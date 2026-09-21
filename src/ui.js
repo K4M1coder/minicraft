@@ -310,6 +310,177 @@
       '<tr><td>échap</td><td>pause</td></tr>' +
       '</table>';
 
+    /* ── Menus ──────────────────────────────────────────────────────────────
+       Tous les ecrans passent par showScreen : un seul calque, un seul
+       endroit ou brancher les evenements. */
+
+    function ech(t) { return C_Chat.echapper(t); }
+
+    function lignePartie(m) {
+      var mode = MC.Modes.mode(m.mode).nom;
+      var diff = MC.Modes.difficulte(m.difficulte).nom;
+      var date = new Date(m.majLe || m.creeLe || Date.now());
+      var quand = date.toLocaleDateString() + ' ' +
+                  String(date.getHours()).padStart(2, '0') + ':' +
+                  String(date.getMinutes()).padStart(2, '0');
+      return '<div class="partie" data-id="' + m.id + '">' +
+        '<div class="pinfo">' +
+          '<div class="pnom">' + ech(m.nom) + '</div>' +
+          '<div class="pmeta">' + mode + ' · ' + diff +
+            ' · graine <code>' + m.graine + '</code> · ' + quand + '</div>' +
+        '</div>' +
+        '<div class="pact">' +
+          '<button class="charger primary" data-id="' + m.id + '">Charger</button>' +
+          '<button class="suppr" data-id="' + m.id + '" title="Supprimer">✕</button>' +
+        '</div></div>';
+    }
+
+    function menuParties(parties) {
+      var liste = parties.length
+        ? parties.map(lignePartie).join('')
+        : '<p class="vide">Aucune partie enregistrée.</p>';
+      showScreen(
+        '<div class="panel large">' +
+        '<h1>MiniCraft</h1>' +
+        '<p class="sub">vos parties</p>' +
+        '<div class="parties">' + liste + '</div>' +
+        '<div class="row">' +
+        '<button id="btn-nouvelle" class="primary">Nouvelle partie</button>' +
+        '<button id="btn-multi">Multijoueur</button>' +
+        '<button id="btn-aide">Commandes</button>' +
+        '</div>' +
+        '<p class="hint" id="lock-hint"></p></div>');
+
+      overlay.querySelector('#btn-nouvelle').onclick = function () { hooks.onNouvelle && hooks.onNouvelle(); };
+      overlay.querySelector('#btn-multi').onclick = function () { hooks.onMulti && hooks.onMulti(); };
+      overlay.querySelector('#btn-aide').onclick = function () { ecranAide(); };
+      Array.prototype.forEach.call(overlay.querySelectorAll('.charger'), function (b) {
+        b.onclick = function () { hooks.onCharger && hooks.onCharger(b.getAttribute('data-id')); };
+      });
+      /* Suppression en deux temps : un clic arme, le second confirme. Une
+         partie effacee par megarde est irrecuperable. */
+      Array.prototype.forEach.call(overlay.querySelectorAll('.suppr'), function (b) {
+        b.onclick = function () {
+          if (b.dataset.arme === '1') {
+            hooks.onSupprimer && hooks.onSupprimer(b.getAttribute('data-id'));
+            return;
+          }
+          b.dataset.arme = '1';
+          b.textContent = 'Confirmer ?';
+          b.classList.add('danger');
+          setTimeout(function () {
+            if (!b.parentNode) return;
+            b.dataset.arme = ''; b.textContent = '✕'; b.classList.remove('danger');
+          }, 3500);
+        };
+      });
+    }
+
+    function boutonsRadio(nom, options, courant) {
+      return '<div class="choix" data-nom="' + nom + '">' + options.map(function (o) {
+        return '<button class="opt' + (o.id === courant ? ' on' : '') + '" data-val="' + o.id + '"' +
+               (o.titre ? ' title="' + ech(o.titre) + '"' : '') + '>' + ech(o.nom) + '</button>';
+      }).join('') + '</div>';
+    }
+
+    function brancherChoix(racine) {
+      Array.prototype.forEach.call(racine.querySelectorAll('.choix'), function (grp) {
+        Array.prototype.forEach.call(grp.querySelectorAll('.opt'), function (b) {
+          b.onclick = function () {
+            Array.prototype.forEach.call(grp.querySelectorAll('.opt'), function (x) {
+              x.classList.remove('on');
+            });
+            b.classList.add('on');
+          };
+        });
+      });
+    }
+    function valeurChoix(nom) {
+      var grp = overlay.querySelector('.choix[data-nom="' + nom + '"] .opt.on');
+      return grp ? grp.getAttribute('data-val') : null;
+    }
+
+    function menuNouvelle() {
+      var modes = Object.keys(MC.Modes.MODES).map(function (k) {
+        var m = MC.Modes.MODES[k];
+        return { id: m.id, nom: m.nom, titre: m.description };
+      });
+      var diffs = MC.Modes.ORDRE_DIFFICULTES.map(function (k) {
+        var d = MC.Modes.DIFFICULTES[k];
+        return { id: d.id, nom: d.nom, titre: d.description };
+      });
+      showScreen(
+        '<div class="panel large">' +
+        '<h1>Nouvelle partie</h1>' +
+        '<div class="form">' +
+        '<label>Nom<input id="f-nom" type="text" maxlength="40" value="Ma partie"></label>' +
+        '<label>Mode' + boutonsRadio('mode', modes, 'survie') + '</label>' +
+        '<label>Difficulté' + boutonsRadio('diff', diffs, 'facile') + '</label>' +
+        '<label>Graine <span class="aide">vide = au hasard · le même mot donne la même carte</span>' +
+        '<input id="f-graine" type="text" maxlength="40" placeholder="ex. vallée perdue"></label>' +
+        '<label>Joueurs locaux' +
+        boutonsRadio('joueurs', [{ id: '1', nom: '1' }, { id: '2', nom: '2' },
+                                 { id: '3', nom: '3' }, { id: '4', nom: '4' }], '1') +
+        '<span class="aide">joueur 1 au clavier, les suivants à la manette</span></label>' +
+        '</div>' +
+        '<div class="row">' +
+        '<button id="btn-creer" class="primary">Créer et jouer</button>' +
+        '<button id="btn-retour">Retour</button>' +
+        '</div><p class="hint" id="lock-hint"></p></div>');
+      brancherChoix(overlay);
+      overlay.querySelector('#btn-retour').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
+      overlay.querySelector('#btn-creer').onclick = function () {
+        hooks.onCreer && hooks.onCreer({
+          nom: overlay.querySelector('#f-nom').value || 'Ma partie',
+          mode: valeurChoix('mode') || 'survie',
+          difficulte: valeurChoix('diff') || 'facile',
+          graineTexte: overlay.querySelector('#f-graine').value,
+          joueurs: parseInt(valeurChoix('joueurs') || '1', 10),
+        });
+      };
+    }
+
+    function menuMulti(defaut) {
+      defaut = defaut || {};
+      showScreen(
+        '<div class="panel large">' +
+        '<h1>Multijoueur</h1>' +
+        '<p class="sub">rejoindre un serveur MiniCraft</p>' +
+        '<div class="form">' +
+        '<label>Adresse <span class="aide">vide = ce serveur</span>' +
+        '<input id="f-hote" type="text" placeholder="ws://192.168.1.20:8080" value="' +
+        ech(defaut.hote || '') + '"></label>' +
+        '<label>Pseudo<input id="f-pseudo" type="text" maxlength="24" value="' +
+        ech(defaut.pseudo || 'Joueur') + '"></label>' +
+        '<label>Joueurs locaux' +
+        boutonsRadio('joueurs', [{ id: '1', nom: '1' }, { id: '2', nom: '2' },
+                                 { id: '3', nom: '3' }, { id: '4', nom: '4' }], '1') + '</label>' +
+        '</div>' +
+        '<div class="row">' +
+        '<button id="btn-join" class="primary">Rejoindre</button>' +
+        '<button id="btn-retour">Retour</button>' +
+        '</div>' +
+        '<p class="hint">Pour héberger : <code>node server.js 8080</code> puis communiquez ' +
+        'votre adresse aux autres joueurs.</p>' +
+        '<p class="hint" id="lock-hint"></p></div>');
+      brancherChoix(overlay);
+      overlay.querySelector('#btn-retour').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
+      overlay.querySelector('#btn-join').onclick = function () {
+        hooks.onRejoindre && hooks.onRejoindre({
+          hote: overlay.querySelector('#f-hote').value.trim(),
+          pseudo: overlay.querySelector('#f-pseudo').value.trim() || 'Joueur',
+          joueurs: parseInt(valeurChoix('joueurs') || '1', 10),
+        });
+      };
+    }
+
+    function ecranAide() {
+      showScreen('<div class="panel large"><h1>Commandes</h1>' + COMMANDES +
+        '<p class="hint">Dans le chat : /aide donne la liste des commandes.</p>' +
+        '<div class="row"><button id="btn-retour" class="primary">Retour</button></div></div>');
+      overlay.querySelector('#btn-retour').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
+    }
+
     function menuPrincipal(hasSave) {
       showScreen(
         '<div class="panel">' +
@@ -327,11 +498,16 @@
       if (bn) bn.onclick = function () { hooks.onPlay && hooks.onPlay(true); };
     }
 
-    function menuPause() {
+    function menuPause(infos) {
+      infos = infos || {};
       showScreen(
         '<div class="panel">' +
         '<h1>Pause</h1>' +
-        '<p class="sub">la partie est figée</p>' +
+        '<p class="sub">' +
+        (infos.nom ? ech(infos.nom) + ' — ' : '') +
+        (infos.mode || '') + (infos.difficulte ? ' · ' + infos.difficulte : '') +
+        (infos.graine !== undefined ? ' · graine <code>' + infos.graine + '</code>' : '') +
+        (infos.enLigne ? ' · <b>en ligne</b>' : '') + '</p>' +
         COMMANDES +
         '<div class="row">' +
         '<button id="btn-resume" class="primary">Reprendre</button>' +
@@ -660,7 +836,8 @@
     return {
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
-      menuPrincipal: menuPrincipal, menuPause: menuPause, ecranMort: ecranMort,
+      menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
+      menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,
       isContainerOpen: isContainerOpen, renderContainer: renderContainer,

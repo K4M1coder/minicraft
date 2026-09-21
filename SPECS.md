@@ -151,6 +151,21 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ✅ |
 | SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ✅ |
 
+## MENU — interface de lancement
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MENU-001 | Le menu liste les parties existantes avec nom, mode, difficulté et graine | une partie créée apparaît avec ses métadonnées | ✅ |
+| SPEC-MENU-002 | Créer une partie permet de choisir nom, mode, difficulté, graine et nombre de joueurs | les cinq champs existent et sont pris en compte | ✅ |
+| SPEC-MENU-003 | Une graine laissée vide est tirée au hasard | deux créations vides donnent deux graines différentes | ✅ |
+| SPEC-MENU-004 | Une graine textuelle est convertie et affichée | le même mot donne la même graine affichée | ✅ |
+| SPEC-MENU-005 | Charger une partie restitue son mode et sa difficulté | les règles appliquées correspondent aux métadonnées | ✅ |
+| SPEC-MENU-006 | Supprimer une partie demande confirmation puis la retire de la liste | la partie disparaît de la liste | ✅ |
+| SPEC-MENU-007 | Le nombre de joueurs locaux choisi est appliqué | l'équipe a la taille demandée | ✅ |
+| SPEC-MENU-008 | L'écran multijoueur permet de saisir une adresse et un pseudo | les deux champs existent | ✅ |
+| SPEC-MENU-009 | Le menu pause permet de sauvegarder et de revenir au menu | les deux actions sont offertes en cours de partie | ✅ |
+| SPEC-MENU-010 | La graine de la partie en cours est consultable | elle est affichée dans le menu pause | ✅ |
+
 ## AUDIT — correctifs issus de la relecture
 
 | ID | Spec | Vérification  | État |

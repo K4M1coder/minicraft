@@ -17,6 +17,7 @@
     var SEED = 20260921;
     var world = MC.createWorld(SEED);
     var entities = MC.createEntities(world);
+    // `world` et `entities` sont reassignes quand on change de partie
     var regles = MC.Modes.regles('survie', 'facile');
 
     /* Le solo est « une equipe d'un joueur » : meme chemin de code que
@@ -85,6 +86,13 @@
       onQuit: toMenu,
       onRespawn: respawn,
       onSound: function (n) { audio.play(n); },
+      onNouvelle: function () { ui.menuNouvelle(); },
+      onMulti: function () { ui.menuMulti({ pseudo: g.nomJoueur }); },
+      onRetourMenu: function () { afficherMenu(); },
+      onCharger: chargerPartie,
+      onSupprimer: supprimerPartie,
+      onCreer: creerPartie,
+      onRejoindre: rejoindreServeur,
     });
 
     var input = MC.createInput(canvas, {
@@ -133,10 +141,105 @@
     // ─── états ───────────────────────────────────────────────────────────────
     function onStateChange(next) {
       if (next === 'playing') { ui.hideScreen(); }
-      else if (next === 'paused') { ui.menuPause(); }
-      else if (next === 'menu') { ui.menuPrincipal(MC.Save.hasSave(storage())); }
+      else if (next === 'paused') {
+        ui.menuPause({
+          nom: g.nomPartie, graine: world.seed,
+          mode: regles.mode.nom, difficulte: regles.difficulte.nom,
+          enLigne: net.enLigne(),
+        });
+      }
+      else if (next === 'menu') { afficherMenu(); }
       else if (next === 'dead') { ui.ecranMort(); }
       if (next !== 'ui' && ui.isContainerOpen()) forceCloseContainer();
+    }
+
+    /* Le menu est le seul point d entree : creer, charger, supprimer,
+       rejoindre. Toute la logique de persistance vit dans Saves ; ici on ne
+       fait que du cablage. */
+    function afficherMenu() {
+      var st = storage();
+      ui.menuParties(st ? MC.Saves.lister(st) : []);
+    }
+    g.afficherMenu = afficherMenu;
+
+    function appliquerPartie(meta) {
+      g.partieId = meta.id;
+      g.nomPartie = meta.nom;
+      regles = MC.Modes.regles(meta.mode, meta.difficulte);
+      g.regles = regles;
+      g.graine = meta.graine;
+    }
+
+    function creerPartie(opts) {
+      var st = storage();
+      if (!st) { ui.toast('Stockage indisponible', 'warn'); return; }
+      var graine = MC.Modes.graineDepuisTexte(opts.graineTexte);
+      var meta = MC.Saves.creer(st, {
+        nom: opts.nom, mode: opts.mode, difficulte: opts.difficulte, graine: graine,
+      });
+      appliquerPartie(meta);
+      // le monde doit repartir de la bonne graine
+      world = MC.createWorld(meta.graine);
+      reconstruireDependances();
+      world.reset(render.disposeChunk);
+      entities.list.length = 0;
+      render.libererToutesEntites();
+      for (var k in furnaces) delete furnaces[k];
+      for (var k2 in chests) delete chests[k2];
+      g.time = 60;
+      composerEquipe(opts.joueurs || 1, regles);
+      chat.vider();
+      chat.systeme('Nouvelle partie « ' + meta.nom + ' » — graine ' + meta.graine);
+      ui.toast('Partie créée');
+      input.setState('playing');
+    }
+
+    function chargerPartie(id) {
+      var st = storage();
+      if (!st) return;
+      var meta = MC.Saves.trouver(st, id);
+      if (!meta) { ui.toast('Partie introuvable', 'warn'); return; }
+      appliquerPartie(meta);
+      world = MC.createWorld(meta.graine);
+      reconstruireDependances();
+      var r = MC.Saves.charger(st, id, g);
+      if (!r) { ui.toast('Sauvegarde illisible', 'warn'); return; }
+      composerEquipe(1, regles);
+      if (!r.vierge) {
+        // la position sauvegardee prime sur le point d apparition
+        var d = g.dernierePosition;
+        if (d) { player.state.pos.x = d.x; player.state.pos.y = d.y; player.state.pos.z = d.z; }
+      }
+      streamChunks(true);
+      chat.vider();
+      chat.systeme('Partie « ' + meta.nom + ' » chargée — graine ' + meta.graine);
+      ui.toast(r.vierge ? 'Nouvelle carte' : 'Partie chargée');
+      input.setState('playing');
+    }
+
+    function supprimerPartie(id) {
+      var st = storage();
+      if (!st) return;
+      var meta = MC.Saves.trouver(st, id);
+      MC.Saves.supprimer(st, id);
+      if (g.partieId === id) g.partieId = null;
+      ui.toast('« ' + (meta ? meta.nom : 'Partie') + ' » supprimée');
+      afficherMenu();
+    }
+
+    function rejoindreServeur(opts) {
+      g.nomJoueur = opts.pseudo;
+      composerEquipe(opts.joueurs || 1, regles);
+      input.setState('playing');
+      net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1);
+    }
+
+    /* Le monde est recree a chaque partie (graine differente) : entites,
+       joueur et registres doivent le suivre, sinon ils pointent sur l ancien. */
+    function reconstruireDependances() {
+      entities = MC.createEntities(world);
+      g.world = world;
+      g.entities = entities;
     }
 
     function storage() {
@@ -525,7 +628,9 @@
     function doSave(notify) {
       var st = storage();
       if (!st) { if (notify) ui.toast('Sauvegarde indisponible', 'warn'); return false; }
-      var ok = MC.Save.save(st, g);
+      // pas d emplacement (partie non nommee) : rien a ecrire
+      if (!g.partieId) { if (notify) ui.toast('Aucune partie à sauvegarder', 'warn'); return false; }
+      var ok = MC.Saves.sauvegarder(st, g.partieId, g);
       if (notify) { ui.toast(ok ? 'Partie sauvegardée' : 'Échec de la sauvegarde', ok ? '' : 'warn');
                     if (ok) audio.play('sauver'); }
       return ok;
@@ -745,7 +850,7 @@
 
     // démarrage : menu, monde prêt derrière
     placeAtSpawn();
-    ui.menuPrincipal(MC.Save.hasSave(storage()));
+    afficherMenu();
     requestAnimationFrame(frame);
 
     return g;

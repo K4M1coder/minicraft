@@ -91,7 +91,8 @@
     A.equal(g.input.state, 'menu', 'état menu');
     A.equal(getComputedStyle(document.querySelector('.overlay')).display, 'flex', 'écran visible');
     A.gt(g.world.chunks.size, 20, 'chunks déjà générés (' + g.world.chunks.size + ')');
-    A.ok(document.querySelector('#btn-play'), 'bouton Jouer présent');
+    A.ok(document.querySelector('#btn-nouvelle'), 'bouton Nouvelle partie present');
+    A.ok(document.querySelector('#btn-multi'), 'bouton Multijoueur present');
   });
 
   /* Le viseur est centré en CSS sur son conteneur : s'il ne coïncide pas avec
@@ -1083,6 +1084,145 @@
     A.equal(g.render.maillagesDistants.size, 0, 'plus aucun maillage distant');
   });
 
+  /* ── Menus ───────────────────────────────────────────────────────────── */
+
+  function videParties() { MC.Saves.toutEffacer(localStorage); }
+
+  e2e('SPEC-MENU-001 : le menu liste les parties avec leurs metadonnees', async function (g) {
+    videParties();
+    MC.Saves.creer(localStorage, { nom: 'Alpha', mode: 'creatif',
+                                   difficulte: 'cauchemar', graine: 4242 });
+    g.afficherMenu();
+    await frames(3);
+    var l = document.querySelectorAll('.partie');
+    A.equal(l.length, 1, 'une partie listee');
+    var t = l[0].textContent;
+    A.ok(t.indexOf('Alpha') >= 0, 'le nom');
+    A.ok(t.indexOf('Cr') >= 0, 'le mode');
+    A.ok(t.indexOf('Cauchemar') >= 0, 'la difficulte');
+    A.ok(t.indexOf('4242') >= 0, 'la graine');
+    videParties();
+  });
+
+  e2e('SPEC-MENU-002 : le formulaire offre les cinq reglages', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-nouvelle').click();
+    await frames(3);
+    A.ok(document.querySelector('#f-nom'), 'champ nom');
+    A.ok(document.querySelector('#f-graine'), 'champ graine');
+    A.equal(document.querySelectorAll('.choix[data-nom="mode"] .opt').length, 2, 'deux modes');
+    A.equal(document.querySelectorAll('.choix[data-nom="diff"] .opt').length, 4, 'quatre difficultes');
+    A.equal(document.querySelectorAll('.choix[data-nom="joueurs"] .opt').length, 4, 'un a quatre joueurs');
+  });
+
+  e2e('SPEC-MENU-004 : une graine textuelle est convertie', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-nouvelle').click(); await frames(2);
+    document.querySelector('#f-nom').value = 'Test graine';
+    document.querySelector('#f-graine').value = 'mot de passe';
+    document.querySelector('#btn-creer').click();
+    await frames(8);
+    A.equal(g.world.seed, MC.Modes.graineDepuisTexte('mot de passe'),
+      'la graine du monde suit le mot saisi');
+    videParties();
+  });
+
+  e2e('SPEC-MENU-003 : une graine vide est tiree au hasard', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    var graines = [];
+    for (var i = 0; i < 2; i++) {
+      document.querySelector('#btn-nouvelle').click(); await frames(2);
+      document.querySelector('#f-nom').value = 'Hasard ' + i;
+      document.querySelector('#f-graine').value = '';
+      document.querySelector('#btn-creer').click();
+      await frames(8);
+      graines.push(g.world.seed);
+      g.afficherMenu(); await frames(2);
+    }
+    A.ne(graines[0], graines[1], 'deux tirages differents');
+    videParties();
+  });
+
+  e2e('SPEC-MENU-005 : le mode et la difficulte choisis sont appliques', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-nouvelle').click(); await frames(2);
+    document.querySelector('#f-nom').value = 'Creatif paisible';
+    document.querySelector('.choix[data-nom="mode"] .opt[data-val="creatif"]').click();
+    document.querySelector('.choix[data-nom="diff"] .opt[data-val="paisible"]').click();
+    document.querySelector('#btn-creer').click();
+    await frames(8);
+    A.equal(g.regles.mode.id, 'creatif', 'mode applique');
+    A.equal(g.regles.difficulte.id, 'paisible', 'difficulte appliquee');
+    A.ok(g.player.state.flying, 'le vol est actif en creatif');
+    A.ok(g.regles.invulnerable, 'invulnerable');
+    videParties();
+  });
+
+  e2e('SPEC-MENU-007 : le nombre de joueurs locaux choisi est applique', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    navigator.getGamepads = function () {
+      return [{ connected: true, index: 0, axes: [0,0,0,0], buttons: [] },
+              { connected: true, index: 1, axes: [0,0,0,0], buttons: [] }];
+    };
+    document.querySelector('#btn-nouvelle').click(); await frames(2);
+    document.querySelector('#f-nom').value = 'A trois';
+    document.querySelector('.choix[data-nom="joueurs"] .opt[data-val="3"]').click();
+    document.querySelector('#btn-creer').click();
+    await frames(8);
+    A.equal(g.equipe.length, 3, 'trois joueurs locaux');
+    A.equal(g.vues.length, 3, 'trois vues');
+    g.composerEquipe(1, MC.Modes.regles('survie', 'facile'));
+    videParties(); await frames(3);
+  });
+
+  e2e('SPEC-MENU-006 : supprimer demande confirmation puis retire la partie', async function (g) {
+    videParties();
+    MC.Saves.creer(localStorage, { nom: 'A jeter', graine: 1 });
+    g.afficherMenu(); await frames(3);
+    A.equal(document.querySelectorAll('.partie').length, 1, 'une partie');
+    var b = document.querySelector('.suppr');
+    b.click();                       // premier clic : arme seulement
+    await frames(2);
+    A.equal(document.querySelectorAll('.partie').length, 1, 'toujours la apres un seul clic');
+    A.ok(/Confirmer/.test(b.textContent), 'le bouton demande confirmation');
+    b.click();                       // second clic : confirme
+    await frames(3);
+    A.equal(document.querySelectorAll('.partie').length, 0, 'partie supprimee');
+    videParties();
+  });
+
+  e2e('SPEC-MENU-008 : l ecran multijoueur offre adresse et pseudo', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-multi').click();
+    await frames(3);
+    A.ok(document.querySelector('#f-hote'), 'champ adresse');
+    A.ok(document.querySelector('#f-pseudo'), 'champ pseudo');
+    A.ok(document.querySelector('#btn-join'), 'bouton rejoindre');
+    document.querySelector('#btn-retour').click();
+    await frames(2);
+    A.ok(document.querySelector('#btn-nouvelle'), 'retour a la liste');
+  });
+
+  e2e('SPEC-MENU-009 : le menu pause offre sauvegarder et quitter', async function (g) {
+    await reset(g);
+    key('Escape');
+    await frames(3);
+    A.equal(g.input.state, 'paused');
+    A.ok(document.querySelector('#btn-save'), 'bouton sauvegarder');
+    A.ok(document.querySelector('#btn-quit'), 'bouton menu principal');
+    A.ok(document.querySelector('#btn-resume'), 'bouton reprendre');
+    key('Escape'); fakeLock(g, true); await frames(3);
+  });
+
+  e2e('SPEC-MENU-010 : la graine courante est affichee en pause', async function (g) {
+    await reset(g);
+    key('Escape');
+    await frames(3);
+    var t = document.querySelector('.panel .sub').textContent;
+    A.ok(t.indexOf(String(g.world.seed)) >= 0, 'la graine est affichee : ' + t);
+    key('Escape'); fakeLock(g, true); await frames(3);
+  });
+
   e2e('le ciel change entre le jour et la nuit', async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;
@@ -1118,6 +1258,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   e2e('sauvegarder puis recharger restitue la construction et l\'inventaire', async function (g) {
     var s = await reset(g);
+    /* La sauvegarde ecrit dans l emplacement de la partie courante : sans
+       emplacement il n y a rien a ecrire, et c est voulu. On en cree un. */
+    MC.Saves.toutEffacer(localStorage);
+    var meta = MC.Saves.creer(localStorage, { nom: 'Test sauvegarde', graine: g.world.seed });
+    g.partieId = meta.id;
     var bx = Math.floor(s.pos.x) + 4, bz = Math.floor(s.pos.z) + 4;
     var by = g.world.groundAt(bx, bz, true) + 1;
     g.world.setBlock(bx, by, bz, B.BRICK);
@@ -1131,12 +1276,12 @@
     s.hp = 20;
     A.equal(g.world.getBlock(bx, by, bz), 0, 'construction effacée');
 
-    A.ok(MC.Save.load(localStorage, g), 'rechargée');
+    A.ok(MC.Saves.charger(localStorage, g.partieId, g), 'rechargée');
     g.world.getChunk(Math.floor(bx / 16), Math.floor(bz / 16), true);
     A.equal(g.world.getBlock(bx, by, bz), B.BRICK, 'brique retrouvée');
     A.equal(s.inv.count(B.GLASS), 33, 'inventaire retrouvé');
     A.equal(s.hp, 11, 'vie retrouvée');
-    localStorage.removeItem(MC.Save.KEY);
+    MC.Saves.toutEffacer(localStorage);
   });
 
   // ══════════════════════════════════════════════════════════════════════════

@@ -59,15 +59,15 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | Lot | Contenu | Domaine de spec | État |
 |---|---|---|---|
 | **L0** | Outillage : `SPECS.md`, `gates.js`, dépôt git | — | fait |
-| **L1** | Correctifs issus de l'audit de code | `AUDIT` | |
-| **L2** | Modes créatif / survie | `MODE` | |
-| **L3** | Quatre difficultés, dont cauchemar (effacement à la mort) | `DIFF` | |
-| **L4** | Parties multiples, menu, choix de la graine | `SAVE` | |
-| **L5** | Armes : ficelle, arc, flèches, projectiles | `ARME` | |
-| **L6** | Chat | `CHAT` | |
-| **L7** | Écran partagé 2 à 4 joueurs locaux | `SPLIT` | |
-| **L8** | Multijoueur client/serveur | `NET` | |
-| **L9** | Revue finale, documentation, portes complètes | — | |
+| **L1** | Correctifs issus de l'audit de code | `AUDIT` | fait |
+| **L2** | Modes créatif / survie | `MODE` | fait |
+| **L3** | Quatre difficultés, dont cauchemar (effacement à la mort) | `DIFF` | fait |
+| **L4** | Parties multiples, menu, choix de la graine | `SAVE` | fait |
+| **L5** | Armes : ficelle, arc, flèches, projectiles | `ARME` | fait |
+| **L6** | Chat | `CHAT` | fait |
+| **L7** | Écran partagé 2 à 4 joueurs locaux | `SPLIT` | fait |
+| **L8** | Multijoueur client/serveur | `NET` | fait |
+| **L9** | Menus (parties, création, multijoueur), documentation | `MENU` | fait |
 
 ### Dépendances entre lots
 

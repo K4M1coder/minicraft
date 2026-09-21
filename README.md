@@ -1,16 +1,18 @@
 # MiniCraft
 
-Prototype de jeu voxel façon Minecraft : terrain infini, grottes, minage progressif,
-inventaire, craft, fourneau, coffres, torches, agriculture, mobs, PNJ, survie,
-cycle jour/nuit, sons synthétisés et sauvegarde locale.
+Prototype de jeu voxel façon Minecraft : deux modes de jeu, quatre difficultés,
+parties multiples avec graine choisie, armes, chat, **écran partagé jusqu'à quatre
+joueurs locaux** et **multijoueur client/serveur**.
 
-Pas de build, pas de dépendance à installer, aucun asset — ni image, ni son :
-les textures sont peintes au runtime sur un `<canvas>` et les bruitages sont
-synthétisés en WebAudio. Seul Three.js est chargé depuis un CDN.
+Aucune dépendance npm, aucun build, aucun asset : les textures sont peintes au
+runtime sur un `<canvas>`, les bruitages synthétisés en WebAudio, et le serveur
+implémente WebSocket à la main. Seul Three.js est chargé depuis un CDN.
 
 ---
 
 ## Lancer
+
+**En solo**, un simple serveur de fichiers suffit :
 
 ```bash
 cd minicraft
@@ -18,179 +20,162 @@ python -m http.server 8777
 # http://127.0.0.1:8777/index.html
 ```
 
-Cliquer **Jouer** pour capturer la souris. `Échap` met en pause.
+**Avec le multijoueur**, lancez le serveur de jeu — il sert aussi les fichiers :
 
-> L'ouverture directe par double-clic (`file://`) devrait fonctionner — il n'y a ni
-> module ES, ni `fetch`, ni XHR, et la sauvegarde dégrade proprement si
-> `localStorage` est refusé. Cela n'a toutefois **pas pu être vérifié** ici, l'outil
-> de test utilisé bloquant le protocole `file:`. Servir le dossier reste la méthode
-> vérifiée.
+```bash
+node server.js 8080
+# http://localhost:8080  ·  les autres joueurs : http://<votre-ip>:8080
+```
+
+Options du serveur : `MC_GRAINE`, `MC_MODE`, `MC_DIFFICULTE`.
+
+```bash
+MC_GRAINE=4242 MC_DIFFICULTE=difficile node server.js 8080
+```
+
+> L'ouverture directe par double-clic (`file://`) devrait fonctionner en solo — ni
+> module ES, ni `fetch` — mais cela **n'a pas pu être vérifié** ici, l'outil de test
+> bloquant le protocole `file:`.
 
 ## Tests
 
 ```bash
-node tests/run.js          # 238 tests unitaires et fonctionnels (logique pure)
-node tests/run.js Craft    # filtre par nom de suite
+node tests/run.js              # 361 tests unitaires et fonctionnels
+node tests/gates.js            # les 6 portes de qualité automatiques
+node tests/integration-net.js  # 30 tests d'intégration réseau (vraies sockets)
 ```
 
-`tests/index.html` exécute **les mêmes** tests dans le navigateur, plus 54 tests
-end-to-end qui pilotent une vraie partie affichée dans un cadre : capture souris,
-pause, inventaire, craft au clic, minage, combat, échange, torches, coffres,
-sauvegarde et rechargement.
+`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 85 tests
+end-to-end qui pilotent une vraie partie.
 
-**292 tests au total.**
+**476 tests au total**, 116 specs couvertes.
 
 ---
 
-## Commandes
+## Jouer
+
+Le menu liste vos parties. **Nouvelle partie** demande un nom, un mode, une
+difficulté, une graine et le nombre de joueurs locaux.
 
 | Touche | Action |
 |---|---|
 | `ZQSD` / `WASD` | se déplacer |
 | souris | regarder |
-| clic gauche | miner (maintenir) · frapper un mob |
-| clic droit | poser · utiliser · interagir (établi, fourneau, coffre, villageois) |
-| `Espace` | sauter · nager vers la surface · double-appui = vol |
-| `Maj` | courir · descendre (vol et nage) |
-| `E` | inventaire + craft 2×2 |
-| `G` | jeter l'objet tenu |
-| `M` | couper ou remettre le son |
+| clic gauche | miner (maintenir) · frapper |
+| clic droit | poser · utiliser · tirer à l'arc · interagir |
+| `Espace` | sauter · nager · double-appui = vol |
+| `Maj` | courir · descendre |
+| `E` | inventaire et craft 2×2 |
+| `G` | jeter un objet |
+| `T` | chat (`/` ouvre sur une commande) |
+| `M` | couper le son |
 | `1` – `9`, molette | choisir un objet |
 | `F5` | sauvegarder |
-| `Échap` | pause (ferme d'abord l'inventaire s'il est ouvert) |
+| `Échap` | pause |
 
-Dans les écrans d'inventaire : **clic gauche** prend ou pose toute la pile,
-**clic droit** prend la moitié ou pose une unité.
+**Manettes** (joueurs 2 à 4) : stick gauche déplacer, stick droit regarder,
+A sauter, L3 courir, LT miner, RT utiliser, LB/RB changer d'objet, Y inventaire.
+
+**Commandes du chat** : `/aide` `/heure` `/jour` `/nuit` `/ou` `/graine` `/vider`
+`/rejoindre [adresse]` `/quitter` `/qui`.
 
 ---
 
 ## Contenu
 
-**Monde.** Chunks 16×16×80 générés, maillés et déchargés à la volée. Terrain issu
-d'un value noise fractal (continentalité × collines × rugosité) : océans, plages,
-plaines, montagnes. **Grottes** creusées par intersection de deux champs de bruit 3D,
-avec une marge sous la surface et sous le niveau de la mer pour ne jamais percer
-l'océan. Arbres, charbon partout sous la surface, fer seulement en profondeur.
+**Modes.** *Survie* : faim, dégâts, usure des outils, blocs consommés.
+*Créatif* : vol, invulnérabilité, casse instantanée, blocs illimités.
 
-**Minage.** Dureté par bloc, vitesse selon l'outil et son matériau, barre de
-progression. Certains blocs ne donnent rien sans le bon outil (la pierre à main nue
-casse mais ne lâche rien ; le fer exige au moins une pioche en pierre).
-Les outils **s'usent** et finissent par se briser ; la jauge est visible dans la
-barre d'action.
+**Difficultés.** *Paisible* (aucun monstre, la faim ne tue pas) · *Facile* ·
+*Difficile* · **Cauchemar** : coups doublés, et **à la mort la carte et la
+sauvegarde sont détruites**. En écran partagé, la mort d'un seul joueur suffit.
 
-**Objets.** 36 cases, piles de 64, outils non empilables. Blocs cassés et mobs tués
-laissent des entités au sol qui tombent, fusionnent et se ramassent. `G` permet de
-jeter — sans quoi un inventaire plein condamnerait à perdre tout nouveau butin.
+**Parties.** Autant que voulu, chacune avec son nom, son mode, sa difficulté et sa
+graine. Une graine textuelle (« vallée perdue ») donne toujours la même carte : deux
+joueurs sur deux machines obtiennent le même monde en tapant le même mot.
 
-**Craft.** Grille 2×2 dans l'inventaire, 3×3 sur l'établi. Recettes façonnées
-(position significative) et informes. Cinq familles d'outils en trois matériaux,
-plus torches, coffres, fourneau, briques, verre et pain.
+**Monde.** Chunks 16×16×80 générés à la volée, océans, plages, montagnes, grottes
+creusées au bruit 3D, charbon partout, fer en profondeur, arbres.
 
-**Fourneau.** Combustible + entrée : minerai de fer → lingot, mouton cru → cuit,
-sable → verre, pavé → pierre.
+**Jeu.** Minage progressif selon l'outil, 36 cases d'inventaire, craft 2×2 et 3×3,
+fourneau, coffres, torches, agriculture (houe, graines, blé, pain), zombies, moutons,
+villageois avec cinq offres d'échange, vie, faim, noyade, cycle jour/nuit.
 
-**Coffres.** 27 cases de stockage par coffre. Casser un coffre (ou un fourneau)
-rend son contenu au sol.
+**Armes.** Épées en trois matériaux, arc et flèches (projectile avec gravité,
+dégâts à l'impact, le tireur ne se blesse pas).
 
-**Torches.** Posables au sol ou contre une paroi, elles tombent si leur support
-disparaît. Le rendu leur affecte un pool borné de lumières ponctuelles, réassigné
-chaque image aux plus proches.
+**Écran partagé.** 1 à 4 joueurs locaux : plein cadre, deux bandes, ou quadrants.
+Chacun a sa caméra, son HUD, son inventaire et sa vie. Joueur 1 au clavier, les
+suivants à la manette.
 
-**Agriculture.** Houe → terre labourée, graines (issues de l'herbe cassée) →
-4 stades de croissance → récolte de blé et de graines → pain.
-
-**Créatures.** Zombies (apparition nocturne, poursuite, dégâts au contact,
-disparition à l'aube), moutons (errance, viande et laine), villageois (cinq offres
-d'échange : blé et laine contre émeraudes, émeraudes contre pain, fer, pioche).
-
-**Survie.** Vie et faim, dégâts de chute, noyade avec jauge d'air, régénération liée
-à la satiété, mort et réapparition. Cycle jour/nuit de 7 minutes pilotant lumière,
-couleur du ciel et apparition des monstres.
-
-**Sauvegarde.** Automatique toutes les minutes et à la fermeture, dans
-`localStorage`. Seul le **delta** est stocké (blocs modifiés, inventaire avec usure,
-coffres, fourneaux, cultures, position, heure) : le terrain se régénère depuis la
-graine, donc une partie tient en quelques kilo-octets.
+**Multijoueur.** Serveur autoritaire sur les blocs, les mobs, l'heure et le chat.
+Les joueurs distants sont affichés avec leur nom. Combinable avec l'écran partagé :
+un poste peut rejoindre à quatre. La perte de connexion bascule en solo sans planter.
 
 ---
 
 ## Architecture
 
-La contrainte structurante : **la logique de jeu ne connaît ni THREE ni le DOM**.
-Le mailleur renvoie des tableaux bruts que la couche rendu emballe ; la physique
-manipule des `{x, y, z}` nus. C'est ce qui permet d'exécuter génération, collisions,
-inventaire, craft, IA, agriculture et sauvegarde sous Node, sans WebGL.
+**La logique de jeu ne connaît ni THREE ni le DOM.** Le mailleur renvoie des tableaux
+bruts ; la physique manipule des `{x, y, z}` nus. C'est ce qui permet de tout tester
+sous Node — et c'est ce qui permet au **serveur de réutiliser exactement les mêmes
+modules** que le client, plutôt que de réécrire une simulation qui divergerait.
 
 ```
 src/
-  core.js       blocs, objets, dureté, drops, passes de rendu, durabilité   ─┐
-  noise.js      bruit déterministe 2D et 3D                                  │
-  world.js      chunks, génération, grottes, cultures, lumières              │ logique
-  mesher.js     géométrie d'un chunk + occlusion ambiante (tableaux bruts)   │ pure,
-  physics.js    collisions AABB, orientation, raycast DDA                    │ testable
-  inventory.js  piles, recettes, fourneau, échanges, usure                   │ sous
-  entities.js   objets au sol, mobs, IA, visée rayon/boîte                   │ Node
-  player.js     déplacement, survie, miner/poser/utiliser/frapper/jeter      │
-  daycycle.js   cycle jour/nuit                                              │
-  save.js       sérialisation (stockage injecté)                             │
-  audio.js      bruitages synthétisés (dégrade en silence)                  ─┘
-  atlas.js      textures peintes au runtime          ─┐
-  render.js     scène THREE, maillages, ambiance,     │ navigateur
-                lumières de torches                   │
-  ui.js         HUD et écrans                         │
-  input.js      clavier, souris, verrou du pointeur   │
-  game.js       boucle et câblage                    ─┘
-  ui.css        styles partagés jeu / page de tests
-
-tests/
-  harness.js    micro-framework (Node et navigateur)
-  unit.js       tests unitaires…
-  functional.js …et fonctionnels
-  e2e.js        54 tests end-to-end sur une vraie partie
-  run.js        exécution Node
-  index.html    exécution navigateur
+  core · noise · world · mesher · physics · inventory · entities       logique pure,
+  player · daycycle · save · saves · modes · chat · split · gamepad    testable sous
+  net-protocol                                                          Node
+  audio · atlas · render · ui · input · net · game                     navigateur
+  ui.css                                              partagé jeu / page de tests
+server.js                    serveur Node sans dépendance (statique + WebSocket)
+tests/  harness · unit · functional · spec-* · e2e · integration-net · gates · run
+SPECS.md   116 specs identifiées      PLAN.md   méthode et portes de qualité
 ```
 
-### Quatre points qui méritent une explication
+### Méthode
 
-**Orientation des déplacements.** Three.js oriente la caméra vers `-Z`. Après une
-rotation `yaw` autour de `Y`, le vecteur avant vaut `(-sin, 0, -cos)` et le vecteur
-droite `(cos, 0, -sin)` : **les deux composantes Z sont négatives**. Les oublier
-miroite le déplacement par rapport à l'axe X — correct en regardant vers ±X, inversé
-vers ±Z. D'où `Physics.wishDirection`, isolée et couverte par un test qui compare la
-direction obtenue au vecteur avant de la caméra sur 72 orientations.
+Spec-driven : chaque comportement est déclaré dans `SPECS.md` avec un identifiant,
+puis couvert par un test qui le cite. `node tests/gates.js` vérifie la couverture
+**dans les deux sens** — aucune spec orpheline, aucun identifiant inventé — et
+refuse de passer au vert si la logique pure référence `THREE`, `document` ou
+`window`. C'est cette dernière porte qui protège toute la stratégie de test.
 
-**Capture de la souris.** Le verrou du pointeur est une *conséquence* de l'état du
-jeu (`menu` / `playing` / `paused` / `ui` / `dead`), jamais une variable
-indépendante. Perdre le verrou (Échap, alt-tab, clic hors fenêtre) met en **pause**
-au lieu de laisser tourner une partie sans entrées. Chrome refuse une nouvelle
-capture pendant ~1,25 s après une sortie par Échap : la demande est retentée au lieu
-d'échouer en silence. Les deltas aberrants émis à l'acquisition sont filtrés.
+### Points qui méritent une explication
 
-**Trois régimes de transparence.** `opaque` (profondeur écrite, aucun tri), `cutout`
-(`alphaTest`, profondeur écrite, pas de tri — feuillage, cultures, torches) et
-`blend` (fondu réel, `depthWrite:false` — eau et verre). Confondre découpe et fondu
-donne un feuillage délavé et des artefacts de tri.
+**Orientation des déplacements.** Three.js oriente la caméra vers `-Z` : après une
+rotation `yaw`, l'avant vaut `(-sin, 0, -cos)` et la droite `(cos, 0, -sin)` — les
+deux composantes Z sont négatives. Les oublier miroite le déplacement par rapport à
+l'axe X. D'où `Physics.wishDirection`, isolée et vérifiée sur 72 orientations.
 
-**Occlusion ambiante.** Pour chaque coin de face, on échantillonne les trois voisins
-situés **devant** la face — jamais ceux du plan de la face, sinon un mur plat
-s'assombrirait uniformément. Quand les deux arêtes sont pleines le coin est enfermé,
-et la diagonale ne doit pas l'éclaircir. Le quad est découpé selon la diagonale la
-plus homogène en occlusion, faute de quoi un pli lumineux apparaît en escalier.
+**Capture de la souris.** Le verrou est une *conséquence* de l'état du jeu, jamais
+une variable indépendante. Le perdre met en **pause**. Chrome refuse une nouvelle
+capture pendant ~1,25 s après Échap : la demande est retentée.
+
+**Trois régimes de transparence.** `opaque`, `cutout` (`alphaTest`, pas de tri —
+feuillage, cultures, torches) et `blend` (fondu réel — eau, verre).
+
+**Occlusion ambiante.** On échantillonne les voisins situés *devant* la face, jamais
+ceux de son plan : sinon un mur plat s'assombrirait uniformément.
+
+**Coalescing TCP.** Une lecture socket peut contenir une demi-trame ou trois. Le
+serveur accumule et décode tant qu'une trame complète sort — c'est la source la plus
+fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 
 ---
 
 ## Limites connues
 
-- Pas de biomes distincts, ni de génération de villages ou de structures.
 - Pas de propagation de lumière : les torches sont des lumières ponctuelles du
-  moteur, bornées à dix simultanées. L'obscurité n'influence pas l'apparition
-  des monstres, qui dépend seulement de l'heure.
-- L'eau ne s'écoule pas : casser un bloc sous la mer laisse une poche d'air
-  permanente. Les grottes évitent donc soigneusement le fond océanique.
-- Les mobs ne franchissent pas les obstacles de plus d'un bloc et ne s'évitent pas
-  entre eux.
-- Pas de greedy meshing : un chunk produit une face par facette visible.
-- Tout tourne sur le thread principal ; entrer dans une zone neuve peut provoquer un
-  bref à-coup malgré le budget de génération par image.
-- La sauvegarde est locale au navigateur ; vider les données du site l'efface.
+  moteur, bornées à dix simultanées. L'obscurité n'influence pas l'apparition des
+  monstres, qui dépend de l'heure seule.
+- Le serveur fait confiance aux clients pour leur propre position : suffisant en
+  réseau local, insuffisant contre un joueur malveillant.
+- Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
+  le sont.
+- L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
+  partager un clavier et une souris.
+- L'eau ne s'écoule pas. Pas de biomes distincts, ni de structures générées.
+- Pas de greedy meshing ; tout tourne sur le thread principal.
+- Les sauvegardes sont locales au navigateur ; le serveur ne persiste pas son monde
+  entre deux démarrages.
