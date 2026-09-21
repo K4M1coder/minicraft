@@ -21,10 +21,11 @@
     var furnaces = Object.create(null);
     var chests = Object.create(null);
     var audio = MC.createAudio();
+    var chat = MC.Chat.creer();
 
     var g = {
       world: world, entities: entities, player: player, render: render,
-      time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio,
+      time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
       disposeChunk: render.disposeChunk,
     };
 
@@ -58,6 +59,17 @@
         ui.toast(player.state.flying ? 'Vol activé' : 'Vol désactivé');
       },
       onKey: onKey,
+      onSaisieTouche: function (k) {
+        // input.EFFACE signale un retour arriere ; tout autre caractere s'ajoute
+        if (k === input.EFFACE) chat.saisie = chat.saisie.slice(0, -1);
+        else chat.saisie = chat.saisie + k;
+      },
+      onSaisieValider: function () {
+        var m = chat.valider(g.nomJoueur || 'Joueur');
+        input.setSaisie(false);
+        if (m) traiterMessage(m);
+      },
+      onSaisieAnnuler: function () { chat.annuler(); input.setSaisie(false); },
       onKeyAnyState: onKeyAnyState,
       onEscape: onEscape,
       onState: onStateChange,
@@ -301,6 +313,12 @@
         input.setState('ui');
       } else if (code === 'F5') {
         doSave(true);
+      } else if (code === 'KeyT') {
+        chat.ouvrir();
+        input.setSaisie(true);
+      } else if (code === 'Slash') {
+        chat.ouvrir(); chat.saisie = '/';
+        input.setSaisie(true);
       } else if (code === 'KeyM') {
         ui.toast(audio.setEnabled(!audio.enabled) ? 'Son activé' : 'Son coupé');
       } else if (code === 'KeyG') {
@@ -336,6 +354,41 @@
       forceCloseContainer();
       input.setState('playing');
     }
+
+    /* Une commande donne un retour immediat ; un message ordinaire part au
+       reseau quand il y en a un. */
+    function traiterMessage(m) {
+      var cmd = MC.Chat.parseCommande(m.texte);
+      if (cmd) {
+        executerCommande(cmd);
+        return;
+      }
+      if (g.net && g.net.envoyerChat) g.net.envoyerChat(m.texte);
+    }
+
+    function executerCommande(cmd) {
+      var s = player.state;
+      switch (cmd.nom) {
+        case 'heure':
+          chat.systeme('Il est ' + DC.clockString(g.time) +
+                       (DC.isNight(g.time) ? ' — il fait nuit' : ' — il fait jour'));
+          break;
+        case 'jour': g.time = DC.DAY_LENGTH * 0.2; chat.systeme('Le jour se lève.'); break;
+        case 'nuit': g.time = DC.DAY_LENGTH * 0.7; chat.systeme('La nuit tombe.'); break;
+        case 'ou':
+        case 'pos':
+          chat.systeme('Vous êtes en ' + s.pos.x.toFixed(1) + ' / ' +
+                       s.pos.y.toFixed(1) + ' / ' + s.pos.z.toFixed(1));
+          break;
+        case 'graine': chat.systeme('Graine du monde : ' + world.seed); break;
+        case 'aide':
+          chat.systeme('Commandes : /heure /jour /nuit /ou /graine /vider /aide');
+          break;
+        case 'vider': chat.vider(); break;
+        default: chat.systeme('Commande inconnue : /' + cmd.nom);
+      }
+    }
+    g.traiterMessage = traiterMessage;
 
     function doSave(notify) {
       var st = storage();

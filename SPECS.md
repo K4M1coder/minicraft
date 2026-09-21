@@ -91,16 +91,16 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-CHAT-001 | Un message envoyé apparaît dans l'historique | l'historique contient le texte | ⏳ |
-| SPEC-CHAT-002 | L'historique est borné : les plus anciens sont oubliés | au-delà de la limite, la taille reste constante | ⏳ |
-| SPEC-CHAT-003 | Un message vide ou d'espaces est refusé | l'historique ne bouge pas | ⏳ |
-| SPEC-CHAT-004 | Un message trop long est tronqué, pas rejeté | longueur ramenée à la limite | ⏳ |
-| SPEC-CHAT-005 | Chaque message porte auteur et horodatage | champs présents | ⏳ |
-| SPEC-CHAT-006 | Les messages système sont distingués des messages de joueur | champ `type` différent | ⏳ |
-| SPEC-CHAT-007 | Le texte est neutralisé à l'affichage | `<script>` ressort échappé | ⏳ |
-| SPEC-CHAT-008 | Les messages récents sont consultables séparément | `recents(n)` renvoie les n derniers | ⏳ |
-| SPEC-CHAT-009 | Une commande `/` est reconnue comme telle | `estCommande` vrai, nom extrait | ⏳ |
-| SPEC-CHAT-010 | Ouvrir le chat suspend les entrées de déplacement | en saisie, les touches ne déplacent plus | ⏳ |
+| SPEC-CHAT-001 | Un message envoyé apparaît dans l'historique | l'historique contient le texte | ✅ |
+| SPEC-CHAT-002 | L'historique est borné : les plus anciens sont oubliés | au-delà de la limite, la taille reste constante | ✅ |
+| SPEC-CHAT-003 | Un message vide ou d'espaces est refusé | l'historique ne bouge pas | ✅ |
+| SPEC-CHAT-004 | Un message trop long est tronqué, pas rejeté | longueur ramenée à la limite | ✅ |
+| SPEC-CHAT-005 | Chaque message porte auteur et horodatage | champs présents | ✅ |
+| SPEC-CHAT-006 | Les messages système sont distingués des messages de joueur | champ `type` différent | ✅ |
+| SPEC-CHAT-007 | Le texte est neutralisé à l'affichage | `<script>` ressort échappé | ✅ |
+| SPEC-CHAT-008 | Les messages récents sont consultables séparément | `recents(n)` renvoie les n derniers | ✅ |
+| SPEC-CHAT-009 | Une commande `/` est reconnue comme telle | `estCommande` vrai, nom extrait | ✅ |
+| SPEC-CHAT-010 | Ouvrir le chat suspend les entrées de déplacement | en saisie, les touches ne déplacent plus | ✅ |
 
 ## SPLIT — écran partagé
 

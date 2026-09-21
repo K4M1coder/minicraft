@@ -766,6 +766,84 @@
     await reset(g);
   });
 
+  /* SPEC-CHAT-010 : ouvrir le chat doit neutraliser les touches de jeu.
+     Sans ce verrou, ecrire « avance » ferait courir le joueur. */
+  e2e('SPEC-CHAT-010 : T ouvre le chat et neutralise les deplacements', async function (g) {
+    var s = await reset(g);
+    key('KeyT');
+    await frames(3);
+    A.ok(g.chat.enSaisie, 'chat ouvert');
+    A.ok(g.input.saisieActive, 'entrees de jeu verrouillees');
+
+    var x0 = s.pos.x, z0 = s.pos.z;
+    // un vrai appui porte toujours `key` : on le fournit comme le navigateur
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyW', key: 'w' }));
+    await frames(20);
+    A.close(s.pos.x, x0, 1e-6, 'le joueur n a pas bouge en X');
+    A.close(s.pos.z, z0, 1e-6, 'ni en Z');
+    A.ok(g.chat.saisie.length > 0, 'la touche a alimente le champ');
+
+    key('Escape');
+    await frames(3);
+    A.notOk(g.chat.enSaisie, 'chat referme');
+    A.notOk(g.input.saisieActive, 'entrees rendues au jeu');
+  });
+
+  e2e('SPEC-CHAT-001 : un message tape apparait dans la fenetre', async function (g) {
+    await reset(g);
+    g.chat.vider();
+    key('KeyT');
+    await frames(2);
+    'bonjour'.split('').forEach(function (ch) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code: 'Key' + ch.toUpperCase() }));
+    });
+    A.equal(g.chat.saisie, 'bonjour', 'texte saisi');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Enter', key: 'Enter' }));
+    await frames(4);
+    A.equal(g.chat.messages.length, 1, 'message publie');
+    A.equal(g.chat.messages[0].texte, 'bonjour');
+    A.ok(document.querySelector('.chat-log').textContent.indexOf('bonjour') >= 0,
+      'affiche dans la fenetre');
+    A.notOk(g.input.saisieActive, 'saisie refermee');
+  });
+
+  e2e('SPEC-CHAT-009 : une commande produit une reponse systeme', async function (g) {
+    await reset(g);
+    g.chat.vider();
+    g.chat.ouvrir();
+    g.chat.saisie = '/graine';
+    var m = g.chat.valider('Joueur');
+    g.traiterMessage(m);
+    await frames(2);
+    var sys = g.chat.messages.filter(function (x) { return x.type === 'systeme'; });
+    A.ok(sys.length > 0, 'une reponse systeme est apparue');
+    A.ok(sys[0].texte.indexOf(String(g.world.seed)) >= 0, 'la graine est annoncee');
+  });
+
+  e2e('SPEC-CHAT-007 : un message contenant du balisage est neutralise', async function (g) {
+    await reset(g);
+    g.chat.vider();
+    g.chat.envoyer('Pirate', '<img src=x onerror=alert(1)>');
+    await frames(3);
+    var log = document.querySelector('.chat-log');
+    A.equal(log.querySelectorAll('img').length, 0, 'aucune balise injectee');
+    A.ok(log.textContent.indexOf('onerror') >= 0, 'le texte brut est bien affiche');
+  });
+
+  e2e('le retour arriere efface un caractere', async function (g) {
+    await reset(g);
+    key('KeyT');
+    await frames(2);
+    ['a', 'b', 'c'].forEach(function (ch) {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: ch, code: 'Key' + ch.toUpperCase() }));
+    });
+    A.equal(g.chat.saisie, 'abc');
+    window.dispatchEvent(new KeyboardEvent('keydown', { code: 'Backspace', key: 'Backspace' }));
+    A.equal(g.chat.saisie, 'ab', 'un caractere retire');
+    key('Escape');
+    await frames(2);
+  });
+
   e2e('le ciel change entre le jour et la nuit', async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;

@@ -3,7 +3,7 @@
 (function (G) {
   'use strict';
   var MC = G.MC = G.MC || {};
-  var C = MC.Core, Inv = MC.Inventory, DC = MC.DayCycle;
+  var C = MC.Core, Inv = MC.Inventory, DC = MC.DayCycle, C_Chat = MC.Chat;
 
   function createUI(root, atlas, hooks) {
     hooks = hooks || {};
@@ -77,6 +77,47 @@
     var damageFlash = el('div', 'damage-flash');
     root.appendChild(damageFlash);
 
+    // ─── chat ───────────────────────────────────────────────────────────────
+    var chatBox = el('div', 'chat');
+    var chatLog = el('div', 'chat-log');
+    var chatInput = el('div', 'chat-input');
+    chatInput.innerHTML = '<span class="prompt">&gt;</span><span class="txt"></span><span class="caret">_</span>';
+    chatBox.appendChild(chatLog); chatBox.appendChild(chatInput);
+    hud.appendChild(chatBox);
+
+    /* L'historique n'est reconstruit que si son contenu a change : sans ce
+       garde-fou, on refait 60 noeuds DOM a chaque image. */
+    var dernierChatId = -1, dernierSaisie = null, dernierEnSaisie = null;
+
+    function updateChat(chat) {
+      if (!chat) { chatBox.style.display = 'none'; return; }
+      var msgs = chat.messages;
+      var dernier = msgs.length ? msgs[msgs.length - 1].id : 0;
+      var visible = chat.enSaisie || (msgs.length > 0 && chat.nonLus > 0);
+
+      if (dernier !== dernierChatId) {
+        dernierChatId = dernier;
+        chatLog.innerHTML = chat.recents(8).map(function (m) {
+          var corps = C_Chat.echapper(m.texte);
+          return m.type === 'systeme'
+            ? '<div class="ln sys">' + corps + '</div>'
+            : '<div class="ln"><b>' + C_Chat.echapper(m.auteur || '?') + '</b> ' + corps + '</div>';
+        }).join('');
+        chatLog.scrollTop = chatLog.scrollHeight;
+      }
+      if (chat.enSaisie !== dernierEnSaisie) {
+        dernierEnSaisie = chat.enSaisie;
+        chatInput.style.display = chat.enSaisie ? 'flex' : 'none';
+        chatBox.classList.toggle('actif', chat.enSaisie);
+      }
+      if (chat.saisie !== dernierSaisie) {
+        dernierSaisie = chat.saisie;
+        chatInput.querySelector('.txt').textContent = chat.saisie;
+      }
+      chatBox.style.display = (visible || chat.enSaisie) ? 'flex' : 'none';
+      chatLog.style.opacity = chat.enSaisie ? 1 : 0.82;
+    }
+
     function toast(msg, kind) {
       var t = el('div', 'toast' + (kind ? ' ' + kind : ''), msg);
       toastBox.appendChild(t);
@@ -140,6 +181,8 @@
 
       damageFlash.style.opacity = Math.max(0, p.hurtFlash) * 0.9;
 
+      updateChat(g.chat);
+
       debug.innerHTML =
         'FPS <b>' + g.fps + '</b> · chunks <b>' + g.world.chunks.size + '</b>' +
         ' · entités <b>' + g.entities.list.length + '</b><br>' +
@@ -172,6 +215,7 @@
       '<tr><td>E</td><td>inventaire et craft 2×2</td></tr>' +
       '<tr><td>G</td><td>jeter un objet</td></tr>' +
       '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
+      '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
       '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
       '<tr><td>F5</td><td>sauvegarder</td></tr>' +
       '<tr><td>échap</td><td>pause</td></tr>' +
@@ -525,7 +569,7 @@
     function refreshFurnace() { if (container && container.kind === 'furnace') renderContainer(); }
 
     return {
-      updateHUD: updateHUD, toast: toast, iconStyle: iconStyle,
+      updateHUD: updateHUD, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
       menuPrincipal: menuPrincipal, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,

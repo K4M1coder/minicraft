@@ -124,11 +124,23 @@
       scheduleRetry({ message: 'capture refusée par le navigateur' });
     });
 
+    /* Mode saisie : tant qu'il est actif, AUCUNE touche ne pilote le jeu.
+       Sans ce verrou, taper « avance » dans le chat ferait courir le joueur.
+       Déclaré ici, avant les gestionnaires qui le lisent. */
+    var EFFACE = String.fromCharCode(8);   // sentinelle « retour arriere »           // sentinelle « retour arrière »
+    var saisieActive = false;
+    function setSaisie(v) {
+      saisieActive = !!v;
+      if (saisieActive) clearKeys();
+      return saisieActive;
+    }
+
     // ─── souris ──────────────────────────────────────────────────────────────
     var MAX_DELTA = 180;   // au-delà, c'est un artefact d'acquisition du verrou
     var SENS = 0.0022;
 
     document.addEventListener('mousemove', function (e) {
+      if (saisieActive) return;
       if (!isLocked() || state !== 'playing') return;
       var dx = e.movementX || 0, dy = e.movementY || 0;
       // Certains navigateurs envoient un delta énorme à la prise du verrou :
@@ -138,6 +150,7 @@
     });
 
     canvas.addEventListener('mousedown', function (e) {
+      if (saisieActive) { e.preventDefault(); return; }
       if (state === 'menu' || state === 'paused') { e.preventDefault(); return; }
       if (!isLocked()) return;
       e.preventDefault();
@@ -160,6 +173,24 @@
     var lastSpace = 0;
 
     window.addEventListener('keydown', function (e) {
+      // la saisie texte capte tout, sauf Entrée et Échap qui la terminent
+      if (saisieActive) {
+        if (e.code === 'Enter' || e.code === 'NumpadEnter') {
+          e.preventDefault();
+          if (hooks.onSaisieValider) hooks.onSaisieValider();
+        } else if (e.code === 'Escape') {
+          e.preventDefault();
+          if (hooks.onSaisieAnnuler) hooks.onSaisieAnnuler();
+        } else if (e.code === 'Backspace') {
+          e.preventDefault();
+          if (hooks.onSaisieTouche) hooks.onSaisieTouche('');
+        } else if (e.key && e.key.length === 1 && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          e.preventDefault();
+          if (hooks.onSaisieTouche) hooks.onSaisieTouche(e.key);
+        }
+        return;
+      }
+
       // Échap : le navigateur relâche déjà le verrou ; on décide de la suite.
       if (e.code === 'Escape') {
         if (hooks.onEscape) hooks.onEscape();
@@ -193,6 +224,7 @@
     });
 
     window.addEventListener('keyup', function (e) {
+      if (saisieActive) return;
       var a = CODE_TO_ACTION[e.code];
       if (a) keys[a] = false;
     });
@@ -210,6 +242,8 @@
     return {
       get state() { return state; },
       setState: setState, isLocked: isLocked, actions: actions, keys: keys,
+      setSaisie: setSaisie, EFFACE: EFFACE,
+      get saisieActive() { return saisieActive; },
       mouse: mouse, clearKeys: clearKeys, requestLock: requestLock, exitLock: exitLock,
       get lockError() { return lockError; },
       BINDINGS: BINDINGS, SENS: SENS, MAX_DELTA: MAX_DELTA,
