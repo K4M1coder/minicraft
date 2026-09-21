@@ -1,0 +1,152 @@
+:root {
+    color-scheme: dark;
+    --slot: 46px;
+    --panel: rgba(12, 15, 21, .82);
+    --line: rgba(255, 255, 255, .10);
+    --accent: #7fd4ff;
+    --good: #7ee08a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    width: 100%; height: 100%; overflow: hidden; background: #0b0e13; color: #e8eaed;
+    font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    user-select: none; -webkit-user-select: none;
+  }
+  /* Le conteneur fait référence : canvas ET interface s'y calent, en `absolute`
+     et non en `fixed`. Ancrer le HUD à la fenêtre marche tant que le jeu occupe
+     tout l'écran, mais décale le viseur dès que la vue est dans un cadre. */
+  #host { position: fixed; inset: 0; }
+  #host > canvas { display: block; position: absolute; inset: 0; width: 100%; height: 100%; }
+
+  /* ─── HUD ─────────────────────────────────────────────────────────────── */
+  .hud { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+
+  .crosshair { position: absolute; left: 50%; top: 50%; width: 20px; height: 20px;
+               margin: -10px 0 0 -10px; opacity: .85; }
+  .crosshair:before, .crosshair:after { content: ""; position: absolute; background: #fff;
+               box-shadow: 0 0 2px #000; }
+  .crosshair:before { left: 9px; top: 0; width: 2px; height: 20px; }
+  .crosshair:after { top: 9px; left: 0; height: 2px; width: 20px; }
+
+  .mining-ring { position: absolute; left: 50%; top: calc(50% + 22px); transform: translateX(-50%);
+                 width: 84px; height: 6px; background: rgba(0,0,0,.55); border-radius: 3px;
+                 display: none; overflow: hidden; border: 1px solid rgba(255,255,255,.18); }
+  .mining-fill { height: 100%; background: linear-gradient(90deg, #7ee08a, #cfe98a); width: 0; }
+
+  .debug { position: absolute; left: 12px; top: 12px; font-size: 12px; line-height: 1.55;
+           background: var(--panel); padding: 8px 10px; border-radius: 6px;
+           border: 1px solid var(--line); }
+  .debug b { color: var(--accent); font-weight: 600; }
+
+  .stats { position: absolute; left: 50%; bottom: 74px; transform: translateX(-50%);
+           display: flex; flex-direction: column; gap: 3px; align-items: center; }
+  .bar { display: flex; gap: 2px; }
+  .pip { width: 13px; height: 13px; border-radius: 2px; background: rgba(255,255,255,.10);
+         box-shadow: inset 0 0 0 1px rgba(0,0,0,.4); }
+  .pip.heart.full { background: #e0453f; }
+  .pip.heart.half { background: linear-gradient(90deg, #e0453f 50%, rgba(255,255,255,.1) 50%); }
+  .pip.food.full { background: #c88a34; }
+  .pip.food.half { background: linear-gradient(90deg, #c88a34 50%, rgba(255,255,255,.1) 50%); }
+  .pip.bubble { width: 10px; height: 10px; border-radius: 50%; }
+  .pip.bubble.full { background: #6fc3f0; }
+
+  .hotbar { position: absolute; left: 50%; bottom: 16px; transform: translateX(-50%);
+            display: flex; gap: 4px; padding: 4px; border-radius: 8px;
+            background: var(--panel); border: 1px solid var(--line); pointer-events: auto; }
+  .slot { width: var(--slot); height: var(--slot); border-radius: 4px; position: relative;
+          border: 2px solid transparent; background: #1a1f28;
+          display: flex; align-items: center; justify-content: center; }
+  .slot.on { border-color: #fff; }
+  .slot .k { position: absolute; left: 3px; top: 1px; font-size: 9px; opacity: .55; }
+  .slot .n { position: absolute; right: 3px; bottom: 1px; font-size: 11px; font-weight: 700;
+             text-shadow: 0 1px 2px #000; }
+  .slot .ico { image-rendering: pixelated; }
+  .slot.result { border-color: rgba(126,224,138,.5); background: #16251a; }
+
+  .held-name { position: absolute; left: 50%; bottom: 124px; transform: translateX(-50%);
+               font-size: 13px; text-shadow: 0 1px 3px #000; transition: opacity .2s; }
+
+  .toasts { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column;
+            gap: 5px; align-items: flex-end; }
+  .toast { background: var(--panel); border: 1px solid var(--line); border-left: 3px solid var(--good);
+           padding: 6px 10px; border-radius: 5px; font-size: 12px; transition: opacity .45s, transform .45s; }
+  .toast.warn { border-left-color: #e0a33f; }
+  .toast.out { opacity: 0; transform: translateX(14px); }
+
+  .damage-flash { position: absolute; inset: 0; pointer-events: none; z-index: 3; opacity: 0;
+                  background: radial-gradient(circle, rgba(180,20,20,0) 45%, rgba(180,20,20,.8) 100%);
+                  transition: opacity .12s; }
+
+  /* ─── écrans ──────────────────────────────────────────────────────────── */
+  .overlay { position: absolute; inset: 0; z-index: 10; display: none;
+             align-items: center; justify-content: center;
+             background: radial-gradient(circle at 50% 40%, rgba(27,37,54,.94), rgba(8,10,15,.97) 70%); }
+  .panel { text-align: center; max-width: 560px; padding: 30px 40px; }
+  .panel h1 { font-size: 40px; letter-spacing: -1px; margin-bottom: 4px;
+              background: linear-gradient(90deg, var(--good), var(--accent));
+              -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .panel.dead h1 { background: linear-gradient(90deg, #e0453f, #e0a33f);
+                   -webkit-background-clip: text; background-clip: text; }
+  .panel .sub { opacity: .6; font-size: 13px; margin-bottom: 20px; }
+  .keys { margin: 0 auto 22px; font-size: 12.5px; border-collapse: collapse; }
+  .keys td { padding: 2px 10px; text-align: left; }
+  .keys td:first-child { color: var(--accent); text-align: right; white-space: nowrap; }
+  .row { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+  button { font: inherit; font-size: 14px; padding: 10px 20px; border-radius: 7px; cursor: pointer;
+           border: 1px solid var(--line); background: #1a212c; color: #e8eaed; }
+  button:hover { background: #232c3a; }
+  button.primary { border-color: rgba(126,224,138,.45); background: rgba(126,224,138,.12); color: var(--good); }
+  button.primary:hover { background: rgba(126,224,138,.22); }
+  .hint { font-size: 11.5px; opacity: .55; margin-top: 14px; line-height: 1.5; }
+
+  /* ─── inventaire ──────────────────────────────────────────────────────── */
+  .inv-screen { position: absolute; inset: 0; z-index: 8; display: none;
+                align-items: center; justify-content: center; background: rgba(6,8,12,.72); }
+  .inv-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
+             padding: 18px 20px; display: flex; flex-direction: column; gap: 12px;
+             align-items: center; box-shadow: 0 20px 60px rgba(0,0,0,.6); }
+  .inv-box h2 { font-size: 16px; font-weight: 600; opacity: .85; }
+  .inv-top { display: flex; justify-content: center; flex-direction: column; align-items: center; gap: 8px; }
+  .craft-wrap { display: flex; align-items: center; gap: 14px; }
+  .craft-grid { display: grid; gap: 3px; }
+  .arrow { font-size: 22px; opacity: .5; }
+  .inv-grid { display: grid; grid-template-columns: repeat(9, 1fr); gap: 3px; }
+  .hb-row { margin-top: 6px; padding-top: 8px; border-top: 1px solid var(--line); }
+  .inv-screen .slot { cursor: pointer; }
+  .inv-screen .slot:hover { border-color: rgba(255,255,255,.35); }
+
+  .furnace-cols { display: flex; align-items: center; gap: 18px; }
+  .fcol { display: flex; flex-direction: column; align-items: center; gap: 5px; }
+  .fcol .lbl { font-size: 10.5px; opacity: .55; }
+  .flame { width: 16px; height: 18px; border-radius: 50% 50% 45% 45%;
+           background: linear-gradient(#f5c04a, #d8762a); transition: opacity .2s; }
+  .progbar { width: 70px; height: 7px; background: rgba(0,0,0,.5); border-radius: 4px; overflow: hidden;
+             border: 1px solid var(--line); }
+  .progbar > div { height: 100%; background: linear-gradient(90deg, #7ee08a, #cfe98a); }
+
+  .held-ghost { position: fixed; z-index: 9; pointer-events: none; display: none;
+                transform: translate(-50%, -50%); }
+  .held-ghost .ico { image-rendering: pixelated; }
+  .held-ghost .n { position: absolute; right: -2px; bottom: -4px; font-size: 11px;
+                   font-weight: 700; text-shadow: 0 1px 2px #000; }
+
+  #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+          z-index: 20; background: #0b0e13; font-size: 14px; opacity: .7; }
+
+  /* ─── échanges avec un villageois ─────────────────────────────────────── */
+  .trades { display: flex; flex-direction: column; gap: 6px; }
+  .trade { display: flex; align-items: center; gap: 8px; padding: 6px 10px;
+           border: 1px solid var(--line); border-radius: 6px; cursor: pointer;
+           background: rgba(255,255,255,.03); }
+  .trade:hover { background: rgba(255,255,255,.08); border-color: rgba(255,255,255,.28); }
+  .trade.ko { opacity: .38; cursor: not-allowed; }
+  .trade.ko:hover { background: rgba(255,255,255,.03); border-color: var(--line); }
+  .trade .arrow { font-size: 16px; }
+  .slot.mini { width: 34px; height: 34px; }
+  .slot.mini .ico { transform: scale(.72); }
+  .slot.mini .n { font-size: 10px; }
+
+  /* jauge d'usure des outils */
+  .slot .wear { position: absolute; left: 4px; right: 4px; bottom: 3px; height: 3px;
+                background: rgba(0,0,0,.65); border-radius: 2px; overflow: hidden; }
+  .slot .wear > div { height: 100%; }

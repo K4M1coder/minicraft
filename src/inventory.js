@@ -1,0 +1,306 @@
+/* inventory.js — piles, inventaire, et moteur de craft (façonné + informe).
+   Logique pure, entièrement testable hors navigateur. */
+(function (G) {
+  'use strict';
+  var MC = G.MC = G.MC || {};
+  var C = MC.Core;
+  var B = C.B, I = C.I;
+
+  var HOTBAR_SIZE = 9, MAIN_SIZE = 27, TOTAL = HOTBAR_SIZE + MAIN_SIZE;
+
+  function createInventory(size) {
+    var slots = new Array(size || TOTAL).fill(null);
+
+    function stackAt(i) { return slots[i]; }
+
+    /* Ajoute n exemplaires de `id`. Remplit d'abord les piles existantes, puis
+       les cases vides. Renvoie le reliquat non casé (0 si tout est rentré). */
+    function add(id, n) {
+      if (!id || n <= 0) return 0;
+      var max = C.maxStack(id);
+      for (var i = 0; i < slots.length && n > 0; i++) {
+        var s = slots[i];
+        if (s && s.id === id && s.n < max) {
+          var can = Math.min(max - s.n, n);
+          s.n += can; n -= can;
+        }
+      }
+      for (var j = 0; j < slots.length && n > 0; j++) {
+        if (!slots[j]) {
+          var take = Math.min(max, n);
+          slots[j] = { id: id, n: take }; n -= take;
+        }
+      }
+      return n;
+    }
+
+    function count(id) {
+      var t = 0;
+      for (var i = 0; i < slots.length; i++) if (slots[i] && slots[i].id === id) t += slots[i].n;
+      return t;
+    }
+
+    /* Retire n exemplaires. Renvoie le nombre réellement retiré. */
+    function remove(id, n) {
+      var removed = 0;
+      for (var i = 0; i < slots.length && removed < n; i++) {
+        var s = slots[i];
+        if (!s || s.id !== id) continue;
+        var take = Math.min(s.n, n - removed);
+        s.n -= take; removed += take;
+        if (s.n === 0) slots[i] = null;
+      }
+      return removed;
+    }
+
+    // retire 1 exemplaire d'une case précise (consommation d'un outil, d'un aliment)
+    function consumeAt(i, n) {
+      var s = slots[i];
+      if (!s) return 0;
+      var take = Math.min(s.n, n === undefined ? 1 : n);
+      s.n -= take;
+      if (s.n <= 0) slots[i] = null;
+      return take;
+    }
+
+    function setAt(i, stack) { slots[i] = stack || null; }
+
+    /* Use un outil d'un point. Renvoie 'broken' si l'outil casse, 'used' s'il
+       s'use, null s'il n'est pas usable. La pile porte son propre compteur
+       `dmg` : chaque outil etant une pile de 1, il n'y a pas d'ambiguite. */
+    function wearTool(i) {
+      var st = slots[i];
+      if (!st) return null;
+      var max = C.durabilityOf(st.id);
+      if (!max) return null;
+      st.dmg = (st.dmg || 0) + 1;
+      if (st.dmg >= max) { slots[i] = null; return 'broken'; }
+      return 'used';
+    }
+    function isEmpty() { return slots.every(function (s) { return !s; }); }
+    function firstEmpty() {
+      for (var i = 0; i < slots.length; i++) if (!slots[i]) return i;
+      return -1;
+    }
+    // le 3e champ (usure) n'est ecrit que s'il existe : les anciennes
+    // sauvegardes a deux champs restent lisibles
+    function serialize() {
+      return slots.map(function (s) {
+        if (!s) return 0;
+        return s.dmg ? [s.id, s.n, s.dmg] : [s.id, s.n];
+      });
+    }
+    function load(data) {
+      for (var i = 0; i < slots.length; i++) {
+        var d = data && data[i];
+        if (d && d[0]) {
+          slots[i] = { id: d[0], n: d[1] };
+          if (d[2]) slots[i].dmg = d[2];
+        } else slots[i] = null;
+      }
+    }
+
+    return {
+      slots: slots, size: slots.length, stackAt: stackAt, add: add, count: count,
+      remove: remove, consumeAt: consumeAt, setAt: setAt, isEmpty: isEmpty,
+      wearTool: wearTool,
+      firstEmpty: firstEmpty, serialize: serialize, load: load,
+    };
+  }
+
+  // ─── recettes ──────────────────────────────────────────────────────────────
+  // Façonnée : `pattern` (lignes de caractères) + `keys`. ' ' = case vide.
+  // Informe : `ingredients` (liste d'ids, ordre indifférent).
+  var RECIPES = [];
+  function shaped(out, n, pattern, keys) {
+    RECIPES.push({ type: 'shaped', out: out, n: n, pattern: pattern, keys: keys,
+                   w: pattern[0].length, h: pattern.length });
+  }
+  function shapeless(out, n, ingredients) {
+    RECIPES.push({ type: 'shapeless', out: out, n: n, ingredients: ingredients });
+  }
+
+  shapeless(B.PLANKS, 4, [B.LOG]);
+  shaped(I.STICK, 4, ['P', 'P'], { P: B.PLANKS });
+  shaped(B.CRAFTING_TABLE, 1, ['PP', 'PP'], { P: B.PLANKS });
+  shaped(B.FURNACE, 1, ['CCC', 'C C', 'CCC'], { C: B.COBBLE });
+  shaped(B.BRICK, 1, ['CC', 'CC'], { C: B.COBBLE });
+  shaped(B.GLASS, 1, ['SS', 'SS'], { S: B.SAND });
+  shapeless(I.BREAD, 1, [I.WHEAT, I.WHEAT, I.WHEAT]);
+  shaped(B.TORCH, 4, ['C', 'S'], { C: I.COAL, S: I.STICK });
+  shaped(B.CHEST, 1, ['PPP', 'P P', 'PPP'], { P: B.PLANKS });
+  shapeless(I.FICELLE, 4, [B.WOOL]);
+  shaped(I.ARC, 1, [' SF', 'B F', ' SF'], { S: I.STICK, B: I.STICK, F: I.FICELLE });
+  shaped(I.FLECHE, 4, ['S', 'F'], { S: I.STICK, F: I.FICELLE });
+
+  // outils : 3 matériaux × 5 familles
+  var MATS = [[B.PLANKS, 1], [B.COBBLE, 2], [I.IRON_INGOT, 3]];
+  var TOOLSETS = {
+    pickaxe: [I.WOOD_PICKAXE, I.STONE_PICKAXE, I.IRON_PICKAXE],
+    axe:     [I.WOOD_AXE, I.STONE_AXE, I.IRON_AXE],
+    shovel:  [I.WOOD_SHOVEL, I.STONE_SHOVEL, I.IRON_SHOVEL],
+    sword:   [I.WOOD_SWORD, I.STONE_SWORD, I.IRON_SWORD],
+    hoe:     [I.WOOD_HOE, I.STONE_HOE],
+  };
+  MATS.forEach(function (m, i) {
+    var mat = m[0];
+    if (TOOLSETS.pickaxe[i]) shaped(TOOLSETS.pickaxe[i], 1, ['MMM', ' S ', ' S '], { M: mat, S: I.STICK });
+    if (TOOLSETS.axe[i])     shaped(TOOLSETS.axe[i], 1,     ['MM', 'MS', ' S'], { M: mat, S: I.STICK });
+    if (TOOLSETS.shovel[i])  shaped(TOOLSETS.shovel[i], 1,  ['M', 'S', 'S'], { M: mat, S: I.STICK });
+    if (TOOLSETS.sword[i])   shaped(TOOLSETS.sword[i], 1,   ['M', 'M', 'S'], { M: mat, S: I.STICK });
+    if (TOOLSETS.hoe[i])     shaped(TOOLSETS.hoe[i], 1,     ['MM', ' S', ' S'], { M: mat, S: I.STICK });
+  });
+
+  /* Réduit une grille w×h à sa boîte englobante non vide.
+     Sans ça, une recette posée en bas à droite d'une grille 3×3 ne serait pas
+     reconnue alors qu'elle est valide. */
+  function trimGrid(grid, w, h) {
+    var minX = w, maxX = -1, minY = h, maxY = -1;
+    for (var y = 0; y < h; y++) for (var x = 0; x < w; x++) {
+      if (grid[y * w + x]) {
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+      }
+    }
+    if (maxX < 0) return { w: 0, h: 0, cells: [] };
+    var nw = maxX - minX + 1, nh = maxY - minY + 1, cells = [];
+    for (var yy = 0; yy < nh; yy++) for (var xx = 0; xx < nw; xx++) {
+      cells.push(grid[(yy + minY) * w + (xx + minX)] || 0);
+    }
+    return { w: nw, h: nh, cells: cells };
+  }
+
+  /* `grid` : tableau de w*h ids (0 = vide). Renvoie {id, n} ou null. */
+  function matchRecipe(grid, w, h) {
+    var t = trimGrid(grid, w, h);
+    var present = grid.filter(function (v) { return v; });
+    if (!present.length) return null;
+
+    for (var r = 0; r < RECIPES.length; r++) {
+      var rec = RECIPES[r];
+      if (rec.type === 'shaped') {
+        if (rec.w !== t.w || rec.h !== t.h) continue;
+        var ok = true;
+        for (var y = 0; y < rec.h && ok; y++) {
+          for (var x = 0; x < rec.w; x++) {
+            var ch = rec.pattern[y][x];
+            var want = ch === ' ' ? 0 : rec.keys[ch];
+            if (t.cells[y * rec.w + x] !== want) { ok = false; break; }
+          }
+        }
+        if (ok) return { id: rec.out, n: rec.n };
+      } else {
+        if (present.length !== rec.ingredients.length) continue;
+        var pool = rec.ingredients.slice();
+        var all = true;
+        for (var i = 0; i < present.length; i++) {
+          var k = pool.indexOf(present[i]);
+          if (k < 0) { all = false; break; }
+          pool.splice(k, 1);
+        }
+        if (all && !pool.length) return { id: rec.out, n: rec.n };
+      }
+    }
+    return null;
+  }
+
+  // ─── fourneau ──────────────────────────────────────────────────────────────
+  var SMELT = {};
+  SMELT[B.IRON_ORE] = I.IRON_INGOT;
+  SMELT[I.RAW_MUTTON] = I.COOKED_MUTTON;
+  SMELT[B.SAND] = B.GLASS;
+  SMELT[B.COBBLE] = B.STONE;
+
+  function smeltResult(id) { return SMELT[id] || 0; }
+  function fuelValue(id) {
+    var d = C.def(id);
+    if (d && d.fuel) return d.fuel;
+    if (id === B.PLANKS || id === B.LOG) return 1.5;
+    if (id === I.STICK) return 0.5;
+    if (id === B.CRAFTING_TABLE) return 1.5;
+    return 0;
+  }
+
+  /* Fait avancer un fourneau de dt secondes. `f` : {input, fuel, output, burn, cook}.
+     Renvoie true si l'état a changé (pour rafraîchir l'UI). */
+  var SMELT_TIME = 6;
+  function tickFurnace(f, dt) {
+    var changed = false;
+    // consommer du combustible si besoin et possible
+    if (f.burn <= 0 && f.input && smeltResult(f.input.id) && f.fuel) {
+      var v = fuelValue(f.fuel.id);
+      if (v > 0) {
+        f.burn = v * SMELT_TIME;
+        f.fuel.n--;
+        if (f.fuel.n <= 0) f.fuel = null;
+        changed = true;
+      }
+    }
+    if (f.burn > 0) {
+      f.burn = Math.max(0, f.burn - dt);
+      changed = true;
+      var res = f.input ? smeltResult(f.input.id) : 0;
+      if (res && (!f.output || (f.output.id === res && f.output.n < C.maxStack(res)))) {
+        f.cook += dt;
+        if (f.cook >= SMELT_TIME) {
+          f.cook -= SMELT_TIME;
+          f.input.n--;
+          if (f.input.n <= 0) f.input = null;
+          if (f.output) f.output.n++;
+          else f.output = { id: res, n: 1 };
+        }
+      } else {
+        f.cook = 0;
+      }
+    } else {
+      f.cook = 0;
+    }
+    return changed;
+  }
+
+  function newFurnace() { return { input: null, fuel: null, output: null, burn: 0, cook: 0 }; }
+
+  // ─── échanges avec les villageois ──────────────────────────────────────────
+  // give : ce que le joueur cède · get : ce qu'il reçoit
+  var TRADES = [
+    { give: [{ id: I.WHEAT, n: 8 }], get: { id: I.EMERALD, n: 1 } },
+    { give: [{ id: B.WOOL, n: 4 }], get: { id: I.EMERALD, n: 1 } },
+    { give: [{ id: I.EMERALD, n: 1 }], get: { id: I.BREAD, n: 4 } },
+    { give: [{ id: I.EMERALD, n: 2 }], get: { id: I.IRON_INGOT, n: 3 } },
+    { give: [{ id: I.EMERALD, n: 3 }], get: { id: I.IRON_PICKAXE, n: 1 } },
+  ];
+
+  function canTrade(inv, trade) {
+    for (var i = 0; i < trade.give.length; i++) {
+      if (inv.count(trade.give[i].id) < trade.give[i].n) return false;
+    }
+    return true;
+  }
+
+  /* Effectue l'échange. Renvoie le reliquat non casé (0 si tout est rentré).
+     On ne retire les ingrédients QUE si la contrepartie peut être reçue, sinon
+     le joueur paierait sans rien obtenir. */
+  function doTrade(inv, trade) {
+    if (!canTrade(inv, trade)) return null;
+    // simulation : reste-t-il de la place ?
+    var libre = inv.firstEmpty() >= 0;
+    if (!libre) {
+      var max = C.maxStack(trade.get.id), place = 0;
+      for (var s = 0; s < inv.slots.length; s++) {
+        var st = inv.slots[s];
+        if (st && st.id === trade.get.id) place += max - st.n;
+      }
+      if (place < trade.get.n) return null;
+    }
+    for (var i = 0; i < trade.give.length; i++) inv.remove(trade.give[i].id, trade.give[i].n);
+    return inv.add(trade.get.id, trade.get.n);
+  }
+
+  MC.Inventory = {
+    HOTBAR_SIZE: HOTBAR_SIZE, MAIN_SIZE: MAIN_SIZE, TOTAL: TOTAL,
+    TRADES: TRADES, canTrade: canTrade, doTrade: doTrade,
+    create: createInventory, RECIPES: RECIPES, matchRecipe: matchRecipe,
+    trimGrid: trimGrid, smeltResult: smeltResult, fuelValue: fuelValue,
+    tickFurnace: tickFurnace, newFurnace: newFurnace, SMELT_TIME: SMELT_TIME,
+  };
+})(typeof globalThis !== 'undefined' ? globalThis : this);

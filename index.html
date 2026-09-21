@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>MiniCraft</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="src/ui.css">
+</head>
+<body>
+
+<div id="host"></div>
+<div id="boot">Chargement…</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+/* Chargement des modules avec un jeton anti-cache.
+   Des balises <script src> statiques restent servies depuis le cache du
+   navigateur meme quand l'URL de la page change : on se retrouve alors avec un
+   melange de versions, symptome tres deroutant (ici : plus aucun terrain).
+   Le chargement sequentiel preserve l'ordre de dependance. */
+window.MC_VERSION = String(Date.now());
+(function () {
+  var SRC = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory', 'entities',
+             'player', 'daycycle', 'save', 'audio', 'atlas', 'render', 'ui', 'input', 'game'];
+  var boot = document.getElementById('boot');
+  function load(i) {
+    if (i >= SRC.length) return start();
+    var sc = document.createElement('script');
+    sc.src = 'src/' + SRC[i] + '.js?v=' + window.MC_VERSION;
+    sc.onload = function () { load(i + 1); };
+    sc.onerror = function () { fatal('Impossible de charger <code>src/' + SRC[i] + '.js</code>.'); };
+    document.head.appendChild(sc);
+  }
+  function fatal(msg) {
+    boot.style.display = 'flex'; boot.style.opacity = 1;
+    boot.innerHTML = '<div style="max-width:520px;text-align:center;line-height:1.6">' + msg + '</div>';
+  }
+  function start() {
+    if (typeof THREE === 'undefined') {
+      return fatal("<b>Three.js n'a pas pu &ecirc;tre charg&eacute;.</b><br>V&eacute;rifiez la connexion, ou placez " +
+                   "<code>three.min.js</code> &agrave; c&ocirc;t&eacute; de ce fichier et adaptez la balise script.");
+    }
+    try {
+      window.GAME = MC.createGame(document.getElementById('host'));
+      boot.style.display = 'none';
+    } catch (e) {
+      fatal('<b>Erreur au d&eacute;marrage.</b><br><code style="font-size:12px">' +
+            (e && e.message ? e.message : e) + '</code>');
+      throw e;
+    }
+  }
+  load(0);
+})();
+</script>
+
+</body>
+</html>
