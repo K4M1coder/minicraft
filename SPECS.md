@@ -72,20 +72,20 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-ARME-001 | La laine se transforme en ficelle | recette informe reconnue, 4 ficelles | ⏳ |
-| SPEC-ARME-002 | L'arc se fabrique avec bâtons et ficelle | recette façonnée reconnue | ⏳ |
-| SPEC-ARME-003 | Les flèches se fabriquent par quatre | recette reconnue, quantité 4 | ⏳ |
-| SPEC-ARME-004 | Tirer consomme exactement une flèche | l'inventaire perd une unité | ⏳ |
-| SPEC-ARME-005 | Tirer sans flèche ne produit aucun projectile | aucune entité créée | ⏳ |
-| SPEC-ARME-006 | Le projectile part dans la direction du regard | direction alignée à moins de 1° | ⏳ |
-| SPEC-ARME-007 | Le projectile subit la gravité | sa trajectoire s'infléchit vers le bas | ⏳ |
-| SPEC-ARME-008 | Le projectile disparaît en touchant un bloc solide | l'entité est retirée à l'impact | ⏳ |
-| SPEC-ARME-009 | Le projectile blesse le premier mob touché | les PV du mob baissent, l'entité disparaît | ⏳ |
-| SPEC-ARME-010 | Le projectile ne blesse pas son tireur | traverser le tireur n'inflige rien | ⏳ |
-| SPEC-ARME-011 | Un projectile blesse davantage qu'un coup à main nue | comparaison de dégâts | ⏳ |
-| SPEC-ARME-012 | L'arc s'use à chaque tir et finit par se briser | après `durability` tirs, l'arc disparaît | ⏳ |
-| SPEC-ARME-013 | Un projectile expire après un temps borné | l'entité disparaît sans impact | ⏳ |
-| SPEC-ARME-014 | L'épée en fer blesse plus que l'épée en bois | comparaison de dégâts | ⏳ |
+| SPEC-ARME-001 | La laine se transforme en ficelle | recette informe reconnue, 4 ficelles | ✅ |
+| SPEC-ARME-002 | L'arc se fabrique avec bâtons et ficelle | recette façonnée reconnue | ✅ |
+| SPEC-ARME-003 | Les flèches se fabriquent par quatre | recette reconnue, quantité 4 | ✅ |
+| SPEC-ARME-004 | Tirer consomme exactement une flèche | l'inventaire perd une unité | ✅ |
+| SPEC-ARME-005 | Tirer sans flèche ne produit aucun projectile | aucune entité créée | ✅ |
+| SPEC-ARME-006 | Le projectile part dans la direction du regard | direction alignée à moins de 1° | ✅ |
+| SPEC-ARME-007 | Le projectile subit la gravité | sa trajectoire s'infléchit vers le bas | ✅ |
+| SPEC-ARME-008 | Le projectile disparaît en touchant un bloc solide | l'entité est retirée à l'impact | ✅ |
+| SPEC-ARME-009 | Le projectile blesse le premier mob touché | les PV du mob baissent, l'entité disparaît | ✅ |
+| SPEC-ARME-010 | Le projectile ne blesse pas son tireur | traverser le tireur n'inflige rien | ✅ |
+| SPEC-ARME-011 | Un projectile blesse davantage qu'un coup à main nue | comparaison de dégâts | ✅ |
+| SPEC-ARME-012 | L'arc s'use à chaque tir et finit par se briser | après `durability` tirs, l'arc disparaît | ✅ |
+| SPEC-ARME-013 | Un projectile expire après un temps borné | l'entité disparaît sans impact | ✅ |
+| SPEC-ARME-014 | L'épée en fer blesse plus que l'épée en bois | comparaison de dégâts | ✅ |
 
 ## CHAT — messagerie
 

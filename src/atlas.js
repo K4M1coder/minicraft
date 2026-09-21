@@ -282,6 +282,34 @@
       g.fillRect(ox + 3, oy, 1, TILE); g.fillRect(ox + 12, oy, 1, TILE);
     })();
 
+    (function () {                                                    // 53 ficelle
+      var o = clear(53), ox = o[0], oy = o[1];
+      g.strokeStyle = '#e8e4d8'; g.lineWidth = 1;
+      g.beginPath();
+      for (var i = 0; i < 14; i++) {
+        var yy = oy + 3 + i;
+        g.lineTo(ox + 8 + Math.sin(i * 0.9) * 4, yy);
+      }
+      g.stroke();
+    })();
+    (function () {                                                    // 54 arc
+      var o = clear(54), ox = o[0], oy = o[1];
+      g.strokeStyle = '#8a6a3c'; g.lineWidth = 2;
+      g.beginPath(); g.arc(ox + 5, oy + 8, 6, -Math.PI / 2.2, Math.PI / 2.2); g.stroke();
+      g.strokeStyle = '#e8e4d8'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(ox + 7, oy + 2); g.lineTo(ox + 7, oy + 14); g.stroke();
+    })();
+    (function () {                                                    // 55 fleche
+      var o = clear(55), ox = o[0], oy = o[1];
+      g.strokeStyle = '#8a6a3c'; g.lineWidth = 1;
+      g.beginPath(); g.moveTo(ox + 3, oy + 13); g.lineTo(ox + 12, oy + 4); g.stroke();
+      g.fillStyle = '#c8c8d0';                                        // pointe
+      g.beginPath(); g.moveTo(ox + 13, oy + 3); g.lineTo(ox + 13, oy + 7);
+      g.lineTo(ox + 9, oy + 3); g.closePath(); g.fill();
+      g.fillStyle = '#e8e4d8';                                        // empennage
+      g.fillRect(ox + 2, oy + 12, 3, 1); g.fillRect(ox + 3, oy + 13, 1, 2);
+    })();
+
     var tex = new THREE.CanvasTexture(cv);
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.NearestFilter;      // pas de mipmap : évite le bleed entre tuiles

@@ -251,6 +251,17 @@
     function onUse() {
       if (input.state !== 'playing') return;
 
+      // une arme a distance tire au clic droit, avant toute autre interaction
+      var enMain = player.held();
+      if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
+        var tir = player.tirer();
+        if (tir) {
+          audio.play('frapper');
+          if (tir.toolBroke) ui.toast("Votre arc s'est brisé", 'warn');
+        } else ui.toast('Plus de munitions', 'warn');
+        return;
+      }
+
       // interagir avec un PNJ a priorité sur le bloc derrière lui
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
       if (ent && entities.SPECS[ent.type].npc) {

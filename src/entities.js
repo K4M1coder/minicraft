@@ -13,7 +13,12 @@
     sheep:    { w: 0.7,  h: 1.2,  hp: 8,  speed: 1.5, damage: 0,
                 drops: [{ id: I.RAW_MUTTON, n: 1 }, { id: B.WOOL, n: 1 }] },
     villager: { w: 0.6,  h: 1.8,  hp: 20, speed: 1.1, damage: 0, npc: true },
+    // projectile : petit, sans IA, il traverse tout jusqu'a percuter
+    arrow:    { w: 0.16, h: 0.16, hp: 1,  speed: 0,   damage: 5, projectile: true },
   };
+
+  var ARROW_GRAVITY = 14;      // plus douce que la chute libre : trajectoire lisible
+  var ARROW_VIE = 12;          // secondes avant disparition
 
   var GRAVITY = 30, MAX_FALL = 55;
 
@@ -41,6 +46,68 @@
       e.vel.z = (r() - 0.5) * 2.2;
       e.vel.y = 2.2 + r();
       return e;
+    }
+
+    /* Lance un projectile. `tireur` sert a ne pas se blesser soi-meme :
+       la fleche part de la tete du joueur et le traverse pendant un instant. */
+    function tirer(origine, direction, vitesse, degats, tireur) {
+      var e = spawn('arrow', origine.x, origine.y, origine.z, {
+        degats: degats === undefined ? SPECS.arrow.damage : degats,
+        tireur: tireur || null,
+        vie: ARROW_VIE,
+      });
+      var v = vitesse === undefined ? 34 : vitesse;
+      e.vel.x = direction.x * v;
+      e.vel.y = direction.y * v;
+      e.vel.z = direction.z * v;
+      return e;
+    }
+
+    /* Avance un projectile par petits pas et s'arrete au premier contact.
+       On subdivise le deplacement : a 34 m/s et 60 images/s, un pas entier
+       fait 0,57 bloc — un mur d'un bloc passerait au travers un tir sur deux. */
+    function stepArrow(e, dt, player, events) {
+      e.vie -= dt;
+      if (e.vie <= 0) { remove(e); return; }
+      e.vel.y -= ARROW_GRAVITY * dt;
+
+      var dist = Math.hypot(e.vel.x, e.vel.y, e.vel.z) * dt;
+      var pas = Math.max(1, Math.ceil(dist / 0.2));
+      var sdt = dt / pas;
+      for (var k = 0; k < pas; k++) {
+        e.pos.x += e.vel.x * sdt;
+        e.pos.y += e.vel.y * sdt;
+        e.pos.z += e.vel.z * sdt;
+
+        // bloc solide : le projectile se fiche et disparait
+        if (C.isSolid(world.getBlock(Math.floor(e.pos.x), Math.floor(e.pos.y), Math.floor(e.pos.z)))) {
+          remove(e); return;
+        }
+        // entite : on ignore le tireur et les autres projectiles
+        for (var i = 0; i < list.length; i++) {
+          var c = list[i];
+          if (c === e || c.type === 'item' || c.type === 'arrow' || c.dead) continue;
+          if (c === e.tireur) continue;
+          var hw = c.w / 2;
+          if (Math.abs(e.pos.x - c.pos.x) < hw && Math.abs(e.pos.z - c.pos.z) < hw &&
+              e.pos.y > c.pos.y && e.pos.y < c.pos.y + c.h) {
+            c.hurtCd = 0;                       // un tir vise touche toujours
+            damage(c, e.degats, e.pos);
+            remove(e);
+            return;
+          }
+        }
+        // le joueur, sauf s'il est le tireur
+        if (player && e.tireur !== player && e.pos.y > player.pos.y &&
+            e.pos.y < player.pos.y + 1.8 &&
+            Math.abs(e.pos.x - player.pos.x) < 0.3 &&
+            Math.abs(e.pos.z - player.pos.z) < 0.3) {
+          if (events) events.damage += e.degats;
+          remove(e);
+          return;
+        }
+        if (e.pos.y < -20) { remove(e); return; }
+      }
     }
 
     function remove(e) {
@@ -159,6 +226,11 @@
         e.age += dt;
         if (e.hurtCd > 0) e.hurtCd -= dt;
 
+        if (e.type === 'arrow') {
+          stepArrow(e, dt, player, events);
+          continue;
+        }
+
         if (e.type === 'item') {
           e.pickup -= dt;
           stepBody(e, dt);
@@ -243,7 +315,7 @@
       var best = null, bestT = Infinity;
       for (var i = 0; i < list.length; i++) {
         var e = list[i];
-        if (e.type === 'item' || e.dead) continue;
+        if (e.type === 'item' || e.type === 'arrow' || e.dead) continue;
         var hw = e.w / 2 + AIM_PAD;
         var t = rayBox(origin, dir,
           e.pos.x - hw, e.pos.y - AIM_PAD, e.pos.z - hw,
@@ -297,6 +369,7 @@
     return {
       list: list, SPECS: SPECS, spawn: spawn, dropItem: dropItem, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
+      tirer: tirer, stepArrow: stepArrow,
       countOf: countOf, trySpawn: trySpawn, burnUndead: burnUndead, stepBody: stepBody,
       stepAI: stepAI,
     };

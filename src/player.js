@@ -289,6 +289,35 @@
       return { damage: dmg, killed: killed, toolBroke: casse };
     }
 
+    /* Tir a l'arc. Renvoie {entity, munition} ou null si l'on n'a pas
+       l'arme en main ou pas de munition. */
+    function tirer() {
+      var st = held();
+      if (!st) return null;
+      var d = C.def(st.id);
+      if (!d || !d.ranged) return null;
+
+      // munition : on cherche la premiere pile marquee `ammo`
+      var iMun = -1;
+      for (var i = 0; i < pl.inv.slots.length; i++) {
+        var s2 = pl.inv.slots[i];
+        if (s2 && C.def(s2.id) && C.def(s2.id).ammo) { iMun = i; break; }
+      }
+      if (iMun < 0 && !R.blocsIllimites) return null;
+      var munId = iMun >= 0 ? pl.inv.slots[iMun].id : I.FLECHE;
+      if (iMun >= 0 && !R.blocsIllimites) pl.inv.consumeAt(iMun, 1);
+
+      var dir = lookDir();
+      var o = eyePos();
+      var e = entities.tirer(
+        { x: o.x + dir.x * 0.4, y: o.y + dir.y * 0.4, z: o.z + dir.z * 0.4 },
+        dir, 34, (C.def(munId) && C.def(munId).damage) || 5, pl);
+
+      var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
+      pl.exhaustion += 0.05;
+      return { entity: e, munition: munId, toolBroke: casse };
+    }
+
     function pickUp(id, n) { return pl.inv.add(id, n); }
 
     /* Jette `n` exemplaires de la case selectionnee, devant le joueur.
@@ -313,7 +342,7 @@
       updateMovement: updateMovement, updateSurvival: updateSurvival,
       hurt: hurt, heal: heal, respawn: respawn, aim: aim,
       mineTick: mineTick, cancelMining: cancelMining, useOn: useOn,
-      attack: attack, pickUp: pickUp, dropSelected: dropSelected,
+      attack: attack, tirer: tirer, pickUp: pickUp, dropSelected: dropSelected,
       regles: R, MAX_HP: MAX_HP, MAX_HUNGER: MAX_HUNGER, MAX_AIR: MAX_AIR,
       PW: PW, PH: PH, EYE: EYE, REACH: REACH,
     };
