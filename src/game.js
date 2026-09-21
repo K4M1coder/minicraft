@@ -107,13 +107,9 @@
     }
 
     function newWorld() {
-      world.overrides.clear();
-      world.crops.clear();
-      world.chunks.forEach(render.disposeChunk);
-      world.chunks.clear();
+      world.reset(render.disposeChunk);        // vide AUSSI le registre de lumieres
       entities.list.length = 0;
-      render.entityMeshes.forEach(function (m) { render.scene.remove(m); });
-      render.entityMeshes.clear();
+      render.libererToutesEntites();           // libere geometries ET materiaux
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
       var s = player.state;

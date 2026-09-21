@@ -243,6 +243,19 @@
       return false;
     }
 
+    /* Remise a zero complete du monde. Regroupee ici parce que la disperser
+       dans l'orchestrateur avait deja coute un bug : `lights` etait oublie et
+       les torches de la partie precedente eclairaient le nouveau terrain.
+       Un seul endroit a mettre a jour quand un registre s'ajoute. */
+    function reset(onUnload) {
+      if (onUnload) chunks.forEach(onUnload);
+      chunks.clear();
+      overrides.clear();
+      crops.clear();
+      lights.clear();
+      return true;
+    }
+
     function unloadFar(pcx, pcz, radius, onUnload) {
       var lim = radius * radius;
       var removed = [];
@@ -259,7 +272,7 @@
 
     return {
       seed: seed, noise: N, chunks: chunks, overrides: overrides, crops: crops,
-      lights: lights, rebuildRegistries: rebuildRegistries,
+      lights: lights, rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,

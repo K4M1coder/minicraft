@@ -155,5 +155,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-AUDIT-001 | Décharger un chunk libère ses géométries | aucune géométrie orpheline après déchargement | ⏳ |
-| SPEC-AUDIT-002 | Les registres dérivés ne conservent pas d'entrées de chunks déchargés | taille bornée après un long parcours | ⏳ |
+| SPEC-AUDIT-001 | Démarrer une nouvelle partie vide le registre des sources de lumière | aucune torche fantôme dans le nouveau monde | ✅ |
+| SPEC-AUDIT-002 | Retirer une entité libère sa géométrie **et** ses matériaux | compteur de matériaux non libérés à zéro | ✅ |
+| SPEC-AUDIT-003 | Démarrer une nouvelle partie libère les ressources des entités vivantes | aucune ressource abandonnée | ✅ |
+| SPEC-AUDIT-004 | Les blocs modifiés survivent au déchargement puis au rechargement d'un chunk | la construction est intacte après un aller-retour | ✅ |

@@ -719,6 +719,53 @@
     A.gt(creux, 0, 'des vides souterrains sont generes (' + creux + ')');
   });
 
+  /* SPEC-AUDIT-002 : retirer une entite doit liberer geometrie ET materiaux.
+     Ne liberer que la geometrie laisse fuir un materiau par entite, et les
+     zombies disparaissent a chaque aube : la fuite est continue. */
+  e2e('SPEC-AUDIT-002 : retirer une entite libere ses materiaux', async function (g) {
+    var s = await reset(g);
+    var avant = g.render.materiauxLiberes;
+    var mobs = [];
+    for (var i = 0; i < 5; i++) mobs.push(g.entities.spawn('zombie', s.pos.x + 3 + i, s.pos.y, s.pos.z));
+    await frames(3);
+    A.equal(g.render.entityMeshes.size, 5, 'cinq maillages crees');
+    mobs.forEach(function (m) { g.entities.remove(m); });
+    await frames(3);
+    A.equal(g.render.entityMeshes.size, 0, 'maillages retires');
+    A.ok(g.render.materiauxLiberes > avant,
+      'des materiaux ont ete liberes (' + (g.render.materiauxLiberes - avant) + ')');
+  });
+
+  /* SPEC-AUDIT-003 : redemarrer une partie ne doit rien abandonner. */
+  e2e('SPEC-AUDIT-003 : une nouvelle partie libere les entites vivantes', async function (g) {
+    var s = await reset(g);
+    for (var i = 0; i < 4; i++) g.entities.spawn('sheep', s.pos.x + 2 + i, s.pos.y, s.pos.z);
+    g.entities.dropItem(s.pos.x, s.pos.y + 1, s.pos.z, B.COBBLE, 1);
+    await frames(3);
+    A.ok(g.render.entityMeshes.size >= 5, 'des maillages existent');
+    var avant = g.render.materiauxLiberes;
+    g.render.libererToutesEntites();
+    A.equal(g.render.entityMeshes.size, 0, 'tout est retire');
+    A.ok(g.render.materiauxLiberes > avant, 'les materiaux sont liberes');
+    g.entities.list.length = 0;
+    await frames(2);
+  });
+
+  /* SPEC-AUDIT-001 : plus de torche fantome apres un redemarrage. */
+  e2e('SPEC-AUDIT-001 : une nouvelle partie n herite pas des lumieres', async function (g) {
+    var s = await reset(g);
+    var bx = Math.floor(s.pos.x) + 2, bz = Math.floor(s.pos.z);
+    var by = g.world.groundAt(bx, bz, true) + 1;
+    g.world.setBlock(bx, by, bz, B.TORCH);
+    A.ok(g.world.lights.size > 0, 'une torche est posee');
+    g.world.reset(g.render.disposeChunk);
+    A.equal(g.world.lights.size, 0, 'registre de lumieres vide apres reinitialisation');
+    await frames(3);
+    A.equal(g.render.torchPool.filter(function (L) { return L.visible; }).length, 0,
+      'aucune lumiere ponctuelle active');
+    await reset(g);
+  });
+
   e2e('le ciel change entre le jour et la nuit', async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;

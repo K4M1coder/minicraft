@@ -146,6 +146,28 @@
       return grp;
     }
 
+    /* Chaque mob instancie ses propres materiaux (corps, tete, yeux) et chaque
+       objet au sol le sien : ne liberer que la geometrie laissait fuir un
+       materiau par entite. Sur une longue partie, les zombies disparaissant
+       a chaque aube, cela s'accumule sans fin. */
+    var liberees = 0;
+    function libererEntite(m) {
+      scene.remove(m);
+      m.traverse(function (o) {
+        if (o.geometry) { o.geometry.dispose(); }
+        if (o.material) {
+          if (Array.isArray(o.material)) o.material.forEach(function (mt) { mt.dispose(); });
+          else o.material.dispose();
+          liberees++;
+        }
+      });
+    }
+
+    function libererToutesEntites() {
+      entityMeshes.forEach(libererEntite);
+      entityMeshes.clear();
+    }
+
     function syncEntities(entities) {
       var seen = new Set();
       for (var i = 0; i < entities.list.length; i++) {
@@ -172,11 +194,7 @@
         }
       }
       entityMeshes.forEach(function (m, id) {
-        if (!seen.has(id)) {
-          scene.remove(m);
-          m.traverse(function (o) { if (o.geometry) o.geometry.dispose(); });
-          entityMeshes.delete(id);
-        }
+        if (!seen.has(id)) { libererEntite(m); entityMeshes.delete(id); }
       });
     }
 
@@ -277,6 +295,8 @@
       syncChunk: syncChunk, disposeChunk: disposeChunk, syncEntities: syncEntities,
       updateAmbience: updateAmbience, setHighlight: setHighlight, setCamera: setCamera,
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
+      libererToutesEntites: libererToutesEntites,
+      get materiauxLiberes() { return liberees; },
       resize: resize, render: render, RENDER_DIST: RENDER_DIST,
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend },
       entityMeshes: entityMeshes,
