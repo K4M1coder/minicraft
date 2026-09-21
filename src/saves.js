@@ -73,7 +73,9 @@
     for (var i = 0; i < idx.length; i++) {
       if (idx[i].id !== id) continue;
       for (var k in champs) idx[i][k] = champs[k];
-      idx[i].majLe = Date.now();
+      // on n'horodate que si l'appelant ne l'a pas fait : sinon impossible de
+      // restaurer une date (import d'une partie, test de tri)
+      if (!('majLe' in champs)) idx[i].majLe = Date.now();
       ecrireIndex(storage, idx);
       return idx[i];
     }
@@ -100,7 +102,10 @@
     var meta = trouver(storage, id);
     if (!meta) return false;
     var data = MC.Save.serialize(state);
-    data.v = VERSION;
+    /* `data.v` appartient a Save (format du contenu). L'enveloppe d'emplacement
+       a sa PROPRE version : ecraser `v` ici faisait rejeter toute sauvegarde
+       par Save.apply, donc plus aucun chargement ne fonctionnait. */
+    data.slotV = VERSION;
     data.meta = { mode: meta.mode, difficulte: meta.difficulte, graine: meta.graine };
     if (!ecrireJSON(storage, slotKey(id), data)) return false;
     majMeta(storage, id, { duree: Math.round(state.duree || meta.duree || 0) });
@@ -112,8 +117,8 @@
     if (!meta) return null;
     var data = lireJSON(storage, slotKey(id), null);
     if (!data) return { meta: meta, vierge: true };     // partie créée mais jamais sauvegardée
-    if (data.v !== VERSION) return null;
-    if (!MC.Save.apply(data, state)) return null;
+    if (data.slotV !== VERSION) return null;           // version de l'enveloppe
+    if (!MC.Save.apply(data, state)) return null;      // version du contenu
     return { meta: meta, vierge: false };
   }
 

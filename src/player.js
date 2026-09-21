@@ -11,15 +11,25 @@
   var SWIM_GRAVITY = 0.28, SWIM_SINK_MAX = 3.2, SWIM_UP = 4.2, SWIM_DRAG = 0.62;
   var MAX_HP = 20, MAX_HUNGER = 20, MAX_AIR = 10, REACH = 5;
 
-  function createPlayer(world, entities) {
+  /* `regles` provient de Modes.regles(mode, difficulte). Le joueur ne connaît
+     ni le mode ni la difficulté : il ne voit que des règles déjà résolues,
+     ce qui évite de recombiner mode et difficulté à chaque usage. */
+  var REGLES_DEFAUT = {
+    vole: false, invulnerable: false, faim: true, degatsFamine: true,
+    casseInstantanee: false, blocsIllimites: false, useDurabilite: true,
+    regenMultiplicateur: 1, monstres: true, degatsMob: 1, permadeath: false,
+  };
+
+  function createPlayer(world, entities, regles) {
+    var R = Object.assign({}, REGLES_DEFAUT, regles || {});
     var pl = {
       pos: { x: 0, y: 0, z: 0 }, vel: { x: 0, y: 0, z: 0 },
-      yaw: 0, pitch: 0, onGround: false, flying: false, swimming: false,
+      yaw: 0, pitch: 0, onGround: false, flying: !!R.vole, swimming: false,
       hp: MAX_HP, hunger: MAX_HUNGER, air: MAX_AIR, exhaustion: 0,
       inv: Inv.create(Inv.TOTAL), selected: 0,
       mining: null, attackCd: 0, regenT: 0, hurtFlash: 0,
       fallFrom: null, dead: false,
-      w: PW, h: PH, eye: EYE, reach: REACH,
+      w: PW, h: PH, eye: EYE, reach: REACH, regles: R,
     };
 
     function held() { return pl.inv.slots[pl.selected]; }
@@ -88,6 +98,7 @@
     // ─── survie ──────────────────────────────────────────────────────────────
     function hurt(n) {
       if (n <= 0 || pl.dead) return;
+      if (R.invulnerable) return;          // créatif : rien ne blesse
       pl.hp = Math.max(0, pl.hp - n);
       pl.hurtFlash = 0.4;
       if (pl.hp === 0) pl.dead = true;
@@ -105,15 +116,20 @@
       } else { pl.air = Math.min(MAX_AIR, pl.air + dt * 4); pl.drownT = 0; }
 
       // faim : l'épuisement se convertit en points de faim
-      if (pl.exhaustion >= 4) { pl.exhaustion -= 4; pl.hunger = Math.max(0, pl.hunger - 1); }
-      if (pl.hunger <= 0) {
-        pl.starveT = (pl.starveT || 0) + dt;
-        if (pl.starveT >= 4) { pl.starveT = 0; hurt(1); }
-      } else pl.starveT = 0;
+      if (R.faim) {
+        if (pl.exhaustion >= 4) { pl.exhaustion -= 4; pl.hunger = Math.max(0, pl.hunger - 1); }
+        if (pl.hunger <= 0 && R.degatsFamine) {
+          pl.starveT = (pl.starveT || 0) + dt;
+          if (pl.starveT >= 4) { pl.starveT = 0; hurt(1); }
+        } else pl.starveT = 0;
+      } else {
+        pl.hunger = MAX_HUNGER;            // créatif : la jauge reste pleine
+        pl.exhaustion = 0;
+      }
 
-      // régénération
+      // régénération : la difficulté en règle la vitesse
       if (pl.hunger >= 16 && pl.hp < MAX_HP) {
-        pl.regenT += dt;
+        pl.regenT += dt * (R.regenMultiplicateur || 1);
         if (pl.regenT >= 3.5) { pl.regenT = 0; heal(1); pl.exhaustion += 1.5; }
       } else pl.regenT = 0;
 
@@ -148,6 +164,8 @@
 
       var bt = C.breakTime(target.block, heldId());
       if (!isFinite(bt.seconds)) { pl.mining.total = Infinity; return null; }
+      // créatif : tout cède d'un coup, et tout se récolte
+      if (R.casseInstantanee && bt.seconds > 0) { bt = { seconds: 0, harvests: true }; }
       pl.mining.total = bt.seconds;
       pl.mining.t += dt;
       if (pl.mining.t < bt.seconds) return null;
@@ -168,7 +186,7 @@
       // usure de l'outil : seulement si le bloc avait une durete non nulle,
       // sinon faucher de l'herbe userait une pioche
       var casse = false;
-      if (C.BLOCKS[id] && C.BLOCKS[id].hardness > 0) {
+      if (R.useDurabilite && C.BLOCKS[id] && C.BLOCKS[id].hardness > 0) {
         casse = pl.inv.wearTool(pl.selected) === 'broken';
       }
 
@@ -220,7 +238,7 @@
         if (tb === B.FARMLAND && target.ny === 1
             && C.isReplaceable(world.getBlock(px, py, pz))) {
           world.setBlock(px, py, pz, idef.plantable);
-          pl.inv.consumeAt(pl.selected, 1);
+          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
           return 'plant';
         }
         return null;
@@ -254,7 +272,7 @@
       if (bdef && bdef.needsSupport && world.hasSupport && !world.hasSupport(bx, by, bz)) return null;
 
       world.setBlock(bx, by, bz, id);
-      pl.inv.consumeAt(pl.selected, 1);
+      if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
       return 'place';
     }
 
@@ -267,7 +285,7 @@
       var dmg = (d && d.damage) ? d.damage : 1;
       pl.exhaustion += 0.1;
       var killed = entities.damage(entity, dmg, pl.pos);
-      var casse = pl.inv.wearTool(pl.selected) === 'broken';
+      var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
       return { damage: dmg, killed: killed, toolBroke: casse };
     }
 
@@ -296,7 +314,7 @@
       hurt: hurt, heal: heal, respawn: respawn, aim: aim,
       mineTick: mineTick, cancelMining: cancelMining, useOn: useOn,
       attack: attack, pickUp: pickUp, dropSelected: dropSelected,
-      MAX_HP: MAX_HP, MAX_HUNGER: MAX_HUNGER, MAX_AIR: MAX_AIR,
+      regles: R, MAX_HP: MAX_HP, MAX_HUNGER: MAX_HUNGER, MAX_AIR: MAX_AIR,
       PW: PW, PH: PH, EYE: EYE, REACH: REACH,
     };
   }

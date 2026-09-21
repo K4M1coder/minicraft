@@ -67,6 +67,32 @@
   }
   G.seededRand = seededRand;
 
+  /* Stockage factice : meme contrat que localStorage, mais inspectable et
+     isole entre tests. */
+  function mockStorage() {
+    var m = {};
+    return {
+      getItem: function (k) { return k in m ? m[k] : null; },
+      setItem: function (k, v) { m[k] = String(v); },
+      removeItem: function (k) { delete m[k]; },
+      cles: function () { return Object.keys(m); },
+      _dump: m,
+    };
+  }
+  G.mockStorage = mockStorage;
+
+  /* Etat de partie minimal, tel que l'attendent Save et Saves. */
+  function etatMinimal(graine, modeId, diffId) {
+    var w = MC.createWorld(graine === undefined ? 1234 : graine);
+    w.getChunk(0, 0, true);
+    var ents = MC.createEntities(w);
+    var regles = MC.Modes.regles(modeId || 'survie', diffId || 'facile');
+    var pl = MC.createPlayer(w, ents, regles);
+    return { world: w, player: pl, entities: ents, time: 0,
+             furnaces: {}, chests: {}, regles: regles, duree: 0 };
+  }
+  G.etatMinimal = etatMinimal;
+
   // ══════════════════════════════════════════════════════════════════════════
   describe('Core — définitions de blocs et d\'objets', function () {
     it('l\'espace d\'ids sépare bien blocs et objets', function () {

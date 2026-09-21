@@ -22,7 +22,8 @@
 window.MC_VERSION = String(Date.now());
 (function () {
   var SRC = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory', 'entities',
-             'player', 'daycycle', 'save', 'audio', 'atlas', 'render', 'ui', 'input', 'game'];
+             'player', 'daycycle', 'save', 'saves', 'modes', 'audio', 'atlas', 'render',
+             'ui', 'input', 'game'];
   var boot = document.getElementById('boot');
   function load(i) {
     if (i >= SRC.length) return start();
