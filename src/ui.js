@@ -31,10 +31,54 @@
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // HUD
+    // HUD — un par joueur local, chacun ancre dans sa propre vue
     // ══════════════════════════════════════════════════════════════════════
     var hud = el('div', 'hud');
     root.appendChild(hud);
+
+    /* Calques supplementaires pour les joueurs 2 a 4. Le joueur 1 garde le
+       HUD principal : le solo emprunte donc exactement le meme chemin de code
+       que l'ecran partage, ce qui evite un mode « special multi » non teste. */
+    var huds = [];
+    function hudDe(i) {
+      if (i === 0) return hud;
+      while (huds.length < i) {
+        var idx = huds.length + 1;
+        var d = el('div', 'hud hud-joueur');
+        d.innerHTML =
+          '<div class="crosshair"></div>' +
+          '<div class="mining-ring"><div class="mining-fill"></div></div>' +
+          '<div class="stats"><div class="bar health"></div><div class="bar hunger"></div>' +
+          '<div class="bar air"></div></div>' +
+          '<div class="hotbar"></div>' +
+          '<div class="held-name"></div>' +
+          '<div class="etiquette">Joueur ' + (idx + 1) + '</div>';
+        root.appendChild(d);
+        huds.push(d);
+      }
+      return huds[i - 1];
+    }
+
+    /* Positionne chaque HUD sur le rectangle de sa vue. */
+    function placerHuds(vues) {
+      etiquette1.style.display = vues.length > 1 ? '' : 'none';
+      for (var i = 0; i < Math.max(vues.length, huds.length + 1); i++) {
+        var d = i === 0 ? hud : (i <= huds.length ? huds[i - 1] : null);
+        if (!d) continue;
+        var v = vues[i];
+        if (!v) { d.style.display = 'none'; continue; }
+        d.style.display = '';
+        d.style.left = v.x + 'px'; d.style.top = v.y + 'px';
+        d.style.width = v.w + 'px'; d.style.height = v.h + 'px';
+        d.style.right = 'auto'; d.style.bottom = 'auto';
+        d.classList.toggle('compact', v.h < 420);
+      }
+      // cree les calques manquants puis repositionne
+      if (vues.length > huds.length + 1) {
+        for (var j = 1; j < vues.length; j++) hudDe(j);
+        placerHuds(vues);
+      }
+    }
 
     var crosshair = el('div', 'crosshair');
     hud.appendChild(crosshair);
@@ -64,6 +108,10 @@
       hotbar.appendChild(s);
       hotbarSlots.push(s);
     }
+
+    var etiquette1 = el('div', 'etiquette', 'Joueur 1');
+    etiquette1.style.display = 'none';
+    hud.appendChild(etiquette1);
 
     var heldName = el('div', 'held-name');
     hud.appendChild(heldName);
@@ -138,8 +186,20 @@
       }
     }
 
-    function updateHUD(g) {
-      var p = g.player.state;
+    /* Rafraichit le HUD d'UN joueur. `index` choisit le calque ; les elements
+       sont retrouves par requete dans ce calque, ce qui evite de dupliquer
+       toute la construction pour les joueurs 2 a 4. */
+    function updateHUDJoueur(g, joueur, index) {
+      var racine = hudDe(index);
+      var p = joueur.state;
+      var healthBar = racine.querySelector('.bar.health');
+      var hungerBar = racine.querySelector('.bar.hunger');
+      var airBar = racine.querySelector('.bar.air');
+      var miningRing = racine.querySelector('.mining-ring');
+      var miningFill = racine.querySelector('.mining-fill');
+      var heldName = racine.querySelector('.held-name');
+      var barre = racine.querySelector('.hotbar');
+
       pips(healthBar, p.hp, 10, 'heart');
       pips(hungerBar, p.hunger, 10, 'food');
       if (p.air < MC.PlayerConst.MAX_AIR - 0.01) {
@@ -147,27 +207,11 @@
         pips(airBar, Math.ceil(p.air), MC.PlayerConst.MAX_AIR, 'bubble');
       } else airBar.style.display = 'none';
 
+      construireHotbar(barre, index);
       for (var i = 0; i < Inv.HOTBAR_SIZE; i++) {
-        var slot = hotbarSlots[i], stack = p.inv.slots[i];
+        var slot = barre.children[i], stack = p.inv.slots[i];
         slot.classList.toggle('on', i === p.selected);
-        var ico = slot.querySelector('.ico'), num = slot.querySelector('.n');
-        var wear = slot.querySelector('.wear');
-        if (stack) {
-          ico.setAttribute('style', iconStyle(stack.id, ICON));
-          num.textContent = stack.n > 1 ? stack.n : '';
-          // l'usure doit se voir sans ouvrir l'inventaire, sinon l'outil casse
-          // par surprise en pleine action
-          var max = C.durabilityOf(stack.id);
-          if (max && stack.dmg) {
-            var reste = 1 - stack.dmg / max;
-            wear.style.display = '';
-            wear.firstChild.style.width = Math.max(0, reste * 100) + '%';
-            wear.firstChild.style.background =
-              reste > 0.5 ? '#7ee08a' : reste > 0.22 ? '#e0c33f' : '#e0453f';
-          } else wear.style.display = 'none';
-        } else {
-          ico.setAttribute('style', ''); num.textContent = ''; wear.style.display = 'none';
-        }
+        majCase(slot, stack);
       }
 
       var h = p.inv.slots[p.selected];
@@ -178,17 +222,62 @@
         miningRing.style.display = 'block';
         miningFill.style.width = Math.min(100, (p.mining.t / p.mining.total) * 100) + '%';
       } else miningRing.style.display = 'none';
+      racine.classList.toggle('mort', !!p.dead);
+    }
 
+    /* Construit les cases de la barre d'action si elles manquent. */
+    function construireHotbar(barre, index) {
+      if (barre.childElementCount === Inv.HOTBAR_SIZE) return;
+      barre.innerHTML = '';
+      for (var i = 0; i < Inv.HOTBAR_SIZE; i++) {
+        var sl = el('div', 'slot hb');
+        sl.innerHTML = '<span class="k">' + (i + 1) + '</span><div class="ico"></div>' +
+                       '<span class="n"></span><div class="wear" style="display:none"><div></div></div>';
+        (function (idx2) {
+          sl.addEventListener('click', function (ev) {
+            ev.stopPropagation();
+            if (index === 0 && hooks.onSelectSlot) hooks.onSelectSlot(idx2);
+          });
+        })(i);
+        barre.appendChild(sl);
+      }
+    }
+
+    function majCase(slot, stack) {
+      var ico = slot.querySelector('.ico'), num = slot.querySelector('.n');
+      var wear = slot.querySelector('.wear');
+      if (stack) {
+        ico.setAttribute('style', iconStyle(stack.id, ICON));
+        num.textContent = stack.n > 1 ? stack.n : '';
+        var max = C.durabilityOf(stack.id);
+        if (max && stack.dmg) {
+          var reste = 1 - stack.dmg / max;
+          wear.style.display = '';
+          wear.firstChild.style.width = Math.max(0, reste * 100) + '%';
+          wear.firstChild.style.background =
+            reste > 0.5 ? '#7ee08a' : reste > 0.22 ? '#e0c33f' : '#e0453f';
+        } else wear.style.display = 'none';
+      } else {
+        ico.setAttribute('style', ''); num.textContent = ''; wear.style.display = 'none';
+      }
+    }
+
+    /* Ce qui reste GLOBAL a la fenetre : debogage, chat, voile de degats.
+       Tout ce qui est propre a un joueur (vie, faim, barre d'action, viseur)
+       passe par updateHUDJoueur — sinon les deux s'ecrasent mutuellement. */
+    function updateHUD(g) {
+      var p = g.player.state;
       damageFlash.style.opacity = Math.max(0, p.hurtFlash) * 0.9;
-
       updateChat(g.chat);
 
       debug.innerHTML =
         'FPS <b>' + g.fps + '</b> · chunks <b>' + g.world.chunks.size + '</b>' +
-        ' · entités <b>' + g.entities.list.length + '</b><br>' +
+        ' · entités <b>' + g.entities.list.length + '</b>' +
+        (g.nbLocaux > 1 ? ' · joueurs <b>' + g.nbLocaux + '</b>' : '') + '<br>' +
         'XYZ <b>' + p.pos.x.toFixed(1) + ' / ' + p.pos.y.toFixed(1) + ' / ' + p.pos.z.toFixed(1) + '</b><br>' +
         DC.clockString(g.time) + ' <b>' + (DC.isNight(g.time) ? 'nuit' : 'jour') + '</b>' +
-        ' · ' + (p.flying ? 'vol' : p.swimming ? 'nage' : p.onGround ? 'au sol' : 'en l\'air');
+        ' · ' + (p.flying ? 'vol' : p.swimming ? 'nage' : p.onGround ? "au sol" : "en l" + String.fromCharCode(39) + "air") +
+        (g.regles && g.regles.mode ? ' · ' + g.regles.mode.nom : '');
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -569,7 +658,8 @@
     function refreshFurnace() { if (container && container.kind === 'furnace') renderContainer(); }
 
     return {
-      updateHUD: updateHUD, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
+      updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
+      hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
       menuPrincipal: menuPrincipal, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,

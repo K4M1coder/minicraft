@@ -25,6 +25,17 @@
     }
     var sz = hostSize();
     var camera = new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 1000);
+
+    /* Écran partagé : une caméra par joueur local, allouées à la demande.
+       La première est `camera` ci-dessus, qui reste celle du joueur 1 — tout
+       le code existant (ambiance, torches) continue de s'y référer. */
+    var cameras = [camera];
+    function cameraDe(i) {
+      while (cameras.length <= i) {
+        cameras.push(new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 1000));
+      }
+      return cameras[i];
+    }
     var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     renderer.setSize(sz[0], sz[1]);
@@ -270,22 +281,65 @@
       return Math.min(proches.length, torchPool.length);
     }
 
-    function setHighlight(target) {
-      if (!target) { highlight.visible = false; return; }
-      highlight.visible = true;
-      highlight.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
+    /* Une surbrillance par joueur : en écran partagé chacun vise un bloc
+       différent, une seule boîte sauterait de l'un à l'autre. */
+    var surbrillances = [highlight];
+    function surbrillanceDe(i) {
+      while (surbrillances.length <= i) {
+        var h3 = new THREE.LineSegments(highlight.geometry, highlight.material);
+        h3.visible = false;
+        scene.add(h3);
+        surbrillances.push(h3);
+      }
+      return surbrillances[i];
+    }
+    function setHighlight(target, index) {
+      var h4 = surbrillanceDe(index || 0);
+      if (!target) { h4.visible = false; return; }
+      h4.visible = true;
+      h4.position.set(target.x + 0.5, target.y + 0.5, target.z + 0.5);
     }
 
-    function setCamera(pos, yaw, pitch) {
-      camera.position.set(pos.x, pos.y, pos.z);
-      camera.rotation.set(pitch, yaw, 0, 'YXZ');
+    function setCamera(pos, yaw, pitch, index) {
+      var cam = cameraDe(index || 0);
+      cam.position.set(pos.x, pos.y, pos.z);
+      cam.rotation.set(pitch, yaw, 0, 'YXZ');
+      return cam;
     }
 
     function resize() {
       var s = hostSize();
-      camera.aspect = s[0] / s[1];
-      camera.updateProjectionMatrix();
+      sz = s;
+      cameras.forEach(function (c2) { c2.aspect = s[0] / s[1]; c2.updateProjectionMatrix(); });
       renderer.setSize(s[0], s[1]);
+    }
+
+    /* Rendu en plusieurs vues. Le test de ciseaux limite chaque passe à son
+       rectangle : sans lui, effacer le tampon pour la deuxième vue effacerait
+       la première. WebGL compte les Y depuis le bas, l'interface depuis le
+       haut : d'où l'inversion. */
+    function renderViews(vues) {
+      var taille = hostSize();
+      if (!vues || vues.length <= 1) {
+        renderer.setScissorTest(false);
+        renderer.setViewport(0, 0, taille[0], taille[1]);
+        renderer.render(scene, camera);
+        return 1;
+      }
+      var H = taille[1];
+      renderer.setScissorTest(true);
+      for (var i = 0; i < vues.length; i++) {
+        var v = vues[i];
+        var y = H - v.y - v.h;
+        renderer.setViewport(v.x, y, v.w, v.h);
+        renderer.setScissor(v.x, y, v.w, v.h);
+        var cam = cameraDe(i);
+        var aspect = v.w / Math.max(1, v.h);
+        if (cam.aspect !== aspect) { cam.aspect = aspect; cam.updateProjectionMatrix(); }
+        renderer.render(scene, cam);
+      }
+      renderer.setScissorTest(false);
+      return vues.length;
     }
 
     function render() { renderer.render(scene, camera); }
@@ -297,7 +351,8 @@
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
       libererToutesEntites: libererToutesEntites,
       get materiauxLiberes() { return liberees; },
-      resize: resize, render: render, RENDER_DIST: RENDER_DIST,
+      resize: resize, render: render, renderViews: renderViews,
+      cameraDe: cameraDe, cameras: cameras, RENDER_DIST: RENDER_DIST,
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend },
       entityMeshes: entityMeshes,
     };

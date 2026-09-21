@@ -17,7 +17,17 @@
     var SEED = 20260921;
     var world = MC.createWorld(SEED);
     var entities = MC.createEntities(world);
-    var player = MC.createPlayer(world, entities);
+    var regles = MC.Modes.regles('survie', 'facile');
+
+    /* Le solo est « une equipe d'un joueur » : meme chemin de code que
+       l'ecran partage, donc teste en permanence plutot qu'en cas special. */
+    var equipe = [];
+    var player = MC.createPlayer(world, entities, regles);
+    equipe.push({ index: 0, nom: 'Joueur 1', player: player,
+                  source: 'clavier', manette: null, vue: null });
+    var manettes = [];
+
+    function joueurPrincipal() { return equipe[0].player; }
     var furnaces = Object.create(null);
     var chests = Object.create(null);
     var audio = MC.createAudio();
@@ -26,6 +36,7 @@
     var g = {
       world: world, entities: entities, player: player, render: render,
       time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
+      equipe: equipe, regles: regles, vues: [], nbLocaux: 1,
       disposeChunk: render.disposeChunk,
     };
 
@@ -133,6 +144,40 @@
       prime();
       ui.toast('Nouveau monde');
     }
+
+    /* Recompose l'equipe pour n joueurs locaux. Appele au demarrage d'une
+       partie : c'est le seul endroit ou le nombre de joueurs change. */
+    function composerEquipe(n, nouvellesRegles) {
+      n = Math.max(1, Math.min(MC.Split.MAX_LOCAUX, n | 0));
+      regles = nouvellesRegles || regles;
+      g.regles = regles;
+
+      var col = world.findSpawnColumn();
+      streamChunks(true);
+      var centre = { x: col[0] + 0.5, y: world.groundAt(col[0], col[1], true) + 1.2,
+                     z: col[1] + 0.5 };
+      var nouvelle = MC.Split.creerEquipe(n, world, entities, regles, centre);
+
+      equipe.length = 0;
+      manettes.length = 0;
+      nouvelle.forEach(function (j) {
+        equipe.push(j);
+        if (j.source === 'manette') {
+          manettes.push(MC.creerManette(j.manette, function () {
+            return (typeof navigator !== 'undefined' && navigator.getGamepads)
+              ? navigator.getGamepads() : [];
+          }));
+        } else manettes.push(null);
+      });
+      player = equipe[0].player;
+      // g.player doit suivre : sinon l'interface et la sauvegarde continuent
+      // de pointer sur le joueur d'AVANT la recomposition
+      g.player = player;
+      g.nbLocaux = equipe.length;
+      g.spawnPoint = { x: centre.x, y: centre.y, z: centre.z };
+      return equipe;
+    }
+    g.composerEquipe = composerEquipe;
 
     function placeAtSpawn() {
       var col = world.findSpawnColumn();
@@ -390,6 +435,33 @@
     }
     g.traiterMessage = traiterMessage;
 
+    /* Le butin revient au joueur le plus proche : en ecran partage, tout
+       donner au joueur 1 serait injuste et deroutant. */
+    function joueurLePlusProche(pos) {
+      var best = equipe[0].player, bd = Infinity;
+      for (var i = 0; i < equipe.length; i++) {
+        var st2 = equipe[i].player.state;
+        if (st2.dead) continue;
+        var d = Math.hypot(st2.pos.x - pos.x, st2.pos.y - pos.y, st2.pos.z - pos.z);
+        if (d < bd) { bd = d; best = equipe[i].player; }
+      }
+      return best;
+    }
+
+    /* Mode cauchemar : la carte ET la sauvegarde disparaissent. */
+    function perdrePartie() {
+      audio.play('mort');
+      var st = storage();
+      if (st && g.partieId) MC.Saves.supprimer(st, g.partieId);
+      g.partieId = null;
+      world.reset(render.disposeChunk);
+      entities.list.length = 0;
+      render.libererToutesEntites();
+      ui.toast('Cauchemar : la carte et la sauvegarde ont ete detruites', 'warn');
+      input.setState('dead');
+    }
+    g.perdrePartie = perdrePartie;
+
     function doSave(notify) {
       var st = storage();
       if (!st) { if (notify) ui.toast('Sauvegarde indisponible', 'warn'); return false; }
@@ -399,6 +471,113 @@
       return ok;
     }
     g.doSave = doSave;
+
+    /* Simule UN joueur local. Le joueur 1 lit le clavier, les autres leur
+       manette : au-dela de la source, le traitement est identique — c'est ce
+       qui evite d'avoir deux logiques de jeu a maintenir. */
+    function simulerJoueur(j, dt) {
+      var pl = j.player, st = pl.state;
+      var man = manettes[j.index];
+      var touches;
+
+      if (j.source === 'clavier') {
+        touches = input.actions();
+      } else if (man && man.connectee()) {
+        touches = man.actions();
+        var r = man.regard(dt);
+        st.yaw += r.dyaw;
+        st.pitch += r.dpitch;
+        var lim = Math.PI / 2 - 0.001;
+        st.pitch = Math.max(-lim, Math.min(lim, st.pitch));
+      } else {
+        // manette debranchee : le joueur reste au repos plutot que de courir
+        touches = { forward: 0, back: 0, left: 0, right: 0, jump: 0, sprint: 0 };
+      }
+
+      if (st.dead) return;
+      pl.updateMovement(dt, touches);
+      pl.updateSurvival(dt);
+
+      // visee et actions
+      var cible = pl.aim();
+      var mob = entities.aimedAt(pl.eyePos(), pl.lookDir(), pl.REACH);
+      var casse = j.source === 'clavier' ? input.mouse.left
+                                         : !!(man && man.boutons().casser);
+      var utilise = j.source === 'clavier' ? input.mouse.right
+                                           : !!(man && man.boutons().utiliser);
+
+      if (casse && cible && !mob) {
+        var pos = { x: cible.x, y: cible.y, z: cible.z };
+        var res = pl.mineTick(dt, cible);
+        if (res) {
+          if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive) spillContainer(pos.x, pos.y, pos.z);
+          audio.play(res.toolBroke ? 'brise' : 'casser');
+          if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
+            ui.toast('Il faut un outil adapte pour recuperer ce bloc', 'warn');
+        }
+      } else if (!casse) pl.cancelMining();
+
+      if (casse && mob && j.source !== 'clavier') {
+        // au clavier, la frappe passe par l'evenement de clic ; a la manette
+        // on echantillonne, avec le temps de recharge du joueur pour cadence
+        var ra = pl.attack(mob);
+        if (ra) audio.play('frapper');
+      }
+
+      if (utilise) {
+        j.useCd = (j.useCd || 0) - dt;
+        if (j.useCd <= 0) { j.useCd = 0.22; utiliserPour(j); }
+      } else j.useCd = 0;
+
+      render.setHighlight(cible, j.index);
+
+      // boutons a front montant, pour les manettes
+      if (man && man.connectee()) {
+        if (man.vientDAppuyer(man.BTN.VOL)) { st.flying = !st.flying; st.vel.y = 0; }
+        if (man.vientDAppuyer(man.BTN.SUIVANT))
+          st.selected = (st.selected + 1) % Inv.HOTBAR_SIZE;
+        if (man.vientDAppuyer(man.BTN.PRECEDENT))
+          st.selected = (st.selected + Inv.HOTBAR_SIZE - 1) % Inv.HOTBAR_SIZE;
+      }
+    }
+
+    /* Utilisation « clic droit » generique, pour n'importe quel joueur local. */
+    function utiliserPour(j) {
+      var pl = j.player;
+      var enMain = pl.held();
+      if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
+        var tir = pl.tirer();
+        if (tir) audio.play('frapper');
+        return;
+      }
+      var target = pl.aim();
+      if (!target) return;
+      var res = pl.useOn(target);
+      if (!res) return;
+      if (res.indexOf('open:') === 0) {
+        // seules les interfaces du joueur 1 s'ouvrent : un seul clavier
+        if (j.index !== 0) return;
+        ouvrirConteneur(res.slice(5), target);
+        return;
+      }
+      if (res === 'place') audio.play('poser');
+      else if (res === 'eat') audio.play('manger');
+      else if (res === 'till' || res === 'plant') audio.play('poser');
+    }
+
+    function ouvrirConteneur(kind, target) {
+      var k = target.x + ',' + target.y + ',' + target.z;
+      if (kind === 'furnace') {
+        if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
+        ui.openContainer('furnace', player.state.inv, furnaces[k], k);
+      } else if (kind === 'chest') {
+        if (!chests[k]) chests[k] = Inv.create(27);
+        ui.openContainer('chest', player.state.inv, chests[k], k);
+      } else {
+        ui.openContainer('craft', player.state.inv);
+      }
+      input.setState('ui');
+    }
 
     // ─── boucle ──────────────────────────────────────────────────────────────
     var last = performance.now(), acc = 0, frames = 0, spawnT = 0, autoSaveT = 0;
@@ -415,58 +594,36 @@
       remeshDirtyNear();
 
       if (actif) {
-        var keys = input.actions();
-        player.updateMovement(dt, keys);
-        player.updateSurvival(dt);
+        // chaque joueur local est simule, quelle que soit sa source d'entrees
+        for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
 
-        // minage continu tant que le bouton gauche est tenu
-        var target = player.aim();
-        var mobVise = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
-        if (input.mouse.left && target && !mobVise) {
-          var cible = { x: target.x, y: target.y, z: target.z };
-          var res = player.mineTick(dt, target);
-          if (res) {
-            if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive)
-              spillContainer(cible.x, cible.y, cible.z);
-            if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
-              ui.toast('Il faut un outil adapté pour récupérer ce bloc', 'warn');
-            audio.play(res.toolBroke ? 'brise' : 'casser');
-            if (res.toolBroke) ui.toast("Votre outil s'est brisé", "warn");
-          }
-        } else if (!input.mouse.left) {
-          player.cancelMining();
-        }
-        render.setHighlight(target);
-
-        // pose continue en maintenant le clic droit, avec une cadence
-        if (input.mouse.right) {
-          g.useCd = (g.useCd || 0) - dt;
-          if (g.useCd <= 0) { g.useCd = 0.22; onUse(); }
-        } else g.useCd = 0;
-
-        // entités et butin
+        // entites et butin : le butin va au joueur le plus proche
         var ev = entities.update(dt, player.state, {});
         if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
         for (var i = 0; i < ev.picked.length; i++) {
-          var p = ev.picked[i];
-          var reste = player.pickUp(p.id, p.n);
-          if (reste > 0) entities.dropItem(player.state.pos.x, player.state.pos.y + 0.5,
-                                           player.state.pos.z, p.id, reste);
-          else { ui.toast('+' + p.n + ' ' + C.nameOf(p.id)); audio.play('ramasser'); }
+          var p2 = ev.picked[i];
+          var dest = joueurLePlusProche(p2.entity ? p2.entity.pos : player.state.pos);
+          var reste = dest.pickUp(p2.id, p2.n);
+          if (reste > 0) entities.dropItem(dest.state.pos.x, dest.state.pos.y + 0.5,
+                                           dest.state.pos.z, p2.id, reste);
+          else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
         }
         entities.mergeItems();
 
         // temps, apparitions, cultures
         g.time += dt;
+        g.duree = (g.duree || 0) + dt;
         world.tick(dt, 14);
         spawnT += dt;
         if (spawnT >= SPAWN_INTERVAL) {
           spawnT = 0;
-          entities.trySpawn(player.state, DC.isNight(g.time));
+          if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
+            entities.trySpawn(player.state, DC.isNight(g.time), null,
+                              MC.Modes.plafondsEntites(regles));
+          }
           if (!DC.isNight(g.time)) entities.burnUndead(false);
         }
 
-        // fourneaux
         for (var fk in furnaces) {
           if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
         }
@@ -474,7 +631,9 @@
         autoSaveT += dt;
         if (autoSaveT >= 60) { autoSaveT = 0; doSave(false); }
 
-        if (player.state.dead) { audio.play('mort'); input.setState('dead'); }
+        // mort : en cauchemar, un seul joueur suffit a perdre la partie
+        if (MC.Split.partiePerdue(equipe, regles)) { perdrePartie(); }
+        else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
         world.tick(dt, 14);
@@ -485,18 +644,30 @@
       }
 
       render.syncEntities(entities);
+
+      // une camera par joueur, puis un rendu par vue
+      var taille = [host.clientWidth || innerWidth, host.clientHeight || innerHeight];
+      var vues = MC.Split.dispositions(equipe.length, taille[0], taille[1]);
+      g.vues = vues;
+      for (var vi = 0; vi < equipe.length; vi++) {
+        var sj = equipe[vi].player.state;
+        equipe[vi].vue = vues[vi];
+        render.setCamera({ x: sj.pos.x, y: sj.pos.y + player.EYE, z: sj.pos.z },
+                         sj.yaw, sj.pitch, vi);
+      }
       var s2 = player.state;
-      render.setCamera({ x: s2.pos.x, y: s2.pos.y + player.EYE, z: s2.pos.z }, s2.yaw, s2.pitch);
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);
-      render.render();
+      render.renderViews(vues);
+      ui.placerHuds(vues);
 
       frames++; acc += dt;
       if (acc >= 0.4) {
         g.fps = Math.round(frames / acc);
         frames = 0; acc = 0;
       }
+      for (var hi = 0; hi < equipe.length; hi++) ui.updateHUDJoueur(g, equipe[hi].player, hi);
       ui.updateHUD(g);
     }
 

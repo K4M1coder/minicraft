@@ -169,3 +169,23 @@
   .chat-input .txt { white-space: pre-wrap; word-break: break-word; }
   .chat-input .caret { animation: clign 1s steps(2) infinite; opacity: .8; }
   @keyframes clign { 50% { opacity: 0; } }
+
+  /* ─── écran partagé ────────────────────────────────────────────────────── */
+  /* chaque HUD est positionné sur le rectangle de sa vue ; les éléments
+     internes restent centrés/ancrés sur CE calque, pas sur la fenêtre */
+  .hud-joueur { position: absolute; pointer-events: none; z-index: 2;
+                border: 1px solid rgba(255,255,255,.10); }
+  /* le panneau de debogage occupe le coin haut-gauche du joueur 1 :
+     son etiquette va a droite pour ne pas passer dessous */
+  .hud > .etiquette { left: auto; right: 10px; }
+  .hud .etiquette { position: absolute; left: 10px; top: 8px; font-size: 11px;
+                    background: rgba(10,12,16,.6); padding: 2px 7px; border-radius: 4px;
+                    opacity: .75; }
+  /* en quadrant, la place manque : on resserre le HUD */
+  .hud.compact { --slot: 34px; }
+  .hud.compact .stats { bottom: 56px; transform: translateX(-50%) scale(.85); }
+  .hud.compact .hotbar { bottom: 10px; }
+  .hud.compact .held-name { bottom: 92px; font-size: 11px; }
+  .hud.compact .pip { width: 10px; height: 10px; }
+  .hud.mort::after { content: ""; position: absolute; inset: 0;
+                     background: rgba(120,10,10,.35); pointer-events: none; }

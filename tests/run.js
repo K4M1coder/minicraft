@@ -11,8 +11,8 @@ const vm = require('vm');
 
 const root = path.join(__dirname, '..');
 const SRC = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory',
-             'entities', 'player', 'daycycle', 'save', 'saves', 'modes', 'chat', 'audio'];
-const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat'];
+             'entities', 'player', 'daycycle', 'save', 'saves', 'modes', 'chat', 'split', 'gamepad', 'audio'];
+const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,

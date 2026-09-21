@@ -106,22 +106,22 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-SPLIT-001 | De 1 à 4 joueurs locaux sont acceptés | création valide pour 1, 2, 3 et 4 | ⏳ |
-| SPEC-SPLIT-002 | Au-delà de 4, la demande est bornée | 5 demandés → 4 créés | ⏳ |
-| SPEC-SPLIT-003 | À un joueur, la vue occupe tout l'écran | rectangle plein cadre | ⏳ |
-| SPEC-SPLIT-004 | À deux joueurs, deux bandes horizontales de hauteur égale | rectangles calculés | ⏳ |
-| SPEC-SPLIT-005 | À trois ou quatre joueurs, quatre quadrants | rectangles calculés, la 4e case reste vide à trois | ⏳ |
-| SPEC-SPLIT-006 | Les vues ne se chevauchent pas et couvrent tout le cadre | somme des aires égale l'aire totale | ⏳ |
-| SPEC-SPLIT-007 | Chaque joueur a son propre état, son inventaire et sa vie | modifier l'un ne change pas l'autre | ⏳ |
-| SPEC-SPLIT-008 | Chaque joueur a son propre HUD | autant de HUD que de joueurs | ⏳ |
-| SPEC-SPLIT-009 | Le joueur 1 utilise clavier et souris | source d'entrée `clavier` | ⏳ |
-| SPEC-SPLIT-010 | Les joueurs 2 à 4 utilisent une manette | source d'entrée `manette`, index croissant | ⏳ |
-| SPEC-SPLIT-011 | Le stick gauche déplace, le stick droit oriente | conversion en actions et en rotation | ⏳ |
-| SPEC-SPLIT-012 | La zone morte des sticks est appliquée | une poussée faible ne produit aucun mouvement | ⏳ |
-| SPEC-SPLIT-013 | Une manette débranchée met son joueur au repos | aucune action émise | ⏳ |
-| SPEC-SPLIT-014 | Les joueurs apparaissent au même endroit, sans se chevaucher | positions distinctes, aucune collision initiale | ⏳ |
-| SPEC-SPLIT-015 | La mort d'un joueur n'interrompt pas les autres | les autres continuent de se déplacer | ⏳ |
-| SPEC-SPLIT-016 | En cauchemar, la mort d'un seul joueur détruit la partie | l'emplacement disparaît | ⏳ |
+| SPEC-SPLIT-001 | De 1 à 4 joueurs locaux sont acceptés | création valide pour 1, 2, 3 et 4 | ✅ |
+| SPEC-SPLIT-002 | Au-delà de 4, la demande est bornée | 5 demandés → 4 créés | ✅ |
+| SPEC-SPLIT-003 | À un joueur, la vue occupe tout l'écran | rectangle plein cadre | ✅ |
+| SPEC-SPLIT-004 | À deux joueurs, deux bandes horizontales de hauteur égale | rectangles calculés | ✅ |
+| SPEC-SPLIT-005 | À trois ou quatre joueurs, quatre quadrants | rectangles calculés, la 4e case reste vide à trois | ✅ |
+| SPEC-SPLIT-006 | Les vues ne se chevauchent pas et couvrent tout le cadre | somme des aires égale l'aire totale | ✅ |
+| SPEC-SPLIT-007 | Chaque joueur a son propre état, son inventaire et sa vie | modifier l'un ne change pas l'autre | ✅ |
+| SPEC-SPLIT-008 | Chaque joueur a son propre HUD | autant de HUD que de joueurs | ✅ |
+| SPEC-SPLIT-009 | Le joueur 1 utilise clavier et souris | source d'entrée `clavier` | ✅ |
+| SPEC-SPLIT-010 | Les joueurs 2 à 4 utilisent une manette | source d'entrée `manette`, index croissant | ✅ |
+| SPEC-SPLIT-011 | Le stick gauche déplace, le stick droit oriente | conversion en actions et en rotation | ✅ |
+| SPEC-SPLIT-012 | La zone morte des sticks est appliquée | une poussée faible ne produit aucun mouvement | ✅ |
+| SPEC-SPLIT-013 | Une manette débranchée met son joueur au repos | aucune action émise | ✅ |
+| SPEC-SPLIT-014 | Les joueurs apparaissent au même endroit, sans se chevaucher | positions distinctes, aucune collision initiale | ✅ |
+| SPEC-SPLIT-015 | La mort d'un joueur n'interrompt pas les autres | les autres continuent de se déplacer | ✅ |
+| SPEC-SPLIT-016 | En cauchemar, la mort d'un seul joueur détruit la partie | l'emplacement disparaît | ✅ |
 
 ## NET — multijoueur client/serveur
 

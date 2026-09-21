@@ -106,7 +106,7 @@
     // c'est bien la zone de contenu que le canvas doit remplir.
     A.close(r.width, host.clientWidth, 1.5, 'le canvas remplit son conteneur en largeur');
     A.close(r.height, host.clientHeight, 1.5, 'et en hauteur');
-    var cr = host.querySelector('.crosshair').getBoundingClientRect();
+    var cr = g.ui.hudDe(0).querySelector('.crosshair').getBoundingClientRect();
     A.close(cr.left + cr.width / 2, r.left + r.width / 2, 1.5, 'viseur centré horizontalement');
     A.close(cr.top + cr.height / 2, r.top + r.height / 2, 1.5, 'viseur centré verticalement');
     // et le rapport d'aspect de la caméra doit suivre, sinon l'image est étirée
@@ -411,12 +411,13 @@
     var s = await reset(g);
     s.pitch = -Math.PI / 2 + 0.05;
     await frames(2);
+    var hudM = g.ui.hudDe(0);
     mouseDown(g, 0);
     await frames(8);
-    A.equal(getComputedStyle(document.querySelector('.mining-ring')).display, 'block', 'barre visible');
+    A.equal(getComputedStyle(hudM.querySelector('.mining-ring')).display, 'block', 'barre visible');
     mouseUp(0);
     await frames(4);
-    A.equal(getComputedStyle(document.querySelector('.mining-ring')).display, 'none', 'barre masquée');
+    A.equal(getComputedStyle(hudM.querySelector('.mining-ring')).display, 'none', 'barre masquée');
   });
 
   e2e('le clic droit pose un bloc du bon type', async function (g) {
@@ -691,7 +692,7 @@
     key('KeyE');
     await frames(3);
     A.gt(document.querySelectorAll('.inv-screen .slot .wear').length, 0,
-      'outil entame : la jauge apparait');
+      'outil entame : la jauge apparait dans l inventaire');
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
@@ -844,6 +845,152 @@
     await frames(2);
   });
 
+  /* ── Ecran partage ──────────────────────────────────────────────────── */
+
+  function fausseManette(specs) {
+    navigator.getGamepads = function () {
+      return specs.map(function (p) {
+        if (!p) return null;
+        return { connected: p.connected !== false, index: p.index || 0,
+                 axes: p.axes || [0, 0, 0, 0],
+                 buttons: (p.buttons || []).map(function (b) {
+                   return { pressed: !!b, value: b ? 1 : 0 }; }) };
+      });
+    };
+  }
+  function soloRetabli(g) {
+    g.composerEquipe(1, MC.Modes.regles('survie', 'facile'));
+  }
+
+  e2e('SPEC-SPLIT-001 : composer une equipe de 1 a 4 joueurs', async function (g) {
+    await reset(g);
+    for (var n = 1; n <= 4; n++) {
+      fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
+      g.composerEquipe(n, MC.Modes.regles('survie', 'facile'));
+      await frames(4);
+      A.equal(g.equipe.length, n, n + ' joueur(s)');
+      A.equal(g.vues.length, n, n + ' vue(s)');
+    }
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-008 : chaque joueur a son HUD, place sur sa vue', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
+    g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
+    await frames(5);
+    var hs = document.querySelectorAll('.hud');
+    A.equal(hs.length, 4, 'quatre HUD');
+    for (var i = 0; i < 4; i++) {
+      var r = hs[i].getBoundingClientRect(), v = g.vues[i];
+      A.close(r.width, v.w, 2, 'HUD ' + i + ' : largeur de sa vue');
+      A.close(r.height, v.h, 2, 'HUD ' + i + ' : hauteur de sa vue');
+    }
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-007 : inventaires et vies independants', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0,0,0,0] }]);
+    g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
+    await frames(3);
+    g.equipe[0].player.state.inv.add(B.COBBLE, 7);
+    g.equipe[0].player.hurt(6);
+    A.equal(g.equipe[1].player.state.inv.count(B.COBBLE), 0, 'inventaire distinct');
+    A.equal(g.equipe[1].player.state.hp, 20, 'vie distincte');
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-011 : le stick gauche deplace le joueur 2', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0, -1, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
+    await frames(3);
+    var st = g.equipe[1].player.state;
+    st.flying = true;
+    var x0 = st.pos.x, z0 = st.pos.z;
+    await frames(40);
+    var d = Math.hypot(st.pos.x - x0, st.pos.z - z0);
+    A.gt(d, 1, 'le joueur 2 a avance a la manette (' + d.toFixed(2) + ')');
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-013 : manette debranchee, joueur au repos', async function (g) {
+    await reset(g);
+    fausseManette([{ connected: false, axes: [0, -1, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
+    await frames(3);
+    var st = g.equipe[1].player.state;
+    st.flying = true; st.vel.x = 0; st.vel.z = 0;
+    var x0 = st.pos.x, z0 = st.pos.z;
+    await frames(40);
+    A.close(Math.hypot(st.pos.x - x0, st.pos.z - z0), 0, 0.05, 'aucun deplacement');
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-006 : les vues couvrent le cadre sans chevauchement', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
+    g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
+    await frames(4);
+    var host = g.render.renderer.domElement.parentElement;
+    var aire = g.vues.reduce(function (s2, v) { return s2 + v.w * v.h; }, 0);
+    A.close(aire, host.clientWidth * host.clientHeight, 4, 'couverture totale');
+    soloRetabli(g); await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-016 : en cauchemar, une mort detruit la partie', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0,0,0,0] }]);
+    var st = localStorage;
+    MC.Saves.toutEffacer(st);
+    var meta = MC.Saves.creer(st, { nom: 'Test cauchemar', difficulte: 'cauchemar', graine: 99 });
+    g.partieId = meta.id;
+    MC.Saves.sauvegarder(st, meta.id, g);
+    A.ok(MC.Saves.trouver(st, meta.id), 'partie enregistree');
+
+    g.composerEquipe(2, MC.Modes.regles('survie', 'cauchemar'));
+    await frames(3);
+    g.equipe[1].player.hurt(20);
+    await frames(8);
+    A.equal(MC.Saves.trouver(st, meta.id), null, 'partie detruite');
+    A.equal(g.world.overrides.size, 0, 'carte effacee');
+
+    MC.Saves.toutEffacer(st);
+    soloRetabli(g);
+    g.player.state.dead = false; g.player.state.hp = 20;
+    g.input.setState('playing'); fakeLock(g, true);
+    await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-015 : hors cauchemar, un mort n arrete pas les autres', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0, -1, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
+    await frames(3);
+    g.equipe[0].player.state.dead = true;
+    var st2 = g.equipe[1].player.state;
+    st2.flying = true;
+    var x0 = st2.pos.x, z0 = st2.pos.z;
+    await frames(40);
+    A.gt(Math.hypot(st2.pos.x - x0, st2.pos.z - z0), 0.5, 'le joueur 2 bouge encore');
+    soloRetabli(g);
+    g.player.state.dead = false; g.player.state.hp = 20;
+    await frames(3);
+  });
+
+  e2e('SPEC-SPLIT-005 : a quatre joueurs la cadence reste jouable', async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
+    g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
+    await frames(10);
+    var t0 = performance.now();
+    await frames(60);
+    var fps = 60 / ((performance.now() - t0) / 1000);
+    A.gt(fps, 20, 'au moins 20 images/s en quadrant (' + fps.toFixed(0) + ')');
+    soloRetabli(g); await frames(3);
+  });
+
   e2e('le ciel change entre le jour et la nuit', async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;
@@ -907,9 +1054,11 @@
     var s = await reset(g);
     s.hp = 6; s.hunger = 4;
     await frames(3);
-    var pleins = document.querySelectorAll('.bar.health .pip.full').length;
+    // un HUD par joueur depuis l ecran partage : on interroge celui du joueur 1
+    var hud = g.ui.hudDe(0);
+    var pleins = hud.querySelectorAll('.bar.health .pip.full').length;
     A.equal(pleins, 3, '6 pv = 3 cœurs pleins');
-    var food = document.querySelectorAll('.bar.hunger .pip.full').length;
+    var food = hud.querySelectorAll('.bar.hunger .pip.full').length;
     A.equal(food, 2, '4 points de faim = 2 pastilles');
     s.hp = 20; s.hunger = 20;
   });
@@ -918,10 +1067,11 @@
     var s = await reset(g);
     s.air = 10;
     await frames(3);
-    A.equal(getComputedStyle(document.querySelector('.bar.air')).display, 'none', 'masquée hors de l\'eau');
+    var hudA = g.ui.hudDe(0);
+    A.equal(getComputedStyle(hudA.querySelector('.bar.air')).display, 'none', 'masquée hors de l\'eau');
     s.air = 4;
     await frames(3);
-    A.ne(getComputedStyle(document.querySelector('.bar.air')).display, 'none', 'visible en apnée');
+    A.ne(getComputedStyle(hudA.querySelector('.bar.air')).display, 'none', 'visible en apnée');
     s.air = 10;
   });
 
@@ -929,13 +1079,14 @@
     var s = await reset(g);
     s.inv.add(B.BRICK, 7);
     await frames(3);
-    var slots = document.querySelectorAll('.hotbar .slot');
+    var hudH = g.ui.hudDe(0);
+    var slots = hudH.querySelectorAll('.hotbar .slot');
     A.ok(slots[0].classList.contains('on'), 'case 0 sélectionnée');
     A.equal(slots[0].querySelector('.n').textContent, '7', 'quantité affichée');
     key('Digit3');
     await frames(3);
     A.equal(s.selected, 2, 'sélection au clavier');
-    A.ok(document.querySelectorAll('.hotbar .slot')[2].classList.contains('on'), 'surbrillance déplacée');
+    A.ok(hudH.querySelectorAll('.hotbar .slot')[2].classList.contains('on'), 'surbrillance déplacée');
     s.selected = 0;
   });
 
