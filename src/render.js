@@ -179,7 +179,86 @@
       entityMeshes.clear();
     }
 
-    function syncEntities(entities) {
+    /* Joueurs distants : meme representation que les mobs, avec une etiquette
+       de nom. Ils vivent dans une table separee des entites locales pour ne
+       pas etre simules deux fois. */
+    var maillagesDistants = new Map();
+
+    /* Etiquette de nom : un sprite toujours face a la camera. On la dessine
+       sur un petit canvas plutot que d utiliser du DOM, pour qu elle soit
+       occultee par le decor comme n importe quel objet de la scene. */
+    function etiquetteNom(texte) {
+      var cv = document.createElement('canvas');
+      cv.width = 256; cv.height = 64;
+      var ctx = cv.getContext('2d');
+      ctx.font = 'bold 34px ui-monospace, Menlo, Consolas, monospace';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      var w = Math.min(248, ctx.measureText(texte).width + 24);
+      ctx.fillStyle = 'rgba(10,12,16,.72)';
+      ctx.fillRect((256 - w) / 2, 10, w, 44);
+      ctx.fillStyle = '#e8eaed';
+      ctx.fillText(texte, 128, 33, 240);
+      var tex = new THREE.CanvasTexture(cv);
+      tex.minFilter = THREE.LinearFilter;
+      var sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true,
+                                                          depthTest: true }));
+      sp.scale.set(1.6, 0.4, 1);
+      sp.position.y = 2.15;
+      return sp;
+    }
+
+    function syncDistants(net) {
+      var vus = new Set();
+      net.distants.forEach(function (d) {
+        vus.add(d.id);
+        var m = maillagesDistants.get(d.id);
+        if (!m) {
+          m = mobMesh('villager', { w: 0.6, h: 1.8 });
+          m.traverse(function (o) {
+            if (o.material && o.material.color) o.material.color.setHex(0x4a86c8);
+          });
+          m.add(etiquetteNom(d.nom || ('Joueur ' + d.id)));
+          m.userData.nom = d.nom;
+          scene.add(m);
+          maillagesDistants.set(d.id, m);
+        } else if (m.userData.nom !== d.nom && d.nom) {
+          // le nom n arrive parfois qu apres la premiere position
+          var vieille = m.children.filter(function (o) { return o.isSprite; });
+          vieille.forEach(function (o) {
+            m.remove(o);
+            if (o.material) { if (o.material.map) o.material.map.dispose(); o.material.dispose(); }
+          });
+          m.add(etiquetteNom(d.nom));
+          m.userData.nom = d.nom;
+        }
+        m.position.set(d.pos.x, d.pos.y, d.pos.z);
+        m.rotation.y = d.yaw || 0;
+      });
+      maillagesDistants.forEach(function (m, id) {
+        if (!vus.has(id)) { libererEntite(m); maillagesDistants.delete(id); }
+      });
+
+      // mobs simules par le serveur
+      net.mobsDistants.forEach(function (d) {
+        var cle = 'm' + d.eid;
+        vus.add(cle);
+        var m2 = maillagesDistants.get(cle);
+        if (!m2) {
+          m2 = mobMesh(d.type, MC.EntitySpecs[d.type] || MC.EntitySpecs.sheep);
+          scene.add(m2);
+          maillagesDistants.set(cle, m2);
+        }
+        m2.position.set(d.pos.x, d.pos.y, d.pos.z);
+        m2.rotation.y = d.yaw || 0;
+      });
+      maillagesDistants.forEach(function (m, id) {
+        if (!vus.has(id)) { libererEntite(m); maillagesDistants.delete(id); }
+      });
+    }
+
+    function syncEntities(entities, net) {
+      if (net) syncDistants(net);
       var seen = new Set();
       for (var i = 0; i < entities.list.length; i++) {
         var e = entities.list[i];
@@ -349,7 +428,8 @@
       syncChunk: syncChunk, disposeChunk: disposeChunk, syncEntities: syncEntities,
       updateAmbience: updateAmbience, setHighlight: setHighlight, setCamera: setCamera,
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
-      libererToutesEntites: libererToutesEntites,
+      libererToutesEntites: libererToutesEntites, syncDistants: syncDistants,
+      maillagesDistants: maillagesDistants,
       get materiauxLiberes() { return liberees; },
       resize: resize, render: render, renderViews: renderViews,
       cameraDe: cameraDe, cameras: cameras, RENDER_DIST: RENDER_DIST,

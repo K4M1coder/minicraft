@@ -127,29 +127,29 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-NET-001 | La poignée de main WebSocket calcule la clé d'acceptation | vecteur de test RFC 6455 | ⏳ |
-| SPEC-NET-002 | Une trame texte courte est encodée puis décodée à l'identique | aller-retour | ⏳ |
-| SPEC-NET-003 | Une trame de taille moyenne (126–65535) est gérée | aller-retour sur 1000 octets | ⏳ |
-| SPEC-NET-004 | Une trame client masquée est démasquée correctement | décodage avec clé de masque | ⏳ |
-| SPEC-NET-005 | Une trame de fermeture est reconnue | opcode 0x8 détecté | ⏳ |
-| SPEC-NET-006 | Un `ping` reçoit un `pong` | opcode 0x9 → 0xA | ⏳ |
-| SPEC-NET-007 | Les messages du protocole sont typés et validés | un message sans `t` est rejeté | ⏳ |
-| SPEC-NET-008 | Un message inconnu est ignoré sans planter | pas d'exception | ⏳ |
-| SPEC-NET-009 | À la connexion, le serveur transmet graine, mode, difficulté et heure | message `bienvenue` complet | ⏳ |
-| SPEC-NET-010 | Le serveur attribue un identifiant unique par joueur | deux connexions, deux identifiants | ⏳ |
-| SPEC-NET-011 | Une pose de bloc est appliquée puis diffusée à tous | l'état serveur change, les autres reçoivent | ⏳ |
-| SPEC-NET-012 | Le serveur fait autorité sur les blocs : un client désynchronisé est corrigé | l'état du serveur l'emporte | ⏳ |
-| SPEC-NET-013 | La position d'un joueur est relayée aux autres, pas à lui-même | l'émetteur ne se reçoit pas | ⏳ |
-| SPEC-NET-014 | Un message de chat est diffusé à tous, émetteur compris | tous reçoivent | ⏳ |
-| SPEC-NET-015 | La déconnexion retire le joueur de la liste et prévient les autres | message `quitte` | ⏳ |
-| SPEC-NET-016 | Le serveur simule les mobs et diffuse leurs positions | les clients reçoivent des positions | ⏳ |
-| SPEC-NET-017 | Le serveur fait autorité sur l'heure du monde | l'heure client suit celle du serveur | ⏳ |
-| SPEC-NET-018 | Un client qui rejoint reçoit l'état déjà modifié du monde | les blocs posés avant sa venue lui parviennent | ⏳ |
-| SPEC-NET-019 | Le serveur sert aussi les fichiers statiques | une requête HTTP sur index.html répond 200 | ⏳ |
-| SPEC-NET-020 | Le serveur refuse une requête hors de son répertoire | tentative de remontée de chemin rejetée | ⏳ |
-| SPEC-NET-021 | Les joueurs distants sont affichés avec leur nom | une entité par joueur distant | ⏳ |
-| SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ⏳ |
-| SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ⏳ |
+| SPEC-NET-001 | La poignée de main WebSocket calcule la clé d'acceptation | vecteur de test RFC 6455 | ✅ |
+| SPEC-NET-002 | Une trame texte courte est encodée puis décodée à l'identique | aller-retour | ✅ |
+| SPEC-NET-003 | Une trame de taille moyenne (126–65535) est gérée | aller-retour sur 1000 octets | ✅ |
+| SPEC-NET-004 | Une trame client masquée est démasquée correctement | décodage avec clé de masque | ✅ |
+| SPEC-NET-005 | Une trame de fermeture est reconnue | opcode 0x8 détecté | ✅ |
+| SPEC-NET-006 | Un `ping` reçoit un `pong` | opcode 0x9 → 0xA | ✅ |
+| SPEC-NET-007 | Les messages du protocole sont typés et validés | un message sans `t` est rejeté | ✅ |
+| SPEC-NET-008 | Un message inconnu est ignoré sans planter | pas d'exception | ✅ |
+| SPEC-NET-009 | À la connexion, le serveur transmet graine, mode, difficulté et heure | message `bienvenue` complet | ✅ |
+| SPEC-NET-010 | Le serveur attribue un identifiant unique par joueur | deux connexions, deux identifiants | ✅ |
+| SPEC-NET-011 | Une pose de bloc est appliquée puis diffusée à tous | l'état serveur change, les autres reçoivent | ✅ |
+| SPEC-NET-012 | Le serveur fait autorité sur les blocs : un client désynchronisé est corrigé | l'état du serveur l'emporte | ✅ |
+| SPEC-NET-013 | La position d'un joueur est relayée aux autres, pas à lui-même | l'émetteur ne se reçoit pas | ✅ |
+| SPEC-NET-014 | Un message de chat est diffusé à tous, émetteur compris | tous reçoivent | ✅ |
+| SPEC-NET-015 | La déconnexion retire le joueur de la liste et prévient les autres | message `quitte` | ✅ |
+| SPEC-NET-016 | Le serveur simule les mobs et diffuse leurs positions | les clients reçoivent des positions | ✅ |
+| SPEC-NET-017 | Le serveur fait autorité sur l'heure du monde | l'heure client suit celle du serveur | ✅ |
+| SPEC-NET-018 | Un client qui rejoint reçoit l'état déjà modifié du monde | les blocs posés avant sa venue lui parviennent | ✅ |
+| SPEC-NET-019 | Le serveur sert aussi les fichiers statiques | une requête HTTP sur index.html répond 200 | ✅ |
+| SPEC-NET-020 | Le serveur refuse une requête hors de son répertoire | tentative de remontée de chemin rejetée | ✅ |
+| SPEC-NET-021 | Les joueurs distants sont affichés avec leur nom | une entité par joueur distant | ✅ |
+| SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ✅ |
+| SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ✅ |
 
 ## AUDIT — correctifs issus de la relecture
 

@@ -33,10 +33,47 @@
     var audio = MC.createAudio();
     var chat = MC.Chat.creer();
 
+    /* Client reseau. Nul tant qu on joue en solo : le jeu fonctionne
+       exactement pareil, le reseau n est qu une couche en plus. */
+    var net = MC.createNetClient({
+      onBienvenue: function (m) {
+        // le serveur fait autorite sur la graine : on rebatit le monde
+        if (m.graine !== world.seed) {
+          ui.toast('Graine du serveur : ' + m.graine + ' — monde reconstruit');
+        }
+        g.time = m.heure || 0;
+        (m.blocs || []).forEach(function (b) {
+          var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
+          world.getChunk(cx, cz, true);
+          world.setBlock(b[0], b[1], b[2], b[3]);
+        });
+        (m.chat || []).forEach(function (c) { chat.recevoir(c); });
+        chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
+      },
+      onBloc: function (x, y, z, id) {
+        // autorite serveur : on applique sans discuter, meme si l on avait
+        // predit autre chose localement
+        var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+        if (world.chunks.has(world.key(cx, cz))) world.setBlock(x, y, z, id);
+      },
+      onChat: function (m) { chat.recevoir(m); },
+      onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
+      onQuitte: function (m) { chat.systeme((m.nom || 'Un joueur') + ' est parti'); },
+      onEtat: function (m) { if (typeof m.heure === 'number') g.time = m.heure; },
+      onStatut: function (e, info) {
+        if (e === 'en ligne') ui.toast('En ligne');
+        else if (e === 'erreur') ui.toast('Reseau : ' + (info || 'erreur'), 'warn');
+        else if (e === 'hors ligne' && info) {
+          ui.toast('Reseau : ' + info + ' — retour en solo', 'warn');
+          chat.systeme('Connexion perdue. La partie continue en solo.');
+        }
+      },
+    });
+
     var g = {
       world: world, entities: entities, player: player, render: render,
       time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
-      equipe: equipe, regles: regles, vues: [], nbLocaux: 1,
+      equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net,
       disposeChunk: render.disposeChunk,
     };
 
@@ -346,6 +383,11 @@
         input.setState('ui');
         return;
       }
+      if (res === 'place' && net.enLigne()) {
+        // le serveur fait autorite : on lui annonce la pose
+        var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
+        net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz));
+      }
       if (res === 'place') audio.play('poser');
       else if (res === 'eat') audio.play('manger');
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
@@ -427,8 +469,26 @@
           break;
         case 'graine': chat.systeme('Graine du monde : ' + world.seed); break;
         case 'aide':
-          chat.systeme('Commandes : /heure /jour /nuit /ou /graine /vider /aide');
+          chat.systeme('Commandes : /heure /jour /nuit /ou /graine /vider /aide ' +
+                       '/rejoindre [adresse] /quitter /qui');
           break;
+        case 'rejoindre': {
+          var hote = cmd.args[0] || '';
+          chat.systeme('Connexion' + (hote ? ' a ' + hote : ' au serveur local') + '…');
+          net.connecter(hote, g.nomJoueur || 'Joueur', equipe.length);
+          break;
+        }
+        case 'quitter':
+          net.deconnecter();
+          chat.systeme('Deconnecte. Partie en solo.');
+          break;
+        case 'qui': {
+          if (!net.enLigne()) { chat.systeme('Hors ligne.'); break; }
+          var noms = [];
+          net.distants.forEach(function (d) { noms.push(d.nom); });
+          chat.systeme('En ligne : vous' + (noms.length ? ', ' + noms.join(', ') : ' (seul)'));
+          break;
+        }
         case 'vider': chat.vider(); break;
         default: chat.systeme('Commande inconnue : /' + cmd.nom);
       }
@@ -510,6 +570,7 @@
         var pos = { x: cible.x, y: cible.y, z: cible.z };
         var res = pl.mineTick(dt, cible);
         if (res) {
+          if (net.enLigne()) net.poserBloc(pos.x, pos.y, pos.z, 0);
           if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive) spillContainer(pos.x, pos.y, pos.z);
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
@@ -643,7 +704,15 @@
         render.setHighlight(null);
       }
 
-      render.syncEntities(entities);
+      if (net.enLigne()) {
+        net.pousserPosition(dt, player.state);
+        net.interpoler(dt);
+      }
+      /* On passe TOUJOURS l objet reseau, meme hors ligne : ses tables sont
+         alors vides et la meme boucle de reconciliation retire les maillages
+         des joueurs partis. Appeler la synchronisation seulement en ligne
+         laissait des joueurs fantomes dans la scene apres une deconnexion. */
+      render.syncEntities(entities, net);
 
       // une camera par joueur, puis un rendu par vue
       var taille = [host.clientWidth || innerWidth, host.clientHeight || innerHeight];

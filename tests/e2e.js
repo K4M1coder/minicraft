@@ -991,6 +991,98 @@
     soloRetabli(g); await frames(3);
   });
 
+  /* ── Multijoueur ─────────────────────────────────────────────────────────
+     Ces tests ne s executent que si la page est servie par le serveur de jeu :
+     ouverts depuis un simple serveur statique, ils passent en s annoncant
+     ignores plutot que d echouer a tort. */
+  var SERVEUR_DISPO = null;
+  async function serveurPresent() {
+    if (SERVEUR_DISPO !== null) return SERVEUR_DISPO;
+    try {
+      var ws = new WebSocket((location.protocol === 'https:' ? 'wss:' : 'ws:') + '//' + location.host);
+      SERVEUR_DISPO = await new Promise(function (res) {
+        var fini = false;
+        var t = setTimeout(function () { if (!fini) { fini = true; try { ws.close(); } catch (e) {} res(false); } }, 1200);
+        ws.onopen = function () { fini = true; clearTimeout(t); ws.close(); res(true); };
+        ws.onerror = function () { if (!fini) { fini = true; clearTimeout(t); res(false); } };
+      });
+    } catch (e) { SERVEUR_DISPO = false; }
+    return SERVEUR_DISPO;
+  }
+
+  e2e('SPEC-NET-021 : un joueur distant est affiche avec son nom', async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    var autre = MC.createNetClient({});
+    g.net.connecter('', 'Hote', 1);
+    await wait(700);
+    A.equal(g.net.etat, 'en ligne', 'connecte');
+    autre.connecter('', 'Visiteur', 1);
+    await wait(700);
+    autre.envoyer({ t: 'bouge', x: g.player.state.pos.x + 3, y: g.player.state.pos.y,
+                    z: g.player.state.pos.z, yaw: 0 });
+    await wait(500);
+    await frames(5);
+    A.equal(g.net.distants.size, 1, 'un joueur distant connu');
+    var d = [...g.net.distants.values()][0];
+    A.equal(d.nom, 'Visiteur', 'son nom est connu');
+    A.gt(g.render.maillagesDistants.size, 0, 'un maillage lui est associe');
+    var m = g.render.maillagesDistants.get(d.id);
+    A.ok(m && m.children.some(function (o) { return o.isSprite; }), 'une etiquette de nom existe');
+    autre.deconnecter(); g.net.deconnecter();
+    await wait(300);
+  });
+
+  e2e('SPEC-NET-011 : une pose de bloc est diffusee aux autres', async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    g.net.connecter('', 'Poseur', 1);
+    await wait(700);
+    var s2 = g.player.state;
+    var bx = Math.floor(s2.pos.x) + 5, bz = Math.floor(s2.pos.z) + 5;
+    var by = g.world.groundAt(bx, bz, true) + 1;
+    g.world.setBlock(bx, by, bz, 0);
+    g.net.poserBloc(bx, by, bz, B.BRICK);
+    await wait(600);
+    A.equal(g.world.getBlock(bx, by, bz), B.BRICK, 'le serveur a confirme la pose');
+    g.net.deconnecter();
+    await wait(300);
+  });
+
+  e2e('SPEC-NET-022 : ecran partage et reseau se combinent', async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    navigator.getGamepads = function () { return [{ connected: true, index: 0, axes: [0,0,0,0], buttons: [] }]; };
+    g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
+    await frames(4);
+    g.net.connecter('', 'Duo', g.equipe.length);
+    await wait(800);
+    A.equal(g.net.etat, 'en ligne', 'connecte malgre l ecran partage');
+    A.equal(g.equipe.length, 2, 'toujours deux joueurs locaux');
+    A.equal(g.vues.length, 2, 'toujours deux vues');
+    g.net.deconnecter();
+    g.composerEquipe(1, MC.Modes.regles('survie', 'facile'));
+    await wait(300);
+  });
+
+  e2e('SPEC-NET-023 : la perte de connexion bascule en solo sans planter', async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    g.net.connecter('', 'Fragile', 1);
+    await wait(700);
+    A.equal(g.net.etat, 'en ligne', 'connecte');
+    g.net.deconnecter();
+    await frames(10);
+    A.equal(g.net.etat, 'hors ligne', 'hors ligne');
+    A.equal(g.net.distants.size, 0, 'les joueurs distants sont oublies');
+    // et le jeu continue de tourner
+    var y0 = g.player.state.pos.y;
+    g.player.state.pos.y += 5;
+    await frames(40);
+    A.lt(g.player.state.pos.y, y0 + 5, 'la physique tourne toujours');
+    A.equal(g.render.maillagesDistants.size, 0, 'plus aucun maillage distant');
+  });
+
   e2e('le ciel change entre le jour et la nuit', async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;
