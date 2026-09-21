@@ -17,10 +17,34 @@
     arrow:    { w: 0.16, h: 0.16, hp: 1,  speed: 0,   damage: 5, projectile: true },
   };
 
+  /* Cap d'une créature. Le maillage a ses yeux vers -Z : après rotation de
+     `yaw` autour de Y, son avant vaut (-sin, 0, -cos). Pour regarder vers
+     (dx, dz) il faut donc yaw = atan2(-dx, -dz).
+     La formule d'errance précédente (-dir + PI/2) donnait exactement l'opposé :
+     les créatures marchaient à reculons. Une seule fonction désormais, pour que
+     poursuite et errance ne puissent plus diverger. */
+  function capVers(dx, dz) {
+    if (Math.abs(dx) < 1e-9 && Math.abs(dz) < 1e-9) return null;   // pas de cap
+    return Math.atan2(-dx, -dz);
+  }
+
+  /* Rayon de séparation entre deux corps : moyenne des demi-largeurs, un peu
+     resserrée pour que les créatures puissent se frôler sans se repousser en
+     permanence. */
+  function largeurDe(x) { return (x && typeof x.w === 'number') ? x.w : 0.6; }
+  function hauteurDe(x) { return (x && typeof x.h === 'number') ? x.h : 1.8; }
+  /* Une largeur manquante donnerait NaN, et NaN contamine silencieusement
+     toutes les positions : le corps finit hors du monde sans la moindre erreur.
+     D'ou les valeurs de repli. */
+  function rayonSeparation(a, b) { return (largeurDe(a) + largeurDe(b)) * 0.42; }
+  var VITESSE_SEPARATION = 4;   // m/s : vitesse a laquelle deux corps s ecartent
+  var POUSSEE_MAX = 0.2;        // deplacement total maximal par image
+
   var ARROW_GRAVITY = 14;      // plus douce que la chute libre : trajectoire lisible
   var ARROW_VIE = 12;          // secondes avant disparition
 
   var GRAVITY = 30, MAX_FALL = 55;
+  var NAGE_FREIN = 0.62;        // facteur de vitesse horizontale dans l'eau
 
   function createEntities(world) {
     var list = [];
@@ -110,6 +134,96 @@
       }
     }
 
+    /* Un corps peut-il en repousser un autre ? Les objets au sol et les
+       projectiles traversent tout le monde : les faire pousser rendrait le
+       ramassage désagréable et ferait dévier les tirs. */
+    function corpsSolide(x) {
+      return x && !x.dead && x.type !== 'item' && x.type !== 'arrow';
+    }
+
+    /* Écarte deux corps qui se chevauchent, horizontalement seulement : une
+       poussée verticale empêcherait de se tenir sur une créature et
+       provoquerait des éjections vers le haut. */
+    function ecarter(a, b, dt, poidsA, poidsB) {
+      var dx = a.pos.x - b.pos.x, dz = a.pos.z - b.pos.z;
+      var d = Math.hypot(dx, dz);
+      var r = rayonSeparation(a, b);
+      if (d >= r) return 0;
+
+      // chevauchement vertical : deux corps l'un au-dessus de l'autre ne se
+      // repoussent pas
+      var hA = hauteurDe(a), hB = hauteurDe(b);
+      if (a.pos.y >= b.pos.y + hB || b.pos.y >= a.pos.y + hA) return 0;
+
+      // superposition exacte : on choisit une direction stable plutôt qu'au hasard
+      if (d < 1e-6) {
+        var ang = ((a.eid || 1) * 2.39996);          // angle d'or : repartition
+        dx = Math.cos(ang); dz = Math.sin(ang); d = 1;
+      }
+      var chevauche = r - d;
+      // vitesse d ecartement plutot qu un pas fixe : le comportement ne depend
+      // plus de la cadence d affichage
+      var pousse = Math.min(chevauche, VITESSE_SEPARATION * Math.max(dt, 1 / 240));
+      var ux = dx / d, uz = dz / d;
+      a.pos.x += ux * pousse * poidsA;
+      a.pos.z += uz * pousse * poidsA;
+      if (poidsB) { b.pos.x -= ux * pousse * poidsB; b.pos.z -= uz * pousse * poidsB; }
+      return pousse;
+    }
+
+    /* Repousse corps (un joueur) hors des créatures. Le joueur seul bouge :
+       une créature repoussée par le joueur serait injouable en combat. */
+    function separer(corps, dt) {
+      if (!corps || corps.dead) return 0;
+      var total = 0;
+      var avantX = corps.pos.x, avantZ = corps.pos.z;
+      for (var i = 0; i < list.length; i++) {
+        var o = list[i];
+        if (!corpsSolide(o)) continue;
+        total += ecarter(corps, o, dt, 1, 0);
+      }
+      /* On borne le deplacement TOTAL, pas chaque contribution : trois corps
+         superposes cumuleraient sinon leurs poussees et projetteraient le
+         joueur au loin. */
+      var dx = corps.pos.x - avantX, dz = corps.pos.z - avantZ;
+      var d = Math.hypot(dx, dz);
+      if (d > POUSSEE_MAX) {
+        corps.pos.x = avantX + (dx / d) * POUSSEE_MAX;
+        corps.pos.z = avantZ + (dz / d) * POUSSEE_MAX;
+      }
+      /* La poussée ne doit jamais faire entrer dans un bloc : sinon un mob
+         acculant le joueur contre un mur le ferait passer au travers. */
+      if (total > 0 && P.collides(world, corps.pos.x, corps.pos.y, corps.pos.z,
+                                  largeurDe(corps), hauteurDe(corps))) {
+        corps.pos.x = avantX; corps.pos.z = avantZ;
+      }
+      return total;
+    }
+
+    /* Sépare les créatures entre elles, chacune cédant la moitié. */
+    function separerEntites(dt) {
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        var a = list[i];
+        if (!corpsSolide(a)) continue;
+        for (var j = i + 1; j < list.length; j++) {
+          var b = list[j];
+          if (!corpsSolide(b)) continue;
+          var avant = { ax: a.pos.x, az: a.pos.z, bx: b.pos.x, bz: b.pos.z };
+          if (ecarter(a, b, dt, 0.5, 0.5) > 0) {
+            n++;
+            if (P.collides(world, a.pos.x, a.pos.y, a.pos.z, a.w, a.h)) {
+              a.pos.x = avant.ax; a.pos.z = avant.az;
+            }
+            if (P.collides(world, b.pos.x, b.pos.y, b.pos.z, b.w, b.h)) {
+              b.pos.x = avant.bx; b.pos.z = avant.bz;
+            }
+          }
+        }
+      }
+      return n;
+    }
+
     function remove(e) {
       e.dead = true;
       var i = list.indexOf(e);
@@ -143,10 +257,22 @@
       if (P.inWater(world, e.pos, e.h)) {
         e.vel.y -= GRAVITY * 0.28 * dt;
         if (e.vel.y < -2.2) e.vel.y = -2.2;
-        if (e.type !== 'item') e.vel.y += 3.0 * dt;      // les mobs surnagent
+        if (e.type !== 'item') {
+          /* Flottaison amortie : une poussée constante fait osciller la
+             créature autour de la surface. On vise une vitesse de remontée
+             et on freine à mesure qu'on s'en approche, ce qui stabilise. */
+          var cible = P.headInWater(world, e.pos, e.h * 0.9) ? 3.2 : 0;
+          e.vel.y = P.approach(e.vel.y, cible, 6, dt);
+        }
       } else {
         e.vel.y -= GRAVITY * dt;
         if (e.vel.y < -MAX_FALL) e.vel.y = -MAX_FALL;
+      }
+      /* Dans l'eau, on avance moins vite : sans cela une créature nage aussi
+         vite qu'elle court, ce qui rend les poursuites aquatiques absurdes. */
+      if (P.inWater(world, e.pos, e.h) && e.type !== 'item' && e.type !== 'arrow') {
+        e.vel.x *= NAGE_FREIN;
+        e.vel.z *= NAGE_FREIN;
       }
       var hit = P.move(world, e, dt, e.w, e.h);
       e.onGround = hit.landed || (e.onGround && !hit.y && Math.abs(e.vel.y) < 1e-3);
@@ -172,7 +298,8 @@
         var d = dist || 1;
         e.vel.x = (dx / d) * s.speed;
         e.vel.z = (dz / d) * s.speed;
-        e.yaw = Math.atan2(-dx, -dz);
+        var cp = capVers(dx, dz);
+        if (cp !== null) e.yaw = cp;
         // sauter par-dessus un obstacle d'un bloc
         if (e.onGround) {
           var ax = Math.floor(e.pos.x + (dx / d) * 0.7);
@@ -202,7 +329,8 @@
           var sp = s.speed * 0.6;
           e.vel.x = Math.cos(e.wanderDir) * sp;
           e.vel.z = Math.sin(e.wanderDir) * sp;
-          e.yaw = -e.wanderDir + Math.PI / 2;
+          var cw = capVers(e.vel.x, e.vel.z);
+          if (cw !== null) e.yaw = cw;
           if (e.onGround) {
             var bx = Math.floor(e.pos.x + Math.cos(e.wanderDir) * 0.7);
             var bz = Math.floor(e.pos.z + Math.sin(e.wanderDir) * 0.7);
@@ -257,9 +385,13 @@
         stepBody(e, dt);
         if (act && act.attack) events.damage += act.attack;
 
+        // une créature ne traverse pas le joueur
+        if (player && !player.dead) ecarter(e, player, dt, 1, 0);
+
         // noyade et chute dans le vide
         if (e.pos.y < -20) remove(e);
       }
+      separerEntites(dt);
       return events;
     }
 
@@ -369,7 +501,8 @@
     return {
       list: list, SPECS: SPECS, spawn: spawn, dropItem: dropItem, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
-      tirer: tirer, stepArrow: stepArrow,
+      tirer: tirer, stepArrow: stepArrow, capVers: capVers,
+      separer: separer, separerEntites: separerEntites, ecarter: ecarter,
       countOf: countOf, trySpawn: trySpawn, burnUndead: burnUndead, stepBody: stepBody,
       stepAI: stepAI,
     };

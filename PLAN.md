@@ -68,6 +68,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L7** | Écran partagé 2 à 4 joueurs locaux | `SPLIT` | fait |
 | **L8** | Multijoueur client/serveur | `NET` | fait |
 | **L9** | Menus (parties, création, multijoueur), documentation | `MENU` | fait |
+| **L10** | Corps solides, nage, grille 3×3, livre des recettes et des objets | `IA` `COLL` `NAGE` `GRILLE` `LIVRE` | fait |
 
 ### Dépendances entre lots
 

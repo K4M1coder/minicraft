@@ -167,6 +167,7 @@
       g.nomPartie = meta.nom;
       regles = MC.Modes.regles(meta.mode, meta.difficulte);
       g.regles = regles;
+      ui.setRegles(regles);
       g.graine = meta.graine;
     }
 
@@ -291,6 +292,7 @@
       n = Math.max(1, Math.min(MC.Split.MAX_LOCAUX, n | 0));
       regles = nouvellesRegles || regles;
       g.regles = regles;
+      ui.setRegles(regles);
 
       var col = world.findSpawnColumn();
       streamChunks(true);
@@ -501,6 +503,10 @@
       if (code === 'KeyE') {
         ui.openContainer('inv', player.state.inv);
         input.setState('ui');
+      } else if (code === 'KeyL') {
+        ui.openContainer('inv', player.state.inv);
+        ui.toggleLivre();
+        input.setState('ui');
       } else if (code === 'F5') {
         doSave(true);
       } else if (code === 'KeyT') {
@@ -519,7 +525,9 @@
     }
 
     function onKeyAnyState(code) {
-      if (input.state === 'ui' && (code === 'KeyE')) closeUI();
+      if (input.state !== 'ui') return;
+      if (code === 'KeyE') closeUI();
+      else if (code === 'KeyL') ui.toggleLivre();
     }
 
     function onEscape() {
@@ -661,6 +669,9 @@
 
       if (st.dead) return;
       pl.updateMovement(dt, touches);
+      // on ne traverse pas les creatures : la separation vient APRES le
+      // deplacement, sinon le joueur entre puis ressort en tremblant
+      entities.separer(st, dt);
       pl.updateSurvival(dt);
 
       // visee et actions

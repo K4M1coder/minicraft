@@ -20,7 +20,7 @@ const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[
    toucher au navigateur. C'est la porte qui protège toute la stratégie de test. */
 const PURS = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory',
               'entities', 'player', 'daycycle', 'save', 'saves', 'modes',
-              'chat', 'split', 'gamepad', 'net-protocol'];
+              'chat', 'split', 'gamepad', 'net-protocol', 'livre'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net'];
 
 function lire(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }

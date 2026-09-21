@@ -1360,6 +1360,134 @@
     await reset(g);
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // Grille 3×3, livre des recettes et livre des objets
+  // ══════════════════════════════════════════════════════════════════════════
+  /* Referme proprement l'inventaire quel que soit l'etat laisse par le test. */
+  async function fermerInv(g) {
+    if (g.ui.isContainerOpen()) { key('KeyE'); await frames(2); }
+    g.input.setState('playing');
+    fakeLock(g, true);
+    await frames(2);
+  }
+
+  e2e('SPEC-GRILLE-001 : la grille de craft de l inventaire fait 3x3', async function (g) {
+    await reset(g);
+    key('KeyE');
+    await frames(3);
+    A.equal(g.input.state, 'ui', 'inventaire ouvert');
+    var cases = document.querySelectorAll('.inv-screen .craft-grid .slot');
+    A.equal(cases.length, 9, 'neuf cases de fabrication');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-GRILLE-004 : fermer l inventaire rend le contenu de la grille', async function (g) {
+    var s = await reset(g);
+    s.inv.add(B.PLANKS, 5);
+    key('KeyE');
+    await frames(3);
+    // on pose deux planches dans la grille, prelevees de l'inventaire
+    g.ui.container.grid[0] = { id: B.PLANKS, n: 2 };
+    s.inv.remove(B.PLANKS, 2);
+    A.equal(s.inv.count(B.PLANKS), 3, 'trois planches restent en poche');
+    key('KeyE');
+    await frames(3);
+    A.equal(s.inv.count(B.PLANKS), 5, 'les cinq planches sont revenues');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-LIVRE-005 : L ouvre le livre, recettes faisables en tete', async function (g) {
+    var s = await reset(g);
+    s.inv.add(B.LOG, 4);
+    key('KeyL');
+    await frames(3);
+    A.equal(g.input.state, 'ui', 'le livre ouvre aussi l inventaire');
+    var pan = document.querySelector('.inv-screen .livre');
+    A.ok(pan, 'panneau du livre affiche');
+    A.equal(pan.querySelector('h3').textContent, 'Livre des recettes', 'variante survie');
+    var lignes = pan.querySelectorAll('.livre-liste .rec');
+    A.gt(lignes.length, 10, 'toutes les recettes sont listees');
+    A.ok(lignes[0].classList.contains('ok'), 'la premiere est realisable');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-LIVRE-004 : un ingredient manquant est signale dans le livre', async function (g) {
+    await reset(g);
+    key('KeyL');
+    await frames(3);
+    var pan = document.querySelector('.inv-screen .livre');
+    A.equal(pan.querySelectorAll('.livre-liste .rec.ok').length, 0,
+            'les mains vides, rien n est realisable');
+    A.gt(pan.querySelectorAll('.livre-liste .rec-i .slot.ko').length, 10,
+         'les ingredients manquants sont marques');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-LIVRE-006 : la recherche restreint le livre sans fermer l inventaire',
+      async function (g) {
+    await reset(g);
+    key('KeyL');
+    await frames(3);
+    var pan = document.querySelector('.inv-screen .livre');
+    var total = pan.querySelectorAll('.livre-liste .rec').length;
+    var champ = pan.querySelector('.livre-rech');
+    champ.value = 'pioche';
+    champ.dispatchEvent(new Event('input', { bubbles: true }));
+    await frames(2);
+    var apres = pan.querySelectorAll('.livre-liste .rec').length;
+    A.equal(apres, 3, 'les trois pioches');
+    A.lt(apres, total, 'la liste est bien restreinte');
+    /* Taper « e » dans la recherche ne doit pas refermer l'inventaire : le
+       champ absorbe les touches du jeu. */
+    champ.dispatchEvent(new KeyboardEvent('keydown', { code: 'KeyE', key: 'e', bubbles: true }));
+    await frames(2);
+    A.equal(g.input.state, 'ui', 'l inventaire est toujours ouvert');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-LIVRE-007 : cliquer une recette la pose dans la grille', async function (g) {
+    var s = await reset(g);
+    s.inv.add(B.PLANKS, 3); s.inv.add(I.STICK, 2);
+    key('KeyL');
+    await frames(3);
+    var pan = document.querySelector('.inv-screen .livre');
+    var cible = null;
+    Array.prototype.forEach.call(pan.querySelectorAll('.livre-liste .rec.ok'), function (r) {
+      if (!cible && r.querySelector('.rec-n').textContent.indexOf('Pioche') === 0) cible = r;
+    });
+    A.ok(cible, 'la pioche est realisable');
+    cible.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await frames(3);
+    A.equal(g.ui.container.result && g.ui.container.result.id, I.WOOD_PICKAXE,
+            'la grille produit une pioche en bois');
+    A.equal(s.inv.count(B.PLANKS), 0, 'les planches ont ete prelevees');
+    A.equal(s.inv.count(I.STICK), 0, 'les batons aussi');
+    await fermerInv(g);
+  });
+
+  e2e('SPEC-LIVRE-012 / SPEC-LIVRE-010 : en creatif le livre donne les objets',
+      async function (g) {
+    var reglesAvant = g.regles;
+    var s = await reset(g);
+    g.ui.setRegles(MC.Modes.regles('creatif', 'facile'));
+    key('KeyL');
+    await frames(3);
+    var pan = document.querySelector('.inv-screen .livre');
+    A.equal(pan.querySelector('h3').textContent, 'Livre des objets', 'variante creatif');
+    A.equal(pan.querySelectorAll('.livre-liste .rec').length, 0, 'pas de recettes ici');
+    var champ = pan.querySelector('.livre-rech');
+    champ.value = 'Pioche en fer';
+    champ.dispatchEvent(new Event('input', { bubbles: true }));
+    await frames(2);
+    var lignes = pan.querySelectorAll('.livre-liste .obj');
+    A.equal(lignes.length, 1, 'une seule entree');
+    lignes[0].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }));
+    await frames(3);
+    A.equal(s.inv.count(I.IRON_PICKAXE), 1, 'la pioche en fer est arrivee sans craft');
+    await fermerInv(g);
+    g.ui.setRegles(reglesAvant);
+  });
+
   // ─── exécution ─────────────────────────────────────────────────────────────
   async function runE2E(g, onProgress) {
     initRefs();

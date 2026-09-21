@@ -6,6 +6,7 @@
   var C = MC.Core, Inv = MC.Inventory, DC = MC.DayCycle, C_Chat = MC.Chat;
 
   function createUI(root, atlas, hooks) {
+    var Livre = MC.Livre;
     hooks = hooks || {};
     var ICON = 32;
 
@@ -547,6 +548,13 @@
     var container = null;   // {kind:'inv'|'craft'|'furnace', grid:[], result, furnace, pos}
     var heldStack = null;
 
+    /* Les règles de la partie : le livre change de nature selon le mode.
+       En survie il explique ce qu'il faut rassembler ; en créatif il donne
+       directement l'objet, ce qui n'aurait aucun sens en survie. */
+    var regles = null;
+    function setRegles(r) { regles = r; }
+    function estCreatif() { return !!(regles && regles.blocsIllimites); }
+
     function slotEl(cls, stack, onLeft, onRight) {
       var s = el('div', 'slot ' + (cls || ''));
       var ico = el('div', 'ico');
@@ -607,7 +615,11 @@
       }
     }
 
-    function craftSize() { return container && container.kind === 'craft' ? 3 : 2; }
+    /* La grille de fabrication fait 3x3 partout, inventaire compris : limiter
+       l inventaire a 2x2 obligeait a poser un etabli pour fabriquer l etabli
+       lui-meme des lors qu on avait perdu le premier, et rendait le coffre
+       (recette 3x3) inatteignable en pratique. */
+    function craftSize() { return 3; }
 
     function recomputeResult() {
       if (!container || !container.grid) { return; }
@@ -633,6 +645,131 @@
       recomputeResult();
     }
 
+    /* Repose le contenu de la grille dans l'inventaire avant d'y placer une
+       recette : sans ça, choisir une recette écraserait ce qui s'y trouvait. */
+    function viderGrille(inv) {
+      for (var i = 0; i < container.grid.length; i++) {
+        var s = container.grid[i];
+        if (!s) continue;
+        var reste = inv.add(s.id, s.n);
+        container.grid[i] = reste ? { id: s.id, n: reste } : null;
+        if (reste) return false;            // plus de place : on n'écrase rien
+      }
+      return true;
+    }
+
+    function poserRecette(entree, inv) {
+      if (!viderGrille(inv)) { toast('Inventaire plein : videz la grille', 'warn'); return; }
+      var g = Livre.remplirGrille(entree.recette, inv, craftSize());
+      if (!g) { toast('Il manque des ingrédients', 'warn'); return; }
+      container.grid = g;
+      recomputeResult();
+      if (hooks.onSound) hooks.onSound('clic');
+      renderContainer();
+    }
+
+    /* Le livre. Un seul panneau, deux visages :
+       — survie : les recettes, celles qu'on peut faire en tête et en évidence ;
+       — créatif : le catalogue complet, un clic suffit à obtenir l'objet. */
+    function panneauLivre(inv) {
+      var creatif = estCreatif();
+      var pan = el('div', 'livre');
+      pan.appendChild(el('h3', null, creatif ? 'Livre des objets' : 'Livre des recettes'));
+
+      var rech = el('input', 'livre-rech');
+      rech.setAttribute('type', 'text');
+      rech.setAttribute('placeholder', creatif ? 'Chercher un bloc, un objet…' : 'Chercher une recette, un ingrédient…');
+      rech.value = container.livreFiltre || '';
+      pan.appendChild(rech);
+
+      var liste = el('div', 'livre-liste');
+      pan.appendChild(liste);
+      var info = el('p', 'hint', '');
+      pan.appendChild(info);
+
+      function ligneObjet(e) {
+        var row = el('div', 'obj');
+        row.appendChild(slotEl('mini', { id: e.id, n: 1 }));
+        row.appendChild(el('span', 'rec-n', e.nom));
+        row.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          var don = Livre.donner(inv, e.id, null, regles);
+          if (!don) { toast('Indisponible dans ce mode', 'warn'); return; }
+          toast(e.nom + ' ×' + don.donne + (don.reste ? ' (inventaire plein)' : ''));
+          if (hooks.onSound) hooks.onSound('clic');
+          renderContainer();
+        });
+        return row;
+      }
+
+      function ligneRecette(e) {
+        var row = el('div', 'rec' + (e.faisable ? ' ok' : ''));
+        row.appendChild(slotEl('mini result', { id: e.sortie, n: e.n }));
+        var d = el('div', 'rec-d');
+        d.appendChild(el('span', 'rec-n', e.nom));
+        var ing = el('div', 'rec-i');
+        e.besoins.forEach(function (b) {
+          var dispo = inv.count(b.id);
+          var s = slotEl('mini' + (dispo >= b.n ? '' : ' ko'), { id: b.id, n: b.n });
+          s.title = b.nom + ' ×' + b.n + ' — en poche : ' + dispo;
+          ing.appendChild(s);
+        });
+        d.appendChild(ing);
+        row.appendChild(d);
+        if (e.faisable) {
+          row.addEventListener('mousedown', function (ev) {
+            ev.preventDefault(); ev.stopPropagation();
+            poserRecette(e, inv);
+          });
+        }
+        return row;
+      }
+
+      function majListe() {
+        liste.innerHTML = '';
+        if (creatif) {
+          var cat = Livre.catalogueObjets(container.livreFiltre);
+          [['Blocs', cat.blocs], ['Objets', cat.objets]].forEach(function (g) {
+            if (!g[1].length) return;
+            liste.appendChild(el('div', 'livre-cat', g[0]));
+            g[1].forEach(function (e) { liste.appendChild(ligneObjet(e)); });
+          });
+          info.textContent = (cat.blocs.length + cat.objets.length)
+            + ' entrées — un clic vous en donne une pile complète.';
+          if (!cat.blocs.length && !cat.objets.length) info.textContent = 'Aucun résultat.';
+        } else {
+          var entrees = Livre.catalogue(inv, container.livreFiltre);
+          entrees.forEach(function (e) { liste.appendChild(ligneRecette(e)); });
+          var faisables = entrees.filter(function (e) { return e.faisable; }).length;
+          info.textContent = entrees.length
+            ? faisables + ' recette(s) réalisable(s) sur ' + entrees.length
+              + ' — cliquez-en une pour la poser dans la grille.'
+            : 'Aucun résultat.';
+        }
+      }
+
+      rech.addEventListener('input', function () {
+        container.livreFiltre = rech.value;
+        majListe();                       // on ne redessine que la liste : le champ garde le focus
+      });
+      /* Le champ de recherche capte les touches : sans cela, taper « e » dans
+         la recherche refermerait l'inventaire. Échap reste transmis pour
+         pouvoir sortir sans souris. */
+      rech.addEventListener('keydown', function (ev) {
+        if (ev.key !== 'Escape') ev.stopPropagation();
+      });
+      majListe();
+      setTimeout(function () { try { rech.focus(); } catch (_) {} }, 0);
+      return pan;
+    }
+
+    function toggleLivre() {
+      if (!container || !container.grid) return false;
+      container.livre = !container.livre;
+      renderContainer();
+      return container.livre;
+    }
+
     function renderContainer() {
       if (!container) { invScreen.style.display = 'none'; heldGhost.style.display = 'none'; return; }
       var inv = container.inv;
@@ -645,6 +782,19 @@
                 : container.kind === 'trade' ? 'Villageois'
                 : container.kind === 'chest' ? 'Coffre' : 'Inventaire';
       box.appendChild(el('h2', null, titre));
+
+      // le livre n'a de sens que là où il y a une grille de fabrication
+      if (container.grid) {
+        var bar = el('div', 'inv-bar');
+        var bl = el('button', 'btn-livre' + (container.livre ? ' on' : ''),
+                    estCreatif() ? 'Livre des objets (L)' : 'Livre des recettes (L)');
+        bl.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          toggleLivre();
+        });
+        bar.appendChild(bl);
+        box.appendChild(bar);
+      }
 
       // ── échanges : liste d'offres cliquables
       if (container.kind === 'trade') {
@@ -756,7 +906,7 @@
         top.appendChild(wrap);
         if (container.kind !== 'craft')
           top.appendChild(el('p', 'hint',
-            'Grille 2×2. Fabriquez un établi (4 planches) et posez-le pour accéder au 3×3.'));
+            'Grille 3×3. Toutes les recettes du jeu sont réalisables ici.'));
       }
       box.appendChild(top);
 
@@ -783,6 +933,7 @@
       box.appendChild(el('p', 'hint',
         'Clic gauche : prendre / poser la pile · clic droit : moitié / une unité · E ou Échap : fermer'));
       invScreen.appendChild(box);
+      if (container.livre && container.grid) invScreen.appendChild(panneauLivre(inv));
 
       // pile portée par le curseur
       if (heldStack) {
@@ -798,13 +949,14 @@
     });
 
     function openContainer(kind, inv, extra, pos) {
-      var n = kind === 'craft' ? 9 : 4;
+      var n = 9;
       var sansGrille = kind === 'trade' || kind === 'furnace' || kind === 'chest';
       container = { kind: kind, inv: inv,
                     grid: sansGrille ? null : new Array(n).fill(null),
                     result: null,
                     furnace: kind === 'furnace' ? extra : null,
                     chest: kind === 'chest' ? extra : null,
+                    livre: false, livreFiltre: '',
                     pos: pos };
       renderContainer();
     }
@@ -842,6 +994,7 @@
       openContainer: openContainer, closeContainer: closeContainer,
       isContainerOpen: isContainerOpen, renderContainer: renderContainer,
       refreshFurnace: refreshFurnace,
+      setRegles: setRegles, toggleLivre: toggleLivre, estCreatif: estCreatif,
       get heldStack() { return heldStack; },
       get container() { return container; },
     };

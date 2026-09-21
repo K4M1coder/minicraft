@@ -65,7 +65,8 @@ difficulté, une graine et le nombre de joueurs locaux.
 | clic droit | poser · utiliser · tirer à l'arc · interagir |
 | `Espace` | sauter · nager · double-appui = vol |
 | `Maj` | courir · descendre |
-| `E` | inventaire et craft 2×2 |
+| `E` | inventaire et craft 3×3 |
+| `L` | livre des recettes (survie) / des objets (créatif) |
 | `G` | jeter un objet |
 | `T` | chat (`/` ouvre sur une commande) |
 | `M` | couper le son |
@@ -97,9 +98,27 @@ joueurs sur deux machines obtiennent le même monde en tapant le même mot.
 **Monde.** Chunks 16×16×80 générés à la volée, océans, plages, montagnes, grottes
 creusées au bruit 3D, charbon partout, fer en profondeur, arbres.
 
-**Jeu.** Minage progressif selon l'outil, 36 cases d'inventaire, craft 2×2 et 3×3,
-fourneau, coffres, torches, agriculture (houe, graines, blé, pain), zombies, moutons,
-villageois avec cinq offres d'échange, vie, faim, noyade, cycle jour/nuit.
+**Jeu.** Minage progressif selon l'outil, 36 cases d'inventaire, craft 3×3 partout
+(inventaire compris), fourneau, coffres, torches, agriculture (houe, graines, blé,
+pain), zombies, moutons, villageois avec cinq offres d'échange, vie, faim, noyade,
+cycle jour/nuit.
+
+**Livre.** `L` ouvre le livre, qui change de nature selon le mode. En *survie*
+c'est le livre des recettes : toutes les recettes du jeu, les ingrédients de
+chacune avec ce qu'il vous en manque, celles que vous pouvez faire tout de suite
+mises en avant et présentées en premier, et un clic qui pose la recette dans la
+grille. En *créatif* c'est le livre des objets : le catalogue complet, blocs d'un
+côté et objets de l'autre, un clic donne une pile sans rien collecter ni fabriquer.
+Les deux se cherchent au clavier — en survie, la recherche porte aussi sur les
+ingrédients (« ficelle » trouve l'arc).
+
+**Corps.** Joueurs et créatures ne se traversent plus : le chevauchement est résolu
+horizontalement, après le déplacement, avec une poussée bornée qui ne peut pas
+enfoncer quelqu'un dans un mur. On peut toujours se tenir sur une créature.
+
+**Nage.** Flottaison amortie plutôt que poussée constante (sinon on oscille autour de
+la surface), vitesse horizontale réduite dans l'eau, descente plafonnée. Les objets
+au sol, eux, coulent.
 
 **Armes.** Épées en trois matériaux, arc et flèches (projectile avec gravité,
 dégâts à l'impact, le tireur ne se blesse pas).
@@ -175,6 +194,9 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
   le sont.
 - L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
   partager un clavier et une souris.
+- Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne
+  trouve pas en jouant (terre labourée par exemple) ; seuls les stades de croissance
+  du blé en sont écartés.
 - L'eau ne s'écoule pas. Pas de biomes distincts, ni de structures générées.
 - Pas de greedy meshing ; tout tourne sur le thread principal.
 - Les sauvegardes sont locales au navigateur ; le serveur ne persiste pas son monde

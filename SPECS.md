@@ -151,6 +151,66 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ✅ |
 | SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ✅ |
 
+## IA — orientation et déplacement des créatures
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-IA-001 | Une créature qui poursuit regarde vers sa cible | l'avant du maillage pointe vers le joueur, écart < 1° | ✅ |
+| SPEC-IA-002 | Une créature qui erre regarde vers où elle avance | l'avant du maillage est aligné sur sa vitesse, écart < 1° | ✅ |
+| SPEC-IA-003 | Une créature à l'arrêt conserve sa dernière orientation | le cap ne change pas quand la vitesse est nulle | ✅ |
+| SPEC-IA-004 | Le cap suit le déplacement réel, pas l'intention | après avoir buté sur un mur, le cap correspond au mouvement effectif | ✅ |
+
+## COLL — collisions entre créatures et joueurs
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-COLL-001 | Un joueur ne traverse pas une créature | avancer dans un mob laisse une distance minimale | ✅ |
+| SPEC-COLL-002 | Une créature ne traverse pas un joueur | un zombie qui charge s'arrête au contact | ✅ |
+| SPEC-COLL-003 | Deux créatures ne se superposent pas | deux mobs au même point se séparent | ✅ |
+| SPEC-COLL-004 | La séparation est horizontale : on peut se tenir sur une créature | un mob sous un autre ne le repousse pas latéralement | ✅ |
+| SPEC-COLL-005 | Les objets au sol et les projectiles ne repoussent personne | un objet au sol n'écarte pas le joueur | ✅ |
+| SPEC-COLL-006 | La poussée est bornée : aucune projection violente | le déplacement induit par image reste sous une limite | ✅ |
+| SPEC-COLL-007 | Un joueur mort ne bloque plus le passage | on traverse un joueur mort | ✅ |
+| SPEC-COLL-008 | Une créature ne peut pas pousser un joueur à travers un mur | le joueur reste du bon côté du bloc | ✅ |
+
+## NAGE — comportement dans l'eau
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-NAGE-001 | Une créature dans l'eau remonte vers la surface | son altitude augmente jusqu'à flotter | ✅ |
+| SPEC-NAGE-002 | Une créature flotte à la surface sans osciller | après stabilisation, l'altitude varie peu | ✅ |
+| SPEC-NAGE-003 | Une créature ne coule pas indéfiniment | la vitesse de descente est plafonnée | ✅ |
+| SPEC-NAGE-004 | Une créature nage plus lentement qu'elle ne marche | distance parcourue moindre à durée égale | ✅ |
+| SPEC-NAGE-005 | Une créature hostile poursuit encore en nageant | elle se rapproche du joueur dans l'eau | ✅ |
+| SPEC-NAGE-006 | Un objet au sol coule au lieu de flotter | son altitude diminue dans l'eau | ✅ |
+| SPEC-NAGE-007 | Une créature sortie de l'eau retrouve sa vitesse normale | la vitesse redevient celle de la marche | ✅ |
+
+## GRILLE — table de craft
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-GRILLE-001 | La grille de craft de l'inventaire est 3×3 | neuf cases dans l'écran d'inventaire | ✅ |
+| SPEC-GRILLE-002 | Toutes les recettes 3×3 sont réalisables depuis l'inventaire | une pioche se fabrique sans établi | ✅ |
+| SPEC-GRILLE-003 | Le coffre est fabricable depuis l'inventaire | la recette du coffre est reconnue en 3×3 | ✅ |
+| SPEC-GRILLE-004 | Fermer l'inventaire rend le contenu de la grille 3×3 | rien n'est perdu | ✅ |
+
+## LIVRE — livre des recettes et des objets
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-LIVRE-001 | Le livre liste toutes les recettes du jeu | autant d'entrées que de recettes | ✅ |
+| SPEC-LIVRE-002 | Chaque entrée indique les ingrédients et leur quantité | la liste des besoins est exacte | ✅ |
+| SPEC-LIVRE-003 | Une recette réalisable avec l'inventaire est signalée | le drapeau de faisabilité est vrai | ✅ |
+| SPEC-LIVRE-004 | Une recette non réalisable indique ce qui manque | la liste des manques est exacte | ✅ |
+| SPEC-LIVRE-005 | Les recettes réalisables sont présentées en premier | tri stable, faisables en tête | ✅ |
+| SPEC-LIVRE-006 | Le livre se filtre par nom d'objet | la recherche restreint la liste | ✅ |
+| SPEC-LIVRE-007 | Choisir une recette remplit la grille de craft | la grille reflète le motif de la recette | ✅ |
+| SPEC-LIVRE-008 | Le remplissage prélève les ingrédients de l'inventaire | les quantités baissent d'autant | ✅ |
+| SPEC-LIVRE-009 | Une recette non réalisable ne remplit rien | l'inventaire reste intact | ✅ |
+| SPEC-LIVRE-010 | En créatif, le livre donne tout objet du jeu directement | l'objet demandé arrive en inventaire | ✅ |
+| SPEC-LIVRE-011 | En créatif, le livre liste blocs et objets séparément | deux catégories distinctes | ✅ |
+| SPEC-LIVRE-012 | En survie, le livre des objets n'est pas accessible | seule la variante recettes s'ouvre | ✅ |
+
 ## MENU — interface de lancement
 
 | ID | Spec | Vérification | État |
