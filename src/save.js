@@ -42,6 +42,8 @@
       histoire: state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null,
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
       vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
+      // les succès débloqués et leurs compteurs (SPEC-SUCCES-001)
+      succes: state.succes ? state.succes.serialiser() : null,
       player: {
         x: +p.pos.x.toFixed(2), y: +p.pos.y.toFixed(2), z: +p.pos.z.toFixed(2),
         yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
@@ -112,6 +114,8 @@
         return MC.Modes.categoriePermise(state.regles, cat);
       }) : null;
     }
+    // les succès : tolère une sauvegarde d'avant ce module (data.succes absent)
+    if (state.succes) state.succes.charger(data.succes);
     if (w.reperes) {
       w.reperes.charger(data.reperes || []);
       w.reperes.suivi = data.suivi || null;
