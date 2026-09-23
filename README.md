@@ -40,15 +40,15 @@ MC_GRAINE=4242 MC_DIFFICULTE=difficile node server.js 8080
 ## Tests
 
 ```bash
-node tests/run.js              # 491 tests unitaires et fonctionnels
+node tests/run.js              # 519 tests unitaires et fonctionnels
 node tests/gates.js            # les 6 portes de qualité automatiques
-node tests/integration-net.js  # 30 tests d'intégration réseau (vraies sockets)
+node tests/integration-net.js  # 37 tests d'intégration réseau (vraies sockets)
 ```
 
 `tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 96 tests
 end-to-end qui pilotent une vraie partie.
 
-**617 tests au total**, 228 specs couvertes.
+**652 tests au total**, 258 specs couvertes.
 
 ---
 
@@ -69,6 +69,8 @@ difficulté, une graine et le nombre de joueurs locaux.
 | `L` | livre des recettes (survie) / des objets (créatif) |
 | `G` | jeter un objet |
 | `F` | descendre du véhicule |
+| `C` | carte (avec une carte en main) : clic pose un repère, clic droit l'enlève |
+| `J` | factions et réputation |
 | clic droit sur un véhicule | monter · `Maj` + clic : soute du camion |
 | `T` | chat (`/` ouvre sur une commande) |
 | `M` | couper le son |
@@ -100,15 +102,39 @@ joueurs sur deux machines obtiennent le même monde en tapant le même mot.
 **Monde.** Chunks 16×16×80 générés à la volée, océans, plages, grottes creusées au
 bruit 3D, charbon partout, fer en profondeur.
 
-**Biomes.** Seize, tirés d'un climat (température, humidité, relief) et de
-l'altitude. Onze terrestres : *plaines* fleuries, *forêt* de chênes et de bouleaux,
+**Relief.** *Volcans* de basalte au cratère plein de lave, coulées de magma sur les
+flancs ; *glaciers* de glace bleue fendus de crevasses sur les hauteurs froides ;
+*lacs* perchés à surface unique ; *falaises* côtières et escarpements ; ravins,
+grandes *cavernes* et lacs de lave profonds, jamais au ras du socle. La lave brûle,
+englue et détruit les objets ; lave, magma et lanternes marines luisent dans le noir.
+
+**Ciel.** Soleil et lune opposés qui traversent le ciel, lune à huit phases (une par
+jour), étoiles la nuit seulement, nuages qui dérivent.
+
+**Textures.** Toujours peintes au runtime, mais *tuilables* (les taches bouclent
+d'un bord à l'autre) et déclinées en variantes choisies par la position du bloc ;
+les faces du dessus tournent en plus. Les coordonnées de texture restent à un
+demi-texel du bord de la tuile : plus de liseré sombre sur les arêtes.
+
+**Carte et repères.** La carte (8 bâtons autour d'une laine) révèle les chunks
+explorés, vus du ciel. On y pose, suit et retire des repères ; une boussole indique
+cap et distance du repère suivi, et une balise lumineuse le signale dans le monde.
+
+**Factions.** Village (villageois, gardes), pillards, morts-vivants, bêtes. Les camps
+ennemis se battent entre eux — un garde défend les villageois contre les zombies.
+Tuer un membre d'un camp fâche ce camp et réjouit ses ennemis ; un village hostile
+refuse de commercer, des pillards amadoués cessent d'attaquer.
+
+**Biomes.** Dix-huit, tirés d'un climat (température, humidité, relief) et de
+l'altitude. Treize terrestres : *plaines* fleuries, *forêt* de chênes et de bouleaux,
 *désert* de sable sur grès, *taïga enneigée* aux sapins, *marais* au ras de l'eau,
 *montagnes* en crêtes enneigées, *jungle* aux arbres géants et à lianes, *savane*
 d'acacias, *badlands* en mesas de terre cuite striée, *pics glacés* hérissés
-d'aiguilles de glace, *île aux champignons* géants où aucun monstre ne naît. Cinq
+d'aiguilles de glace, *île aux champignons* géants où aucun monstre ne naît,
+*volcan*, *glacier*. Cinq
 marins : *océan*, *récif corallien*, *océan gelé* à icebergs, *forêt de varech*,
-*abysses*. Le relief varie continûment d'un biome à l'autre : pas de falaise aux
-frontières (sauf les mesas, qui en sont faites).
+*abysses*. Hors des reliefs voulus (falaises, mesas, volcans, lacs), le relief
+varie continûment d'un biome à l'autre.
 
 **Mer.** Varech en colonnes, herbiers, massifs de coraux rouges, jaunes et bleus
 coiffés de gorgones, cornichons de mer lumineux, éponges des abysses. Une plante
@@ -150,7 +176,8 @@ il ne se relève pas. Le coffre a un butin fixé par la graine et propre au type
 de la pyramide, prismarine du monument…).
 
 **Véhicules.** Bateau, moto, voiture, camion (soute de 27 cases), avion (décolle
-au-delà de sa vitesse de décollage), sous-marin (on y respire). Fabriqués à
+au-delà de sa vitesse de décollage), sous-marin (on y respire), wagonnet (suit les
+rails, prend les virages, s'arrête en bout de voie). Fabriqués à
 l'établi (roues, moteur, hélice), posés d'un clic droit ; clic droit sur l'engin
 pour monter, ZQSD pour conduire, Espace/Maj pour monter/descendre en avion et en
 sous-marin, **F** pour descendre, Maj + clic droit pour ouvrir la soute du camion.
@@ -182,7 +209,8 @@ horizontalement, après le déplacement, avec une poussée bornée qui ne peut p
 enfoncer quelqu'un dans un mur. On peut toujours se tenir sur une créature.
 
 **Nage.** Flottaison amortie plutôt que poussée constante (sinon on oscille autour de
-la surface), vitesse horizontale réduite dans l'eau, descente plafonnée. Les objets
+la surface), vitesse horizontale réduite dans l'eau, descente plafonnée. En nageant
+contre une berge, on se hisse sur la terre ferme jusqu'à deux blocs de haut. Les objets
 au sol, eux, coulent.
 
 **Armes.** Épées en trois matériaux, arc et flèches (projectile avec gravité,
@@ -192,8 +220,12 @@ dégâts à l'impact, le tireur ne se blesse pas).
 Chacun a sa caméra, son HUD, son inventaire et sa vie. Joueur 1 au clavier, les
 suivants à la manette.
 
-**Multijoueur.** Serveur autoritaire sur les blocs, les mobs, l'heure et le chat.
-Les joueurs distants sont affichés avec leur nom. Combinable avec l'écran partagé :
+**Multijoueur.** Serveur **autoritaire** à 60 Hz : il simule positions, vie, faim,
+air, créatures, blocs (portée vérifiée), l'heure et le chat. Le client envoie ses
+touches (six bits), prédit son propre mouvement avec les mêmes modules, puis rejoue
+les entrées non confirmées sur chaque état reçu : l'écart est nul quand tout va bien.
+Un budget de temps empêche d'accélérer sa simulation. Le rendu reste entièrement
+dans le navigateur. Les joueurs distants sont affichés avec leur nom. Combinable avec l'écran partagé :
 un poste peut rejoindre à quatre. La perte de connexion bascule en solo sans planter.
 
 ---
@@ -208,14 +240,14 @@ modules** que le client, plutôt que de réécrire une simulation qui divergerai
 ```
 src/
   core · noise · biomes · donjons · world · mesher · physics           logique pure,
-  faune · inventory · vehicules · entities
+  faune · factions · carte · synchro · inventory · vehicules · entities
   player · daycycle · save · saves · modes · chat · split · gamepad    testable sous
   net-protocol                                                          Node
   audio · atlas · render · ui · input · net · game                     navigateur
   ui.css                                              partagé jeu / page de tests
 server.js                    serveur Node sans dépendance (statique + WebSocket)
 tests/  harness · unit · functional · spec-* · e2e · integration-net · gates · run
-SPECS.md   228 specs identifiées      PLAN.md   méthode et portes de qualité
+SPECS.md   258 specs identifiées      PLAN.md   méthode et portes de qualité
 ```
 
 ### Méthode
@@ -255,6 +287,11 @@ gelée plutôt que livrée à la gravité sans sol.
 **Structures générées.** Un donjon est une fonction pure de la graine et de sa
 région : chaque chunk en pose sa part, dans n'importe quel ordre de génération.
 
+**Boucle serveur à 60 Hz.** `setInterval` ne descend pas de façon fiable sous
+~15 ms sous Windows ; le serveur interroge donc toutes les 4 ms et ne lance un tick
+que lorsque `performance.now()` a franchi la période, en gardant le reliquat pour
+ne pas dériver.
+
 **Coalescing TCP.** Une lecture socket peut contenir une demi-trame ou trois. Le
 serveur accumule et décode tant qu'une trame complète sort — c'est la source la plus
 fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
@@ -266,8 +303,8 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - Pas de propagation de lumière : les torches sont des lumières ponctuelles du
   moteur, bornées à dix simultanées. L'obscurité n'influence pas l'apparition des
   monstres, qui dépend de l'heure seule.
-- Le serveur fait confiance aux clients pour leur propre position : suffisant en
-  réseau local, insuffisant contre un joueur malveillant.
+- En ligne, inventaire, craft, fourneaux et cultures restent côté client ; le
+  serveur valide positions, stats, blocs et combats, pas le contenu des sacs.
 - Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
   le sont.
 - L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
@@ -278,8 +315,7 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - L'eau ne s'écoule pas.
 - Les gardiens de donjon ne s'éveillent qu'en solo et en écran partagé : en ligne,
   les créatures appartiennent au serveur, qui ne les simule pas encore.
-- Les véhicules sont locaux : en ligne, les autres joueurs voient le conducteur se
-  déplacer, pas l'engin.
+- Les véhicules ne sont pas disponibles en ligne (le serveur ne les simule pas).
 - L'avion et le sous-marin se pilotent au clavier ; à la manette, on monte avec
   « utiliser » et l'on descend avec le bouton de vol.
 - Les créatures ne poursuivent que le joueur 1 d'un écran partagé.
