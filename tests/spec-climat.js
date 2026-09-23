@@ -109,6 +109,30 @@
     });
   });
 
+  describe('Specs — ombre des nuages', function () {
+    var ME = MC.Meteo;
+    it('SPEC-OMBRE-003 : les nuages projettent leur ombre au sol, décalée selon le soleil, et elle dérive avec eux', function () {
+      var m = ME.creer(11), et = Object.assign({}, m.etat(0), { couverture: 1 });
+      var zenith = { x: 0, y: 1, z: 0 }, oblique = { x: 0.6, y: 0.5, z: 0 };
+      var n = Math.hypot(oblique.x, oblique.y); oblique.x /= n; oblique.y /= n;
+      var ombres = 0, clairs = 0, decales = 0;
+      for (var i = 0; i < 300; i++) {
+        var x = i * 29, z = i * 53, f = m.ombreNuage(x, 30, z, 0, zenith, et);
+        A.ok(f >= 0.5 && f <= 1, 'facteur borné');
+        if (f < 0.75) ombres++; else if (f > 0.99) clairs++;
+        if (Math.abs(m.ombreNuage(x, 30, z, 0, oblique, et) - f) > 0.2) decales++;
+      }
+      A.gt(ombres, 10, 'des taches d ombre sous les nuages : ' + ombres);
+      A.gt(clairs, 10, 'et du soleil entre eux : ' + clairs);
+      A.gt(decales, 10, 'un soleil oblique déplace l ombre : ' + decales);
+      A.equal(m.ombreNuage(0, 30, 0, 0, { x: 0.2, y: -0.3, z: 0 }, et), 1, 'la nuit, pas d ombre de nuage');
+      // l'ombre voyage avec le vent
+      var bouge = 0;
+      for (var j = 0; j < 200; j++) if (Math.abs(m.ombreNuage(j * 41, 30, j * 17, 0, zenith, et) - m.ombreNuage(j * 41, 30, j * 17, 600, zenith, et)) > 0.2) bouge++;
+      A.gt(bouge, 10, 'dix minutes plus tard, l ombre a bougé : ' + bouge);
+    });
+  });
+
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — météo', function () {
     var ME = MC.Meteo;

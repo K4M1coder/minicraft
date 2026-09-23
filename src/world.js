@@ -35,6 +35,8 @@
     var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); }) : null;
+    // habitants tués : identifiant → heure de la mort (sauvegardé : les morts le restent)
+    var pnjsMorts = new Map();
     // le compte en banque du joueur, commun à toutes les banques
     var banque = MC.Inventory ? MC.Inventory.create(27) : null;
     // donjons dont le gardien est tombé : persistés par la sauvegarde
@@ -582,6 +584,7 @@
       if (reperes) { reperes.charger([]); reperes.suivi = null; }
       if (reputation) reputation.remettre();
       if (MC.Inventory) banque = MC.Inventory.create(27);
+      pnjsMorts.clear();
       return true;
     }
 
@@ -667,7 +670,7 @@
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,
-      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats,
+      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, pnjsMorts: pnjsMorts,
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
     };

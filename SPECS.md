@@ -509,12 +509,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-LUMIERE-004 | La lumière du ciel descend dans chaque colonne jusqu'au premier bloc opaque, puis se répand de proche en proche : une grotte fermée est noire, un surplomb reste dans la pénombre | niveaux de ciel en plein air, sous un surplomb, dans une grotte close | ✅ |
 | SPEC-LUMIERE-005 | Lumière du ciel et lumière des blocs se combinent par sommet : le jour le ciel domine dehors, la nuit seules les sources éclairent ; une grotte reste sombre de jour, sauf près de ses torches | attributs par sommet, formule de combinaison | ✅ |
 | SPEC-LUMIERE-006 | Créatures et objets prennent la lumière de la case qu'ils occupent (ciel et blocs) | éclairage d'une entité dehors, dans une grotte, près d'une torche | ✅ |
-| SPEC-OMBRE-001 | Le soleil, ou la lune la nuit, projette des ombres nettes à courte distance, en cascades qui suivent la caméra et s'orientent selon l'astre | cadres des cascades selon la direction de l'astre | ⏳ |
-| SPEC-OMBRE-002 | Au loin, le relief s'ombre lui-même selon la hauteur du soleil : versants à contre-jour et vallées encaissées s'assombrissent au couchant | ombrage du relief lointain selon le soleil | ⏳ |
-| SPEC-OMBRE-003 | Les nuages projettent au sol leur ombre, décalée selon la direction du soleil, et elle se déplace avec eux | ombre au sol sous un nuage dense, décalage, dérive | ⏳ |
-| SPEC-POP-001 | Un habitant tué reste mort, hors ligne comme en ligne : la sauvegarde ou le serveur le retient, il ne réapparaît pas au chargement | mort sauvegardée, rechargée ; serveur | ⏳ |
-| SPEC-POP-002 | Un lieu en sous-effectif accueille avec le temps de nouveaux habitants (naissances, arrivées), jusqu'à sa capacité | repeuplement progressif jusqu'à la capacité | ⏳ |
-| SPEC-POP-003 | Deux animaux de même espèce proches l'un de l'autre engendrent un petit tant que la population alentour reste sous son plafond ; le petit grandit | naissances, plafond, croissance | ⏳ |
+| SPEC-OMBRE-001 | Le soleil, ou la lune la nuit, projette des ombres nettes à courte distance, dans des cadres (cascades) qui suivent la caméra, calés sur les texels et orientés selon l'astre ; au-delà du cadre proche, l'ombrage du relief prend le relais | cadres des cascades selon la direction de l'astre | ✅ |
+| SPEC-OMBRE-002 | Au loin, le relief s'ombre lui-même selon la hauteur du soleil : versants à contre-jour et vallées encaissées s'assombrissent au couchant | ombrage du relief lointain selon le soleil | ✅ |
+| SPEC-OMBRE-003 | Les nuages projettent au sol leur ombre, décalée selon la direction du soleil, et elle se déplace avec eux | ombre au sol sous un nuage dense, décalage, dérive | ✅ |
+| SPEC-POP-001 | Un habitant tué reste mort, hors ligne comme en ligne : la sauvegarde ou le serveur le retient, il ne réapparaît pas au chargement | mort sauvegardée, rechargée ; serveur | ✅ |
+| SPEC-POP-002 | Un lieu en sous-effectif accueille avec le temps de nouveaux habitants (naissances, arrivées), jusqu'à sa capacité | repeuplement progressif jusqu'à la capacité | ✅ |
+| SPEC-POP-003 | Deux animaux de même espèce proches l'un de l'autre engendrent un petit tant que la population alentour reste sous son plafond ; le petit grandit | naissances, plafond, croissance | ✅ |
 
 ## L15 — eau
 
@@ -606,5 +606,5 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-HUD-001 | Chaque composant du HUD (infos, barres de vie et de faim, barre d'objets, viseur, boussole, objectif, chat, barre du gardien) s'affiche ou se masque indépendamment, ou tous d'un coup ; le choix est conservé | bascules individuelles et globale, conservation | ⏳ |
+| SPEC-HUD-001 | Les composants existants du HUD, consolidés sous un seul registre, s'affichent ou se masquent chacun indépendamment ou tous d'un coup, et le choix est conservé : infos (`.debug`), viseur (`.crosshair`), anneau de minage (`.mining-ring`), barres de vie, faim et air (`.stats`), barre d'objets (`.hotbar`), nom de l'objet tenu (`.held-name`), notifications (`.toasts`), chat (`.chat`), boussole des repères (`.boussole`), barre du gardien (`.barre-boss`), objectif de l'histoire (`.objectif-histoire`), étiquettes des joueurs en écran partagé (`.etiquette`) ; les effets (éclair de dégâts, givre et fournaise) et les panneaux ouverts à la demande (inventaire, carte, factions, journal, livre, dialogues) n'en font pas partie | bascules individuelles et globale sur chaque composant listé, conservation | ⏳ |
 | SPEC-HUD-002 | Les infos donnent la graine, la version de génération d'origine de la carte, la version du jeu en cours et l'orientation du regard (cap en degrés et point cardinal, inclinaison) | contenu du panneau d'infos | ⏳ |

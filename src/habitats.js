@@ -693,12 +693,36 @@
   /* Les habitants qu'il faut faire apparaître : ceux des lieux proches qui ne
      sont pas encore dans la liste des entités (repérés par leur identifiant),
      sauf ceux qu'on a tués (`morts`) — ils ne renaissent pas aussitôt. */
-  function pnjsManquants(lieux, entites, morts) {
+  /* `morts` : un Set d'identifiants, ou une Map identifiant → heure de la mort.
+     Avec une Map et l'heure `temps`, un habitant mort depuis plus de `delai`
+     secondes cède sa place à un remplaçant — même métier, même foyer, nouveau
+     nom : le lieu garde sa population sans ressusciter personne. Le remplaçant
+     porte un nouvel identifiant (`id+1`, `id+2`…) ; tué à son tour, il sera
+     remplacé de la même façon. */
+  var DELAI_REMPLACEMENT = 420;          // une journée de jeu
+  function pnjsManquants(lieux, entites, morts, temps, delai) {
     var presents = new Set();
     entites.forEach(function (e) { if (e.pnj) presents.add(e.pnj); });
-    var l = [];
+    var l = [], estMap = morts && typeof morts.get === 'function' && !(morts instanceof Set);
+    delai = delai === undefined ? DELAI_REMPLACEMENT : delai;
     lieux.forEach(function (lieu) {
-      lieu.pnjs.forEach(function (p) { if (!presents.has(p.id) && !(morts && morts.has(p.id))) l.push(p); });
+      lieu.pnjs.forEach(function (p) {
+        var id = p.id, k = 0;
+        // la génération en cours : le premier de la lignée qui n'est pas mort
+        while (morts && morts.has(id)) {
+          if (!estMap || temps === undefined || temps - morts.get(id) < delai) return;   // pas encore remplacé
+          k++;
+          id = p.id + '+' + k;
+        }
+        if (presents.has(id)) return;
+        if (k === 0) { l.push(p); return; }
+        var r = {}, c;
+        for (c in p) r[c] = p[c];
+        r.id = id;
+        r.nom = PRENOMS[(PRENOMS.indexOf(p.nom) + k * 7) % PRENOMS.length];
+        r.remplacant = k;
+        l.push(r);
+      });
     });
     return l;
   }
@@ -779,5 +803,6 @@
   MC.Habitats = { STYLES: STYLES, URBAIN: URBAIN, LIEUX: LIEUX, BATIMENTS: BATIMENTS, ROLES: ROLES,
                   ARTISANS: ARTISANS, LOISIRS: LOISIRS, ORDRE_LIEUX: ORDRE_LIEUX,
                   stylePour: stylePour, creer: creer, pnjsManquants: pnjsManquants, servir: servir,
+                  DELAI_REMPLACEMENT: DELAI_REMPLACEMENT,
                   RAYON_INFO: RAYON_INFO };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

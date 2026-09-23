@@ -285,8 +285,8 @@
       world = MC.createWorld(graine);
       reconstruireDependances();
       grille = creerGrilleLointaine();
-      // les habitants tués l'étaient dans l'ancien monde
-      pnjsMorts.clear(); pnjsSuivis.clear();
+      // les habitants suivis appartenaient à l'ancien monde
+      pnjsSuivis.clear();
       return world;
     }
     g.remplacerMonde = remplacerMonde;
@@ -378,7 +378,7 @@
     }
 
     // ─── habitants, métiers et lieux ─────────────────────────────────────────
-    var pnjsMorts = new Set(), pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null;
+    var pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null;
     function ouvrirBanque() {
       if (!world.banque) return;
       ui.openContainer('chest', player.state.inv, world.banque, 'banque');
@@ -443,7 +443,7 @@
          il est mort ; sinon (liste vidée par une nouvelle partie), on l'oublie. */
       pnjsSuivis.forEach(function (e, id) {
         if (entities.list.indexOf(e) >= 0) return;
-        if (e.hp <= 0) pnjsMorts.add(id);
+        if (e.hp <= 0) world.pnjsMorts.set(id, g.time);
         pnjsSuivis.delete(id);
       });
       var lieux = [];
@@ -451,7 +451,7 @@
         var p = j.player.state.pos;
         world.habitats.lieuxProches(p.x, p.z, 90).forEach(function (l) { if (lieux.indexOf(l) < 0) lieux.push(l); });
       });
-      MC.Habitats.pnjsManquants(lieux, entities.list, pnjsMorts).forEach(function (p) {
+      MC.Habitats.pnjsManquants(lieux, entities.list, world.pnjsMorts, g.time).forEach(function (p) {
         if (!world.estCharge(p.x, p.z)) return;
         var e = entities.spawn('villager', p.x, p.y + 0.05, p.z,
                                { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });

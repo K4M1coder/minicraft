@@ -861,7 +861,44 @@
         if (e.pos.y < -20) remove(e);
       }
       separerEntites(dt);
+      reproduire(dt, rand, events);
       return events;
+    }
+
+    /* Reproduction : deux adultes de la même espèce, proches l'un de l'autre et
+       reposés, donnent un petit — tant que leur espèce reste sous son plafond
+       dans les environs. Le petit grandit en quelques minutes. De quoi garder
+       une population vivante sans la laisser envahir le monde. */
+    var ESPECES = { sheep: 1, pig: 1, chicken: 1, goat: 1, polar_bear: 1, wolf: 1 };
+    var REPRO = { rayon: 5, delai: 90, croissance: 180, plafond: 8, zone: 48, cadence: 4 };
+    var reproT = 0;
+    function reproduire(dt, rand, events) {
+      for (var i = 0; i < list.length; i++) {
+        var p = list[i];
+        if (p.bebe) { p.croissance = (p.croissance || 0) + dt; if (p.croissance >= REPRO.croissance) { p.bebe = false; } }
+        if (p.reproCd > 0) p.reproCd -= dt;
+      }
+      reproT -= dt;
+      if (reproT > 0) return;
+      reproT = REPRO.cadence;
+      for (var a = 0; a < list.length; a++) {
+        var e = list[a];
+        if (!ESPECES[e.type] || e.dead || e.bebe || e.reproCd > 0 || !zoneChargee(e)) continue;
+        var voisins = 0, partenaire = null;
+        for (var b = 0; b < list.length; b++) {
+          var o = list[b];
+          if (o === e || o.type !== e.type || o.dead) continue;
+          var d = Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z);
+          if (d < REPRO.zone) voisins++;
+          if (!partenaire && !o.bebe && !(o.reproCd > 0) && d < REPRO.rayon) partenaire = o;
+        }
+        if (!partenaire || voisins + 1 >= REPRO.plafond) continue;
+        e.reproCd = partenaire.reproCd = REPRO.delai * (0.8 + rand() * 0.4);
+        var petit = spawn(e.type, (e.pos.x + partenaire.pos.x) / 2, Math.max(e.pos.y, partenaire.pos.y) + 0.1,
+                          (e.pos.z + partenaire.pos.z) / 2, { bebe: true, croissance: 0 });
+        events.naissances = (events.naissances || 0) + 1;
+        journal.push({ type: 'naissance', espece: e.type, eid: petit.eid });
+      }
     }
 
     /* Fusionne les piles d'objets proches : évite qu'un arbre abattu ne laisse
@@ -1055,7 +1092,7 @@
     }
 
     return {
-      list: list, SPECS: SPECS, spawn: spawn, dropItem: dropItem, remove: remove,
+      list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, ecarter: ecarter,

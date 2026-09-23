@@ -36,6 +36,8 @@
       reputation: state.world.reputation ? state.world.reputation.serialiser() : null,
       // le compte en banque, commun à toutes les banques du monde
       banque: state.world.banque ? state.world.banque.serialize() : [],
+      // les habitants tués, et quand : ils ne ressuscitent pas au chargement
+      pnjsMorts: state.world.pnjsMorts ? Array.from(state.world.pnjsMorts.entries()) : [],
       // l'avancée du récit : chapitre, étape, choix, quêtes secondaires
       histoire: state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null,
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
@@ -101,6 +103,10 @@
     if (w.exploration) w.exploration.charger(data.explores || []);
     if (w.reputation) w.reputation.charger(data.reputation);
     if (w.banque) w.banque.load(data.banque || []);
+    if (w.pnjsMorts) {
+      w.pnjsMorts.clear();
+      (data.pnjsMorts || []).forEach(function (m) { if (m && typeof m[0] === 'string') w.pnjsMorts.set(m[0], +m[1] || 0); });
+    }
     if (MC.Histoire) {
       state.histoire = data.histoire ? MC.Histoire.charger(data.histoire, function (cat) {
         return MC.Modes.categoriePermise(state.regles, cat);

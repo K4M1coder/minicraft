@@ -13,10 +13,11 @@
   var B = C.B, I = C.I;
 
   // créatures hostiles : celles qui comptent pour le succès des dix vaincues
-  var HOSTILES = { zombie: 1, squelette: 1, araignee: 1, creeper: 1, enderman: 1,
-                    sorciere: 1, noye: 1, pillard: 1, spectre: 1, gardien: 1 };
+  // (les types réels des créatures, tels que les nomme entities.js)
+  var HOSTILES = { zombie: 1, skeleton: 1, spider: 1, mummy: 1, slime: 1, pillager: 1,
+                   vindicator: 1, drowned: 1, shark: 1, jellyfish: 1 };
 
-  function estBois(bloc) { var d = C.def(bloc); return !!(d && d.log); }
+  function estBois(bloc) { return !!(C.isLog && C.isLog(bloc)); }
   function estOutil(id) { var d = C.def(id); return !!(d && d.tool); }
 
   /* Chaque entrée : nom, description, l'événement qui la fait progresser,

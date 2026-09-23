@@ -49,6 +49,9 @@
     }
     var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // ombres portées du soleil (ou de la lune) sur le terrain proche
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
     renderer.setSize(sz[0], sz[1]);
     canvasHost.appendChild(renderer.domElement);
 
@@ -56,6 +59,23 @@
     scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xfff2d8, 0.55);
     scene.add(sun);
+    scene.add(sun.target);
+    /* Carte d'ombres : un cadre de CADRE_OMBRE blocs qui suit la caméra, calé
+       sur la grille des texels (MC.Ombres.cascades) pour que les ombres ne
+       scintillent pas quand on marche. Au-delà, le relief lointain porte son
+       propre ombrage. */
+    var CADRE_OMBRE = 96, RESOLUTION_OMBRE = 2048, RECUL_OMBRE = 240;
+    sun.castShadow = true;
+    sun.shadow.mapSize.set(RESOLUTION_OMBRE, RESOLUTION_OMBRE);
+    sun.shadow.bias = -0.0005;
+    if ('normalBias' in sun.shadow) sun.shadow.normalBias = 0.03;
+    (function () {
+      var sc = sun.shadow.camera;
+      sc.left = -CADRE_OMBRE / 2; sc.right = CADRE_OMBRE / 2; sc.top = CADRE_OMBRE / 2; sc.bottom = -CADRE_OMBRE / 2;
+      sc.near = 1; sc.far = RECUL_OMBRE * 2;
+      sc.updateProjectionMatrix();
+    })();
+    var soleilDir = { value: new THREE.Vector3(0, 1, 0) }, forceOmbreNuages = { value: 0 };
 
     var matOpaque = new THREE.MeshLambertMaterial({ map: atlas.texture, vertexColors: true });
     // découpe : alphaTest, profondeur écrite, donc AUCUN tri nécessaire.
@@ -82,17 +102,40 @@
     function avecLumiereDesBlocs(mat) {
       mat.onBeforeCompile = function (sh) {
         sh.uniforms.forceTorches = forceTorches;
-        sh.vertexShader = 'attribute float lum;\nattribute float ciel;\nvarying float vLum;\nvarying float vCiel;\n' +
-          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLum = lum;\n  vCiel = ciel;');
+        sh.uniforms.carteNuages = UN.carte; sh.uniforms.deriveNuages = UN.derive; sh.uniforms.tempsNuages = UN.temps;
+        sh.uniforms.couvNuages = UN.couvertureCiel; sh.uniforms.soleilDir = soleilDir; sh.uniforms.forceOmbreNuages = forceOmbreNuages;
+        sh.vertexShader = 'attribute float lum;\nattribute float ciel;\nvarying float vLum;\nvarying float vCiel;\nvarying vec3 vMondeO;\n' +
+          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLum = lum;\n  vCiel = ciel;')
+            .replace('#include <project_vertex>', '#include <project_vertex>\n  vMondeO = (modelMatrix * vec4(transformed, 1.0)).xyz;');
         /* Les sources ajoutent leur lueur ; le ciel, lui, dose toute la
            lumière du soleil et de l'atmosphère : une grotte close est noire. */
-        sh.fragmentShader = 'uniform float forceTorches;\nvarying float vLum;\nvarying float vCiel;\n' +
+        sh.fragmentShader = 'uniform float forceTorches;\nvarying float vLum;\nvarying float vCiel;\nvarying vec3 vMondeO;\n' +
+          GLSL_OMBRE_NUAGES +
           sh.fragmentShader.replace('#include <emissivemap_fragment>',
             '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.8, 0.55) * pow(vLum, 2.2) * forceTorches;' +
-            '\n  diffuseColor.rgb *= max(0.03, pow(vCiel, 1.3));');
+            '\n  diffuseColor.rgb *= max(0.03, pow(vCiel, 1.3)) * ombreNuages(vMondeO);');
       };
       return mat;
     }
+    /* Ombre des nuages au sol : la même lecture de texture que les cumulus
+       (MC.Meteo.densiteNuage), au point où l'on rencontre la couche en
+       remontant vers le soleil. Le ciel (vCiel) la module déjà : sous un toit,
+       il n'y a plus de soleil à voiler. */
+    var GLSL_OMBRE_NUAGES = [
+      'uniform sampler2D carteNuages; uniform vec2 deriveNuages; uniform float tempsNuages; uniform float couvNuages;',
+      'uniform vec3 soleilDir; uniform float forceOmbreNuages;',
+      'float ombreNuages(vec3 m) {',
+      '  if (forceOmbreNuages <= 0.0 || soleilDir.y <= 0.05) return 1.0;',
+      '  vec2 q = m.xz + soleilDir.xz / soleilDir.y * (74.8 - m.y);',
+      '  vec2 p = (q - deriveNuages) / 350.0; float e = tempsNuages / 90.0;',
+      '  float nA = texture2D(carteNuages, p + vec2(e * 0.031, e * 0.017) + 0.137).a;',
+      '  float nB = texture2D(carteNuages, p * 1.37 + vec2(-e * 0.023, e * 0.029) + 0.637).a;',
+      '  float n = mix(nA, nB, 0.5 + 0.5 * sin(e * 1.3 + nA * 6.2832));',
+      '  float champ = texture2D(carteNuages, (q - deriveNuages) / 9600.0 + vec2(tempsNuages / 60000.0, 0.0)).a;',
+      '  float couv = clamp(0.30 + (couvNuages - 0.3) * 0.95 + (champ - 0.5) * 0.9, 0.0, 1.0);',
+      '  float d = clamp((n - (0.62 - couv * 0.34)) * 5.0, 0.0, 1.0);',
+      '  return 1.0 - 0.5 * d * forceOmbreNuages;',
+      '}', ''].join('\n');
     [matOpaque, matCutout, matBlend].forEach(avecLumiereDesBlocs);
 
     // contour du bloc visé
@@ -141,6 +184,8 @@
           var m = new THREE.Mesh(toGeometry(raw), mat);
           m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
           m.renderOrder = passes[i][3];
+          m.castShadow = pass !== 'blend';
+          m.receiveShadow = true;
           scene.add(m);
           chunk[key] = m;
         }
@@ -630,6 +675,7 @@
         if (!m) {
           m = e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e);
           m.userData.blesse = false;
+          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           scene.add(m);
           entityMeshes.set(e.eid, m);
         }
@@ -643,6 +689,9 @@
           m.rotation.set(Math.atan2(e.vel.y, vh), Math.atan2(-e.vel.x, -e.vel.z), 0, 'YXZ');
         } else {
           m.rotation.y = e.yaw || 0;
+          // un petit : même créature, à demi-taille
+          var ech = e.bebe ? 0.55 : 1;
+          if (m.scale.x !== ech) m.scale.setScalar(ech);
           // l'avion se cabre quand il monte, pique quand il descend
           if (e.vehicule === 'avion') m.rotation.x = Math.max(-0.5, Math.min(0.5, e.vel.y * 0.06));
           animer(m, e);
@@ -905,12 +954,35 @@
       sh.fragmentShader = 'uniform vec3 trou; varying vec3 vMondeL;\n' + sh.fragmentShader.replace('void main() {',
         'void main() {\n  if (length(vMondeL.xz - trou.xy) < trou.z) discard;');
     };
-    var lointain = null, versionLointain = -1;
+    var lointain = null, versionLointain = -1, grilleLointaine = null, baseLointain = null;
+    var soleilOmbre = null, ombreT = 0;
+    /* Le relief lointain s'ombre lui-même (MC.Ombres.ombrerRelief) : versants
+       à contre-jour et vallées encaissées. On ne recalcule que quand le
+       soleil a assez bougé, et au plus toutes les deux secondes. */
+    function ombrerLointain(astre) {
+      if (!lointain || !grilleLointaine || !MC.Ombres) return false;
+      var t = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      if (soleilOmbre && t - ombreT < 2000 &&
+          Math.abs(soleilOmbre.x - astre.x) + Math.abs(soleilOmbre.y - astre.y) + Math.abs(soleilOmbre.z - astre.z) < 0.03) return false;
+      if (soleilOmbre && Math.abs(soleilOmbre.x - astre.x) + Math.abs(soleilOmbre.y - astre.y) + Math.abs(soleilOmbre.z - astre.z) < 0.01) return false;
+      soleilOmbre = { x: astre.x, y: astre.y, z: astre.z }; ombreT = t;
+      var a = grilleLointaine.actif;
+      var f = MC.Ombres.ombrerRelief({ cote: grilleLointaine.cote, pas: grilleLointaine.pas, sol: a.sol, eau: a.eau }, astre);
+      var col = lointain.geometry.attributes.color;
+      for (var i = 0; i < f.length; i++) {
+        col.array[i * 3] = baseLointain[i * 3] * f[i];
+        col.array[i * 3 + 1] = baseLointain[i * 3 + 1] * f[i];
+        col.array[i * 3 + 2] = baseLointain[i * 3 + 2] * f[i];
+      }
+      col.needsUpdate = true;
+      return true;
+    }
     function majLointain(grille) {
       majReliefNuages(grille);
       if (!grille || !grille.pret || grille.version === versionLointain) return false;
       versionLointain = grille.version;
       var raw = MC.Lointain.maillage(grille, 1.5);
+      grilleLointaine = grille; baseLointain = raw.colors.slice(); soleilOmbre = null;
       var g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.BufferAttribute(raw.positions, 3));
       g.setAttribute('color', new THREE.BufferAttribute(raw.colors, 3));
@@ -1155,17 +1227,32 @@
       // le relief lisible (et les zombies visibles avant qu'ils ne mordent).
       // la nuit, les sources de lumière prennent le dessus
       forceTorches.value = 0.95 - inten * 0.6;
-      sun.intensity = (0.12 + inten * 0.48) * Math.min(1.2, lum * (lum < 1 ? 0.8 : 1)) + flash * 0.8;
-      hemi.intensity = (0.46 + inten * 0.52) * (0.75 + 0.25 * lum) + flash * 0.9;
+      /* Le soleil direct pèse assez, face à l'ambiance, pour que les ombres
+         portées se voient ; par temps couvert (lum bas) il s'efface et
+         l'ambiance diffuse prend le relais, comme sous un vrai ciel gris. */
+      sun.intensity = (0.1 + inten * 0.95) * Math.min(1.2, lum * lum) + flash * 0.8;
+      hemi.intensity = (0.44 + inten * 0.3) * (1.25 - 0.25 * lum) + flash * 0.9;
       // la lumière hémisphérique vire au bleu nuit quand le soleil se couche
       hemi.color.setRGB(0.55 + s[0] * 0.45, 0.62 + s[1] * 0.38, 0.72 + s[2] * 0.28);
       var ast = majCiel(time);
       // la lumière vient du soleil visible ; sous l'horizon, de la lune, faiblement
-      var d = ast.soleil.y > 0 ? ast.soleil : { x: ast.lune.x, y: Math.max(0.05, ast.lune.y), z: ast.lune.z };
-      sun.position.set(camera.position.x + d.x * 100, camera.position.y + d.y * 100,
-                       camera.position.z + d.z * 100);
-      sun.target.position.copy(camera.position);
+      var choix = MC.Ombres ? MC.Ombres.choisirAstre(ast.soleil, ast.lune) : null;
+      var d = choix ? choix.dir : { x: 0, y: 1, z: 0 };
+      var cadre = choix ? MC.Ombres.cascades(camera.position, d,
+                                              { tailles: [CADRE_OMBRE], resolution: RESOLUTION_OMBRE, recul: RECUL_OMBRE }) : null;
+      if (cadre) {
+        sun.position.set(cadre[0].position.x, cadre[0].position.y, cadre[0].position.z);
+        sun.target.position.set(cadre[0].centre.x, cadre[0].centre.y, cadre[0].centre.z);
+        sun.castShadow = !submerged;
+      } else {
+        sun.position.set(camera.position.x, camera.position.y + 100, camera.position.z);
+        sun.target.position.copy(camera.position);
+        sun.castShadow = false;
+      }
       sun.target.updateMatrixWorld();
+      soleilDir.value.set(ast.soleil.x, ast.soleil.y, ast.soleil.z);
+      forceOmbreNuages.value = inten;
+      ombrerLointain(ast.soleil);
     }
 
     /* ── Torches ───────────────────────────────────────────────────────────
@@ -1290,6 +1377,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      ombres: { soleil: sun, cadre: CADRE_OMBRE, soleilDir: soleilDir, forceNuages: forceOmbreNuages, ombrerLointain: ombrerLointain },
       majPrecipitations: majPrecipitations, precipitations: { pluie: pluie, neige: neige },
       get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },
       get lointain() { return lointain; },

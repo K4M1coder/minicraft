@@ -58,12 +58,12 @@ let heure = 60;
 let meteoT = null;
 /* Les habitants des villes et villages proches des joueurs : le serveur les
    fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
-const pnjsMorts = new Set(), pnjsSuivis = new Map();
+const pnjsSuivis = new Map();                 // les morts : monde.pnjsMorts (identifiant → heure)
 function peuplerLieux() {
   if (!monde.habitats) return;
   pnjsSuivis.forEach((e, id) => {
     if (entites.list.indexOf(e) >= 0) return;
-    if (e.hp <= 0) pnjsMorts.add(id);
+    if (e.hp <= 0) monde.pnjsMorts.set(id, heure);
     pnjsSuivis.delete(id);
   });
   const lieux = [];
@@ -71,7 +71,7 @@ function peuplerLieux() {
     const p = js.joueur.state.pos;
     monde.habitats.lieuxProches(p.x, p.z, 90).forEach(l => { if (lieux.indexOf(l) < 0) lieux.push(l); });
   });
-  MC.Habitats.pnjsManquants(lieux, entites.list, pnjsMorts).forEach(p => {
+  MC.Habitats.pnjsManquants(lieux, entites.list, monde.pnjsMorts, heure).forEach(p => {
     if (!monde.estCharge(p.x, p.z)) return;
     const e = entites.spawn('villager', p.x, p.y + 0.05, p.z,
                             { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });

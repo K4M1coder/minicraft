@@ -252,8 +252,22 @@
       return true;
     }
 
+    /* Ombre des nuages en un point du sol (x, ySol, z) : on remonte vers
+       l'astre jusqu'à la couche des cumulus, et l'on y lit la densité du
+       nuage. Renvoie un facteur d'éclairage, 1 à découvert, 0,5 sous un
+       nuage épais. Le shader du terrain applique la même règle. */
+    var OMBRE_NUAGE = 0.5;
+    function ombreNuage(x, ySol, z, temps, astre, et) {
+      if (!astre || astre.y <= 0.05) return 1;
+      var cu = COUCHES[1], y = cu.y + cu.epaisseur * 0.3;
+      var k = (y - ySol) / astre.y;
+      if (k <= 0) return 1;
+      var d = densiteNuage(cu, x + astre.x * k, z + astre.z * k, temps, et, null, y);
+      return 1 - OMBRE_NUAGE * d;
+    }
+
     return { etat: etat, typeDu: typeDu, derive: derive, rassemblement: rassemblement,
-             temperatureEn: temperatureEn, foudroie: foudroie, DEGATS_FOUDRE: 6,
+             temperatureEn: temperatureEn, ombreNuage: ombreNuage, foudroie: foudroie, DEGATS_FOUDRE: 6,
              densiteNuage: densiteNuage, temperature: temperature, precipitation: precipitation,
              eclairs: eclairs, lieuEclair: lieuEclair };
   }
