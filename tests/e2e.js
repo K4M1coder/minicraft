@@ -1029,6 +1029,19 @@
     return SERVEUR_DISPO;
   }
 
+  /* Une case d'air à portée certaine du joueur (le serveur refuse au-delà de
+     7 blocs depuis les yeux) : le relief autour du point d'apparition peut
+     être un creux, où « le sol deux blocs plus loin » est hors d'atteinte. */
+  function caseLibreProche(g) {
+    var p = g.player.state.pos, fx = Math.floor(p.x), fy = Math.floor(p.y), fz = Math.floor(p.z);
+    for (var r = 2; r <= 3; r++) for (var dy = 0; dy <= 2; dy++) for (var dx = -r; dx <= r; dx++) for (var dz = -r; dz <= r; dz++) {
+      if (Math.max(Math.abs(dx), Math.abs(dz)) !== r) continue;
+      var x = fx + dx, y = fy + dy, z = fz + dz;
+      if (g.world.getBlock(x, y, z) === 0) return { x: x, y: y, z: z };
+    }
+    return { x: fx, y: fy + 2, z: fz };
+  }
+
   e2e('SPEC-NET-021 : un joueur distant est affiche avec son nom', async function (g) {
     if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
     await reset(g);
@@ -1056,11 +1069,11 @@
     if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
     await reset(g);
     g.net.connecter('', 'Poseur', 1);
-    await wait(700);
+    // la bienvenue replace le joueur là où le serveur le tient : on vise APRÈS
+    for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
+    await wait(300);
     var s2 = g.player.state;
-    // à portée du serveur (7 blocs depuis les yeux) : une case voisine, pas à 7,07 blocs
-    var bx = Math.floor(s2.pos.x) + 2, bz = Math.floor(s2.pos.z) + 2;
-    var by = g.world.groundAt(bx, bz, true) + 1;
+    var cl = caseLibreProche(g), bx = cl.x, by = cl.y, bz = cl.z;
     g.world.setBlock(bx, by, bz, 0);
     g.net.poserBloc(bx, by, bz, B.BRICK);
     await wait(600);
@@ -1082,6 +1095,27 @@
     A.equal(g.vues.length, 2, 'toujours deux vues');
     g.net.deconnecter();
     g.composerEquipe(1, MC.Modes.regles('survie', 'facile'));
+    await wait(300);
+  });
+
+  e2e('SPEC-NET-030 : une reconnexion immediate survit a la fermeture tardive de l ancienne socket', async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    g.net.connecter('', 'Premier', 1);
+    for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
+    A.equal(g.net.etat, 'en ligne', 'premiere connexion');
+    // on coupe et on rappelle AUSSITOT : la fermeture de la premiere arrive apres coup
+    g.net.deconnecter();
+    g.net.connecter('', 'Second', 1);
+    for (var u = 0; u < 30 && g.net.etat !== 'en ligne'; u++) await wait(100);
+    await wait(400);
+    A.equal(g.net.etat, 'en ligne', 'la seconde connexion tient');
+    var cl = caseLibreProche(g), bx = cl.x, by = cl.y, bz = cl.z;
+    g.world.setBlock(bx, by, bz, 0);
+    g.net.poserBloc(bx, by, bz, B.BRICK);
+    await wait(600);
+    A.equal(g.world.getBlock(bx, by, bz), B.BRICK, 'et elle porte encore les poses de bloc');
+    g.net.deconnecter();
     await wait(300);
   });
 

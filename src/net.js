@@ -43,18 +43,26 @@
     function connecter(hote, nom, locaux) {
       if (ws) deconnecter();
       statut('connexion');
+      var socket;
       try {
-        ws = new WebSocket(url(hote));
+        socket = ws = new WebSocket(url(hote));
       } catch (e) {
         statut('erreur', e.message);
         return false;
       }
+      /* Chaque gestionnaire vérifie qu'il appartient à la socket COURANTE : la
+         fermeture d'une ancienne connexion arrive après coup, et remettait
+         `ws` à null sous les pieds de la nouvelle — qui perdait alors son
+         message d'arrivée ou sa pose de bloc. */
+      function courante() { return ws === socket; }
 
-      ws.onopen = function () {
+      socket.onopen = function () {
+        if (!courante()) return;
         envoyer({ t: NP.MSG.REJOINDRE, nom: nom || 'Joueur', locaux: locaux || 1 });
       };
 
-      ws.onmessage = function (ev) {
+      socket.onmessage = function (ev) {
+        if (!courante()) return;
         var m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
         recevoir(m);
@@ -63,13 +71,14 @@
       /* Une coupure ne doit pas emporter la partie : on repasse en solo et on
          le dit. Sans cela, le joueur se retrouve devant un monde fige sans
          comprendre pourquoi. */
-      ws.onclose = function () {
+      socket.onclose = function () {
+        if (!courante()) return;
         ws = null;
         distants.clear();
         mobsDistants.clear();
         if (etat !== 'erreur') statut('hors ligne', 'connexion perdue');
       };
-      ws.onerror = function () { statut('erreur', 'connexion impossible'); };
+      socket.onerror = function () { if (courante()) statut('erreur', 'connexion impossible'); };
       return true;
     }
 

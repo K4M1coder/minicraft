@@ -148,12 +148,13 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-NET-019 | Le serveur sert aussi les fichiers statiques | une requête HTTP sur index.html répond 200 | ✅ |
 | SPEC-NET-020 | Le serveur refuse une requête hors de son répertoire | tentative de remontée de chemin rejetée | ✅ |
 | SPEC-NET-021 | Les joueurs distants sont affichés avec leur nom | une entité par joueur distant | ✅ |
-| SPEC-NET-022 | Le serveur fait autorité sur la position : une position imposée par le client est ignorée | le joueur ne se téléporte pas | ✅ |
-| SPEC-NET-023 | Un bloc hors de portée est refusé, et le client reçoit le vrai contenu de la case | correction renvoyée à l'émetteur | ✅ |
-| SPEC-NET-024 | Le serveur donne à chaque client la position et les statistiques qui font foi | position, vie et faim reçues | ✅ |
-| SPEC-NET-025 | L'état est rafraîchi au moins 45 fois par seconde | comptage sur une seconde | ✅ |
+| SPEC-NET-026 | Le serveur fait autorité sur la position : une position imposée par le client est ignorée | le joueur ne se téléporte pas | ✅ |
+| SPEC-NET-027 | Un bloc hors de portée est refusé, et le client reçoit le vrai contenu de la case | correction renvoyée à l'émetteur | ✅ |
+| SPEC-NET-028 | Le serveur donne à chaque client la position et les statistiques qui font foi | position, vie et faim reçues | ✅ |
+| SPEC-NET-029 | L'état est rafraîchi au moins 45 fois par seconde | comptage sur une seconde | ✅ |
 | SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ✅ |
 | SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ✅ |
+| SPEC-NET-030 | Se reconnecter aussitôt après une déconnexion fonctionne : la fermeture tardive de l'ancienne socket n'emporte pas la nouvelle | connexion, déconnexion, reconnexion immédiate, pose confirmée | ✅ |
 
 ## IA — orientation et déplacement des créatures
 
@@ -462,3 +463,11 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-VUE-001 | Au-delà des chunks, un relief simplifié (couleurs du terrain, neige, lave, eau) porte la vue à plus d'un kilomètre ; sa grille se remplit sur plusieurs images sans en figer aucune | remplissage progressif, fidélité des hauteurs, étendue, couleurs | ✅ |
 | SPEC-VUE-002 | La distance de vue en vrais blocs s'allonge tant que l'image reste fluide et le chargement à jour, et recule dès que la fluidité se dégrade | réglage adaptatif et bornes | ✅ |
+
+## LUMIERE — lumière des blocs
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-LUMIERE-001 | Une source répand sa lumière de proche en proche, un cran par bloc ; les blocs pleins l'arrêtent, le verre, le feuillage et l'eau la laissent passer | niveaux autour d'une torche, mur, verre | ✅ |
+| SPEC-LUMIERE-002 | Aucune limite au nombre de sources : toutes éclairent, d'un chunk à l'autre, et le mailleur inscrit la lumière dans chaque sommet | 84 sources, lumière du chunk voisin, attribut par sommet | ✅ |
+| SPEC-LUMIERE-003 | Poser ou retirer une source, ou ouvrir un passage près d'elle, recalcule les chunks à portée et eux seuls ; un lac de lave n'éclaire que par sa surface | chunks touchés, cache des sources | ✅ |

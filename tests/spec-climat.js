@@ -194,6 +194,96 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — lumière des blocs', function () {
+    var L = MC.Lumiere, CX = C.CHUNK_X, CZ = C.CHUNK_Z;
+    // 3 × 3 chunks factices : un sol de pierre en y ≤ 10, de l'air au-dessus
+    function region() {
+      var chunks = new Map();
+      for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) {
+        var bl = new Uint8Array(CX * C.WORLD_H * CZ);
+        for (var y = 0; y <= 10; y++) for (var z = 0; z < CZ; z++) for (var x = 0; x < CX; x++) bl[C.idx(x, y, z)] = B.STONE;
+        chunks.set(a + ',' + b, { cx: a, cz: b, blocks: bl });
+      }
+      function chunkDe(a, b) { return chunks.get(a + ',' + b) || null; }
+      function poser(wx, wy, wz, id) {
+        var c = chunkDe(Math.floor(wx / CX), Math.floor(wz / CZ));
+        c.blocks[C.idx(((wx % CX) + CX) % CX, wy, ((wz % CZ) + CZ) % CZ)] = id;
+        c.emetteurs = null;
+      }
+      return { chunkDe: chunkDe, poser: poser };
+    }
+
+    it('SPEC-LUMIERE-001 : une source éclaire de proche en proche, un cran par bloc, et les murs l arrêtent', function () {
+      A.equal(L.emission(B.TORCH), 12); A.equal(L.emission(B.LAVA), 15); A.equal(L.emission(B.STONE), 0);
+      A.ok(L.opaque(B.STONE) && !L.opaque(B.GLASS) && !L.opaque(B.LEAVES) && !L.opaque(B.WATER) && !L.opaque(0));
+      var r = region();
+      r.poser(8, 11, 8, B.TORCH);
+      var e = L.eclairer(r.chunkDe, 0, 0);
+      A.equal(e.niveau(8, 11, 8), 12, 'la source à son plein niveau');
+      A.equal(e.niveau(9, 11, 8), 11, 'un bloc plus loin : un cran de moins');
+      A.equal(e.niveau(12, 11, 8), 8);
+      A.equal(e.niveau(8, 11, 13), 7);
+      A.equal(e.niveau(8, 10, 8), 0, 'la pierre ne s allume pas');
+      // un mur de pierre : la lumière le contourne, plus faible, au lieu de le traverser
+      for (var y = 11; y < 30; y++) for (var z = 0; z < 16; z++) r.poser(10, y, z, B.STONE);
+      e = L.eclairer(r.chunkDe, 0, 0);
+      A.equal(e.niveau(11, 11, 8), 0, 'derrière un mur plein, le noir');
+      // le verre la laisse passer
+      r.poser(10, 11, 8, B.GLASS);
+      e = L.eclairer(r.chunkDe, 0, 0);
+      A.equal(e.niveau(11, 11, 8), 9, 'à travers le verre : 12 − 3');
+    });
+
+    it('SPEC-LUMIERE-002 : autant de sources que l on veut, et la lumière passe d un chunk à l autre', function () {
+      var r = region(), n = 0;
+      for (var x = 0; x < 16; x += 2) for (var z = 0; z < 16; z += 2) { r.poser(x, 11, z, B.TORCH); n++; }
+      for (var i = 0; i < 20; i++) { r.poser(-8 + (i % 5), 11, -8 + ((i / 5) | 0), B.LANTERN); n++; }
+      var e = L.eclairer(r.chunkDe, 0, 0);
+      A.ok(e.sources >= 64, 'toutes les sources du chunk comptent (' + e.sources + ' sur ' + n + ') — aucune limite de nombre');
+      // une torche dans le chunk voisin éclaire le bord du chunk central
+      var r2 = region();
+      r2.poser(-3, 11, 5, B.TORCH);
+      var e2 = L.eclairer(r2.chunkDe, 0, 0);
+      A.equal(e2.niveau(0, 11, 5), 9, 'lumière venue du chunk voisin (12 − 3)');
+      A.equal(e2.niveau(-1, 11, 5), 10, 'et la marge d une case la connaît aussi');
+      // le mailleur l'inscrit dans les sommets
+      var c = r2.chunkDe(0, 0);
+      var raw = MC.Mesher.buildChunk(c, 'opaque', function (wx, wy) { return wy <= 10 ? B.STONE : 0; }, e2);
+      A.equal(raw.lums.length, raw.positions.length / 3, 'une lumière par sommet');
+      var allumes = raw.lums.filter(function (v) { return v > 0; }).length;
+      A.ok(allumes > 0 && allumes < raw.lums.length, 'le sol près de la torche s éclaire, le reste non');
+      A.ok(Math.max.apply(null, raw.lums) <= 1, 'bornée à 1');
+      var sans = MC.Mesher.buildChunk(c, 'opaque', function (wx, wy) { return wy <= 10 ? B.STONE : 0; });
+      A.ok(sans.lums.every(function (v) { return v === 0; }), 'sans propagation, aucune lueur');
+    });
+
+    it('SPEC-LUMIERE-003 : poser, retirer une source ou ouvrir un passage recalcule les chunks à portée, et eux seuls', function () {
+      var r = region();
+      var t = L.chunksTouches(r.chunkDe, 2, 11, 2, 0, B.TORCH);
+      A.ok(t.length >= 2 && t.some(function (c) { return c[0] === 0 && c[1] === 0; }), 'poser une torche : son chunk et ses voisins proches');
+      A.ok(t.some(function (c) { return c[0] === -1 && c[1] === -1; }), 'près d un coin, le chunk en diagonale aussi');
+      A.equal(L.chunksTouches(r.chunkDe, 8, 30, 8, 0, B.STONE).length, 0, 'un bloc loin de toute source ne coûte rien');
+      r.poser(8, 11, 8, B.TORCH);
+      A.ok(L.chunksTouches(r.chunkDe, 10, 11, 8, 0, B.STONE).length > 0, 'fermer un passage près d une torche rééclaire');
+      A.equal(L.chunksTouches(r.chunkDe, 10, 11, 8, B.TALL_GRASS, 0).length, 0, 'une herbe ne change rien à la lumière');
+      // un lac de lave n'éclaire que par sa surface
+      var r3 = region();
+      for (var x = 2; x < 14; x++) for (var z = 2; z < 14; z++) for (var y = 3; y <= 10; y++) r3.poser(x, y, z, B.LAVA);
+      var em = L.emetteurs(r3.chunkDe(0, 0));
+      A.equal(em.length / 2, 12 * 12, 'seule la couche du dessus rayonne (' + em.length / 2 + ')');
+      A.equal(L.eclairer(r3.chunkDe, 0, 0).niveau(8, 11, 8), 14, 'et elle éclaire au-dessus du lac');
+      // le vrai monde tient ces caches à jour
+      var w = monde();
+      var ch = w.getChunk(40, 40, true);
+      L.emetteurs(ch);
+      A.ok(Array.isArray(ch.emetteurs), 'sources en cache');
+      w.setBlock(40 * 16 + 3, 60, 40 * 16 + 3, B.TORCH);
+      A.equal(ch.emetteurs, null, 'un bloc changé vide le cache du chunk');
+      w.setBlock(40 * 16 + 3, 60, 40 * 16 + 3, 0);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — vue lointaine', function () {
     var L = MC.Lointain;
     it('SPEC-VUE-001 : un relief simplifié porte la vue jusqu à un kilomètre, sans figer une image', function () {

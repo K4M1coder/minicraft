@@ -426,8 +426,16 @@
       var c = chunks.get(key(cx, cz));
       if (!c) return false;
       var lx = wx - cx * CX, lz = wz - cz * CZ;
+      var avant = c.blocks[idx(lx, wy, lz)];
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
+      /* Lumière : les sources du chunk ont peut-être changé, et les chunks à
+         portée d'une source concernée doivent recalculer leur éclairage. */
+      c.emetteurs = null;
+      if (MC.Lumiere) {
+        MC.Lumiere.chunksTouches(function (a, b) { return chunks.get(key(a, b)) || null; },
+                                 wx, wy, wz, avant, id).forEach(function (t) { touch(t[0], t[1]); });
+      }
       overrides.set(key3(wx, wy, wz), id);
       // un bloc changé redessine la carte de son chunk
       if (exploration) exploration.invalider(wx, wz);
@@ -643,6 +651,7 @@
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,
       voisinsCharges: voisinsCharges, marquerVoisins: marquerVoisins, estCharge: estCharge,
+      chunkDe: function (cx, cz) { return chunks.get(key(cx, cz)) || null; },
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,

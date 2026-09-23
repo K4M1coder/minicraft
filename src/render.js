@@ -75,6 +75,23 @@
        leur éclat de nuit comme au fond des abysses, au lieu de s'assombrir. */
     var matLumineux = new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true });
 
+    /* Lumière des blocs (MC.Lumiere) : un attribut `lum` par sommet, ajouté
+       comme une lueur chaude par-dessus l'éclairage du ciel. Plus discrète en
+       plein jour, où le soleil domine, qu'au cœur de la nuit ou d'une grotte. */
+    var forceTorches = { value: 1 };
+    function avecLumiereDesBlocs(mat) {
+      mat.onBeforeCompile = function (sh) {
+        sh.uniforms.forceTorches = forceTorches;
+        sh.vertexShader = 'attribute float lum;\nvarying float vLum;\n' +
+          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLum = lum;');
+        sh.fragmentShader = 'uniform float forceTorches;\nvarying float vLum;\n' +
+          sh.fragmentShader.replace('#include <emissivemap_fragment>',
+            '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.8, 0.55) * pow(vLum, 2.2) * forceTorches;');
+      };
+      return mat;
+    }
+    [matOpaque, matCutout, matBlend].forEach(avecLumiereDesBlocs);
+
     // contour du bloc visé
     var highlight = new THREE.LineSegments(
       new THREE.EdgesGeometry(new THREE.BoxGeometry(1.004, 1.004, 1.004)),
@@ -89,6 +106,8 @@
       g.setAttribute('normal', new THREE.Float32BufferAttribute(raw.normals, 3));
       g.setAttribute('uv', new THREE.Float32BufferAttribute(raw.uvs, 2));
       g.setAttribute('color', new THREE.Float32BufferAttribute(raw.colors, 3));
+      g.setAttribute('lum', new THREE.Float32BufferAttribute(raw.lums && raw.lums.length ? raw.lums
+                                                               : new Float32Array(raw.positions.length / 3), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return g;
@@ -104,9 +123,12 @@
     function syncChunk(world, chunk) {
       var sample = world.getBlock;
       var passes = PASSES;
+      // une propagation de lumière par chunk, partagée par ses quatre passes
+      var lumiere = MC.Lumiere && world.chunkDe ? MC.Lumiere.eclairer(world.chunkDe, chunk.cx, chunk.cz) : null;
+      chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
-        var raw = MC.Mesher.buildChunk(chunk, pass, sample);
+        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere);
         if (chunk[key]) { scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);
@@ -1022,6 +1044,8 @@
       // Plancher d'éclairage nocturne : une nuit physiquement correcte serait
       // noire, donc injouable. On garde le contraste jour/nuit tout en laissant
       // le relief lisible (et les zombies visibles avant qu'ils ne mordent).
+      // la nuit, les sources de lumière prennent le dessus
+      forceTorches.value = 0.95 - inten * 0.6;
       sun.intensity = (0.12 + inten * 0.48) * Math.min(1.2, lum * (lum < 1 ? 0.8 : 1)) + flash * 0.8;
       hemi.intensity = (0.46 + inten * 0.52) * (0.75 + 0.25 * lum) + flash * 0.9;
       // la lumière hémisphérique vire au bleu nuit quand le soleil se couche
@@ -1066,7 +1090,7 @@
         if (i < proches.length) {
           var p = proches[i].t;
           L.position.set(p.x + 0.5, p.y + 0.55, p.z + 0.5);
-          L.intensity = 1.5;
+          L.intensity = 0.6;             // le terrain a sa lumière propagée : celle-ci éclaire les créatures
           L.visible = true;
         } else {
           L.visible = false;
@@ -1153,6 +1177,7 @@
       cameraDe: cameraDe, cameras: cameras,
       get RENDER_DIST() { return RENDER_DIST; },
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
+      forceTorches: forceTorches,
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,

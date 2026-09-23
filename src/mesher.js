@@ -87,10 +87,33 @@
      `sample(wx, wy, wz)` lit le monde, y compris hors du chunk : c'est ce qui
      supprime les coutures aux frontières.
      (Un booléen est accepté pour compatibilité : false = opaque, true = blend.) */
-  function buildChunk(chunk, wantPass, sample) {
+  /* `lumiere` (facultatif) : { niveau(lx, ly, lz) } — la lumière des blocs
+     propagée par MC.Lumiere, en coordonnées locales. Elle sort dans `lums`,
+     un nombre par sommet de 0 (noir) à 1 (plein éclat d'une source). */
+  function buildChunk(chunk, wantPass, sample, lumiere) {
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
-    var positions = [], normals = [], uvs = [], colors = [], indices = [];
+    var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [];
+    var niv = lumiere ? lumiere.niveau : null;
+    // lumière d'une case, ramenée à [0, 1]
+    function lumEn(x, y, z) { return niv ? niv(x, y, z) / 15 : 0; }
+    /* Lumière lissée d'un coin de face : moyenne des cases non opaques parmi
+       les quatre qui touchent ce coin côté air (même voisinage que l'AO). */
+    function lumCoin(bx, by, bz, dir, U, V, su, sv) {
+      if (!niv) return 0;
+      var nx = bx + dir[0], ny = by + dir[1], nz = bz + dir[2];
+      var s = niv(nx, ny, nz), n = 1;
+      var ax = nx + U[0] * su, ay = ny + U[1] * su, az = nz + U[2] * su;
+      var bx2 = nx + V[0] * sv, by2 = ny + V[1] * sv, bz2 = nz + V[2] * sv;
+      var o1 = occupied(ax, ay, az), o2 = occupied(bx2, by2, bz2);
+      if (!o1) { s += niv(ax, ay, az); n++; }
+      if (!o2) { s += niv(bx2, by2, bz2); n++; }
+      if (!(o1 && o2)) {
+        var cx2 = nx + U[0] * su + V[0] * sv, cy2 = ny + U[1] * su + V[1] * sv, cz2 = nz + U[2] * su + V[2] * sv;
+        if (!occupied(cx2, cy2, cz2)) { s += niv(cx2, cy2, cz2); n++; }
+      }
+      return s / n / 15;
+    }
     var baseX = chunk.cx * CX, baseZ = chunk.cz * CZ;
     var blocks = chunk.blocks;
 
@@ -126,6 +149,7 @@
           normals.push(0, 1, 0);
           pushUV(uvs, d.tiles[0], p[2], p[3]);
           colors.push(1, 1, 1);
+          lums.push(lumEn(x, y, z));
         });
         indices.push(s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3);
         continue;
@@ -140,6 +164,7 @@
             normals.push(0, 1, 0);
             pushUV(uvs, d.tiles[0], p[3], p[4]);
             colors.push(1, 1, 1);
+            lums.push(Math.max(lumEn(x, y, z), d.light ? d.light / 15 : 0));
           }
           indices.push(start0, start0 + 1, start0 + 2, start0 + 2, start0 + 1, start0 + 3);
         }
@@ -180,6 +205,11 @@
           pushUV(uvs, tile, q2[3], q2[4], vt.rot);
           var c = s * ao[k];
           colors.push(c, c, c);
+          if (niv) {
+            var suL = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
+            var svL = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
+            lums.push(withAO ? lumCoin(x, y, z, f.dir, U, V, suL, svL) : lumEn(nx, ny, nz));
+          } else lums.push(0);
         }
 
         /* Le quad se découpe en deux triangles ; choisir la mauvaise diagonale
@@ -195,7 +225,7 @@
 
     if (!indices.length) return null;
     return { positions: positions, normals: normals, uvs: uvs,
-             colors: colors, indices: indices };
+             colors: colors, indices: indices, lums: lums };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,

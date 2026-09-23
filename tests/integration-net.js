@@ -195,7 +195,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     /* Le serveur fait autorité et vérifie la portée : on pose le bloc juste
        au-dessus de la tête d'Alice, là où elle se tient — donc dans l'air. */
     const moi = bienvenueA.toi && bienvenueA.toi[0];
-    ok(!!moi && typeof moi.x === 'number', 'SPEC-NET-024 : la bienvenue donne la position qui fait foi');
+    ok(!!moi && typeof moi.x === 'number', 'SPEC-NET-028 : la bienvenue donne la position qui fait foi');
     const BX = Math.floor(moi.x), BY = Math.floor(moi.y) + 3, BZ = Math.floor(moi.z);
     a.envoyer({ t: 'bloc', x: BX, y: BY, z: BZ, id: 9 });
     const blocRecu = await b.attendre('bloc');
@@ -210,12 +210,12 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     ok(chatB.texte.indexOf('bonjour') >= 0, 'SPEC-NET-014 : Bob recoit le message');
     eq(chatB.auteur, 'Alice', 'SPEC-NET-014 : l auteur est transmis');
 
-    // ── SPEC-NET-022 : le client ne peut plus imposer sa position
+    // ── SPEC-NET-026 : le client ne peut plus imposer sa position
     a.envoyer({ t: 'bouge', x: moi.x + 50, y: moi.y + 20, z: moi.z + 50, yaw: 1.2, pitch: -0.3 });
     await dodo(250);
     const apresBouge = a.messages.filter(m => m.t === 'etat').pop();
     ok(!!apresBouge && Math.abs(apresBouge.toi[0].x - moi.x) < 1,
-       'SPEC-NET-022 : une position imposée par le client est ignorée');
+       'SPEC-NET-026 : une position imposée par le client est ignorée');
 
     // ── SPEC-NET-013 / 016 / 017 : Alice avance par ses ENTRÉES, le serveur la déplace
     for (let s2 = 1; s2 <= 45; s2++) a.envoyer({ t: 'e', s: s2, j: 0, dt: 1 / 60, k: 1, yaw: 0, pitch: 0 });
@@ -232,21 +232,21 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
       if (alice) ok(Math.abs(alice.x - toi.x) < 0.05 && Math.abs(alice.z - toi.z) < 0.05,
                     'SPEC-NET-013 : Bob voit Alice là où le serveur l a placée');
       ok(typeof toi.pv === 'number' && typeof toi.faim === 'number',
-         'SPEC-NET-024 : vie et faim viennent du serveur');
+         'SPEC-NET-028 : vie et faim viennent du serveur');
       ok(Array.isArray(etat.mobs), 'SPEC-NET-016 : les mobs sont diffuses');
       ok(typeof etat.heure === 'number', 'SPEC-NET-017 : l heure du serveur est diffusee');
     }
 
-    // ── SPEC-NET-023 : un bloc hors de portée est refusé, et le client corrigé
+    // ── SPEC-NET-027 : un bloc hors de portée est refusé, et le client corrigé
     a.envoyer({ t: 'bloc', x: BX + 40, y: BY, z: BZ, id: 9 });
     const correction = await a.attendre('bloc', 2000, m => m.x === BX + 40);
-    ok(correction.id !== 9, 'SPEC-NET-023 : le serveur refuse et rappelle le vrai bloc');
+    ok(correction.id !== 9, 'SPEC-NET-027 : le serveur refuse et rappelle le vrai bloc');
 
-    // ── SPEC-NET-025 : un rafraîchissement rapide
+    // ── SPEC-NET-029 : un rafraîchissement rapide
     const avantN = b.messages.filter(m => m.t === 'etat').length;
     await dodo(1000);
     const parSeconde = b.messages.filter(m => m.t === 'etat').length - avantN;
-    ok(parSeconde >= 45, 'SPEC-NET-025 : au moins 45 états par seconde (' + parSeconde + ')');
+    ok(parSeconde >= 45, 'SPEC-NET-029 : au moins 45 états par seconde (' + parSeconde + ')');
 
     // ── SPEC-NET-018 : un nouveau venu recoit le monde deja modifie
     const c2 = await connecter(PORT);

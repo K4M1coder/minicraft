@@ -18,7 +18,7 @@ const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[
 
 /* Modules de logique pure : ils doivent tourner sous Node, donc ne jamais
    toucher au navigateur. C'est la porte qui protège toute la stratégie de test. */
-const PURS = ['core', 'noise', 'biomes', 'donjons', 'carte', 'meteo', 'lointain', 'world', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const PURS = ['core', 'noise', 'biomes', 'donjons', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
               'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
               'chat', 'split', 'gamepad', 'net-protocol', 'livre'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net'];
@@ -45,16 +45,22 @@ function porte(id, titre, fn) {
 const RE_SPEC = /\bSPEC-[A-Z]+-\d{3}\b/g;
 
 const planifiees = new Set();
+const doublons = new Set();
 
 function specsDeclarees() {
   if (!existe('SPECS.md')) return new Set();
   const txt = lire('SPECS.md');
   const set = new Set();
   planifiees.clear();
+  doublons.clear();
+  const vues = new Set();
   // une spec est DÉCLARÉE quand son identifiant ouvre une ligne de tableau
   txt.split('\n').forEach(l => {
     const m = l.match(/^\s*\|\s*(SPEC-[A-Z]+-\d{3})\s*\|/);
     if (!m) return;
+    // un identifiant déclaré deux fois rend ambiguë toute citation dans un test
+    if (vues.has(m[1])) doublons.add(m[1]);
+    vues.add(m[1]);
     /* ⏳ = spec écrite mais pas encore implémentée : G1 ne l'exige pas encore.
        C'est ce qui permet de spécifier tout le périmètre d'avance sans bloquer
        chaque commit intermédiaire, tout en gardant la porte utile. Une spec
@@ -100,6 +106,7 @@ porte('G2', 'Tout identifiant cité par un test existe dans SPECS.md', () => {
   const cit = specsCitees();
   // un identifiant planifie (⏳) n'est pas un fantôme : il est declare, pas encore exige
   const fantomes = [...cit.keys()].filter(id => !dec.has(id) && !planifiees.has(id));
+  if (doublons.size) return { ok: false, detail: `identifiants déclarés deux fois : ${[...doublons].slice(0, 8).join(', ')}` };
   return fantomes.length
     ? { ok: false, detail: `identifiants inconnus : ${fantomes.slice(0, 8).join(', ')}` }
     : { ok: true, detail: `${cit.size} identifiants valides` };
