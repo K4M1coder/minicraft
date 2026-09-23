@@ -81,6 +81,8 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L20** | Rendu lointain : imposteurs, silhouettes des villes, perspective atmosphérique, option réaliste | `VUE` | à faire |
 | **L21** | Trois archétypes d'histoires procédurales : épopée, enquête, colonie | `HISTOIRE` | à faire |
 | **L22** | Couverture : portes, trappes, échelles, lianes, combat (PvE, PvP), physique, véhicules, recettes, butins, succès, options, commandes | `PORTE` `COMBAT` `PHYS` `RECETTE` `DROP` `SUCCES` `OPTION` `CMD` | à faire |
+| **L35** | Profondeurs : flore et récifs sous-marins, biomes souterrains (créatures, donjons, ruines, mines), bioluminescence, tous les minerais | `MER` `SOUTERRAIN` `LUMIERE` `MINERAI` | à faire |
+| **L36** | Ambiance sonore complète et spatialisée : environnement, créatures, actions, interactions, événements (absorbe la proposition L30) | `AUDIO` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
 porte G1 ne les exige qu'une fois implémentés. Chaque lot passe ses specs à ✅
@@ -144,7 +146,7 @@ série de specs ⏳ dans `SPECS.md`, puis suit le cycle S1→S7.
 | **L27** | **Économie vivante** : prix des habitants qui varient avec l'offre et la demande, spécialités régionales, commerce entre villes par les caravanes des routes, monnaie | `ECO` |
 | **L28** | **Faune sociale** : troupeaux et meutes, migrations d'oiseaux, chaîne alimentaire (loups et moutons), pêche à la canne | `FAUNE` `PECHE` |
 | **L29** | **Mécanismes** : leviers, boutons, plaques de pression, portes et trappes automatiques, rails alimentés | `MECA` |
-| **L30** | **Son spatial** : sons positionnés en 3D, ambiances par biome et par lieu (forêt, ville, grotte, mer), musique procédurale selon le moment et l'histoire | `AUDIO` |
+| **L30** | *(repris par L36)* **Son spatial** : sons positionnés en 3D, ambiances par biome et par lieu (forêt, ville, grotte, mer), musique procédurale selon le moment et l'histoire | `AUDIO` |
 | **L31** | **Accessibilité** : sous-titres des sons, modes daltoniens, taille du texte et du HUD, commandes tactiles | `ACCES` |
 | **L32** | **Serveur persistant** : le monde du serveur sauvegardé entre deux démarrages, profils de joueurs, chat de proximité, histoires jouées en coopération | `NET` `HISTOIRE` |
 | **L33** | **Performances** : génération et maillage dans des Web Workers, maillage glouton (greedy meshing), pour allonger encore la distance de vue | `PERF` |

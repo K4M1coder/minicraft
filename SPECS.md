@@ -633,3 +633,27 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-HUD-011 | Objectif de l'histoire (`.objectif-histoire`) : se masque et se rétablit seul | bascule du composant | ✅ |
 | SPEC-HUD-012 | Étiquettes des joueurs en écran partagé (`.etiquette`) et HUD de chaque vue : les bascules s'appliquent à toutes les vues | bascules en écran partagé | ✅ |
 | SPEC-HUD-002 | Les infos donnent la graine, la version de génération d'origine de la carte, la version du jeu en cours et l'orientation du regard (cap en degrés et point cardinal, inclinaison) | contenu du panneau d'infos | ✅ |
+
+## L35 — profondeurs : mers, souterrains, minerais
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MER-010 | La flore sous-marine se diversifie : anémones, algues rouges et brunes, posidonies, gorgones, éponges, laminaires, chacune selon la profondeur, la température et la lumière | espèces et conditions de pousse | ⏳ |
+| SPEC-MER-011 | Des récifs se forment : barrières de corail le long des côtes chaudes, récifs frangeants, atolls autour des îles, et leurs lagons | structures récifales générées | ⏳ |
+| SPEC-SOUTERRAIN-001 | Des biomes souterrains dépendent de ce qui les surmonte : géodes et grottes de cristal sous les montagnes, chambres magmatiques sous les volcans, grottes luxuriantes sous les plaines et les forêts, grottes englouties sous les fonds marins, et au plus profond l'abîme | biome souterrain selon la surface et la profondeur | ⏳ |
+| SPEC-SOUTERRAIN-002 | Chaque biome souterrain a ses créatures (chauves-souris, araignées des cavernes, élémentaires de magma, golems de cristal, rôdeurs de l'abîme, créatures aveugles des grottes englouties…) | tables d'apparition souterraines | ⏳ |
+| SPEC-SOUTERRAIN-003 | Chaque biome souterrain a ses structures : donjons propres, ruines d'anciennes cités, mines abandonnées avec rails et étais | structures par biome souterrain | ⏳ |
+| SPEC-LUMIERE-007 | Des plantes et des organismes bioluminescents éclairent les profondeurs selon leurs conditions : champignons et lichens des grottes humides, cristaux des géodes, algues luminescentes des abysses, planctons près des récifs la nuit ; ils sont des sources de lumière | espèces, conditions, lumière émise | ⏳ |
+| SPEC-MINERAI-001 | Tous les minerais existent, chacun à sa profondeur et dans ses biomes : charbon, cuivre, étain, fer, argent, or, lapis, émeraude, rubis, saphir, diamant, quartz, soufre (volcans), sel (déserts et mers asséchées), obsidienne ; chacun se mine avec l'outil voulu et donne sa matière | répartition, outils requis, butins | ⏳ |
+| SPEC-MINERAI-002 | Les nouvelles matières servent : lingots et gemmes entrent dans des recettes (outils, blocs, objets), s'échangent auprès des habitants, et apparaissent dans les butins des donjons | recettes, échanges, butins | ⏳ |
+
+## L36 — ambiance sonore
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-AUDIO-001 | L'environnement s'entend selon le lieu : vent, pluie, mer et ressac, rivière, cascade, feuillage en forêt, grillons la nuit, résonance des grottes, rumeur des villes, grondement des volcans | nappes selon le lieu et le moment | ⏳ |
+| SPEC-AUDIO-002 | Chaque créature a ses sons : cris, pas, blessure, mort, attaque | sons par créature | ⏳ |
+| SPEC-AUDIO-003 | Les actions s'entendent selon la matière : pas (herbe, pierre, sable, bois, neige, eau), minage et casse, pose, nage, chute, combat, tir | sons par action et par matière | ⏳ |
+| SPEC-AUDIO-004 | Les interactions s'entendent : portes et trappes, coffres, fourneau, établi, échanges, interface | sons d'interaction | ⏳ |
+| SPEC-AUDIO-005 | Les événements s'entendent : tonnerre, éruption, cyclone et tornade, succès, chapitres et fins d'histoire, réveil d'un gardien | sons d'événement | ⏳ |
+| SPEC-AUDIO-006 | Les sons sont spatialisés : leur volume et leur panoramique suivent leur position par rapport à l'auditeur, étouffés sous l'eau et derrière la roche ; chaque catégorie a son volume dans les options | spatialisation, étouffement, volumes par catégorie | ⏳ |
