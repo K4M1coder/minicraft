@@ -911,6 +911,28 @@
     seau(188, false);
     seau(189, true);
 
+    // ─── porte et trappe (190-191) ─────────────────────────────────────────
+    (function () {                                                    // 190 porte
+      var o = grain(190, [150, 108, 62], 16);
+      g.fillStyle = 'rgba(90,62,32,.7)';
+      g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+      // deux panneaux, comme une porte à cadre
+      g.strokeRect(o[0] + 3, o[1] + 2, 4.5, 5.5);
+      g.strokeRect(o[0] + 8.5, o[1] + 2, 4.5, 5.5);
+      g.strokeRect(o[0] + 3, o[1] + 8.5, 4.5, 5.5);
+      g.strokeRect(o[0] + 8.5, o[1] + 8.5, 4.5, 5.5);
+      // poignée
+      g.fillStyle = '#e0c060'; g.fillRect(o[0] + 11, o[1] + 8, 2, 2);
+    })();
+    (function () {                                                    // 191 trappe
+      var o = grain(191, [150, 108, 62], 16);
+      g.fillStyle = 'rgba(90,62,32,.75)';
+      for (var y = 2; y < TILE; y += 4) g.fillRect(o[0] + 1, o[1] + y, TILE - 2, 1);
+      g.strokeStyle = 'rgba(70,48,26,.8)'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+      // charnières
+      g.fillStyle = '#8a8c94'; g.fillRect(o[0] + 2, o[1] + 1, 2, 2); g.fillRect(o[0] + 12, o[1] + 1, 2, 2);
+    })();
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec

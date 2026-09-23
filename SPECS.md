@@ -602,8 +602,8 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-PORTE-001 | Des portes (deux blocs) se fabriquent, s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas, les habitants si ; les bâtiments générés ont leurs portes | recette, collisions porte ouverte / fermée, créatures, portes des bâtiments | ⏳ |
-| SPEC-PORTE-002 | Des trappes se fabriquent, s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe à travers, et une échelle dessous se grimpe jusqu'à elles | recette, collisions trappe ouverte / fermée, échelle | ⏳ |
+| SPEC-PORTE-001 | Des portes (deux blocs) se fabriquent, s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas, les habitants si ; les bâtiments générés ont leurs portes | recette, collisions porte ouverte / fermée, créatures, portes des bâtiments | ✅ |
+| SPEC-PORTE-002 | Des trappes se fabriquent, s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe à travers, et une échelle dessous se grimpe jusqu'à elles | recette, collisions trappe ouverte / fermée, échelle | ✅ |
 | SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ✅ |
 | SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ✅ |
 | SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP (réglage du serveur, désactivé par défaut), avec les mêmes armes, reculs et délais qu'en PvE ; le serveur fait foi et annonce qui a vaincu qui | attaque d'un joueur par un autre, réglage du serveur, annonce | ⏳ |

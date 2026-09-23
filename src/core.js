@@ -55,6 +55,11 @@
     TONNEAU: 99, ENCLUME: 100, PANNEAU_INFO: 101,
     // eau courante : sept niveaux, du filet (1) au ras de la source (7)
     EAU_1: 102, EAU_2: 103, EAU_3: 104, EAU_4: 105, EAU_5: 106, EAU_6: 107, EAU_7: 108,
+    // portes et trappes : un panneau fin, dont l'id encode l'orientation (N,E,S,O)
+    // et l'état (fermée/ouverte) — pas de métadonnées par bloc, voir SPEC-PORTE-*.
+    PORTE_FERMEE_N: 109, PORTE_FERMEE_E: 110, PORTE_FERMEE_S: 111, PORTE_FERMEE_O: 112,
+    PORTE_OUVERTE_N: 113, PORTE_OUVERTE_E: 114, PORTE_OUVERTE_S: 115, PORTE_OUVERTE_O: 116,
+    TRAPPE_FERMEE: 117, TRAPPE_OUVERTE: 118,
   };
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
@@ -88,6 +93,8 @@
     CARTE: 200,
     // l'eau se puise et se verse
     SEAU: 201, SEAU_EAU: 202,
+    // porte et trappe : l'objet posable ; le bloc réel encode orientation et état
+    PORTE: 203, TRAPPE: 204,
   };
 
   var FIRST_ITEM = 128;
@@ -128,6 +135,54 @@
     defBlock(B['EAU_' + n], { name: 'Eau courante', tiles: [12, 12, 12], transparent: true, liquid: true, pass: 'blend',
                               hardness: -1, drops: [], eauCourante: n });
   });
+  // ─── portes et trappes ──────────────────────────────────────────────────────
+  /* Un bloc est plein ou non (isSolid) : pas de case pour un panneau qui n'en
+     occupe qu'une tranche. On ajoute donc une géométrie locale `panneau`
+     (boîte [x0,y0,z0]-[x1,y1,z1] dans le cube unité) que le mailleur dessine
+     et que la physique utilise comme boîte de collision partielle (boiteDe).
+     L'orientation (mur nord/est/sud/ouest, 0..3) et l'état (ouverte ou non)
+     ne sont pas des métadonnées à part : ils SONT l'identifiant de bloc —
+     8 ids pour la porte (fermée × 4 murs, ouverte × 4 murs), 2 pour la
+     trappe (elle n'a besoin d'aucune orientation stockée : elle se relève
+     toujours contre la même face, un choix qui économise des ids sans
+     changer le jeu observable). Les deux moitiés (bas/haut) d'une porte
+     partagent le même id : le panneau qu'elles dessinent est identique. */
+  var EPAIS_PANNEAU = 3 / 16;
+  // boîte d'un panneau plein-hauteur flush contre le mur `mur` (0=N,1=E,2=S,3=O)
+  function boiteMur(mur) {
+    var e = EPAIS_PANNEAU;
+    if (mur === 0) return { x0: 0, y0: 0, z0: 0, x1: 1, y1: 1, z1: e };
+    if (mur === 1) return { x0: 1 - e, y0: 0, z0: 0, x1: 1, y1: 1, z1: 1 };
+    if (mur === 2) return { x0: 0, y0: 0, z0: 1 - e, x1: 1, y1: 1, z1: 1 };
+    return { x0: 0, y0: 0, z0: 0, x1: e, y1: 1, z1: 1 };
+  }
+  /* Ouverte, la porte pivote d'un quart de tour et vient se plaquer contre le
+     mur adjacent (celui qui portait sa charnière) : le mur (mur+3)%4, c-à-d
+     le précédent dans le cycle N,E,S,O. */
+  function boiteMurOuverte(mur) { return boiteMur((mur + 3) & 3); }
+
+  var PORTE_FERMEE_LIST = [B.PORTE_FERMEE_N, B.PORTE_FERMEE_E, B.PORTE_FERMEE_S, B.PORTE_FERMEE_O];
+  var PORTE_OUVERTE_LIST = [B.PORTE_OUVERTE_N, B.PORTE_OUVERTE_E, B.PORTE_OUVERTE_S, B.PORTE_OUVERTE_O];
+  var NOMS_MUR = ['nord', 'est', 'sud', 'ouest'];
+  PORTE_FERMEE_LIST.forEach(function (id, mur) {
+    defBlock(id, { name: 'Porte (' + NOMS_MUR[mur] + ', fermée)', tiles: [190, 190, 190],
+                   hardness: 2.0, tool: 'axe', transparent: true, pass: 'cutout',
+                   panneau: boiteMur(mur), porte: { wall: mur, ouverte: false } });
+  });
+  PORTE_OUVERTE_LIST.forEach(function (id, mur) {
+    defBlock(id, { name: 'Porte (' + NOMS_MUR[mur] + ', ouverte)', tiles: [190, 190, 190],
+                   hardness: 2.0, tool: 'axe', transparent: true, pass: 'cutout',
+                   panneau: boiteMurOuverte(mur), porte: { wall: mur, ouverte: true } });
+  });
+  defBlock(B.TRAPPE_FERMEE, { name: 'Trappe (fermée)', tiles: [191, 191, 191],
+                             hardness: 2.0, tool: 'axe', transparent: true, pass: 'cutout',
+                             panneau: { x0: 0, y0: 0, z0: 0, x1: 1, y1: EPAIS_PANNEAU, z1: 1 },
+                             trappe: { ouverte: false } });
+  defBlock(B.TRAPPE_OUVERTE, { name: 'Trappe (ouverte)', tiles: [191, 191, 191],
+                              hardness: 2.0, tool: 'axe', transparent: true, pass: 'cutout',
+                              panneau: { x0: 0, y0: 0, z0: 0, x1: 1, y1: 1, z1: EPAIS_PANNEAU },
+                              trappe: { ouverte: true } });
+
   defBlock(B.CRAFTING_TABLE, { name: 'Établi', tiles: [13, 14, 8], hardness: 2.5, tool: 'axe',
                                interactive: 'craft' });
   defBlock(B.FURNACE, { name: 'Fourneau', tiles: [16, 15, 16], hardness: 3.5, tool: 'pickaxe',
@@ -434,6 +489,9 @@
   defItem(I.CARTE, { name: 'Carte', tile: 172, carte: true, maxStack: 1 });
   defItem(I.SEAU, { name: 'Seau', tile: 188, seau: 'vide', maxStack: 16 });
   defItem(I.SEAU_EAU, { name: "Seau d'eau", tile: 189, seau: 'plein', maxStack: 1 });
+  // porte/trappe : l'objet posé occupe un ou deux blocs (voir player.useOn)
+  defItem(I.PORTE, { name: 'Porte en bois', tile: 190, porte: true, maxStack: 16 });
+  defItem(I.TRAPPE, { name: 'Trappe', tile: 191, trappe: true, maxStack: 16 });
 
   /* ─── variantes de tuiles ──────────────────────────────────────────────────
      Une même tuile répétée sur un grand sol dessine un quadrillage. Les tuiles
@@ -505,7 +563,34 @@
 
   function isSolid(id) {
     var d = BLOCKS[id];
-    return !!d && !d.liquid && !d.plant;
+    return !!d && !d.liquid && !d.plant && !d.panneau;
+  }
+  /* Boîte(s) de collision LOCALE(s) (dans le cube unité) d'un bloc qui n'est
+     ni plein ni vide : aujourd'hui seules les portes et les trappes en ont.
+     `null` pour tout le reste, ce qui laisse `isSolid` décider seule — la
+     physique doit d'abord tester isSolid (bloc plein, comme avant) et
+     n'appeler boiteDe que sinon, pour ne rien changer aux blocs existants. */
+  function boiteDe(id) {
+    var d = BLOCKS[id];
+    return (d && d.panneau) ? [d.panneau] : null;
+  }
+  function estPorte(id) { var d = BLOCKS[id]; return !!d && !!d.porte; }
+  function estTrappe(id) { var d = BLOCKS[id]; return !!d && !!d.trappe; }
+  /* Bascule d'une porte ou d'une trappe : renvoie le nouvel id (fermé <-> ouvert).
+     Fonction pure, testée telle quelle — c'est elle qui centralise la règle
+     « même mur, autre état ». Renvoie l'id inchangé si ce n'est ni l'un ni l'autre. */
+  function bascule(id) {
+    var d = BLOCKS[id];
+    if (d && d.porte) return d.porte.ouverte ? PORTE_FERMEE_LIST[d.porte.wall] : PORTE_OUVERTE_LIST[d.porte.wall];
+    if (d && d.trappe) return d.trappe.ouverte ? B.TRAPPE_FERMEE : B.TRAPPE_OUVERTE;
+    return id;
+  }
+  /* Le mur (0=N -z, 1=E +x, 2=S +z, 3=O -x) vers lequel une direction pointe :
+     sert à orienter une porte posée selon le regard du joueur, et partage la
+     même convention que la façade des bâtiments générés (habitats.js). */
+  function orientDeRegard(dir) {
+    if (Math.abs(dir.x) > Math.abs(dir.z)) return dir.x > 0 ? 1 : 3;
+    return dir.z > 0 ? 2 : 0;
   }
   // un bloc peut-il être remplacé en posant dessus ? (air, eau, plantes)
   function isReplaceable(id) {
@@ -575,5 +660,8 @@
     PREMIERE_VARIANTE: PREMIERE_VARIANTE,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,
     breakTime: breakTime, dropsOf: dropsOf, TIER_SPEED: TIER_SPEED,
+    boiteDe: boiteDe, estPorte: estPorte, estTrappe: estTrappe, bascule: bascule,
+    orientDeRegard: orientDeRegard, PORTE_FERMEE_LIST: PORTE_FERMEE_LIST,
+    PORTE_OUVERTE_LIST: PORTE_OUVERTE_LIST, EPAIS_PANNEAU: EPAIS_PANNEAU,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

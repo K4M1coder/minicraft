@@ -22,16 +22,34 @@
     return { x: x, z: z };
   }
 
-  /* Le pavé [x±w/2] × [y, y+h] × [z±w/2] chevauche-t-il un bloc solide ? */
+  // deux intervalles [aLo, aHi] et [bLo, bHi] se chevauchent-ils (strictement) ?
+  function chevauche1(aLo, aHi, bLo, bHi) { return aLo < bHi && bLo < aHi; }
+
+  /* Le pavé [x±w/2] × [y, y+h] × [z±w/2] chevauche-t-il un bloc solide ?
+     Un bloc plein bloque comme avant (isSolid). Un bloc à boîte partielle
+     (porte, trappe : voir core.boiteDe) ne bloque que sur la tranche qu'il
+     occupe réellement — fermé il barre le passage, ouvert il le laisse
+     souvent libre, sans rien changer pour tous les autres blocs. */
   function collides(world, x, y, z, w, h) {
     var r = w / 2;
     var x0 = Math.floor(x - r), x1 = Math.floor(x + r);
     var y0 = Math.floor(y), y1 = Math.floor(y + h - 1e-6);
     var z0 = Math.floor(z - r), z1 = Math.floor(z + r);
+    var pxLo = x - r, pxHi = x + r, pyLo = y, pyHi = y + h, pzLo = z - r, pzHi = z + r;
     for (var yy = y0; yy <= y1; yy++)
     for (var zz = z0; zz <= z1; zz++)
-    for (var xx = x0; xx <= x1; xx++)
-      if (C.isSolid(world.getBlock(xx, yy, zz))) return true;
+    for (var xx = x0; xx <= x1; xx++) {
+      var id = world.getBlock(xx, yy, zz);
+      if (C.isSolid(id)) return true;
+      var boites = C.boiteDe(id);
+      if (!boites) continue;
+      for (var bi = 0; bi < boites.length; bi++) {
+        var b = boites[bi];
+        if (chevauche1(pxLo, pxHi, xx + b.x0, xx + b.x1) &&
+            chevauche1(pyLo, pyHi, yy + b.y0, yy + b.y1) &&
+            chevauche1(pzLo, pzHi, zz + b.z0, zz + b.z1)) return true;
+      }
+    }
     return false;
   }
 

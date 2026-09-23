@@ -200,6 +200,9 @@
   shaped(B.ENCLUME, 1, ['III', ' I ', 'III'], { I: I.IRON_INGOT });
   shaped(B.PANNEAU_INFO, 1, ['PPP', 'PPP', ' S '], { P: B.PLANKS, S: I.STICK });
   shaped(I.SEAU, 1, ['I I', ' I '], { I: I.IRON_INGOT });
+  // porte : 2 colonnes × 3 planches. trappe : 2 rangées × 3 planches.
+  shaped(I.PORTE, 1, ['PP', 'PP', 'PP'], { P: B.PLANKS });
+  shaped(I.TRAPPE, 1, ['PPP', 'PPP'], { P: B.PLANKS });
   shaped(I.SOUS_MARIN, 1, ['GIG', 'IMI', 'III'], { G: B.GLASS, I: I.IRON_INGOT, M: I.MOTEUR });
   shaped(I.STICK, 4, ['P', 'P'], { P: B.PLANKS });
   shaped(B.CRAFTING_TABLE, 1, ['PP', 'PP'], { P: B.PLANKS });
