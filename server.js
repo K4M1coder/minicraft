@@ -19,8 +19,8 @@ const RACINE = __dirname;
 const PORT = parseInt(process.argv[2], 10) || 8080;
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'biomes', 'donjons', 'world', 'mesher', 'physics', 'faune', 'inventory', 'vehicules',
-                 'entities', 'player', 'daycycle', 'save', 'saves', 'modes',
+const MODULES = ['core', 'noise', 'biomes', 'donjons', 'carte', 'world', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+                 'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
@@ -34,14 +34,20 @@ MODULES.forEach(m => {
 });
 const MC = ctx.MC;
 const NP = MC.NetProtocol;
+const SY = MC.Synchro;
+const C = MC.Core;
 
 // ── état du monde, autoritatif ───────────────────────────────────────────────
 const CONF = {
   graine: parseInt(process.env.MC_GRAINE, 10) || 20260921,
   mode: process.env.MC_MODE || 'survie',
   difficulte: process.env.MC_DIFFICULTE || 'facile',
-  tickHz: 20,          // simulation
-  etatHz: 10,          // diffusion des positions
+  /* Le serveur fait autorité : il simule les joueurs à partir de leurs
+     entrées. On le fait tourner aussi vite que le client affiche, et l'on
+     diffuse l'état à la même cadence : c'est ce qui rend la correction
+     invisible. Réglables par MC_TICK_HZ et MC_ETAT_HZ. */
+  tickHz: parseInt(process.env.MC_TICK_HZ, 10) || 60,
+  etatHz: parseInt(process.env.MC_ETAT_HZ, 10) || 60,
 };
 
 const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
@@ -192,6 +198,9 @@ function traiter(c, m) {
       c.nom = m.nom;
       c.locaux = m.locaux;
       c.rejoint = true;
+      c.joueurs = [];
+      for (let j = 0; j < c.locaux; j++) c.joueurs.push(creerJoueurServeur(j));
+      c.pos = c.joueurs[0].joueur.state.pos;
       // l'état complet du monde modifié, pour que le nouveau venu voie les
       // constructions faites avant son arrivée
       const blocs = [];
@@ -203,6 +212,9 @@ function traiter(c, m) {
         t: NP.MSG.BIENVENUE,
         id: c.id, graine: CONF.graine, mode: CONF.mode, difficulte: CONF.difficulte,
         heure, blocs,
+        // la position qui fait foi, pour chaque joueur local du poste
+        toi: c.joueurs.map(js => SY.etatJoueur(js.joueur, 0)),
+        tickHz: CONF.tickHz, etatHz: CONF.etatHz,
         joueurs: [...clients.values()].filter(x => x.id !== c.id && x.rejoint)
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),
@@ -215,9 +227,61 @@ function traiter(c, m) {
       break;
     }
     case NP.MSG.BOUGE:
-      c.pos.x = m.x; c.pos.y = m.y; c.pos.z = m.z;
+      /* Ancien message : le client imposait sa position. Le serveur fait
+         désormais autorité — on n'en retient que le regard. */
       c.yaw = m.yaw; c.pitch = m.pitch;
       break;
+
+    case NP.MSG.ENTREE: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      js.entrees.push(m);
+      // un client qui inonde le serveur perd ses entrées les plus anciennes
+      if (js.entrees.length > 240) js.entrees.splice(0, js.entrees.length - 240);
+      break;
+    }
+
+    case NP.MSG.ATTAQUE: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || js.joueur.state.dead) break;
+      const e = entites.list.find(x => x.eid === m.eid);
+      if (!e || e.dead || e.type === 'item') break;
+      const st = js.joueur.state;
+      const d = Math.hypot(e.pos.x - st.pos.x, e.pos.y + e.h / 2 - st.pos.y - 1.6, e.pos.z - st.pos.z);
+      // portée et cadence vérifiées : on ne frappe ni de loin ni en rafale
+      if (d > 6 || js.attaqueCd > 0) break;
+      js.attaqueCd = 0.4;
+      entites.damage(e, m.degats, st.pos, st);
+      break;
+    }
+
+    case NP.MSG.TIR: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || js.joueur.state.dead || js.tirCd > 0) break;
+      js.tirCd = 0.3;
+      const st = js.joueur.state;
+      const o = { x: st.pos.x + m.dx * 0.4, y: st.pos.y + 1.62 + m.dy * 0.4, z: st.pos.z + m.dz * 0.4 };
+      entites.tirer(o, { x: m.dx, y: m.dy, z: m.dz }, m.vitesse, m.degats, st, m.genre);
+      break;
+    }
+
+    case NP.MSG.MANGER: {
+      const js = c.joueurs && c.joueurs[m.j];
+      const d = C.ITEMS[m.id];
+      if (!js || !d || !d.food) break;
+      const st = js.joueur.state;
+      st.hunger = Math.min(20, st.hunger + d.food);
+      if (d.soin) js.joueur.heal(d.soin);
+      break;
+    }
+
+    case NP.MSG.RENAITRE: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || !js.joueur.state.dead) break;
+      js.joueur.respawn({ x: SPAWN.x + m.j * 1.2, y: SPAWN.y, z: SPAWN.z });
+      js.entrees.length = 0;
+      break;
+    }
 
     case NP.MSG.BLOC: {
       /* Le serveur fait autorité : il applique, PUIS diffuse à tous — y
@@ -225,7 +289,20 @@ function traiter(c, m) {
          ou corrigée. */
       const cx = Math.floor(m.x / 16), cz = Math.floor(m.z / 16);
       monde.getChunk(cx, cz, true);
+      const avant = monde.getBlock(m.x, m.y, m.z);
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!blocAutorise(js, m, avant)) {
+        // refusé : on rappelle au client ce qui s'y trouve vraiment
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
+        break;
+      }
       monde.setBlock(m.x, m.y, m.z, m.id);
+      // une casse lâche son butin côté serveur : c'est lui qui le distribue
+      if (m.id === 0 && avant) {
+        const cassure = C.breakTime(avant, m.outil);
+        C.dropsOf(avant, cassure.harvests).forEach(d =>
+          entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
+      }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id });
       break;
     }
@@ -242,8 +319,37 @@ function traiter(c, m) {
   }
 }
 
+// ── joueurs simulés ──────────────────────────────────────────────────────────
+/* Un joueur du serveur : le MÊME code que celui du client (player.js), piloté
+   par les entrées reçues. C'est lui qui fait foi sur la position et les
+   statistiques (vie, faim, air, mort). */
+function creerJoueurServeur(j) {
+  const joueur = MC.createPlayer(monde, entites, regles);
+  joueur.state.pos.x = SPAWN.x + j * 1.2; joueur.state.pos.y = SPAWN.y; joueur.state.pos.z = SPAWN.z;
+  return { joueur, entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
+}
+const PORTEE_BLOC = 7;
+function blocAutorise(js, m, avant) {
+  if (!js || js.joueur.state.dead) return false;
+  const st = js.joueur.state;
+  const d = Math.hypot(m.x + 0.5 - st.pos.x, m.y + 0.5 - st.pos.y - 1.62, m.z + 0.5 - st.pos.z);
+  if (d > PORTEE_BLOC) return false;                      // hors de portée
+  if (m.id === 0) {
+    const def = C.BLOCKS[avant];
+    return !!def && def.hardness >= 0;                    // ni le socle ni l'eau
+  }
+  // on ne pose que dans une case libre (air, eau, plante)
+  return C.isReplaceable(avant);
+}
+function tousLesJoueurs() {
+  const l = [];
+  clients.forEach(c => { if (c.rejoint && c.joueurs) c.joueurs.forEach((js, j) => l.push({ c, j, js })); });
+  return l;
+}
+
 // ── boucle de simulation ─────────────────────────────────────────────────────
-let dernier = Date.now();
+const { performance } = require('perf_hooks');
+let dernier = performance.now();
 let accEtat = 0;
 let accSpawn = 0;
 let accChunks = 1;         // premier passage immédiat
@@ -253,8 +359,14 @@ function joueurReference() {
   return { pos: SPAWN };
 }
 
+/* Sous Windows, un minuteur de 16,7 ms est souvent arrondi à 31 ms : la
+   simulation tombait à 30-40 Hz. On sonde donc plus souvent (au rythme réel
+   de l horloge système) et l on ne fait un pas que lorsque sa période est
+   écoulée — la cadence visée est tenue, sans boucle active qui brûlerait le CPU. */
+const PERIODE_TICK = 1000 / CONF.tickHz;
 setInterval(() => {
-  const now = Date.now();
+  const now = performance.now();
+  if (now - dernier < PERIODE_TICK * 0.9) return;
   const dt = Math.min((now - dernier) / 1000, 0.25);
   dernier = now;
 
@@ -276,8 +388,37 @@ setInterval(() => {
     monde.unloadLoin(centres, 5);
   }
 
-  const ref = joueurReference();
-  entites.update(dt, ref, {});
+  /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :
+     c'est le serveur qui décide de la position et des statistiques. */
+  const joueurs = tousLesJoueurs();
+  joueurs.forEach(({ js }) => {
+    js.budget.crediter(dt);
+    js.attaqueCd = Math.max(0, js.attaqueCd - dt);
+    js.tirCd = Math.max(0, js.tirCd - dt);
+    const st = js.joueur.state;
+    while (js.entrees.length && !st.dead && js.budget.consommer(js.entrees[0].dt)) {
+      const e = js.entrees.shift();
+      SY.rejouer(js.joueur, [e]);
+      js.joueur.updateSurvival(e.dt);
+      js.dernier = e.s;
+    }
+    // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
+    while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
+  });
+
+  const etats = joueurs.map(x => x.js.joueur.state);
+  const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
+  const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref] });
+  // les coups des créatures, appliqués aux joueurs qu'ils visaient
+  ev.degatsPar.forEach(d => {
+    const x = joueurs.find(y => y.js.joueur.state === d.joueur);
+    if (x) x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
+  });
+  // le butin ramassé part au client du joueur qui l'a pris
+  ev.picked.forEach(p => {
+    const x = joueurs.find(y => y.js.joueur.state === p.joueur);
+    if (x) envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: p.n });
+  });
   entites.mergeItems();
 
   accSpawn += dt;
@@ -293,23 +434,39 @@ setInterval(() => {
   /* Diffusion d'état à cadence réduite : simuler à 20 Hz et n'envoyer qu'à
      10 Hz divise le trafic par deux sans que l'on voie la différence, les
      clients interpolant entre deux relevés. */
+  /* On garde le reliquat plutôt que de remettre à zéro : avec une horloge
+     qui bat à ~15,6 ms (Windows), une image sur deux tombait juste sous la
+     période et sautait son envoi — 30 états par seconde au lieu de 60. La
+     petite tolérance absorbe la gigue du minuteur. */
   accEtat += dt;
-  if (accEtat >= 1 / CONF.etatHz) {
-    accEtat = 0;
+  const periodeEtat = 1 / CONF.etatHz;
+  if (accEtat >= periodeEtat * 0.9) {
+    accEtat = Math.min(periodeEtat, Math.max(0, accEtat - periodeEtat));
     if (clients.size > 0) {
-      const joueurs = [...clients.values()].filter(c => c.rejoint).map(c => ({
-        id: c.id, x: +c.pos.x.toFixed(2), y: +c.pos.y.toFixed(2), z: +c.pos.z.toFixed(2),
-        yaw: +c.yaw.toFixed(2),
-      }));
-      const mobs = entites.list.filter(e => e.type !== 'item').slice(0, 40).map(e => ({
-        e: e.eid, t: e.type,
-        x: +e.pos.x.toFixed(2), y: +e.pos.y.toFixed(2), z: +e.pos.z.toFixed(2),
-        yaw: +(e.yaw || 0).toFixed(2),
-      }));
-      diffuser({ t: NP.MSG.ETAT, joueurs, mobs, heure: +heure.toFixed(1) });
+      const js = tousLesJoueurs().map(({ c, j, js: x }) => {
+        const st = x.joueur.state;
+        return { id: c.id, j, nom: c.nom, x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2),
+                 z: +st.pos.z.toFixed(2), yaw: +st.yaw.toFixed(2), mort: st.dead ? 1 : 0 };
+      });
+      // créatures, objets au sol et projectiles : tout ce qui vit dans le monde
+      const mobs = entites.list.slice(0, 80).map(e => {
+        const o = { e: e.eid, t: e.type, x: +e.pos.x.toFixed(2), y: +e.pos.y.toFixed(2),
+                    z: +e.pos.z.toFixed(2), yaw: +(e.yaw || 0).toFixed(2) };
+        if (e.type === 'item') o.i = e.item;
+        if (e.genre) o.g = e.genre;
+        if (e.arme) o.a = e.arme;
+        if (e.variante !== undefined) o.v = e.variante;
+        return o;
+      });
+      const commun = { t: NP.MSG.ETAT, joueurs: js, mobs, heure: +heure.toFixed(1) };
+      clients.forEach(c => {
+        if (!c.rejoint || !c.joueurs) return;
+        commun.toi = c.joueurs.map(x => SY.etatJoueur(x.joueur, x.dernier));
+        envoyer(c, commun);
+      });
     }
   }
-}, 1000 / CONF.tickHz);
+}, 4);
 
 // ── démarrage ────────────────────────────────────────────────────────────────
 serveur.listen(PORT, () => {

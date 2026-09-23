@@ -148,6 +148,10 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-NET-019 | Le serveur sert aussi les fichiers statiques | une requête HTTP sur index.html répond 200 | ✅ |
 | SPEC-NET-020 | Le serveur refuse une requête hors de son répertoire | tentative de remontée de chemin rejetée | ✅ |
 | SPEC-NET-021 | Les joueurs distants sont affichés avec leur nom | une entité par joueur distant | ✅ |
+| SPEC-NET-022 | Le serveur fait autorité sur la position : une position imposée par le client est ignorée | le joueur ne se téléporte pas | ✅ |
+| SPEC-NET-023 | Un bloc hors de portée est refusé, et le client reçoit le vrai contenu de la case | correction renvoyée à l'émetteur | ✅ |
+| SPEC-NET-024 | Le serveur donne à chaque client la position et les statistiques qui font foi | position, vie et faim reçues | ✅ |
+| SPEC-NET-025 | L'état est rafraîchi au moins 45 fois par seconde | comptage sur une seconde | ✅ |
 | SPEC-NET-022 | Écran partagé et réseau se combinent | plusieurs joueurs locaux annoncés au serveur | ✅ |
 | SPEC-NET-023 | La perte de connexion bascule en solo sans planter | le jeu continue, un message le signale | ✅ |
 
@@ -184,6 +188,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-NAGE-005 | Une créature hostile poursuit encore en nageant | elle se rapproche du joueur dans l'eau | ✅ |
 | SPEC-NAGE-006 | Un objet au sol coule au lieu de flotter | son altitude diminue dans l'eau | ✅ |
 | SPEC-NAGE-007 | Une créature sortie de l'eau retrouve sa vitesse normale | la vitesse redevient celle de la marche | ✅ |
+| SPEC-NAGE-008 | On se hisse hors de l'eau sur une berge jusqu'à deux blocs ; un mur plus haut ne se franchit pas | sortie réussie sur des berges de 0, 1 et 2 blocs | ✅ |
 
 ## GRILLE — table de craft
 
@@ -252,9 +257,9 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-BIOME-001 | Seize biomes existent — onze terrestres (plaines, forêt, désert, taïga, marais, montagnes, jungle, savane, badlands, pics glacés, île aux champignons) et cinq marins — et apparaissent tous | un échantillon de 6 km couvre les seize | ✅ |
+| SPEC-BIOME-001 | Dix-huit biomes existent — treize terrestres (plaines, forêt, désert, taïga, marais, montagnes, jungle, savane, badlands, pics glacés, île aux champignons, volcan, glacier) et cinq marins — et apparaissent tous | un échantillon de 6 km couvre les dix-huit | ✅ |
 | SPEC-BIOME-002 | Biome et relief ne dépendent que de la graine | même graine, mêmes valeurs ; autre graine, autre carte | ✅ |
-| SPEC-BIOME-003 | Le relief reste continu aux frontières de biomes | pente entre colonnes voisines ≤ 5 blocs | ✅ |
+| SPEC-BIOME-003 | Hors des reliefs voulus (falaises, mesas, volcans, lacs), le relief reste continu aux frontières de biomes | pente entre colonnes voisines ≤ 5 blocs | ✅ |
 | SPEC-BIOME-004 | Chaque biome a sa surface : grès sous le désert, neige en taïga, eau gelée dans le froid | comptage de blocs dans un chunk de chaque biome | ✅ |
 
 ## VEGE — végétation
@@ -336,7 +341,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-VEHIC-001 | Six véhicules — bateau, moto, voiture, camion, avion, sous-marin —, chacun fabricable et posé depuis son objet | recettes, gabarits, pose | ✅ |
+| SPEC-VEHIC-001 | Sept véhicules — bateau, moto, voiture, camion, avion, sous-marin, wagonnet —, chacun fabricable et posé depuis son objet | recettes, gabarits, pose | ✅ |
 | SPEC-VEHIC-002 | La voiture accélère, braque et franchit une marche d'un bloc sans entrer dans le décor | distance, altitude, cap | ✅ |
 | SPEC-VEHIC-003 | Le bateau flotte et file sur l'eau, se traîne à terre | ligne de flottaison, vitesses | ✅ |
 | SPEC-VEHIC-004 | L'avion ne décolle qu'au-delà de sa vitesse de décollage, et redescend moteur coupé | altitude selon la vitesse | ✅ |
@@ -345,6 +350,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-VEHIC-007 | Le camion a une soute de 27 cases | inventaire embarqué | ✅ |
 | SPEC-VEHIC-008 | Les véhicules et leur chargement survivent à la sauvegarde | aller-retour | ✅ |
 | SPEC-VEHIC-009 | Un véhicule abandonné ralentit et retombe ; piloté, la boucle des créatures n'y touche pas | vitesse, altitude | ✅ |
+| SPEC-VEHIC-011 | Le wagonnet suit les rails, prend les virages, s'arrête au bout de la voie et se traîne hors des rails | parcours d'une voie en L | ✅ |
 | SPEC-VEHIC-010 | Détruit, un véhicule rend son objet ; il ne recule pas sous les coups | butin, recul nul | ✅ |
 
 ## RECETTE — recettes
@@ -371,3 +377,64 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | ID | Spec | Vérification | État |
 |---|---|---|---|
 | SPEC-MIGR-001 | Une sauvegarde d'avant les biomes se charge : ses objets sont convertis, ses blocs intacts | inventaire, coffre, fourneau convertis | ✅ |
+
+## TEXTURE — textures
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-TEXTURE-001 | Les tuiles de terrain ont plusieurs variantes, choisies par la position du bloc, et les faces supérieures tournent : le sol ne répète pas un motif | variantes distinctes, stables, mélangées | ✅ |
+| SPEC-TEXTURE-002 | Les coordonnées de texture restent à l'intérieur de leur tuile : aucune arête ne se souligne d'un pixel de la tuile voisine | marge d'un demi-texel sur toutes les rotations | ✅ |
+
+## CIEL — ciel dynamique
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-CIEL-001 | Le soleil se lève à l'aube, culmine en journée, se couche au crépuscule ; la lune lui est opposée ; les étoiles ne brillent que la nuit | positions des astres selon l'heure | ✅ |
+| SPEC-CIEL-002 | La lune passe par huit phases, une par jour | huit phases distinctes, cycle de huit jours | ✅ |
+
+## RELIEF — reliefs remarquables
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-RELIEF-001 | Des volcans de basalte s'élèvent, un cratère plein de lave au sommet | lave au fond du cratère, sommet élevé, biome volcan sur les flancs | ✅ |
+| SPEC-RELIEF-002 | Des lacs perchés au-dessus de la mer, à surface unique, gardent leur biome terrestre | niveau commun, eau générée | ✅ |
+| SPEC-RELIEF-003 | Des falaises côtières et des escarpements coupent le relief | paroi d'au moins sept blocs | ✅ |
+| SPEC-RELIEF-004 | Les hauteurs froides portent des glaciers de glace bleue, gardés par une forteresse ; aucun donjon dans un volcan | glace bleue générée ; type de donjon | ✅ |
+| SPEC-RELIEF-005 | Grottes, cavernes et lacs de lave profonds creusent le sous-sol, jamais au ras du socle | vides souterrains, lave au fond | ✅ |
+
+## LAVE — lave et magma
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-LAVE-001 | La lave brûle joueur et créatures, englue, et détruit les objets qui y tombent | PV perdus, objet détruit, créature blessée | ✅ |
+| SPEC-LAVE-002 | Lave, magma et lanternes marines luisent dans le noir ; le magma brûle au contact | passe lumineuse, source de lumière | ✅ |
+
+## CARTE — carte et points de repère
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-CARTE-001 | On pose, suit et retire des points de repère ; la boussole donne leur cap et leur distance | ajout, recherche, direction, retrait | ✅ |
+| SPEC-CARTE-002 | La carte ne montre que les chunks explorés, aux couleurs du terrain vu du ciel | tuiles révélées, couleurs, invalidation | ✅ |
+| SPEC-CARTE-003 | Pixels de la carte et coordonnées du monde se correspondent exactement | aller-retour | ✅ |
+| SPEC-CARTE-004 | La carte se fabrique, s'ouvre d'un clic droit, et repères comme exploration survivent à la sauvegarde | recette, ouverture, aller-retour | ✅ |
+
+## FACTION — factions et réputation
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-FACTION-001 | Chaque créature appartient à un camp (village, pillards, morts-vivants, bêtes) ; les inimitiés sont réciproques | appartenances et relations | ✅ |
+| SPEC-FACTION-002 | La réputation du joueur décide qui l'attaque | morts toujours hostiles, pillards amadouables, gardes pacifiques | ✅ |
+| SPEC-FACTION-003 | Tuer un membre fâche son camp et réjouit ses ennemis ; un village hostile ne commerce plus | réputations, statuts, commerce | ✅ |
+| SPEC-FACTION-004 | Les camps ennemis se combattent : un garde défend les villageois contre les morts | escarmouche simulée | ✅ |
+| SPEC-FACTION-005 | Les réputations survivent à la sauvegarde et repartent de zéro en nouvelle partie | aller-retour, reset | ✅ |
+
+## SYNC — serveur autoritaire et prédiction
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-SYNC-001 | Les touches voyagent sur six bits | encodage réciproque | ✅ |
+| SPEC-SYNC-002 | Serveur et client calculent la même trajectoire à partir des mêmes entrées | positions identiques après 120 images passées par JSON | ✅ |
+| SPEC-SYNC-003 | La réconciliation ne corrige que ce qui a divergé et garde les entrées non confirmées | écart nul si juste, correction sinon | ✅ |
+| SPEC-SYNC-004 | Un client ne peut pas simuler plus de temps qu'il ne s'en écoule | budget de temps | ✅ |
+| SPEC-SYNC-005 | Position et statistiques (vie, faim, air, mort) du serveur font foi | état envoyé et appliqué | ✅ |
+| SPEC-SYNC-006 | Le protocole valide entrées, attaques, tirs, repas et renaissance, et borne chaque valeur | messages valides, bornés, ou refusés | ✅ |

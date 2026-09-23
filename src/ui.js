@@ -45,6 +45,189 @@
     root.appendChild(barreBossEl);
     var barreBossNom = barreBossEl.querySelector('.barre-boss-nom');
     var barreBossRemplie = barreBossEl.querySelector('.barre-boss-jauge > div');
+    // ══════════════════════════════════════════════════════════════════════
+    // Carte : le monde exploré, vu du ciel, et les points de repère
+    // ══════════════════════════════════════════════════════════════════════
+    var carteEl = el('div', 'carte-panneau');
+    carteEl.style.display = 'none';
+    carteEl.innerHTML =
+      '<div class="carte-tete"><b>Carte</b><span class="carte-aide">clic : poser un repère · ' +
+      'clic droit sur un repère : le retirer · molette : zoom</span></div>' +
+      '<div class="carte-corps"><canvas width="480" height="480"></canvas>' +
+      '<div class="carte-cote"><div class="carte-zoom"><button data-z="-1">−</button>' +
+      '<span class="carte-echelle"></span><button data-z="1">+</button></div>' +
+      '<input class="carte-nom" maxlength="24" placeholder="Nom du prochain repère">' +
+      '<button class="carte-ici">Repère ici</button><div class="carte-liste"></div></div></div>';
+    root.appendChild(carteEl);
+    var carteCanvas = carteEl.querySelector('canvas');
+    var carteCtx = carteCanvas.getContext('2d');
+    var carte = null;                  // { world, joueur, reperes, exploration, echelle }
+    var ECHELLES = [0.5, 1, 2, 4, 8];  // blocs par pixel
+
+    function dessinerCarte() {
+      if (!carte) return;
+      var W = carteCanvas.width, H = carteCanvas.height;
+      var j = carte.joueur, ech = carte.echelle;
+      var img = carteCtx.createImageData(W, H), px = img.data;
+      var cxMonde = j.pos.x, czMonde = j.pos.z;
+      var tuiles = {};
+      for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
+        var m = MC.Carte.versMonde(x, y, W, H, cxMonde, czMonde, ech);
+        var bx = Math.floor(m.x), bz = Math.floor(m.z);
+        var ccx = Math.floor(bx / 16), ccz = Math.floor(bz / 16), k = ccx + ',' + ccz;
+        var t = tuiles[k];
+        if (t === undefined) t = tuiles[k] = carte.exploration.tuile(carte.world, ccx, ccz);
+        var o = (y * W + x) * 4;
+        if (!t) {
+          // inexploré : du parchemin, légèrement quadrillé
+          var q = ((bx >> 4) + (bz >> 4)) & 1 ? 214 : 206;
+          px[o] = q; px[o + 1] = q - 16; px[o + 2] = q - 44; px[o + 3] = 255;
+          continue;
+        }
+        var i = (((bz - ccz * 16) * 16) + (bx - ccx * 16)) * 4;
+        px[o] = t[i]; px[o + 1] = t[i + 1]; px[o + 2] = t[i + 2]; px[o + 3] = 255;
+      }
+      carteCtx.putImageData(img, 0, 0);
+      // repères
+      carteCtx.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
+      carte.reperes.liste.forEach(function (r) {
+        var p = MC.Carte.versCarte(r.x + 0.5, r.z + 0.5, W, H, cxMonde, czMonde, ech);
+        if (p.px < -20 || p.py < -20 || p.px > W + 20 || p.py > H + 20) return;
+        carteCtx.fillStyle = r.couleur; carteCtx.strokeStyle = '#111';
+        carteCtx.beginPath(); carteCtx.arc(p.px, p.py, 6, 0, 7); carteCtx.fill(); carteCtx.stroke();
+        if (carte.reperes.suivi === r.id) { carteCtx.beginPath(); carteCtx.arc(p.px, p.py, 10, 0, 7); carteCtx.stroke(); }
+        carteCtx.fillStyle = '#111'; carteCtx.fillText(r.nom, p.px + 9, p.py - 7);
+      });
+      // le joueur : une flèche dans le sens du regard
+      carteCtx.save();
+      carteCtx.translate(W / 2, H / 2); carteCtx.rotate(-j.yaw);
+      carteCtx.fillStyle = '#fff'; carteCtx.strokeStyle = '#111'; carteCtx.lineWidth = 1.5;
+      carteCtx.beginPath(); carteCtx.moveTo(0, -9); carteCtx.lineTo(6, 7); carteCtx.lineTo(0, 3); carteCtx.lineTo(-6, 7);
+      carteCtx.closePath(); carteCtx.fill(); carteCtx.stroke();
+      carteCtx.restore();
+      carteEl.querySelector('.carte-echelle').textContent = '1 px = ' + ech + ' bloc' + (ech > 1 ? 's' : '');
+      listerReperes();
+    }
+
+    function listerReperes() {
+      var l = carteEl.querySelector('.carte-liste');
+      l.innerHTML = carte.reperes.liste.map(function (r) {
+        var d = Math.round(Math.hypot(r.x - carte.joueur.pos.x, r.z - carte.joueur.pos.z));
+        return '<div class="carte-rep' + (carte.reperes.suivi === r.id ? ' suivi' : '') + '" data-id="' + r.id + '">' +
+          '<i style="background:' + r.couleur + '"></i><span>' + echapper(r.nom) + '</span><small>' + d + ' m</small>' +
+          '<button class="suivre" data-id="' + r.id + '" title="Suivre">◎</button>' +
+          '<button class="retirer" data-id="' + r.id + '" title="Retirer">✕</button></div>';
+      }).join('') || '<p class="carte-vide">Aucun repère.</p>';
+      l.querySelectorAll('.suivre').forEach(function (b) {
+        b.onclick = function () {
+          var id = +b.getAttribute('data-id');
+          carte.reperes.suivi = carte.reperes.suivi === id ? null : id;
+          dessinerCarte();
+        };
+      });
+      l.querySelectorAll('.retirer').forEach(function (b) {
+        b.onclick = function () { retirerRepere(+b.getAttribute('data-id')); };
+      });
+    }
+    function echapper(t) {
+      return String(t).replace(/[&<>"]/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]; });
+    }
+    function ajouterRepere(x, z) {
+      var champ = carteEl.querySelector('.carte-nom');
+      var r = carte.reperes.ajouter(champ.value.trim() || ('Repère ' + (carte.reperes.liste.length + 1)), x, z);
+      champ.value = '';
+      if (carte.surChange) carte.surChange('ajout', r);
+      dessinerCarte();
+      return r;
+    }
+    function retirerRepere(id) {
+      if (carte.reperes.suivi === id) carte.reperes.suivi = null;
+      carte.reperes.retirer(id);
+      if (carte.surChange) carte.surChange('retrait', id);
+      dessinerCarte();
+    }
+    function repereSous(ev) {
+      var rect = carteCanvas.getBoundingClientRect();
+      var px = (ev.clientX - rect.left) * carteCanvas.width / rect.width;
+      var py = (ev.clientY - rect.top) * carteCanvas.height / rect.height;
+      var m = MC.Carte.versMonde(px, py, carteCanvas.width, carteCanvas.height, carte.joueur.pos.x, carte.joueur.pos.z, carte.echelle);
+      var r = carte.reperes.proche(m.x, m.z, 9 * carte.echelle);
+      return { monde: m, repere: r };
+    }
+    carteCanvas.addEventListener('mousedown', function (ev) {
+      if (!carte) return;
+      ev.preventDefault();
+      var q = repereSous(ev);
+      if (ev.button === 2) { if (q.repere) retirerRepere(q.repere.id); return; }
+      if (q.repere) { carte.reperes.suivi = q.repere.id; dessinerCarte(); return; }
+      ajouterRepere(q.monde.x, q.monde.z);
+    });
+    carteCanvas.addEventListener('contextmenu', function (ev) { ev.preventDefault(); });
+    carteCanvas.addEventListener('wheel', function (ev) { ev.preventDefault(); zoomer(ev.deltaY > 0 ? 1 : -1); });
+    function zoomer(sens) {
+      var i = ECHELLES.indexOf(carte.echelle);
+      i = Math.max(0, Math.min(ECHELLES.length - 1, i + sens));
+      carte.echelle = ECHELLES[i];
+      dessinerCarte();
+    }
+    carteEl.querySelectorAll('.carte-zoom button').forEach(function (b) {
+      b.onclick = function () { zoomer(-(+b.getAttribute('data-z'))); };
+    });
+    carteEl.querySelector('.carte-ici').onclick = function () { ajouterRepere(carte.joueur.pos.x, carte.joueur.pos.z); };
+
+    function ouvrirCarte(opts) {
+      carte = { world: opts.world, joueur: opts.joueur, reperes: opts.reperes, exploration: opts.exploration,
+                echelle: carte ? carte.echelle : 2, surChange: opts.surChange };
+      carteEl.style.display = '';
+      dessinerCarte();
+      return carteEl;
+    }
+    function fermerCarte() { carteEl.style.display = 'none'; var o = !!carte; carte = null; return o; }
+    function carteOuverte() { return !!carte; }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Factions : ce que chaque camp pense du joueur
+    // ══════════════════════════════════════════════════════════════════════
+    var factionsEl = el('div', 'factions-panneau');
+    factionsEl.style.display = 'none';
+    root.appendChild(factionsEl);
+    var factionsVisibles = false;
+    var LIBELLES = { hostile: 'Hostile', neutre: 'Neutre', amical: 'Amical' };
+    function panneauFactions(rep) {
+      var F = MC.Factions;
+      factionsEl.innerHTML = '<div class="carte-tete"><b>Factions</b><span class="carte-aide">J pour fermer</span></div>' +
+        F.ORDRE.map(function (id) {
+          var f = F.FACTIONS[id], v = rep ? rep.get(id) : f.depart, st = F.statut(id, rep);
+          var pct = (v + 100) / 2;
+          var ennemis = f.ennemis.map(function (e) { return F.FACTIONS[e].nom; }).join(', ') || 'aucun';
+          return '<div class="faction"><div class="faction-l"><b>' + f.nom + '</b>' +
+            '<span class="st ' + st + '">' + LIBELLES[st] + '</span></div>' +
+            '<div class="faction-jauge"><div style="width:' + pct + '%"></div><i style="left:50%"></i></div>' +
+            '<small>Réputation ' + (v > 0 ? '+' : '') + v + ' · ennemis : ' + ennemis + '</small></div>';
+        }).join('');
+      factionsEl.style.display = '';
+      factionsVisibles = true;
+      return factionsEl;
+    }
+    function fermerFactions() { factionsEl.style.display = 'none'; var o = factionsVisibles; factionsVisibles = false; return o; }
+    function factionsOuvertes() { return factionsVisibles; }
+
+    // boussole : le repère suivi, sa distance et son sens, en haut de l'écran
+    var boussoleEl = el('div', 'boussole');
+    boussoleEl.style.display = 'none';
+    root.appendChild(boussoleEl);
+    var FLECHES = ['↑', '↗', '→', '↘', '↓', '↙', '←', '↖'];
+    function boussole(reperes, joueur) {
+      var r = reperes && reperes.suivi && reperes.liste.filter(function (x) { return x.id === reperes.suivi; })[0];
+      if (!r) { boussoleEl.style.display = 'none'; return null; }
+      var d = reperes.direction(r, joueur.pos.x, joueur.pos.z, joueur.yaw);
+      var i = ((Math.round(d.angle / (Math.PI / 4)) % 8) + 8) % 8;
+      boussoleEl.style.display = '';
+      boussoleEl.innerHTML = '<i style="background:' + r.couleur + '"></i>' + echapper(r.nom) +
+        ' · <b>' + Math.round(d.distance) + ' m</b> <span class="fl">' + FLECHES[i] + '</span>';
+      return { repere: r, distance: d.distance, fleche: FLECHES[i] };
+    }
+
     function barreBoss(info) {
       if (!info) { barreBossEl.style.display = 'none'; return false; }
       barreBossEl.style.display = '';
@@ -327,6 +510,8 @@
       '<tr><td>G</td><td>jeter un objet</td></tr>' +
       '<tr><td>clic droit sur un véhicule</td><td>monter · Maj + clic : soute du camion</td></tr>' +
       '<tr><td>F</td><td>descendre du véhicule</td></tr>' +
+      '<tr><td>C</td><td>carte et points de repère</td></tr>' +
+      '<tr><td>J</td><td>factions et réputation</td></tr>' +
       '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
       '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
       '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
@@ -1011,7 +1196,9 @@
     return {
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
-      barreBoss: barreBoss,
+      barreBoss: barreBoss, ouvrirCarte: ouvrirCarte, fermerCarte: fermerCarte, carteOuverte: carteOuverte,
+      dessinerCarte: dessinerCarte, boussole: boussole,
+      panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,

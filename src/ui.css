@@ -270,3 +270,46 @@
                       border-radius: 2px; overflow: hidden; }
   .barre-boss-jauge > div { height: 100%; background: linear-gradient(#e0483a, #9a2018);
                             transition: width .15s linear; }
+
+  /* carte */
+  .carte-panneau { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12;
+                   background: #2a2218; border: 2px solid #8a6a3a; border-radius: 4px; padding: 10px;
+                   color: #f0e6cc; font: 12px/1.4 ui-monospace, Menlo, Consolas, monospace; pointer-events: auto;
+                   max-width: calc(100vw - 32px); }
+  .carte-tete { display: flex; justify-content: space-between; gap: 16px; margin-bottom: 8px; }
+  .carte-aide { opacity: .7; }
+  .carte-corps { display: flex; gap: 10px; flex-wrap: wrap; }
+  .carte-corps canvas { width: min(480px, 80vw); height: auto; aspect-ratio: 1; image-rendering: pixelated;
+                        border: 1px solid #8a6a3a; cursor: crosshair; background: #d6c79a; }
+  .carte-cote { width: 200px; display: flex; flex-direction: column; gap: 6px; }
+  .carte-zoom { display: flex; align-items: center; justify-content: space-between; }
+  .carte-cote button { background: #4a3a24; color: #f0e6cc; border: 1px solid #8a6a3a; border-radius: 3px;
+                       padding: 3px 8px; cursor: pointer; font: inherit; }
+  .carte-cote input { background: #1a150f; color: #f0e6cc; border: 1px solid #8a6a3a; padding: 4px; font: inherit; }
+  .carte-liste { max-height: 330px; overflow-y: auto; display: flex; flex-direction: column; gap: 3px; }
+  .carte-rep { display: flex; align-items: center; gap: 5px; padding: 2px 4px; border-radius: 3px; }
+  .carte-rep.suivi { background: rgba(240,200,80,.18); }
+  .carte-rep i, .boussole i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
+  .carte-rep span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .carte-rep small { opacity: .7; }
+  .carte-rep button { padding: 0 5px; }
+  .carte-vide { opacity: .6; margin: 4px 0; }
+  .boussole { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none;
+              background: rgba(10,12,16,.62); color: #eef; padding: 3px 10px; border-radius: 3px;
+              font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; display: flex; gap: 6px; align-items: center; }
+  .boussole .fl { font-size: 15px; }
+
+  /* factions */
+  .factions-panneau { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12;
+                      width: min(420px, calc(100vw - 32px)); background: #1c1e24; border: 2px solid #4a5060;
+                      border-radius: 4px; padding: 12px; color: #e8eaf0;
+                      font: 12px/1.45 ui-monospace, Menlo, Consolas, monospace; pointer-events: auto; }
+  .faction { margin: 10px 0; }
+  .faction-l { display: flex; justify-content: space-between; }
+  .faction .st { padding: 0 6px; border-radius: 3px; }
+  .faction .st.hostile { background: #7a2020; } .faction .st.neutre { background: #4a4a52; }
+  .faction .st.amical { background: #2a6a30; }
+  .faction-jauge { position: relative; height: 8px; background: #2a2c34; border-radius: 2px; margin: 4px 0 2px; }
+  .faction-jauge > div { height: 100%; background: linear-gradient(90deg, #c04040, #c0a040, #40a050); border-radius: 2px; }
+  .faction-jauge i { position: absolute; top: -2px; width: 1px; height: 12px; background: #fff8; }
+  .faction small { opacity: .7; }

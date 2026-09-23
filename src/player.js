@@ -57,9 +57,11 @@
         var enMain = held() && C.def(held().id);
         if (enMain && enMain.nageRapide) speed *= 1.9;
       }
-      // une toile d'araignée englue
+      // une toile d'araignée englue ; la lave, plus encore
       var englue = P.occupeAvec(world, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH, 'ralentit');
       if (englue) speed *= englue.ralentit;
+      pl.dansLave = !!P.dansLave(world, pl.pos, PW, PH);
+      if (pl.dansLave) speed *= 0.35;
       if (pl.hunger <= 0) speed *= 0.6;              // affamé, on traîne
 
       pl.vel.x = P.approach(pl.vel.x, wish.x * speed, ACCEL, dt);
@@ -102,6 +104,15 @@
 
       var before = pl.pos.y;
       var hit = P.move(world, pl, dt, PW, PH);
+      /* Se hisser hors de l'eau. La poussée de nage cesse dès que la poitrine
+         émerge : trop tôt pour franchir un rebord, si bien qu'on restait
+         prisonnier de la mer, même face à une plage au ras de l'eau. Nageant
+         contre un rebord libre au-dessus, on reçoit juste l'élan qu'il faut. */
+      if (!pl.flying && (hit.x || hit.z) && (wish.x || wish.z) &&
+          (swimming || P.inWater(world, { x: pl.pos.x, y: pl.pos.y - 0.4, z: pl.pos.z }, PH))) {
+        var elan = P.elanPourSortir(world, pl.pos, wish, PW, PH);
+        if (elan > pl.vel.y) pl.vel.y = elan;
+      }
       pl.onGround = hit.landed ? true : (hit.y ? pl.onGround : false);
 
       if (hit.landed && pl.fallFrom !== null) {
@@ -152,6 +163,11 @@
         pl.regenT += dt * (R.regenMultiplicateur || 1);
         if (pl.regenT >= 3.5) { pl.regenT = 0; heal(1); pl.exhaustion += 1.5; }
       } else pl.regenT = 0;
+
+      // la lave brûle, vite et fort
+      pl.lavaT = Math.max(0, (pl.lavaT || 0) - dt);
+      var lave = P.dansLave(world, pl.pos, PW, PH);
+      if (lave && pl.lavaT <= 0) { pl.lavaT = 0.5; hurt(lave.brule); }
 
       // les cactus piquent, par petites touches régulières
       pl.piqueT = Math.max(0, (pl.piqueT || 0) - dt);
@@ -248,6 +264,8 @@
       if (!id) return null;
       var idef = C.def(id);
 
+      // la carte s'ouvre d'un clic droit
+      if (idef && idef.carte) return 'carte';
       // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
       if (idef && idef.vehicule) return 'vehicule:' + idef.vehicule;
 
@@ -346,7 +364,7 @@
       var d = s ? C.def(s.id) : null;
       var dmg = (d && d.damage) ? d.damage : 1;
       pl.exhaustion += 0.1;
-      var killed = entities.damage(entity, dmg, pl.pos);
+      var killed = entities.damage(entity, dmg, pl.pos, pl);
       var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
       return { damage: dmg, killed: killed, toolBroke: casse };
     }

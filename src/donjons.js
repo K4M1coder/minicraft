@@ -49,6 +49,8 @@
     }
     if (surf < SEA + 2) return null;          // rivage, lac : rien
     var id = bio ? bio.id : 'plaines';
+    if (id === 'volcan') return null;             // la lave n'épargnerait rien
+    if (id === 'glacier') return 'forteresse_glace';
     if (id === 'desert') return 'pyramide';
     if (id === 'taiga' || id === 'pics_glaces') return 'forteresse_glace';
     if (id === 'jungle') return 'temple';

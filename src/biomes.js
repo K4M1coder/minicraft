@@ -21,7 +21,7 @@
       arbres: [{ type: 'chene', p: 0.003 }],
       plantes: [{ id: B.TALL_GRASS, p: 0.09 }, { id: B.FLOWER_RED, p: 0.012 },
                 { id: B.FLOWER_YELLOW, p: 0.012 }],
-      mobsJour: { sheep: 4, pig: 3, chicken: 3, villager: 2 },
+      mobsJour: { sheep: 4, pig: 3, chicken: 3, villager: 2, garde: 1 },
       mobsNuit: { zombie: 5, skeleton: 3, spider: 3, pillager: 1 },
       mobsCiel: { bird: 3 },
     },
@@ -82,7 +82,7 @@
       id: 'savane', nom: 'Savane', surface: B.GRASS, sousSol: B.DIRT,
       arbres: [{ type: 'acacia', p: 0.005 }],
       plantes: [{ id: B.TALL_GRASS, p: 0.26 }],
-      mobsJour: { sheep: 3, chicken: 2, villager: 1 },
+      mobsJour: { sheep: 3, chicken: 2, villager: 1, garde: 1 },
       mobsNuit: { zombie: 3, skeleton: 2, pillager: 3, vindicator: 2 },
       mobsCiel: { bird: 2 },
     },
@@ -111,6 +111,18 @@
       mobsJour: { pig: 3 },
       mobsNuit: {},
       mobsCiel: { seagull: 1 },
+    },
+
+    volcan: {
+      id: 'volcan', nom: 'Volcan', surface: B.BASALT, sousSol: B.BASALT, roche: B.BASALT,
+      arbres: [], plantes: [{ id: B.DEAD_BUSH, p: 0.004 }],
+      mobsJour: {}, mobsNuit: { skeleton: 2, slime: 1 }, mobsCiel: {},
+    },
+    // glacier : la glace bleue recouvre les hauteurs froides, fendue de crevasses
+    glacier: {
+      id: 'glacier', nom: 'Glacier', surface: B.BLUE_ICE, sousSol: B.PACKED_ICE, gel: true,
+      arbres: [], plantes: [],
+      mobsJour: { polar_bear: 2 }, mobsNuit: { skeleton: 3 }, mobsCiel: {},
     },
 
     // ── marins : le biome d'une colonne immergée ──
@@ -157,7 +169,7 @@
     },
   };
   var TERRESTRES = ['plaines', 'foret', 'desert', 'taiga', 'marais', 'montagnes',
-                    'jungle', 'savane', 'badlands', 'pics_glaces', 'champignons'];
+                    'jungle', 'savane', 'badlands', 'pics_glaces', 'champignons', 'volcan', 'glacier'];
   var MARINS = ['ocean', 'ocean_chaud', 'ocean_gele', 'foret_varech', 'abysses'];
   var ORDRE = TERRESTRES.concat(MARINS);
   // tous les biomes exposent les quatre tables : un biome sans ciel a une table vide
@@ -198,7 +210,73 @@
       return { t: t, h: h, r: r, montagne: wm, desert: wd, badlands: wb, marais: ws, champignons: wc };
     }
 
+    /* ── Volcans ───────────────────────────────────────────────────────────
+       Un au plus par région de 384 blocs, un sur trois environ. Un cône qui
+       s'élève du relief (ou de la mer : c'est alors une île), un cratère au
+       sommet, rempli de lave. Tout est fonction pure de la graine. */
+    var REGION_VOLCAN = 384;
+    var volcans = new Map();
+    function volcanDe(rx, rz) {
+      var k = rx + ',' + rz;
+      if (volcans.has(k)) return volcans.get(k);
+      var v = null;
+      if (N.hash2(rx * 7919 + 3, rz * 104729 - 11) < 0.34) {
+        var m = 80;
+        v = { x: rx * REGION_VOLCAN + m + Math.floor(N.hash2(rx * 31, rz * 57) * (REGION_VOLCAN - 2 * m)),
+              z: rz * REGION_VOLCAN + m + Math.floor(N.hash2(rx * 83, rz * 29) * (REGION_VOLCAN - 2 * m)),
+              R: 42 + Math.floor(N.hash2(rx * 5, rz * 13) * 22) };
+        v.sommet = 60 + Math.floor(N.hash2(rx * 17, rz * 3) * 4);
+        v.cratere = 7;
+        v.lave = v.sommet - 4;
+      }
+      volcans.set(k, v);
+      return v;
+    }
+    function volcanProche(wx, wz) {
+      var rx = Math.floor(wx / REGION_VOLCAN), rz = Math.floor(wz / REGION_VOLCAN);
+      for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) {
+        var v = volcanDe(rx + a, rz + b);
+        if (v && Math.hypot(wx - v.x, wz - v.z) < v.R) return v;
+      }
+      return null;
+    }
+
+    /* ── Lacs ──────────────────────────────────────────────────────────────
+       Un lac par région de 160 blocs, une fois sur deux, au-dessus du niveau
+       de la mer. Son niveau est fixé au centre : toute la cuvette se remplit
+       à la même hauteur, et les berges s'adoucissent vers l'eau. */
+    var REGION_LAC = 160;
+    var lacs = new Map();
+    function lacDe(rx, rz) {
+      var k = rx + ',' + rz;
+      if (lacs.has(k)) return lacs.get(k);
+      var l = null;
+      if (N.hash2(rx * 4507 - 9, rz * 8837 + 1) < 0.5) {
+        var m = 40;
+        l = { x: rx * REGION_LAC + m + Math.floor(N.hash2(rx * 41, rz * 11) * (REGION_LAC - 2 * m)),
+              z: rz * REGION_LAC + m + Math.floor(N.hash2(rx * 3, rz * 97) * (REGION_LAC - 2 * m)),
+              R: 14 + Math.floor(N.hash2(rx * 7, rz * 71) * 16) };
+        var cc = climat(l.x, l.z);
+        var base = hauteurBrute(l.x, l.z, cc);
+        l.niveau = base - 1;
+        // pas de lac en mer, sur une montagne, dans un désert brûlant ou sous un volcan
+        if (l.niveau < SEA + 3 || l.niveau > 48 || cc.badlands > 0.5 || volcanProche(l.x, l.z)) l = null;
+      }
+      lacs.set(k, l);
+      return l;
+    }
+    function lacProche(wx, wz) {
+      var rx = Math.floor(wx / REGION_LAC), rz = Math.floor(wz / REGION_LAC);
+      for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) {
+        var l = lacDe(rx + a, rz + b);
+        if (l && Math.hypot(wx - l.x, wz - l.z) < l.R + 8) return l;
+      }
+      return null;
+    }
+
     function classerTerre(c) {
+      if (c.volcan) return 'volcan';
+      if (c.glacier) return 'glacier';
       if (c.champignons > 0.5) return 'champignons';
       if (c.t < 0.06) return 'pics_glaces';
       if (c.montagne > 0.5) return 'montagnes';
@@ -221,7 +299,7 @@
     /* Classement d'un climat. Sans altitude, on renvoie le biome terrestre :
        c'est ce qu'attendent les appels qui ne connaissent que le climat. */
     function classer(c, altitude) {
-      if (altitude !== undefined && altitude <= SEA - PROF_MARINE && c.champignons <= 0.5) {
+      if (altitude !== undefined && altitude <= SEA - PROF_MARINE && c.champignons <= 0.5 && !c.lac) {
         return classerMer(c, SEA - altitude);
       }
       return classerTerre(c);
@@ -229,7 +307,7 @@
 
     /* Hauteur du terrain. La base reprend le relief d'origine (continents,
        collines, détail) ; chaque biome la module par son poids. */
-    function hauteurDe(wx, wz, c) {
+    function hauteurBrute(wx, wz, c) {
       var continent = N.fbm(wx / 320, wz / 320, 3, 2, 0.5);
       var hills = N.signed(N.fbm(wx / 70, wz / 70, 4, 2, 0.5));
       var detail = N.signed(N.fbm(wx / 18, wz / 18, 2, 2, 0.5));
@@ -263,22 +341,79 @@
       if (c.champignons > 0 && h < SEA + 4) {
         h = h + (SEA + 4 + detail * 1.5 - h) * c.champignons * 0.9;
       }
+      /* Falaises côtières : par endroits, le rivage se dresse d'un coup. La
+         montée tient dans quelques blocs d'altitude du relief de base, donc
+         dans une bande étroite le long de la côte : une paroi, pas une pente. */
+      var fal = smoothstep(0.60, 0.66, N.fbm((wx + 4411) / 260, (wz - 1717) / 260, 2, 2, 0.5));
+      if (fal > 0 && h > SEA - 3 && c.marais < 0.5) h += fal * 11 * smoothstep(SEA - 1.5, SEA + 0.5, h);
+      c.falaise = fal;
+      /* Escarpements : dans certaines régions, une marche de sept blocs suit
+         une courbe de niveau du bruit — une ligne de falaises dans la plaine. */
+      var zoneEsc = smoothstep(0.56, 0.62, N.fbm((wx + 77) / 400, (wz + 99) / 400, 2, 2, 0.5));
+      if (zoneEsc > 0) {
+        h += zoneEsc * 7 * smoothstep(0.50, 0.52, N.fbm((wx - 2231) / 90, (wz + 881) / 90, 2, 2, 0.5));
+      }
+      c.escarpement = zoneEsc;
       // plafond souple : pas de plateaux tranchés net au sommet du monde
       if (h > 56) h = 56 + (h - 56) * 0.45;
       return Math.max(3, Math.floor(h));
     }
-    function hauteur(wx, wz) { return hauteurDe(wx, wz, climat(wx, wz)); }
 
-    /* Hauteur ET biome d'une colonne, en un seul calcul du climat. */
-    function echantillon(wx, wz) {
+    /* Une colonne complète : hauteur du sol, niveau de l'eau (la mer, ou un
+       lac au-dessus d'elle), niveau de la lave (cratère), et le climat annoté
+       des reliefs particuliers qu'elle traverse. */
+    function colonne(wx, wz) {
       var c = climat(wx, wz);
-      var h = hauteurDe(wx, wz, c);
-      return { h: h, biome: LISTE[classer(c, h)], climat: c };
+      var h = hauteurBrute(wx, wz, c);
+      var eau = SEA, lave = 0;
+      c.volcan = false; c.lac = false; c.glacier = false;
+      var v = volcanProche(wx, wz);
+      if (v) {
+        var d = Math.hypot(wx - v.x, wz - v.z);
+        var cone = SEA + 2 + (v.sommet - SEA - 2) * Math.pow(1 - d / v.R, 1.5);
+        if (d < v.cratere) {
+          // le cratère : une cuvette sous le rebord, pleine de lave
+          cone = v.sommet - 7 + Math.pow(d / v.cratere, 2) * 5;
+          lave = v.lave;
+        }
+        if (cone > h) h = Math.floor(cone);
+        c.volcan = d < v.R * 0.8;
+        // coulées : des rigoles de magma qui dévalent les flancs
+        c.coulee = c.volcan && d > v.cratere + 1 &&
+          Math.abs(N.fbm((wx - v.x) / 11 + 50, (wz - v.z) / 11 - 50, 2, 2, 0.5) - 0.5) < 0.025;
+      }
+      var l = !v && lacProche(wx, wz);
+      if (l) {
+        var dl = Math.hypot(wx - l.x, wz - l.z);
+        if (dl < l.R) {
+          // cuvette : plus profonde au centre
+          var fond = l.niveau - 1 - Math.floor((1 - Math.pow(dl / l.R, 2)) * 6);
+          if (h > fond) h = fond;
+          eau = l.niveau;
+          c.lac = true;
+        } else if (h > l.niveau + 1) {
+          // berge : le relief descend en pente douce vers l'eau
+          var k = (dl - l.R) / 8;
+          h = Math.floor(l.niveau + 1 + (h - l.niveau - 1) * k);
+        }
+      }
+      // glacier : les hauteurs froides se couvrent de glace bleue
+      c.glacier = !c.volcan && c.t < 0.22 && h >= 44;
+      return { h: Math.max(3, h), eau: eau, lave: lave, climat: c };
+    }
+    function hauteur(wx, wz) { return colonne(wx, wz).h; }
+
+    /* Hauteur, eau, lave ET biome d'une colonne, en un seul calcul du climat. */
+    function echantillon(wx, wz) {
+      var col = colonne(wx, wz);
+      col.biome = LISTE[classer(col.climat, col.h)];
+      return col;
     }
     function biomeAt(wx, wz) { return echantillon(wx, wz).biome; }
 
     return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur,
-             echantillon: echantillon };
+             echantillon: echantillon, colonne: colonne, volcanProche: volcanProche,
+             lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe };
   }
 
   /* Tirage pondéré d'un type de mob dans une table { type: poids }. */

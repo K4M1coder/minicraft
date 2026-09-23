@@ -165,11 +165,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — biomes', function () {
 
-    it('SPEC-BIOME-001 : seize biomes existent et apparaissent tous', function () {
+    it('SPEC-BIOME-001 : dix-huit biomes existent et apparaissent tous', function () {
       var w = monde();
-      A.equal(MC.Biomes.TERRESTRES.length, 11, 'onze biomes terrestres');
+      A.equal(MC.Biomes.TERRESTRES.length, 13, 'treize biomes terrestres');
       A.equal(MC.Biomes.MARINS.length, 5, 'cinq biomes marins');
-      A.equal(MC.Biomes.ORDRE.length, 16);
+      A.equal(MC.Biomes.ORDRE.length, 18);
       var vus = {};
       for (var x = -3000; x <= 3000; x += 37) for (var z = -3000; z <= 3000; z += 41) {
         vus[w.biomeAt(x, z).id] = true;
@@ -188,7 +188,7 @@
         var x = i * 53 - 9000, z = i * 71 - 4000;
         A.equal(a.hauteur(x, z), b.hauteur(x, z), 'même graine, même relief');
         A.equal(a.biomeAt(x, z).id, b.biomeAt(x, z).id, 'même graine, même biome');
-        A.equal(a.classer(a.climat(x, z), a.hauteur(x, z)), a.biomeAt(x, z).id, 'classer(climat, hauteur) = biomeAt');
+        A.equal(a.classer(a.colonne(x, z).climat, a.hauteur(x, z)), a.biomeAt(x, z).id, 'classer(climat, hauteur) = biomeAt');
         var e = a.echantillon(x, z);
         A.equal(e.h, a.hauteur(x, z), 'echantillon donne la même hauteur');
         A.equal(e.biome.id, a.biomeAt(x, z).id, 'et le même biome');
@@ -199,11 +199,19 @@
 
     it('SPEC-BIOME-003 : le relief reste continu aux frontieres de biomes', function () {
       var w = monde(), pire = 0;
+      var Bi = MC.Biomes.creer(w.noise);
+      // falaises, mesas, volcans et lacs sont des ruptures VOULUES : on les écarte
+      function relief(x, z) {
+        var c = Bi.colonne(x, z).climat;
+        return c.falaise > 0 || c.escarpement > 0 || c.badlands > 0 || c.volcan || c.lac ||
+               Bi.volcanProche(x, z) || Bi.lacProche(x, z);
+      }
       for (var x = -2500; x <= 2500; x += 13) for (var z = -2500; z <= 2500; z += 197) {
+        if (relief(x, z) || relief(x + 1, z) || relief(x, z + 1)) continue;
         var h = w.heightAt(x, z);
         pire = Math.max(pire, Math.abs(w.heightAt(x + 1, z) - h), Math.abs(w.heightAt(x, z + 1) - h));
       }
-      A.ok(pire <= 5, 'pente maximale entre deux colonnes voisines : ' + pire);
+      A.ok(pire <= 5, 'pente maximale entre deux colonnes voisines, hors reliefs particuliers : ' + pire);
       // les poids sont des fonctions lisses et bornées
       A.equal(MC.Biomes.smoothstep(0.2, 0.8, 0.1), 0);
       A.equal(MC.Biomes.smoothstep(0.2, 0.8, 0.9), 1);
@@ -619,8 +627,8 @@
       A.ok(s.ents.damage(g, 999, { x: 0, y: 11, z: 0 }), 'le coup est fatal');
       var epee = s.ents.list.some(function (e) { return e.type === 'item' && e.item === I.EPEE_RUNIQUE; });
       A.ok(epee, 'l épée runique tombe');
-      var ev = s.ents.evenements();
-      A.equal(ev.length, 1, 'un événement');
+      var ev = s.ents.evenements().filter(function (x) { return x.type === 'boss_vaincu'; });
+      A.equal(ev.length, 1, 'un événement de victoire');
       A.equal(ev[0].type, 'boss_vaincu');
       A.equal(ev[0].donjon, '4,4', 'qui désigne le donjon');
       A.equal(s.ents.evenements().length, 0, 'et n est rendu qu une fois');

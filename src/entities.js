@@ -77,6 +77,9 @@
                 drops: [{ id: I.EMERALD, n: 1, chance: 0.3 }, { id: I.FLECHE, n: 2 }] },
     vindicator: { w: 0.6, h: 1.8, hp: 24, speed: 3.0, damage: 4, hostile: true, arme: I.IRON_AXE,
                   drops: [{ id: I.EMERALD, n: 1, chance: 0.4 }] },
+    // le garde défend le village : il combat morts et pillards, et le joueur s'il en est l'ennemi
+    garde:    { w: 0.6,  h: 1.8,  hp: 30, speed: 2.8, damage: 4, arme: I.IRON_SWORD, vue: 20,
+                drops: [{ id: I.EMERALD, n: 1, chance: 0.2 }] },
 
     // ── gardiens de donjon ──
     boss_zombie:    { w: 1.1, h: 2.8, hp: 90, speed: 2.3, damage: 6, hostile: true, boss: true,
@@ -241,7 +244,8 @@
     /* Avance un projectile par petits pas et s'arrete au premier contact.
        On subdivise le deplacement : a 34 m/s et 60 images/s, un pas entier
        fait 0,57 bloc — un mur d'un bloc passerait au travers un tir sur deux. */
-    function stepArrow(e, dt, player, events) {
+    function stepArrow(e, dt, player, events, joueurs) {
+      var cibles = joueurs && joueurs.length ? joueurs : (player ? [player] : []);
       e.vie -= dt;
       if (e.vie <= 0) { remove(e); return; }
       var gp = GRAVITE_PROJECTILE[e.genre || 'fleche'];
@@ -268,19 +272,24 @@
           if (Math.abs(e.pos.x - c.pos.x) < hw && Math.abs(e.pos.z - c.pos.z) < hw &&
               e.pos.y > c.pos.y && e.pos.y < c.pos.y + c.h) {
             c.hurtCd = 0;                       // un tir vise touche toujours
-            damage(c, e.degats, e.pos);
+            damage(c, e.degats, e.pos, e.tireur);
             remove(e);
             return;
           }
         }
-        // le joueur, sauf s'il est le tireur
-        if (player && e.tireur !== player && e.pos.y > player.pos.y &&
-            e.pos.y < player.pos.y + 1.8 &&
-            Math.abs(e.pos.x - player.pos.x) < 0.3 &&
-            Math.abs(e.pos.z - player.pos.z) < 0.3) {
-          if (events) events.damage += e.degats;
-          remove(e);
-          return;
+        // un joueur, sauf s'il est le tireur
+        for (var q = 0; q < cibles.length; q++) {
+          var pj = cibles[q];
+          if (!pj || pj.dead || e.tireur === pj) continue;
+          if (e.pos.y > pj.pos.y && e.pos.y < pj.pos.y + 1.8 &&
+              Math.abs(e.pos.x - pj.pos.x) < 0.3 && Math.abs(e.pos.z - pj.pos.z) < 0.3) {
+            if (events) {
+              if (pj === player) events.damage += e.degats;
+              events.degatsPar.push({ joueur: pj, n: e.degats });
+            }
+            remove(e);
+            return;
+          }
         }
         if (e.pos.y < -20) { remove(e); return; }
       }
@@ -388,13 +397,18 @@
     var journal = [];
     function evenements() { var l = journal.slice(); journal.length = 0; return l; }
 
-    function damage(e, amount, knockFrom) {
+    /* `auteur` : qui frappe — le joueur (son état, qui porte un inventaire),
+       une créature, ou rien (chute, asphyxie). */
+    function estJoueur(a) { return !!(a && a.inv); }
+    function damage(e, amount, knockFrom, auteur) {
       if (e.hurtCd > 0 || e.dead) return false;
       var s = SPECS[e.type];
       e.hp -= amount;
       e.hurtCd = 0.35;
-      // une créature neutre frappée devient hostile, et le reste
-      if (s.neutral) e.enrage = true;
+      // une créature neutre frappée par le joueur lui en veut, et le reste
+      if (s.neutral && (!auteur || estJoueur(auteur))) e.enrage = true;
+      // frappée par une autre créature, elle riposte contre elle
+      if (auteur && !estJoueur(auteur) && auteur.eid && !auteur.dead) { e.cibleE = auteur; e.cibleT = 2; }
       if (knockFrom) {
         var dx = e.pos.x - knockFrom.x, dz = e.pos.z - knockFrom.z;
         var d = Math.hypot(dx, dz) || 1;
@@ -421,6 +435,7 @@
             p.vel.x = Math.cos(ang) * 3; p.vel.z = Math.sin(ang) * 3; p.vel.y = 5;
           }
         }
+        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur) });
         if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom,
                                    donjon: e.donjon || null, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         remove(e);
@@ -432,6 +447,12 @@
     /* Physique commune : gravité, collisions, flottaison dans l'eau. */
     function stepBody(e, dt) {
       var sb = SPECS[e.type];
+      var lv = P.dansLave(world, e.pos, e.w, e.h);
+      if (lv) {
+        if (e.type === 'item') { remove(e); return { x: false, y: false, z: false }; }
+        if (!sb.boss || e.type !== 'boss_wyverne') damage(e, lv.brule);
+        e.vel.x *= 0.5; e.vel.z *= 0.5;
+      }
       if (sb && sb.lest && P.inWater(world, e.pos, e.h)) {
         // lesté : la verticale a déjà été réglée par Faune.lester
       } else if (P.inWater(world, e.pos, e.h)) {
@@ -505,10 +526,47 @@
       return n;
     }
 
+    /* Choix de la cible d'une créature, revu deux fois par seconde : le
+       joueur s'il est son ennemi (selon sa faction et la réputation du joueur),
+       ou la créature ennemie la plus proche. Renvoie { cible, agressif,
+       joueur }. Une créature sans faction garde l'ancien comportement : elle
+       vise le joueur, agressive selon son gabarit. */
+    function choisirCible(e, s, joueur, rep, dt) {
+      var F = MC.Factions;
+      var f = F && F.factionDe(e.type);
+      var contreJoueur = !!(joueur && !joueur.dead &&
+        ((F ? F.hostileEnversJoueur(e.type, rep, s.hostile) : s.hostile) || (s.neutral && e.enrage)));
+      if (!f) return { cible: joueur, agressif: contreJoueur || !!s.hostile, joueur: true };
+      var vue = s.vue || 16;
+      e.cibleT = (e.cibleT || 0) - dt;
+      if (e.cibleT <= 0 || !e.cibleE || e.cibleE.dead) {
+        e.cibleT = 0.5;
+        var best = null, bd = vue;
+        e.fuirDe = null;
+        for (var i = 0; i < list.length; i++) {
+          var o = list[i];
+          if (o === e || o.dead || o.type === 'item' || o.type === 'arrow') continue;
+          if (!F.typesEnnemis(e.type, o.type)) continue;
+          var d = Math.hypot(o.pos.x - e.pos.x, o.pos.z - e.pos.z);
+          if (d < bd && Math.abs(o.pos.y - e.pos.y) < 6) { bd = d; best = o; }
+        }
+        // les pacifiques ne se battent pas : ils fuient ce qui les menace
+        if (s.npc) { e.fuirDe = best && bd < 8 ? best.pos : null; best = null; }
+        e.cibleE = best;
+      }
+      var ce = e.cibleE && !e.cibleE.dead ? e.cibleE : null;
+      if (ce && contreJoueur) {
+        var dj = Math.hypot(joueur.pos.x - e.pos.x, joueur.pos.z - e.pos.z);
+        if (dj < Math.hypot(ce.pos.x - e.pos.x, ce.pos.z - e.pos.z)) ce = null;
+      }
+      if (ce) return { cible: ce, agressif: true, joueur: false };
+      return { cible: joueur, agressif: contreJoueur, joueur: true };
+    }
+
     /* Nageurs et volants. Le déplacement vient de Faune ; les attaques
        (morsure, tir, renforts) suivent les mêmes règles que sur la terre ferme. */
-    function stepFaune(e, s, dt, player, rand) {
-      var agressif = !!(s.hostile || (s.neutral && e.enrage));
+    function stepFaune(e, s, dt, player, rand, agressifImpose) {
+      var agressif = agressifImpose !== undefined ? !!agressifImpose : !!(s.hostile || (s.neutral && e.enrage));
       var ctx = { world: world, cible: player, rand: rand, agressif: agressif };
       var act = null;
       if (s.nageur) {
@@ -547,14 +605,22 @@
     }
 
     /* IA : poursuite pour les hostiles, errance pour les autres. */
-    function stepAI(e, dt, player, rand) {
+    function stepAI(e, dt, player, rand, agressifImpose) {
       var r = rand || Math.random;
       var s = SPECS[e.type];
       if (!s.speed) return;
 
       var dx = player.pos.x - e.pos.x, dz = player.pos.z - e.pos.z;
       var dist = Math.hypot(dx, dz);
-      var agressif = s.hostile || (s.neutral && e.enrage);
+      var agressif = agressifImpose !== undefined ? agressifImpose : (s.hostile || (s.neutral && e.enrage));
+      // un villageois fuit le danger au lieu d'errer
+      if (e.fuirDe && !agressif) {
+        var fx = e.pos.x - e.fuirDe.x, fz = e.pos.z - e.fuirDe.z, fd = Math.hypot(fx, fz) || 1;
+        e.vel.x = fx / fd * s.speed * 1.8; e.vel.z = fz / fd * s.speed * 1.8;
+        var cf = capVers(e.vel.x, e.vel.z);
+        if (cf !== null) e.yaw = cf;
+        return null;
+      }
       var vue = s.vue || 18;
 
       if (agressif && dist < vue && !player.dead) {
@@ -663,7 +729,21 @@
     function update(dt, player, opts) {
       opts = opts || {};
       var rand = opts.rand || Math.random;
-      var events = { damage: 0, picked: [] };
+      var events = { damage: 0, picked: [], degatsPar: [] };
+      /* Plusieurs joueurs (le serveur les simule tous) : chaque entité
+         s'occupe du plus proche. Sans liste, le joueur unique d'autrefois. */
+      var joueurs = opts.joueurs && opts.joueurs.length ? opts.joueurs : [player];
+      function procheDe(e) {
+        if (joueurs.length === 1) return joueurs[0];
+        var best = null, bd = Infinity;
+        for (var q = 0; q < joueurs.length; q++) {
+          var pj = joueurs[q];
+          if (!pj || pj.dead) continue;
+          var d = Math.hypot(pj.pos.x - e.pos.x, pj.pos.y - e.pos.y, pj.pos.z - e.pos.z);
+          if (d < bd) { bd = d; best = pj; }
+        }
+        return best || joueurs[0];
+      }
 
       for (var i = list.length - 1; i >= 0; i--) {
         var e = list[i];
@@ -679,17 +759,19 @@
         if (e.hurtCd > 0) e.hurtCd -= dt;
 
         if (e.type === 'arrow') {
-          stepArrow(e, dt, player, events);
+          stepArrow(e, dt, player, events, joueurs);
           continue;
         }
 
         if (e.type === 'item') {
           e.pickup -= dt;
           stepBody(e, dt);
-          // aimantation vers le joueur quand il est proche
-          var dx = player.pos.x - e.pos.x;
-          var dy = (player.pos.y + 0.6) - e.pos.y;
-          var dz = player.pos.z - e.pos.z;
+          if (e.dead) continue;
+          // aimantation vers le joueur le plus proche
+          var pi = procheDe(e);
+          var dx = pi.pos.x - e.pos.x;
+          var dy = (pi.pos.y + 0.6) - e.pos.y;
+          var dz = pi.pos.z - e.pos.z;
           var d = Math.hypot(dx, dy, dz);
           if (e.pickup <= 0 && d < 2.2) {
             var pull = 9 / Math.max(0.35, d);
@@ -698,7 +780,7 @@
             e.vel.z += (dz / d) * pull * dt * 6;
           }
           if (e.pickup <= 0 && d < 0.85) {
-            events.picked.push({ id: e.item, n: e.n, entity: e });
+            events.picked.push({ id: e.item, n: e.n, entity: e, joueur: pi });
             remove(e);
           }
           if (e.age > 300) remove(e);       // les objets oubliés disparaissent
@@ -707,29 +789,38 @@
 
         var se = SPECS[e.type];
         var act;
+        var pj = procheDe(e);
         if (se.vehicule) {
           // un véhicule abandonné roule sur son élan, flotte ou retombe ; piloté,
           // c'est le jeu qui le conduit, avec les commandes du joueur
           if (!e.conducteur && MC.Vehicules) MC.Vehicules.conduire(e, dt, world, null);
           continue;
         }
+        var choix = choisirCible(e, se, pj, opts.reputation, dt);
         if (se.nageur || se.volant) {
-          act = stepFaune(e, se, dt, player, rand);
+          act = stepFaune(e, se, dt, choix.joueur ? pj : choix.cible, rand, choix.agressif);
         } else {
-          act = stepAI(e, dt, player, rand);
-          if (se.lest) MC.Faune.lester(e, se, dt, { world: world, cible: player,
+          act = stepAI(e, dt, choix.cible || pj, rand, choix.agressif);
+          if (se.lest) MC.Faune.lester(e, se, dt, { world: world, cible: pj,
                                                    agressif: !!(se.hostile || e.enrage) });
           stepBody(e, dt);
         }
         if (e.dead) continue;
-        if (act && act.attack) events.damage += act.attack;
+        if (act && act.attack) {
+          // le coup va à la cible : le joueur, ou la créature combattue
+          if (choix.joueur) {
+            if (pj === player) events.damage += act.attack;
+            events.degatsPar.push({ joueur: pj, n: act.attack });
+          } else if (choix.cible && !choix.cible.dead) damage(choix.cible, act.attack, e.pos, e);
+        }
         // méduse : elle pique quiconque la frôle
-        if (se.pique && player && !player.dead) {
+        if (se.pique && pj && !pj.dead) {
           e.piqueCd = (e.piqueCd || 0) - dt;
           if (e.piqueCd <= 0 && P.boxOverlap(e.pos.x, e.pos.y, e.pos.z, e.w + 0.2, e.h,
-                                             player.pos.x, player.pos.y, player.pos.z, 0.6, 1.8)) {
+                                             pj.pos.x, pj.pos.y, pj.pos.z, 0.6, 1.8)) {
             e.piqueCd = 1;
-            events.damage += se.pique;
+            if (pj === player) events.damage += se.pique;
+            events.degatsPar.push({ joueur: pj, n: se.pique });
           }
         }
         if (act && act.tir) {
@@ -752,9 +843,9 @@
 
         // une créature ne traverse pas le joueur — sans pour autant entrer dans un mur,
         // comme les deux autres séparations : sinon le joueur l'enfonçait dans la roche
-        if (player && !player.dead) {
+        if (pj && !pj.dead) {
           var avX = e.pos.x, avZ = e.pos.z;
-          if (ecarter(e, player, dt, 1, 0) > 0 && P.collides(world, e.pos.x, e.pos.y, e.pos.z, e.w, e.h)) {
+          if (ecarter(e, pj, dt, 1, 0) > 0 && P.collides(world, e.pos.x, e.pos.y, e.pos.z, e.w, e.h)) {
             e.pos.x = avX; e.pos.z = avZ;
           }
         }
@@ -962,7 +1053,7 @@
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, ecarter: ecarter,
       countOf: countOf, trySpawn: trySpawn, burnUndead: burnUndead, stepBody: stepBody,
-      stepAI: stepAI, evenements: evenements, voitCible: voitCible, viser: viser,
+      stepAI: stepAI, evenements: evenements, choisirCible: choisirCible, voitCible: voitCible, viser: viser,
       sbires: sbires, sousPlafond: sousPlafond, zoneChargee: zoneChargee, stepFaune: stepFaune,
       tirerArme: tirerArme, degatsAvecArme: degatsAvecArme, tirDe: tirDe,
       invoquerGardien: invoquerGardien,

@@ -4,7 +4,7 @@
   'use strict';
   var MC = G.MC = G.MC || {};
   // 8 × 24 tuiles : terrain d origine, puis biomes, mer, structures, objets et véhicules
-  var TILE = 16, COLS = 8, ROWS = 24;
+  var TILE = 16, COLS = 16, ROWS = 24;
 
   function buildAtlas() {
     var cv = document.createElement('canvas');
@@ -778,6 +778,94 @@
     vehicule(165, '#e0c030', function (x, y) {                         // sous-marin
       g.beginPath(); g.ellipse(x + 8, y + 10, 7, 3.5, 0, 0, 7); g.fill(); g.fillRect(x + 6, y + 4, 4, 4);
       g.fillStyle = '#6ab8ff'; g.fillRect(x + 4, y + 9, 2, 2); g.fillRect(x + 8, y + 9, 2, 2);
+    });
+
+    // ─── volcans, glaciers, exploration (166-172) ─────────────────────────────
+    (function () {                                                    // 166 lave
+      var o = grain(166, [220, 96, 20], 30);
+      for (var k = 0; k < 18; k++) {
+        g.fillStyle = rnd() < 0.5 ? '#ffd040' : '#ff9a20';
+        g.fillRect(o[0] + ((rnd() * 14) | 0), o[1] + ((rnd() * 14) | 0), 1 + ((rnd() * 3) | 0), 1 + ((rnd() * 2) | 0));
+      }
+      g.fillStyle = 'rgba(120,30,10,.55)';
+      for (var j = 0; j < 6; j++) g.fillRect(o[0] + ((rnd() * 14) | 0), o[1] + ((rnd() * 14) | 0), 2, 1);
+    })();
+    taches(167, [58, 56, 62], 18, 'rgba(90,88,96,.7)', 10, 2);         // 167 basalte dessus
+    (function () {                                                    // 168 basalte côté
+      var o = grain(168, [54, 52, 58], 16);
+      g.fillStyle = 'rgba(30,28,34,.8)';
+      for (var x = 2; x < TILE; x += 4) g.fillRect(o[0] + x, o[1], 1, TILE);
+    })();
+    (function () {                                                    // 169 magma
+      var o = grain(169, [96, 30, 16], 20);
+      g.strokeStyle = '#ff8a20'; g.lineWidth = 1;
+      for (var k = 0; k < 5; k++) {
+        g.beginPath(); var x0 = rnd() * 16, y0 = rnd() * 16;
+        g.moveTo(o[0] + x0, o[1] + y0); g.lineTo(o[0] + x0 + (rnd() - 0.5) * 10, o[1] + y0 + (rnd() - 0.5) * 10);
+        g.stroke();
+      }
+    })();
+    taches(170, [90, 150, 230], 12, 'rgba(200,230,255,.55)', 8, 2);   // 170 glace bleue
+    (function () {                                                    // 171 wagonnet
+      var o = clear(171);
+      g.fillStyle = '#6a6a72'; g.fillRect(o[0] + 2, o[1] + 5, 12, 6); g.fillRect(o[0] + 2, o[1] + 3, 2, 3); g.fillRect(o[0] + 12, o[1] + 3, 2, 3);
+      g.fillStyle = '#18181c'; g.fillRect(o[0] + 3, o[1] + 11, 3, 3); g.fillRect(o[0] + 10, o[1] + 11, 3, 3);
+    })();
+    (function () {                                                    // 172 carte
+      var o = clear(172);
+      g.fillStyle = '#e8d8a8'; g.fillRect(o[0] + 2, o[1] + 2, 12, 12);
+      g.fillStyle = '#5a9a40'; g.fillRect(o[0] + 3, o[1] + 3, 5, 4); g.fillRect(o[0] + 8, o[1] + 8, 5, 4);
+      g.fillStyle = '#4a7ad8'; g.fillRect(o[0] + 9, o[1] + 3, 4, 4); g.fillRect(o[0] + 3, o[1] + 9, 4, 4);
+      g.fillStyle = '#c02a2a'; g.fillRect(o[0] + 7, o[1] + 7, 2, 2);
+      g.strokeStyle = '#8a6a3a'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+    })();
+
+    // ─── textures raccordables et variantes ──────────────────────────────────
+    /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
+       interpolé en bouclant sur les bords. Le motif se raccorde donc avec
+       lui-même : posées côte à côte, deux tuiles ne laissent voir aucune
+       couture, là où le grain pixel à pixel seul paraissait plat. */
+    function tachesTuilables(i, amp) {
+      var o = origin(i);
+      var img = g.getImageData(o[0], o[1], TILE, TILE), px = img.data;
+      var L = [], N = 4;
+      for (var a = 0; a < N * N; a++) L.push(rnd() - 0.5);
+      function lis(t) { return t * t * (3 - 2 * t); }
+      for (var y = 0; y < TILE; y++) for (var x = 0; x < TILE; x++) {
+        var fx = x / TILE * N, fy = y / TILE * N;
+        var x0 = Math.floor(fx), y0 = Math.floor(fy), tx = lis(fx - x0), ty = lis(fy - y0);
+        var x1 = (x0 + 1) % N, y1 = (y0 + 1) % N;
+        var v = (L[y0 * N + x0] * (1 - tx) + L[y0 * N + x1] * tx) * (1 - ty) +
+                (L[y1 * N + x0] * (1 - tx) + L[y1 * N + x1] * tx) * ty;
+        var k = (y * TILE + x) * 4;
+        if (px[k + 3] === 0) continue;                // trou d'un feuillage : on n'y touche pas
+        px[k] = clamp(px[k] + v * amp); px[k + 1] = clamp(px[k + 1] + v * amp); px[k + 2] = clamp(px[k + 2] + v * amp);
+      }
+      g.putImageData(img, o[0], o[1]);
+    }
+    var TACHES = { 0: 26, 2: 22, 3: 24, 4: 18, 9: 14, 12: 14, 56: 10, 57: 0, 59: 12, 82: 18,
+                   86: 12, 87: 16, 93: 16, 94: 12, 83: 14, 7: 20, 78: 20, 64: 18, 66: 18 };
+    Object.keys(TACHES).forEach(function (t) { if (TACHES[t]) tachesTuilables(+t, TACHES[t]); });
+
+    /* Variantes : la tuile de base, décalée d'un roulement circulaire (qui
+       reste raccordable), puis re-tachetée. Une tuile de côté ne roule
+       qu'horizontalement : la frange d'herbe doit rester en haut. */
+    var CV = MC.Core;
+    Object.keys(CV.INDEX_VARIANTES).forEach(function (t) {
+      var base = +t, liste = CV.INDEX_VARIANTES[t], cote = CV.TUILES_VARIABLES[t].cote;
+      var ob = origin(base);
+      var src = g.getImageData(ob[0], ob[1], TILE, TILE);
+      for (var k = 1; k < liste.length; k++) {
+        var dx = 3 + ((rnd() * 10) | 0), dy = cote ? 0 : 3 + ((rnd() * 10) | 0);
+        var out = g.createImageData(TILE, TILE);
+        for (var y = 0; y < TILE; y++) for (var x = 0; x < TILE; x++) {
+          var s = (((y + dy) % TILE) * TILE + ((x + dx) % TILE)) * 4, d = (y * TILE + x) * 4;
+          for (var c = 0; c < 4; c++) out.data[d + c] = src.data[s + c];
+        }
+        var ov = origin(liste[k]);
+        g.putImageData(out, ov[0], ov[1]);
+        tachesTuilables(liste[k], (TACHES[base] || 12) * 0.8);
+      }
     });
 
     var tex = new THREE.CanvasTexture(cv);

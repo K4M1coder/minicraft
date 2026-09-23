@@ -29,9 +29,9 @@
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — vehicules', function () {
 
-    it('SPEC-VEHIC-001 : six vehicules, chacun fabricable et pose depuis son objet', function () {
-      A.equal(V.TYPES.length, 6);
-      ['bateau', 'moto', 'voiture', 'camion', 'avion', 'sous_marin'].forEach(function (t) {
+    it('SPEC-VEHIC-001 : sept vehicules, chacun fabricable et pose depuis son objet', function () {
+      A.equal(V.TYPES.length, 7);
+      ['bateau', 'moto', 'voiture', 'camion', 'avion', 'sous_marin', 'wagonnet'].forEach(function (t) {
         var d = V.DEFS[t];
         A.ok(d && d.nom && d.vmax > 0, t + ' défini');
         A.equal(C.ITEMS[d.objet].vehicule, t, t + ' : son objet le désigne');

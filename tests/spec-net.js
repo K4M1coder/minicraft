@@ -223,7 +223,9 @@
     it('SPEC-NET-007 : la validation ne fait jamais confiance a la source', function () {
       // un client malveillant ne doit pas pouvoir injecter de champs
       var m = N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 5, admin: true, __proto__: {} });
-      A.deep(Object.keys(m).sort(), ['id', 't', 'x', 'y', 'z'], 'champs recopies un a un');
+      // j (joueur local) et outil sont des champs du protocole, bornés par le serveur
+      A.deep(Object.keys(m).sort(), ['id', 'j', 'outil', 't', 'x', 'y', 'z'], 'champs recopies un a un');
+      A.equal(m.admin, undefined, 'le champ injecte est ignore');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

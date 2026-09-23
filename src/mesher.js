@@ -7,7 +7,8 @@
   var C = MC.Core;
   var CX = C.CHUNK_X, CZ = C.CHUNK_Z, WH = C.WORLD_H, idx = C.idx;
 
-  var ATLAS_COLS = 8, ATLAS_ROWS = 24;
+  // doit suivre atlas.js : 16 colonnes depuis l'arrivée des variantes
+  var ATLAS_COLS = 16, ATLAS_ROWS = 24;
 
   // -x, +x, -y, +y, -z, +z.  t = index dans tiles[] (0 dessus, 1 côté, 2 dessous).
   // shade = éclairage directionnel bon marché, encodé en couleur par sommet.
@@ -27,9 +28,29 @@
     [[0.85,0,0.15,0,0],[0.15,0,0.85,1,0],[0.85,1,0.15,0,1],[0.15,1,0.85,1,1]],
   ];
 
-  function pushUV(uvs, tile, u, v) {
+  /* Coordonnées de texture d'un sommet. Deux précautions :
+     - on rentre d'un demi-texel dans la tuile : échantillonnée pile sur sa
+       frontière, une tuile laisse déborder un pixel de sa voisine dans l'atlas,
+       et chaque arête de bloc se soulignait d'un trait sombre ;
+     - `rot` fait tourner la tuile d'autant de quarts de tour, pour que le sol
+       ne répète pas le même motif à l'identique. */
+  var MARGE_UV = 0.5 / 16;
+  function pushUV(uvs, tile, u, v, rot) {
+    var a = u, b = v;
+    if (rot === 1) { a = v; b = 1 - u; }
+    else if (rot === 2) { a = 1 - u; b = 1 - v; }
+    else if (rot === 3) { a = 1 - v; b = u; }
+    a = MARGE_UV + a * (1 - 2 * MARGE_UV);
+    b = MARGE_UV + b * (1 - 2 * MARGE_UV);
     var tx = tile % ATLAS_COLS, ty = (tile / ATLAS_COLS) | 0;
-    uvs.push((tx + u) / ATLAS_COLS, 1 - (ty + 1 - v) / ATLAS_ROWS);
+    uvs.push((tx + a) / ATLAS_COLS, 1 - (ty + 1 - b) / ATLAS_ROWS);
+  }
+
+  // hachage entier d'une position, pour choisir une variante stable
+  function hachePos(x, y, z, k) {
+    var h = Math.imul(x | 0, 73856093) ^ Math.imul(y | 0, 19349663) ^ Math.imul(z | 0, 83492791) ^ Math.imul(k | 0, 2654435761);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
   }
 
   /* ── Occlusion ambiante par sommet ────────────────────────────────────────
@@ -134,7 +155,10 @@
         if (C.occludes(b, nb)) continue;
         if (d.liquid && f.dir[1] === -1) continue;
 
-        var tile = d.tiles[f.t];
+        // variante et rotation : stables pour ce bloc et cette face
+        var dessus = f.dir[1] !== 0;
+        var vt = C.tuileVariante(d.tiles[f.t], hachePos(baseX + x, y, baseZ + z, fi), dessus);
+        var tile = vt.tile;
         var s = f.shade, start = positions.length / 3;
         var drop = d.liquid ? 0.12 : 0;
         var tg = tangents(f.dir), U = tg[0], V = tg[1];
@@ -153,7 +177,7 @@
           }
           positions.push(x + q2[0], y + q2[1] - (q2[1] === 1 ? drop : 0), z + q2[2]);
           normals.push(f.dir[0], f.dir[1], f.dir[2]);
-          pushUV(uvs, tile, q2[3], q2[4]);
+          pushUV(uvs, tile, q2[3], q2[4], vt.rot);
           var c = s * ao[k];
           colors.push(c, c, c);
         }
@@ -174,6 +198,6 @@
              colors: colors, indices: indices };
   }
 
-  MC.Mesher = { buildChunk: buildChunk, FACES: FACES,
+  MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,
                 ATLAS_COLS: ATLAS_COLS, ATLAS_ROWS: ATLAS_ROWS };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -62,6 +62,27 @@
     return id ? C.BLOCKS[id] : null;
   }
 
+  /* Vitesse verticale qu'il faut pour monter sur le rebord situé devant soi
+     (direction `dir`), ou 0 s'il n'y a pas de rebord franchissable : plus de
+     2,6 blocs à gravir, ou pas la place de se tenir debout dessus. */
+  var HISSE_MAX = 2.6, GRAVITE_HISSE = 30;
+  function elanPourSortir(world, pos, dir, w, h) {
+    var n = Math.hypot(dir.x, dir.z);
+    if (n < 1e-9) return 0;
+    var ax = pos.x + dir.x / n * (w / 2 + 0.35), az = pos.z + dir.z / n * (w / 2 + 0.35);
+    var pied = Math.floor(pos.y);
+    if (!C.isSolid(world.getBlock(Math.floor(ax), pied, Math.floor(az))) &&
+        !C.isSolid(world.getBlock(Math.floor(ax), pied + 1, Math.floor(az)))) return 0;
+    for (var dy = 1; dy <= 3; dy++) {
+      var y = pied + dy;
+      if (y - pos.y > HISSE_MAX) return 0;
+      if (collides(world, ax, y, az, w, h)) continue;
+      // assez haut pour passer par-dessus, marge comprise
+      return Math.sqrt(2 * GRAVITE_HISSE * (y - pos.y + 0.25));
+    }
+    return 0;
+  }
+
   /* Déplace un corps axe par axe. Si un axe collisionne, on annule cet axe
      SEUL — c'est ce qui permet de glisser le long d'un mur au lieu de s'y coller. */
   function moveAxis(world, body, axis, amount, w, h) {
@@ -97,6 +118,11 @@
   }
   function headInWater(world, pos, eye) {
     return C.isWater(world.getBlock(Math.floor(pos.x), Math.floor(pos.y + eye), Math.floor(pos.z)));
+  }
+
+  /* Le corps touche-t-il de la lave ? Renvoie sa définition (dégâts `brule`). */
+  function dansLave(world, pos, w, h) {
+    return occupeAvec(world, pos.x, pos.y, pos.z, w, h, 'lave');
   }
 
   /* Lissage exponentiel : indépendant du framerate, contrairement à un lerp naïf
@@ -139,7 +165,7 @@
   }
 
   MC.Physics = {
-    wishDirection: wishDirection, collides: collides, contact: contact, occupeAvec: occupeAvec, moveAxis: moveAxis, move: move,
+    wishDirection: wishDirection, collides: collides, contact: contact, occupeAvec: occupeAvec, elanPourSortir: elanPourSortir, dansLave: dansLave, moveAxis: moveAxis, move: move,
     inWater: inWater, headInWater: headInWater, approach: approach, SWIM_SAMPLE: SWIM_SAMPLE,
     raycast: raycast, boxOverlap: boxOverlap,
   };

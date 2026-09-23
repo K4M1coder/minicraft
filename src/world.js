@@ -33,6 +33,11 @@
     }, function (x, z) { return biomeAt(x, z); });
     // donjons dont le gardien est tombé : persistés par la sauvegarde
     var donjonsVaincus = new Set();
+    // la carte : chunks explorés et points de repère, propres à cette partie
+    var exploration = MC.Carte ? MC.Carte.creerExploration() : null;
+    var reperes = MC.Carte ? MC.Carte.creerReperes() : null;
+    // ce que chaque faction pense du joueur
+    var reputation = MC.Factions ? MC.Factions.creerReputations() : null;
     // coffres de donjon dont le butin a déjà été tiré (ouverts ou cassés)
     var coffresPilles = new Set();
 
@@ -48,7 +53,29 @@
       var a = N.fbm3(wx / 26, wy / 15, wz / 26, 2, 2, 0.5);
       var b = N.fbm3((wx + 411) / 34, (wy + 77) / 19, (wz - 233) / 34, 2, 2, 0.5);
       // les deux seuils doivent tomber ensemble : intersection = tunnels
-      return a > 0.60 && b > 0.56;
+      if (a > 0.60 && b > 0.56) return true;
+      /* Cavernes : de grandes salles, aplaties (le bruit varie plus vite en
+         hauteur qu'en largeur), entre 8 et 28 de profondeur. */
+      if (wy >= 6 && wy <= 28) {
+        var cav = N.fbm3((wx - 911) / 40, (wy + 13) / 12, (wz + 577) / 40, 2, 2, 0.5);
+        if (cav > 0.66) return true;
+      }
+      return false;
+    }
+    /* Sous ce niveau, un vide de grotte se remplit de lave : les lacs de lave
+       des profondeurs, qui rendent la descente vers le diamant dangereuse. */
+    var NIVEAU_LAVE_PROFONDE = 6;
+
+    /* Ravins : de longues entailles étroites qui ouvrent le sol jusqu'aux
+       profondeurs — des falaises intérieures. Une ligne de niveau d'un bruit
+       dessine leur tracé, un second bruit décide où il y en a. */
+    function ravin(wx, wz, h) {
+      if (h < SEA + 3) return 0;
+      var zone = N.fbm((wx + 3301) / 300, (wz - 1201) / 300, 2, 2, 0.5);
+      if (zone < 0.56) return 0;
+      var tr = Math.abs(N.fbm((wx + 913) / 70, (wz - 373) / 70, 3, 2, 0.5) - 0.5);
+      if (tr > 0.014) return 0;
+      return Math.max(8, h - 26 + Math.floor(tr * 400));        // fond du ravin
     }
 
     /* Surface d'une colonne selon son biome et son altitude. Les plages
@@ -105,10 +132,17 @@
         var beach = bio.berges ? h <= SEA : h <= SEA + 1;
         var sf = surfaceDe(bio, h, beach);
 
+        var fondRavin = ech.eau > h || ech.lave ? 0 : ravin(wx, wz, h);
+        // crevasses : le glacier se fend par endroits, sur une dizaine de blocs
+        if (ech.climat.glacier && Math.abs(N.fbm((wx - 77) / 28, (wz + 45) / 28, 2, 2, 0.5) - 0.5) < 0.02) {
+          fondRavin = Math.max(fondRavin, h - 10);
+        }
         for (var y = 0; y <= h; y++) {
           var b;
           if (y === 0) b = B.BEDROCK;
-          else if (isCave(wx, y, wz, h)) b = 0;          // galerie creusée
+          else if (fondRavin && y > fondRavin) b = 0;     // ravin ouvert vers le ciel
+          else if (isCave(wx, y, wz, h)) b = y <= NIVEAU_LAVE_PROFONDE ? B.LAVA : 0;
+          else if (y === h && ech.climat.coulee) b = B.MAGMA;   // coulée sur le flanc du volcan
           else if (y === h) b = sf[0];
           else if (y > h - 4) b = bio.strates && !beach ? strate(y) : sf[1];
           // le désert repose sur une couche de grès, les badlands sur leurs strates
@@ -117,13 +151,18 @@
           else b = filon(wx, y, wz, h, bio);
           blocks[idx(x, y, z)] = b;
         }
-        for (var yw = h + 1; yw <= SEA; yw++) {
-          // dans le froid, la surface de l'eau est prise en glace
-          blocks[idx(x, yw, z)] = (bio.gel && yw === SEA) ? B.ICE : B.WATER;
+        // eau : la mer, ou un lac perché ; dans le froid, la surface est prise en glace
+        var niveau = ech.eau;
+        for (var yw = h + 1; yw <= niveau; yw++) {
+          blocks[idx(x, yw, z)] = (bio.gel && yw === niveau) ? B.ICE : B.WATER;
         }
+        // lave du cratère
+        for (var yl = h + 1; yl <= ech.lave; yl++) blocks[idx(x, yl, z)] = B.LAVA;
+        if (ech.lave) continue;
+        if (fondRavin) continue;
 
-        if (bio.marin || h < SEA) {
-          fondMarin(blocks, x, z, wx, wz, h, bio);
+        if (bio.marin || h < niveau) {
+          fondMarin(blocks, x, z, wx, wz, h, bio, niveau);
           continue;
         }
         if (beach) continue;
@@ -188,8 +227,11 @@
     /* Fond de la mer : flore posée sur le sol immergé, icebergs dans le froid.
        Tout se décide colonne par colonne : aucune structure ne déborde d'un
        chunk, donc rien ne dépend de l'ordre de génération. */
-    function fondMarin(blocks, x, z, wx, wz, h, bio) {
-      var prof = SEA - h;
+    var FLORE_LAC = [{ id: B.SEAGRASS, p: 0.12 }, { id: B.KELP, p: 0.015 }];
+    function fondMarin(blocks, x, z, wx, wz, h, bio, niveau) {
+      var surf = niveau === undefined ? SEA : niveau;
+      var prof = surf - h;
+      if (!bio.marin) bio = { plantes: FLORE_LAC };
       // icebergs : des colonnes de glace compacte qui crèvent la surface
       if (bio.icebergs) {
         var ib = N.fbm((wx + 77) / 14, (wz - 31) / 14, 2, 2, 0.5);
@@ -224,7 +266,7 @@
       if (plante.id === B.KELP) {
         // le varech monte en colonne, sans jamais crever la surface
         var hk = 2 + Math.floor(N.hash2(wx * 13 + 7, wz * 19) * Math.max(1, prof - 2));
-        for (var yk = y0; yk < y0 + hk && yk < SEA; yk++) blocks[idx(x, yk, z)] = B.KELP;
+        for (var yk = y0; yk < y0 + hk && yk < surf; yk++) blocks[idx(x, yk, z)] = B.KELP;
         return;
       }
       blocks[idx(x, y0, z)] = plante.id;
@@ -339,7 +381,7 @@
       for (var y = 0; y < WH; y++) for (var z = 0; z < CZ; z++) for (var x = 0; x < CX; x++) {
         var id = bl[idx(x, y, z)];
         if (!id) continue;
-        var lv = C.lightOf(id);
+        var lv = C.lampeDe(id);
         if (lv > 0) lights.set(key3(bx + x, y, bz + z), { x: bx + x, y: y, z: bz + z, level: lv });
       }
     }
@@ -379,6 +421,8 @@
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
       overrides.set(key3(wx, wy, wz), id);
+      // un bloc changé redessine la carte de son chunk
+      if (exploration) exploration.invalider(wx, wz);
 
       // registre des cultures
       var k3 = key3(wx, wy, wz);
@@ -389,7 +433,7 @@
       }
 
       // registre des sources de lumière
-      if (C.lightOf(id) > 0) lights.set(k3, { x: wx, y: wy, z: wz, level: C.lightOf(id) });
+      if (C.lampeDe(id) > 0) lights.set(k3, { x: wx, y: wy, z: wz, level: C.lampeDe(id) });
       else lights.delete(k3);
 
       // un bloc de bordure change la silhouette du chunk voisin
@@ -458,9 +502,9 @@
     function rebuildRegistries() {
       lights.clear();
       overrides.forEach(function (id, k) {
-        if (C.lightOf(id) > 0) {
+        if (C.lampeDe(id) > 0) {
           var p = k.split(',');
-          lights.set(k, { x: +p[0], y: +p[1], z: +p[2], level: C.lightOf(id) });
+          lights.set(k, { x: +p[0], y: +p[1], z: +p[2], level: C.lampeDe(id) });
         }
       });
       // les torches générées des chunks déjà en mémoire (donjons)
@@ -507,6 +551,9 @@
       lights.clear();
       donjonsVaincus.clear();
       coffresPilles.clear();
+      if (exploration) exploration.charger([]);
+      if (reperes) { reperes.charger([]); reperes.suivi = null; }
+      if (reputation) reputation.remettre();
       return true;
     }
 
@@ -589,7 +636,7 @@
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,
       voisinsCharges: voisinsCharges, marquerVoisins: marquerVoisins, estCharge: estCharge,
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
-      coffresPilles: coffresPilles,
+      coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,
       key: key, key3: key3,
     };

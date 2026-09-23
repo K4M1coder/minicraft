@@ -47,6 +47,31 @@
     return { x: Math.cos(ang) * 0.6, y: Math.max(0.05, -Math.sin(ang)), z: 0.35 };
   }
 
+  /* Course des astres, cohérente avec les phases du jour : le soleil se lève
+     à l'aube (0,94), culmine en milieu de journée et se couche au crépuscule
+     (0,515) ; la nuit il passe sous l'horizon et la lune, à l'opposé, monte.
+     Renvoie des directions unitaires, la lune à l'opposé du soleil, sa phase
+     (0 nouvelle … 4 pleine … 7) et la visibilité des étoiles. */
+  var LEVER = 0.94, COUCHER = 0.515;
+  var DUREE_JOUR = (COUCHER + 1 - LEVER) % 1;
+  function astres(t) {
+    var p = phase(t);
+    var depuisLever = (p - LEVER + 1) % 1;
+    var theta = depuisLever < DUREE_JOUR
+      ? Math.PI * depuisLever / DUREE_JOUR                              // au-dessus de l'horizon
+      : Math.PI + Math.PI * (depuisLever - DUREE_JOUR) / (1 - DUREE_JOUR); // en dessous
+    var sx = Math.cos(theta), sy = Math.sin(theta), sz = 0.28;
+    var n = Math.hypot(sx, sy, sz);
+    var soleil = { x: sx / n, y: sy / n, z: sz / n };
+    var jour = Math.floor(t / DAY_LENGTH);
+    return {
+      soleil: soleil,
+      lune: { x: -soleil.x, y: -soleil.y, z: -soleil.z },
+      phaseLune: ((jour % 8) + 8) % 8,
+      etoiles: Math.max(0, Math.min(1, 1 - sunIntensity(t) * 1.4)),
+    };
+  }
+
   function clockString(t) {
     var p = phase(t);
     var mins = Math.floor(p * 24 * 60);
@@ -57,5 +82,6 @@
   MC.DayCycle = {
     DAY_LENGTH: DAY_LENGTH, phase: phase, isNight: isNight, isDusk: isDusk, isDawn: isDawn,
     sunIntensity: sunIntensity, skyColor: skyColor, sunDir: sunDir, clockString: clockString,
+    astres: astres, LEVER: LEVER, COUCHER: COUCHER,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

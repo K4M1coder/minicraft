@@ -30,6 +30,9 @@
     // on respire dans le sous-marin : ni noyade, ni remontée forcée
     sous_marin: { nom: 'Sous-marin', objet: I.SOUS_MARIN, w: 1.8, h: 1.6, vmax: 8, accel: 4, virage: 1.5,
                   milieu: 'eau', siege: 0.3, plonge: true, respire: true, pv: 12 },
+    // le wagonnet suit les rails : il tourne tout seul dans les virages
+    wagonnet:   { nom: 'Wagonnet', objet: I.WAGONNET, w: 0.9, h: 0.8, vmax: 9, accel: 5, virage: 0,
+                  milieu: 'rail', siege: 0.3, rails: true, pv: 4 },
   };
   var TYPES = Object.keys(DEFS);
 
@@ -81,6 +84,7 @@
   function conduire(e, dt, world, cmd) {
     var d = defDe(e);
     if (!d) return null;
+    if (d.rails) return rouler(e, dt, world, cmd || {}, d);
     var c = cmd || {};
     var milieu = milieuDe(world, e, d);
     var vm = vmaxDans(d, milieu);
@@ -146,6 +150,69 @@
     e.onGround = !!hit.landed || (e.onGround && !hit.y && Math.abs(e.vel.y) < 1e-3);
     if (hit.landed) e.onGround = true;
     return milieu;
+  }
+
+  /* ── Wagonnet ───────────────────────────────────────────────────────────
+     Sur un rail, il file dans l'axe (cap arrondi au quart de tour), centré
+     sur la voie. Au bout d'une ligne droite, il prend le rail qui part à
+     gauche ou à droite ; sans issue, il s'arrête. Hors des rails, il se
+     traîne. */
+  var B_RAIL = C.B.RAIL;
+  function railEn(world, x, y, z) {
+    return world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) === B_RAIL;
+  }
+  function rouler(e, dt, world, c, d) {
+    var surRail = railEn(world, e.pos.x, e.pos.y + 0.1, e.pos.z);
+    var vm = surRail ? d.vmax : d.vmax * 0.12;
+    var cible = c.avant ? vm : (c.arriere ? -vm : 0);
+    var taux = d.accel;
+    if (Math.abs(cible - e.vitesse) <= taux * dt) e.vitesse = cible;
+    else e.vitesse += Math.sign(cible - e.vitesse) * taux * dt;
+    if (surRail) {
+      var quart = Math.round(e.yaw / (Math.PI / 2));
+      e.yaw = quart * (Math.PI / 2);
+      var fx = Math.round(-Math.sin(e.yaw)), fz = Math.round(-Math.cos(e.yaw));
+      var sens = e.vitesse < 0 ? -1 : 1;
+      var bx = Math.floor(e.pos.x), by = Math.floor(e.pos.y + 0.1), bz = Math.floor(e.pos.z);
+      // centré sur la voie, dans l'axe perpendiculaire au mouvement
+      if (fx === 0) e.pos.x = bx + 0.5; else e.pos.z = bz + 0.5;
+      // au centre du bloc, on regarde la suite de la voie
+      var avance = fx ? (e.pos.x - bx - 0.5) * fx * sens : (e.pos.z - bz - 0.5) * fz * sens;
+      if (avance >= 0 && !railEn(world, bx + fx * sens + 0.5, by, bz + fz * sens + 0.5) &&
+          !railEn(world, bx + fx * sens + 0.5, by + 1, bz + fz * sens + 0.5) &&
+          !railEn(world, bx + fx * sens + 0.5, by - 1, bz + fz * sens + 0.5)) {
+        /* Droite et gauche du SENS DE MARCHE (l'avant vaut (-sin, -cos), la
+           droite (cos, -sin)). Tourner à droite fait décroître le cap, en
+           marche avant comme en marche arrière. */
+        var mfx = fx * sens, mfz = fz * sens;
+        var dr = [-mfz, mfx], ga = [mfz, -mfx];
+        if (railEn(world, bx + dr[0] + 0.5, by, bz + dr[1] + 0.5)) {
+          e.yaw -= Math.PI / 2; e.pos.x = bx + 0.5; e.pos.z = bz + 0.5;
+        } else if (railEn(world, bx + ga[0] + 0.5, by, bz + ga[1] + 0.5)) {
+          e.yaw += Math.PI / 2; e.pos.x = bx + 0.5; e.pos.z = bz + 0.5;
+        } else {
+          e.vitesse = 0;                                  // bout de la voie
+          if (fx === 0) e.pos.z = bz + 0.5; else e.pos.x = bx + 0.5;
+        }
+      }
+    }
+    var ffx = -Math.sin(e.yaw), ffz = -Math.cos(e.yaw);
+    e.vel.x = ffx * e.vitesse;
+    e.vel.z = ffz * e.vitesse;
+    e.vel.y -= 30 * dt;
+    if (e.vel.y < -40) e.vel.y = -40;
+    var etaitAuSol = e.onGround;
+    var hit = P.move(world, e, dt, d.w, d.h);
+    // une pente de rails : on monte d'un bloc comme une voiture
+    if ((hit.x || hit.z) && etaitAuSol && Math.abs(e.vitesse) > 0.3) {
+      var px = ffx * e.vitesse * dt, pz = ffz * e.vitesse * dt;
+      if (!P.collides(world, e.pos.x + px, e.pos.y + 1.05, e.pos.z + pz, d.w, d.h)) {
+        e.pos.x += px; e.pos.y += 1.05; e.pos.z += pz; e.vel.y = 0;
+      } else e.vitesse = 0;
+    }
+    e.onGround = !!hit.landed || (e.onGround && !hit.y && Math.abs(e.vel.y) < 1e-3);
+    if (hit.landed) e.onGround = true;
+    return surRail ? 'rail' : 'sol';
   }
 
   function surfaceEau(world, e) {
@@ -239,5 +306,5 @@
                    gabarits: gabarits, poser: poser, conduire: conduire, milieuDe: milieuDe,
                    vmaxDans: vmaxDans, surfaceEau: surfaceEau, siege: siege, monter: monter,
                    descendre: descendre, caler: caler, vitesseKmh: vitesseKmh,
-                   serialiser: serialiser, restaurer: restaurer };
+                   serialiser: serialiser, restaurer: restaurer, rouler: rouler, railEn: railEn };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

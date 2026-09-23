@@ -768,8 +768,18 @@
     g.world.reset(g.render.disposeChunk);
     A.equal(g.world.lights.size, 0, 'registre de lumieres vide apres reinitialisation');
     await frames(3);
-    A.equal(g.render.torchPool.filter(function (L) { return L.visible; }).length, 0,
-      'aucune lumiere ponctuelle active');
+    /* Le monde régénéré a ses propres sources (torches de donjon, lanternes) :
+       ce qui compte, c'est qu'aucune lumière ne survive de l'ancienne partie. */
+    var actives = g.render.torchPool.filter(function (L) { return L.visible; });
+    A.equal(actives.filter(function (L) {
+      return Math.abs(L.position.x - (bx + 0.5)) < 0.01 && Math.abs(L.position.z - (bz + 0.5)) < 0.01 &&
+             Math.abs(L.position.y - (by + 0.55)) < 0.01;
+    }).length, 0, 'aucune lumiere ponctuelle a l emplacement de l ancienne torche');
+    var sources = [];
+    g.world.lights.forEach(function (l) { sources.push(l); });
+    A.ok(actives.every(function (L) {
+      return sources.some(function (l) { return Math.abs(l.x + 0.5 - L.position.x) < 0.01 && Math.abs(l.z + 0.5 - L.position.z) < 0.01; });
+    }), 'chaque lumiere active appartient au monde courant');
     await reset(g);
   });
 
@@ -1524,9 +1534,10 @@
   function maillagesOrphelins(g) {
     var siens = new Set();
     g.world.chunks.forEach(function (c) {
-      ['mesh', 'meshC', 'meshT'].forEach(function (k) { if (c[k]) siens.add(c[k]); });
+      g.render.PASSES.forEach(function (p) { if (c[p[0]]) siens.add(c[p[0]]); });
     });
-    var mats = [g.render.materials.opaque, g.render.materials.cutout, g.render.materials.blend];
+    var m0 = g.render.materials;
+    var mats = [m0.opaque, m0.cutout, m0.blend, m0.lumineux];
     return g.render.scene.children.filter(function (o) {
       return o.isMesh && mats.indexOf(o.material) >= 0 && !siens.has(o);
     }).length;

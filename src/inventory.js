@@ -178,6 +178,9 @@
   shaped(I.VOITURE, 1, ['III', 'RMR'], { I: I.IRON_INGOT, R: I.ROUE, M: I.MOTEUR });
   shaped(I.CAMION, 1, ['IIK', 'IIM', 'RRR'], { I: I.IRON_INGOT, K: B.CHEST, M: I.MOTEUR, R: I.ROUE });
   shaped(I.AVION, 1, [' H ', 'IMI', 'I I'], { H: I.HELICE, I: I.IRON_INGOT, M: I.MOTEUR });
+  shaped(I.WAGONNET, 1, ['I I', 'III'], { I: I.IRON_INGOT });
+  // pas de papier dans ce monde : une carte de laine tendue sur un cadre de bois
+  shaped(I.CARTE, 1, ['SSS', 'SWS', 'SSS'], { S: I.STICK, W: B.WOOL });
   shaped(I.SOUS_MARIN, 1, ['GIG', 'IMI', 'III'], { G: B.GLASS, I: I.IRON_INGOT, M: I.MOTEUR });
   shaped(I.STICK, 4, ['P', 'P'], { P: B.PLANKS });
   shaped(B.CRAFTING_TABLE, 1, ['PP', 'PP'], { P: B.PLANKS });

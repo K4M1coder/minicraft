@@ -41,6 +41,8 @@
     GOLD_ORE: 69, DIAMOND_ORE: 70, GOLD_BLOCK: 71, LANTERN: 72, BOOKSHELF: 73,
     SANDSTONE_BRICK: 74, ICE_BRICK: 75, OBSIDIAN: 76, COBWEB: 77, RAIL: 78, HAY: 79,
     WOOL_RED: 80, WOOL_BLUE: 81, WOOL_YELLOW: 82, WOOL_GREEN: 83, LADDER: 84,
+    // volcans et glaciers
+    LAVA: 85, BASALT: 86, MAGMA: 87, BLUE_ICE: 88,
   };
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
@@ -69,6 +71,9 @@
     // véhicules et pièces
     ROUE: 190, MOTEUR: 191, HELICE: 192,
     BATEAU: 193, MOTO: 194, VOITURE: 195, CAMION: 196, AVION: 197, SOUS_MARIN: 198,
+    WAGONNET: 199,
+    // exploration
+    CARTE: 200,
   };
 
   var FIRST_ITEM = 128;
@@ -160,6 +165,18 @@
                              tool: 'pickaxe', needsTool: true });
   defBlock(B.STONE_BRICK, { name: 'Brique de pierre', tiles: [73, 73, 73], hardness: 2.0,
                             tool: 'pickaxe', needsTool: true });
+  // ─── volcans et glaciers ─────────────────────────────────────────────────
+  /* La lave : un liquide, comme l'eau, mais qui brûle (`brule` PV par
+     demi-seconde) et luit. `pass: 'lumineux'` la dessine sans éclairage :
+     de nuit, elle reste vive au lieu de s'éteindre avec le soleil. */
+  defBlock(B.LAVA, { name: 'Lave', tiles: [166, 166, 166], transparent: true, liquid: true, lave: true,
+                     pass: 'lumineux', hardness: -1, light: 15, brule: 4, sansLampe: true,
+                     drops: [] });
+  defBlock(B.BASALT, { name: 'Basalte', tiles: [167, 168, 167], hardness: 1.6, tool: 'pickaxe', needsTool: true });
+  defBlock(B.MAGMA, { name: 'Magma', tiles: [169, 169, 169], hardness: 0.8, tool: 'pickaxe', pass: 'lumineux',
+                      light: 9, hurts: 1, sansLampe: true });
+  defBlock(B.BLUE_ICE, { name: 'Glace bleue', tiles: [170, 170, 170], hardness: 1.4, tool: 'pickaxe' });
+
   // le chêne d'origine rejoint les familles « tronc » et « feuillage »
   BLOCKS[B.LOG].log = true;
   BLOCKS[B.LEAVES].leaves = true;
@@ -217,7 +234,8 @@
                            needsTool: true });
   defBlock(B.PRISMARINE_BRICK, { name: 'Briques de prismarine', tiles: [105, 105, 105], hardness: 1.5,
                                  tool: 'pickaxe', needsTool: true });
-  defBlock(B.SEA_LANTERN, { name: 'Lanterne marine', tiles: [106, 106, 106], hardness: 0.3, light: 15,
+  // elle luit dans le noir des abysses : dessinée sans éclairage
+  defBlock(B.SEA_LANTERN, { name: 'Lanterne marine', tiles: [106, 106, 106], hardness: 0.3, light: 15, pass: 'lumineux',
                             drops: [{ id: I.PRISMARINE_SHARD, n: 2 }] });
   planteMarine(B.SEA_PICKLE, 'Cornichon de mer', 107, { light: 6, drops: [{ id: B.SEA_PICKLE, n: 1 }] });
 
@@ -372,6 +390,47 @@
   [[I.BATEAU, 'Bateau', 'bateau'], [I.MOTO, 'Moto', 'moto'], [I.VOITURE, 'Voiture', 'voiture'],
    [I.CAMION, 'Camion', 'camion'], [I.AVION, 'Avion', 'avion'], [I.SOUS_MARIN, 'Sous-marin', 'sous_marin']]
     .forEach(function (v, i) { defItem(v[0], { name: v[1], tile: 160 + i, vehicule: v[2], maxStack: 1 }); });
+  // le wagonnet ne roule que sur des rails
+  defItem(I.WAGONNET, { name: 'Wagonnet', tile: 171, vehicule: 'wagonnet', maxStack: 1 });
+  // la carte montre les environs explorés et porte des points de repère
+  defItem(I.CARTE, { name: 'Carte', tile: 172, carte: true, maxStack: 1 });
+
+  /* ─── variantes de tuiles ──────────────────────────────────────────────────
+     Une même tuile répétée sur un grand sol dessine un quadrillage. Les tuiles
+     de terrain ont donc plusieurs versions, choisies par la position du bloc,
+     et les faces supérieures sans sens (herbe, sable, pierre…) tournent d'un
+     quart de tour au hasard. `n` : nombre de versions, base comprise ;
+     `tourne` : la rotation est permise ; `cote` : tuile de côté (la frange
+     d'herbe doit rester en haut, on ne la décale qu'horizontalement). */
+  var TUILES_VARIABLES = {
+    0: { n: 4, tourne: true }, 1: { n: 3, cote: true }, 2: { n: 4, tourne: true },
+    3: { n: 4, tourne: true }, 4: { n: 4, tourne: true }, 7: { n: 3, tourne: true },
+    9: { n: 3, tourne: true }, 12: { n: 3, tourne: true }, 56: { n: 3, tourne: true },
+    57: { n: 2, cote: true }, 59: { n: 2, tourne: true }, 82: { n: 3, tourne: true },
+    86: { n: 2, tourne: true }, 87: { n: 2, tourne: true }, 93: { n: 3, tourne: true },
+    78: { n: 2, tourne: true }, 66: { n: 2, tourne: true }, 64: { n: 2, tourne: true },
+    94: { n: 2, tourne: true }, 83: { n: 2, tourne: true },
+  };
+  var PREMIERE_VARIANTE = 192;         // les variantes suivent les tuiles de base dans l'atlas
+  var INDEX_VARIANTES = {};            // tuile -> [tuile, variante 1, variante 2, …]
+  (function () {
+    var suivante = PREMIERE_VARIANTE;
+    Object.keys(TUILES_VARIABLES).map(Number).sort(function (a, b) { return a - b; }).forEach(function (t) {
+      var l = [t];
+      for (var k = 1; k < TUILES_VARIABLES[t].n; k++) l.push(suivante++);
+      INDEX_VARIANTES[t] = l;
+    });
+  })();
+  /* Tuile et rotation (en quarts de tour) d'une face, d'après un hachage de
+     la position du bloc. `dessus` : face horizontale, seule à pouvoir tourner. */
+  function tuileVariante(tile, h, dessus) {
+    var l = INDEX_VARIANTES[tile];
+    if (!l) return { tile: tile, rot: 0 };
+    var info = TUILES_VARIABLES[tile];
+    var k = Math.floor(h * 4096) % l.length;
+    var rot = (dessus && info.tourne) ? (Math.floor(h * 65536) & 3) : 0;
+    return { tile: l[k], rot: rot };
+  }
 
   function def(id) { return isItem(id) ? ITEMS[id] : BLOCKS[id]; }
 
@@ -382,6 +441,11 @@
      'blend'  — fondu réel : exige depthWrite:false et un tri (eau, verre). */
   function passOf(id) { var d = BLOCKS[id]; return (d && d.pass) || 'opaque'; }
   function lightOf(id) { var d = BLOCKS[id]; return (d && d.light) || 0; }
+  /* Faut-il une lumière ponctuelle pour ce bloc ? La lave et le magma luisent
+     déjà par leur rendu sans éclairage ; en faire des lampes enregistrerait
+     chaque bloc d'un lac souterrain, qui raflerait les dix lumières du
+     moteur au détriment des torches du joueur. */
+  function lampeDe(id) { var d = BLOCKS[id]; return d && !d.sansLampe ? (d.light || 0) : 0; }
   function durabilityOf(id) { var d = ITEMS[id]; return (d && d.durability) || 0; }
   function nameOf(id) { var d = def(id); return d ? d.name : (id === 0 ? 'Air' : '?' + id); }
   function maxStack(id) { var d = def(id); return (d && d.maxStack) || 64; }
@@ -392,6 +456,7 @@
   function isLeaves(id) { var d = BLOCKS[id]; return !!d && !!d.leaves; }
 
   // eau ou plante noyée : ce qui compte comme « dans l'eau »
+  function isLava(id) { var d = BLOCKS[id]; return !!d && !!d.lave; }
   function isWater(id) {
     if (id === B.WATER) return true;
     var d = BLOCKS[id];
@@ -461,8 +526,10 @@
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
     FIRST_ITEM: FIRST_ITEM, DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
-    lightOf: lightOf, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
-    isLog: isLog, isLeaves: isLeaves, isWater: isWater, TIER_NAME: TIER_NAME,
+    lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
+    isLog: isLog, isLeaves: isLeaves, isWater: isWater, isLava: isLava, TIER_NAME: TIER_NAME,
+    TUILES_VARIABLES: TUILES_VARIABLES, INDEX_VARIANTES: INDEX_VARIANTES, tuileVariante: tuileVariante,
+    PREMIERE_VARIANTE: PREMIERE_VARIANTE,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,
     breakTime: breakTime, dropsOf: dropsOf, TIER_SPEED: TIER_SPEED,
   };

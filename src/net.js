@@ -23,6 +23,9 @@
       onArrive: opts.onArrive || function () {},
       onQuitte: opts.onQuitte || function () {},
       onStatut: opts.onStatut || function () {},
+      // serveur autoritaire : l'état qui fait foi pour nos joueurs, et le butin reçu
+      onToi: opts.onToi || function () {},
+      onDonne: opts.onDonne || function () {},
     };
 
     function statut(e, info) {
@@ -97,6 +100,11 @@
                                  cible: { x: j.x, y: j.y, z: j.z }, yaw: j.yaw || 0 });
           });
           hooks.onBienvenue(m);
+          if (m.toi) hooks.onToi(m.toi);
+          break;
+
+        case NP.MSG.DONNE:
+          hooks.onDonne(m);
           break;
 
         case NP.MSG.BLOC:
@@ -119,26 +127,36 @@
           break;
 
         case NP.MSG.ETAT:
+          var presents = {};
           (m.joueurs || []).forEach(function (j) {
-            if (j.id === monId) return;                 // on ne se suit pas soi-meme
-            var d = distants.get(j.id);
+            if (j.id === monId) return;                 // nos joueurs sont prédits, pas suivis
+            // un poste peut porter plusieurs joueurs (écran partagé) : clé id/j
+            var cle = j.j ? j.id + '/' + j.j : j.id;
+            presents[cle] = 1;
+            var d = distants.get(cle);
             if (!d) {
-              d = { id: j.id, nom: 'Joueur ' + j.id, pos: { x: j.x, y: j.y, z: j.z },
-                    cible: { x: j.x, y: j.y, z: j.z }, yaw: j.yaw || 0 };
-              distants.set(j.id, d);
+              d = { id: cle, nom: (j.nom || 'Joueur ' + j.id) + (j.j ? ' (' + (j.j + 1) + ')' : ''),
+                    pos: { x: j.x, y: j.y, z: j.z }, cible: { x: j.x, y: j.y, z: j.z }, yaw: j.yaw || 0 };
+              distants.set(cle, d);
             } else {
               // on vise la nouvelle position, l'interpolation lissera
               d.cible.x = j.x; d.cible.y = j.y; d.cible.z = j.z;
               d.yaw = j.yaw || 0;
             }
           });
+          // les joueurs d'écran partagé absents du relevé sont partis
+          distants.forEach(function (d, cle) {
+            if (typeof cle === 'string' && !presents[cle]) distants.delete(cle);
+          });
           (m.mobs || []).forEach(function (e) {
             var d = mobsDistants.get(e.e);
-            if (!d) mobsDistants.set(e.e, { eid: e.e, type: e.t,
+            if (!d) mobsDistants.set(e.e, { eid: e.e, type: e.t, item: e.i, genre: e.g, arme: e.a,
+                                            variante: e.v, w: 0.6, h: 1.8,
                                             pos: { x: e.x, y: e.y, z: e.z },
                                             cible: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw });
             else { d.cible.x = e.x; d.cible.y = e.y; d.cible.z = e.z; d.yaw = e.yaw; }
           });
+          if (m.toi) hooks.onToi(m.toi);
           // les mobs absents du relevé ont disparu côté serveur
           var vus = {};
           (m.mobs || []).forEach(function (e) { vus[e.e] = 1; });
@@ -164,20 +182,25 @@
       });
     }
 
-    /* Position envoyée à cadence réduite : 60 envois par seconde saturent
-       inutilement, 10 suffisent puisque les autres interpolent. */
-    function pousserPosition(dt, st) {
-      if (!enLigne()) return false;
-      envoiT += dt;
-      if (envoiT < 0.1) return false;
-      envoiT = 0;
-      return envoyer({ t: NP.MSG.BOUGE, x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2),
-                       z: +st.pos.z.toFixed(2), yaw: +st.yaw.toFixed(2),
-                       pitch: +st.pitch.toFixed(2) });
+    /* Le serveur fait autorité : on ne lui envoie plus sa position, mais nos
+       entrées, une par image. Il les rejoue et nous renvoie la position qui
+       fait foi (voir synchro.js). pousserPosition ne sert plus qu'à rester
+       compatible avec un appelant d'autrefois. */
+    function pousserPosition() { return false; }
+    function envoyerEntree(e, j) {
+      return envoyer({ t: NP.MSG.ENTREE, s: e.s, j: j || 0, dt: +e.dt.toFixed(4), k: e.k,
+                       yaw: +e.yaw.toFixed(4), pitch: +e.pitch.toFixed(4), v: e.v });
     }
+    function attaquer(eid, degats, j) { return envoyer({ t: NP.MSG.ATTAQUE, eid: eid, degats: degats, j: j || 0 }); }
+    function tirer(dir, vitesse, degats, genre, j) {
+      return envoyer({ t: NP.MSG.TIR, dx: dir.x, dy: dir.y, dz: dir.z, vitesse: vitesse, degats: degats,
+                       genre: genre || 'fleche', j: j || 0 });
+    }
+    function manger(id, j) { return envoyer({ t: NP.MSG.MANGER, id: id, j: j || 0 }); }
+    function renaitre(j) { return envoyer({ t: NP.MSG.RENAITRE, j: j || 0 }); }
 
-    function poserBloc(x, y, z, id) {
-      return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id });
+    function poserBloc(x, y, z, id, outil, j) {
+      return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0 });
     }
     function envoyerChat(texte) {
       return envoyer({ t: NP.MSG.CHAT, texte: texte });
@@ -187,6 +210,7 @@
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
       envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat,
       pousserPosition: pousserPosition, interpoler: interpoler,
+      envoyerEntree: envoyerEntree, attaquer: attaquer, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,
       get etat() { return etat; },
       get monId() { return monId; },

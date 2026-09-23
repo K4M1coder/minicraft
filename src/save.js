@@ -29,6 +29,11 @@
       // donjons : gardiens vaincus et coffres déjà pillés ne reviennent pas
       donjons: state.world.donjonsVaincus ? Array.from(state.world.donjonsVaincus) : [],
       pilles: state.world.coffresPilles ? Array.from(state.world.coffresPilles) : [],
+      // la carte : ce qu'on a exploré, les repères posés et celui qu'on suit
+      explores: state.world.exploration ? state.world.exploration.serialiser() : [],
+      reperes: state.world.reperes ? state.world.reperes.serialiser() : [],
+      suivi: state.world.reperes && state.world.reperes.suivi ? state.world.reperes.suivi : 0,
+      reputation: state.world.reputation ? state.world.reputation.serialiser() : null,
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
       vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
       player: {
@@ -88,6 +93,12 @@
       state.entities.list.filter(function (e) { return e.vehicule; })
         .forEach(function (e) { state.entities.remove(e); });
       MC.Vehicules.restaurer(state.entities, data.vehicules || []);
+    }
+    if (w.exploration) w.exploration.charger(data.explores || []);
+    if (w.reputation) w.reputation.charger(data.reputation);
+    if (w.reperes) {
+      w.reperes.charger(data.reperes || []);
+      w.reperes.suivi = data.suivi || null;
     }
     if (w.coffresPilles) {
       w.coffresPilles.clear();

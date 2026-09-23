@@ -149,6 +149,9 @@
     REJOINDRE: 'rejoindre', BIENVENUE: 'bienvenue', ETAT: 'etat',
     BLOC: 'bloc', BOUGE: 'bouge', CHAT: 'chat',
     ARRIVE: 'arrive', QUITTE: 'quitte', MOBS: 'mobs', HEURE: 'heure',
+    // serveur autoritaire : le client envoie ses entrées et ses intentions,
+    // le serveur décide et répond
+    ENTREE: 'e', ATTAQUE: 'attaque', MANGER: 'manger', RENAITRE: 'renaitre', DONNE: 'donne', TIR: 'tir',
   };
 
   /* Valide un message entrant. Un message sans `t` connu est rejeté : il ne
@@ -163,7 +166,38 @@
       case MSG.BLOC:
         if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
         if (!estEntier(msg.id) || msg.id < 0 || msg.id > 255) return null;
-        return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, id: msg.id | 0 };
+        // `outil` : ce que le joueur tient, pour que le serveur calcule le butin
+        return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, id: msg.id | 0,
+                 j: joueurLocal(msg.j), outil: estEntier(msg.outil) && msg.outil >= 0 ? msg.outil | 0 : 0 };
+      case MSG.ENTREE:
+        // une image de simulation : numéro, durée, touches, regard
+        if (!estEntier(msg.s) || msg.s < 0) return null;
+        if (!estFini(msg.dt) || msg.dt <= 0 || msg.dt > 0.1) return null;
+        if (!estEntier(msg.k) || msg.k < 0 || msg.k > 63) return null;
+        return { t: msg.t, s: msg.s, j: joueurLocal(msg.j), dt: +msg.dt, k: msg.k | 0,
+                 yaw: estFini(msg.yaw) ? +msg.yaw : 0,
+                 pitch: estFini(msg.pitch) ? Math.max(-1.6, Math.min(1.6, +msg.pitch)) : 0,
+                 v: msg.v ? 1 : 0 };
+      case MSG.ATTAQUE:
+        if (!estEntier(msg.eid)) return null;
+        return { t: msg.t, eid: msg.eid | 0, j: joueurLocal(msg.j),
+                 degats: estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 1 };
+      case MSG.MANGER:
+        if (!estEntier(msg.id)) return null;
+        return { t: msg.t, id: msg.id | 0, j: joueurLocal(msg.j) };
+      case MSG.RENAITRE:
+        return { t: msg.t, j: joueurLocal(msg.j) };
+      case MSG.TIR: {
+        // une direction unitaire, une vitesse et des dégâts bornés
+        if (!estFini(msg.dx) || !estFini(msg.dy) || !estFini(msg.dz)) return null;
+        var n = Math.hypot(msg.dx, msg.dy, msg.dz);
+        if (n < 0.5 || n > 1.5) return null;
+        var genres = ['fleche', 'sortilege'];
+        return { t: msg.t, j: joueurLocal(msg.j), dx: msg.dx / n, dy: msg.dy / n, dz: msg.dz / n,
+                 vitesse: estFini(msg.vitesse) ? Math.max(10, Math.min(50, +msg.vitesse)) : 34,
+                 degats: estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 5,
+                 genre: genres.indexOf(msg.genre) >= 0 ? msg.genre : 'fleche' };
+      }
       case MSG.BOUGE:
         if (!estFini(msg.x) || !estFini(msg.y) || !estFini(msg.z)) return null;
         return { t: msg.t, i: (msg.i | 0), x: +msg.x, y: +msg.y, z: +msg.z,
@@ -179,6 +213,8 @@
   }
 
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
+  // indice du joueur local sur le poste (écran partagé) : 0 à 3
+  function joueurLocal(j) { return estEntier(j) && j >= 0 && j < 4 ? j : 0; }
   function estEntier(v) { return estFini(v) && Math.floor(v) === v; }
 
   MC.NetProtocol = {

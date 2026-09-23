@@ -70,6 +70,28 @@
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
       onQuitte: function (m) { chat.systeme((m.nom || 'Un joueur') + ' est parti'); },
       onEtat: function (m) { if (typeof m.heure === 'number') g.time = m.heure; },
+      /* Le serveur fait autorité : pour chacun de nos joueurs, on adopte sa
+         position et ses statistiques, puis on rejoue les entrées qu'il n'a
+         pas encore traitées (voir synchro.js). */
+      onToi: function (liste) {
+        for (var i = 0; i < liste.length; i++) {
+          var j = equipe[i];
+          if (!j || !j.prediction) continue;
+          var ecart = MC.Synchro.reconcilier(j.player, liste[i], j.prediction);
+          g.ecartReseau = ecart;
+          var st = j.player.state, etaitMort = st.dead;
+          MC.Synchro.appliquerStats(st, liste[i]);
+          if (i === 0 && st.dead && !etaitMort && input.state === 'playing') {
+            audio.play('mort'); input.setState('dead');
+          }
+        }
+      },
+      // le butin ramassé côté serveur arrive dans notre inventaire
+      onDonne: function (m) {
+        var j = equipe[m.j] || equipe[0];
+        var reste = j.player.pickUp(m.id, m.n);
+        if (!reste && m.j === 0) { ui.toast('+' + m.n + ' ' + C.nameOf(m.id)); audio.play('ramasser'); }
+      },
       onStatut: function (e, info) {
         if (e === 'en ligne') ui.toast('En ligne');
         else if (e === 'erreur') ui.toast('Reseau : ' + (info || 'erreur'), 'warn');
@@ -235,6 +257,8 @@
     function rejoindreServeur(opts) {
       g.nomJoueur = opts.pseudo;
       composerEquipe(opts.joueurs || 1, regles);
+      equipe.forEach(function (j) { j.prediction = MC.Synchro.creerPrediction(); });
+      entities.list.length = 0;              // en ligne, les créatures sont celles du serveur
       input.setState('playing');
       net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1);
     }
@@ -351,6 +375,13 @@
     }
 
     function respawn() {
+      if (net.enLigne()) {
+        // le serveur décide du lieu de renaissance ; l'état suivant nous y placera
+        equipe.forEach(function (j) { net.renaitre(j.index); if (j.prediction) j.prediction.confirmer(Infinity); });
+        player.state.dead = false;
+        input.setState('playing');
+        return;
+      }
       var sp = g.spawnPoint;
       if (!sp) { placeAtSpawn(); sp = g.spawnPoint; }
       // on réapparaît sur un sol valide même si le terrain a changé
@@ -448,6 +479,15 @@
          gardien se relevait aussitôt. */
       var evts = entities.evenements();
       for (var k = 0; k < evts.length; k++) {
+        // une mort de la main du joueur change ce que les factions pensent de lui
+        if (evts[k].type === 'mort' && evts[k].parJoueur && world.reputation) {
+          MC.Factions.surMort(evts[k].victime, world.reputation).forEach(function (c) {
+            var mot = { hostile: 'vous est désormais hostile', neutre: 'vous tolère', amical: 'vous est désormais amical' };
+            chat.systeme(c.nom + ' ' + mot[c.statut]);
+            ui.toast(c.nom + ' ' + mot[c.statut], c.statut === 'hostile' ? 'warn' : undefined);
+          });
+          continue;
+        }
         if (evts[k].type !== 'boss_vaincu') continue;
         if (evts[k].donjon) world.donjonsVaincus.add(evts[k].donjon);
         chat.systeme(evts[k].nom + ' est vaincu !');
@@ -499,6 +539,22 @@
     }
     g.coffreDe = coffreDe;
 
+    // ─── carte ──────────────────────────────────────────────────────────────
+    function aUneCarte(pl) { return regles.blocsIllimites || pl.state.inv.count(I.CARTE) > 0; }
+    function ouvrirCarte() {
+      if (!world.reperes) return false;
+      world.exploration.explorer(world, player.state.pos.x, player.state.pos.z);
+      ui.ouvrirCarte({ world: world, joueur: player.state, reperes: world.reperes,
+                       exploration: world.exploration,
+                       surChange: function (quoi, r) {
+                         if (quoi === 'ajout') ui.toast('Repère « ' + r.nom + ' » posé');
+                       } });
+      input.setState('ui');
+      return true;
+    }
+    g.ouvrirCarte = ouvrirCarte;
+    var explorationT = 0;
+
     // ─── véhicules ──────────────────────────────────────────────────────────
     var V = MC.Vehicules;
 
@@ -522,6 +578,7 @@
     function interagirVehicule(j, e, sprint) {
       var st = j.player.state;
       if (!e || !e.vehicule || e === st.monture) return false;
+      if (net.enLigne()) { ui.toast('Les véhicules ne sont pas disponibles en ligne', 'warn'); return true; }
       if (sprint && e.soute && j.index === 0) {
         ui.openContainer('chest', st.inv, e.soute, 'soute');
         input.setState('ui');
@@ -576,8 +633,45 @@
       player.cancelMining();
     }
 
+    /* Créature du serveur visée par un joueur (en ligne, il n'y a pas de
+       créature locale : on vise celles que le serveur nous montre). */
+    function mobDistantVise(pl) {
+      var o = pl.eyePos(), d = pl.lookDir(), best = null, bt = Infinity;
+      net.mobsDistants.forEach(function (m) {
+        if (m.type === 'item' || m.type === 'arrow') return;
+        var sp = MC.EntitySpecs[m.type] || { w: 0.6, h: 1.8 };
+        var hw = sp.w / 2 + 0.12;
+        var t = entities.rayBox(o, d, m.pos.x - hw, m.pos.y - 0.12, m.pos.z - hw,
+                                m.pos.x + hw, m.pos.y + sp.h + 0.12, m.pos.z + hw);
+        if (t !== null && t <= pl.REACH && t < bt) { bt = t; best = m; }
+      });
+      return best;
+    }
+    function attaqueEnLigne(j) {
+      var pl = j.player, st = pl.state;
+      if (st.attackCd > 0) return false;
+      var m = mobDistantVise(pl);
+      if (!m) return false;
+      st.attackCd = 0.45;
+      var h = pl.held(), d = h ? C.def(h.id) : null;
+      net.attaquer(m.eid, (d && d.damage) || 1, j.index);
+      audio.play('frapper');
+      return true;
+    }
+    function tirEnLigne(j) {
+      var pl = j.player, h = pl.held(), d = h && C.def(h.id);
+      var avant = entities.list.length;
+      var tir = pl.tirer();                    // consomme munitions et usure comme en solo…
+      if (!tir) return null;
+      entities.list.splice(avant);             // …mais la flèche vole côté serveur
+      net.tirer(pl.lookDir(), d.vitesseTir || 34,
+                d.sansMunition ? (d.degatsTir || 6) : 5 + (d.bonusTir || 0), d.ranged, j.index);
+      return tir;
+    }
+
     function onAttack() {
       if (input.state !== 'playing') return;
+      if (net.enLigne()) { attaqueEnLigne(equipe[0]); return; }
       var e = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
       if (e && e === player.state.monture) e = null;
       if (e) {
@@ -594,7 +688,7 @@
       // une arme a distance tire au clic droit, avant toute autre interaction
       var enMain = player.held();
       if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
-        var tir = player.tirer();
+        var tir = net.enLigne() ? tirEnLigne(equipe[0]) : player.tirer();
         if (tir) {
           audio.play('frapper');
           if (tir.toolBroke) ui.toast("Votre arc s'est brisé", 'warn');
@@ -606,6 +700,12 @@
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
       if (ent && ent.vehicule && interagirVehicule(equipe[0], ent, input.actions().sprint)) return;
       if (ent && entities.SPECS[ent.type].npc) {
+        // un village hostile ne commerce plus
+        if (world.reputation && !MC.Factions.commerceOuvert(world.reputation)) {
+          ui.toast('Les villageois refusent de commercer avec vous', 'warn');
+          return;
+        }
+        MC.Factions.surEchange(world.reputation);
         ui.openContainer('trade', player.state.inv, null, ent.eid);
         input.setState('ui');
         return;
@@ -613,9 +713,12 @@
 
       var target = player.aim();
       if (!target) return;
+      var mange = player.heldId();
       var res = player.useOn(target);
       if (!res) return;
+      if (res === 'eat' && net.enLigne()) net.manger(mange, 0);
       if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target); return; }
+      if (res === 'carte') { ouvrirCarte(); return; }
       if (res.indexOf('open:') === 0) {
         var kind = res.slice(5);
         var k = target.x + ',' + target.y + ',' + target.z;
@@ -634,7 +737,7 @@
       if (res === 'place' && net.enLigne()) {
         // le serveur fait autorite : on lui annonce la pose
         var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
-        net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz));
+        net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0);
       }
       if (res === 'place') audio.play('poser');
       else if (res === 'eat') audio.play('manger');
@@ -661,6 +764,12 @@
         input.setSaisie(true);
       } else if (code === 'KeyM') {
         ui.toast(audio.setEnabled(!audio.enabled) ? 'Son activé' : 'Son coupé');
+      } else if (code === 'KeyC') {
+        if (aUneCarte(player)) ouvrirCarte();
+        else ui.toast('Il faut une carte dans l\'inventaire', 'warn');
+      } else if (code === 'KeyJ') {
+        ui.panneauFactions(world.reputation);
+        input.setState('ui');
       } else if (code === 'KeyF') {
         descendreDe(equipe[0]);
       } else if (code === 'KeyG') {
@@ -673,6 +782,8 @@
     function onKeyAnyState(code) {
       if (input.state !== 'ui') return;
       if (code === 'KeyE') closeUI();
+      else if (code === 'KeyC' && ui.carteOuverte()) closeUI();
+      else if (code === 'KeyJ' && ui.factionsOuvertes()) closeUI();
       else if (code === 'KeyL') ui.toggleLivre();
     }
 
@@ -695,6 +806,8 @@
       ui.toast('Inventaire plein : objets lâchés au sol', 'warn');
     }
     function closeUI() {
+      ui.fermerCarte();
+      ui.fermerFactions();
       forceCloseContainer();
       input.setState('playing');
     }
@@ -817,7 +930,14 @@
         if (st.monture) V.descendre(st, world, pl.PW, pl.PH);
         return;
       }
-      if (st.monture) {
+      if (net.enLigne() && j.prediction) {
+        /* Prédiction : l'entrée part au serveur ET s'applique tout de suite,
+           par le même code que lui. Les statistiques (vie, faim, air) ne sont
+           pas calculées ici : elles arrivent du serveur. */
+        var entree = j.prediction.enregistrer(dt, touches, st.yaw, st.pitch, st.flying);
+        net.envoyerEntree(entree, j.index);
+        MC.Synchro.rejouer(pl, [entree]);
+      } else if (st.monture) {
         // à bord : les touches de déplacement deviennent les commandes de l'engin
         var mt = st.monture;
         V.conduire(mt, dt, world, {
@@ -832,7 +952,7 @@
         // deplacement, sinon le joueur entre puis ressort en tremblant
         entities.separer(st, dt);
       }
-      pl.updateSurvival(dt);
+      if (!net.enLigne()) pl.updateSurvival(dt);
 
       // visee et actions
       var cible = pl.aim();
@@ -844,9 +964,15 @@
 
       if (casse && cible && !mob) {
         var pos = { x: cible.x, y: cible.y, z: cible.z };
+        var outil = pl.heldId();
+        var nAvant = entities.list.length;
         var res = pl.mineTick(dt, cible);
         if (res) {
-          if (net.enLigne()) net.poserBloc(pos.x, pos.y, pos.z, 0);
+          if (net.enLigne()) {
+            // le serveur calcule le butin et nous le donne : pas de double compte
+            entities.list.splice(nAvant);
+            net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
+          }
           if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive) spillContainer(pos.x, pos.y, pos.z);
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
@@ -854,6 +980,7 @@
         }
       } else if (!casse) pl.cancelMining();
 
+      if (casse && net.enLigne() && j.source !== 'clavier') attaqueEnLigne(j);
       if (casse && mob && j.source !== 'clavier') {
         // au clavier, la frappe passe par l'evenement de clic ; a la manette
         // on echantillonne, avec le temps de recharge du joueur pour cadence
@@ -934,13 +1061,23 @@
 
       streamChunks(false);
       remeshDirtyNear();
+      // la carte retient ce que chaque joueur a vu de près
+      explorationT -= dt;
+      if (explorationT <= 0 && world.exploration) {
+        explorationT = 0.5;
+        for (var ej = 0; ej < equipe.length; ej++) {
+          world.exploration.explorer(world, equipe[ej].player.state.pos.x, equipe[ej].player.state.pos.z);
+        }
+      }
 
       if (actif) {
         // chaque joueur local est simule, quelle que soit sa source d'entrees
         for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
 
         // entites et butin : le butin va au joueur le plus proche
-        var ev = entities.update(dt, player.state, {});
+        // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)
+        var ev = net.enLigne() ? { damage: 0, picked: [] }
+                               : entities.update(dt, player.state, { reputation: world.reputation });
         if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
         for (var i = 0; i < ev.picked.length; i++) {
           var p2 = ev.picked[i];
@@ -958,7 +1095,7 @@
         g.duree = (g.duree || 0) + dt;
         world.tick(dt, 14);
         spawnT += dt;
-        if (spawnT >= SPAWN_INTERVAL) {
+        if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
           spawnT = 0;
           if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
             entities.trySpawn(player.state, DC.isNight(g.time), null,
@@ -986,10 +1123,7 @@
         render.setHighlight(null);
       }
 
-      if (net.enLigne()) {
-        net.pousserPosition(dt, player.state);
-        net.interpoler(dt);
-      }
+      if (net.enLigne()) net.interpoler(dt);
       /* On passe TOUJOURS l objet reseau, meme hors ligne : ses tables sont
          alors vides et la meme boucle de reconciliation retire les maillages
          des joueurs partis. Appeler la synchronisation seulement en ligne
@@ -1020,6 +1154,8 @@
       }
       for (var hi = 0; hi < equipe.length; hi++) ui.updateHUDJoueur(g, equipe[hi].player, hi);
       ui.barreBoss(st === 'playing' || st === 'ui' ? gardienProche() : null);
+      ui.boussole(st === 'playing' ? world.reperes : null, player.state);
+      render.syncReperes(world.reperes);
       ui.updateHUD(g);
     }
 

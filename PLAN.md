@@ -17,7 +17,7 @@ Pour chaque comportement attendu, le cycle est strictement le suivant :
 | **S4** | Implémenter le minimum pour faire passer le test | test vert |
 | **S5** | Relire et refactoriser à tests verts | diff propre |
 | **S6** | Passer les portes de qualité | `node tests/gates.js` vert |
-| **S7** | Commit | entrée dans l'historique |
+| **S7** | Commit la tache | entrée dans l'historique |
 
 Une spec non couverte par un test est un échec de la porte G1 : le projet
 refuse d'être déclaré vert.
