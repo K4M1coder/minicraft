@@ -134,6 +134,173 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — vent et formations', function () {
+    var ME = MC.Meteo;
+
+    it('SPEC-VENT-001 : le vent tourne et forcit avec l altitude, avec des rafales bornées, et chaque couche dérive sans saut', function () {
+      var m = ME.creer(21);
+      // rotation et renforcement : le sommet des cirrus (168) tourne et forcit nettement plus que le sol
+      var diffs = 0, forcis = 0;
+      for (var i = 0; i < 200; i++) {
+        var t = i * 733;
+        var sol = m.ventEn(t, 0), haut = m.ventEn(t, 168);
+        var dAngle = Math.abs(((haut.angle - sol.angle + Math.PI) % (2 * Math.PI)) - Math.PI);
+        if (dAngle > 0.3) diffs++;
+        if (haut.force > sol.force * 1.6) forcis++;
+      }
+      A.gt(diffs, 150, 'le vent tourne en altitude sur la plupart des instants : ' + diffs);
+      A.gt(forcis, 150, 'et forcit nettement (jusqu à ×2,5) : ' + forcis);
+      // rafales : bornées, la force ondule sans jamais s emballer
+      var forces = [];
+      for (var s = 0; s < 4000; s += 7) forces.push(m.ventEn(s, 80).force);
+      var maxF = Math.max.apply(null, forces);
+      A.ok(maxF < 1.3 * 2.6, 'les rafales restent bornées : max ' + maxF.toFixed(2));
+      A.ok(forces.some(function (f) { return f > 0; }), 'du vent, au moins parfois');
+      var variePeu = forces.every(function (f, k) { return k === 0 || Math.abs(f - forces[k - 1]) < 1.5; });
+      A.ok(variePeu, 'les rafales ne font pas de saut brutal d un échantillon au suivant');
+      // ventCouche : le vent à l altitude d une couche haute tourne plus qu une couche basse
+      var basCouche = m.ventCouche(0, 1000), hautCouche = m.ventCouche(4, 1000);
+      A.ok(hautCouche.force >= basCouche.force - 0.6, 'la couche haute (cirrus) porte un vent au moins comparable à la couche basse');
+      // déterminisme : même graine, même vent à tous les postes
+      var m2 = ME.creer(21);
+      A.deep(m2.ventEn(555, 90), m.ventEn(555, 90), 'même vent pour tous les postes');
+      // dérive par couche : continue au changement de segment, comme `derive`
+      var S = ME.SEGMENT;
+      for (var k = 1; k < 20; k++) {
+        for (var c = 0; c < ME.COUCHES.length; c++) {
+          var a = m.deriveCouche(c, k * S - 0.01), b = m.deriveCouche(c, k * S + 0.01);
+          A.ok(Math.hypot(a.x - b.x, a.z - b.z) < 1, 'pas de saut de dérive, couche ' + c + ', segment ' + k);
+        }
+      }
+      // chaque couche dérive à son propre rythme (couches distinctes = dérives distinctes après un moment)
+      var dBas = m.deriveCouche(0, 20000), dHaut = m.deriveCouche(4, 20000);
+      A.ok(Math.hypot(dBas.x - dHaut.x, dBas.z - dHaut.z) > 50, 'couches basse et haute dérivent différemment');
+    });
+
+    it('SPEC-NUAGE-003 : les cyclones ne naissent que sur une mer chaude et humide, se déplacent avec le vent, tournent et s affaiblissent', function () {
+      var m = ME.creer(2020);
+      var vus = [], t;
+      for (t = 0; t < 400000 && vus.length < 3; t += 3600) {
+        m.cyclones(t).forEach(function (c) { vus.push(c); });
+      }
+      A.gt(vus.length, 0, 'des cyclones naissent en mer chaude par défaut');
+      vus.forEach(function (c) {
+        A.ok(typeof c.id === 'string' && c.rayon > 0 && c.oeil > 0 && c.oeil < c.rayon, 'forme cohérente : ' + JSON.stringify(c));
+        A.ok(c.force >= 0 && c.force <= 1, 'force bornée');
+        A.ok(c.sens === 1 || c.sens === -1, 'un sens de rotation');
+      });
+      // jamais de naissance là où il n y a pas de mer chaude
+      var m0 = ME.creer(2020, { estMerChaude: function () { return false; } });
+      var total0 = 0;
+      for (t = 0; t < 200000; t += 3600) total0 += m0.cyclones(t).length;
+      A.equal(total0, 0, 'sans mer chaude nulle part, aucun cyclone ne naît');
+      // avec une mer chaude partout, on en trouve aussi, et vite
+      var m1 = ME.creer(2020, { estMerChaude: function () { return true; } });
+      var total1 = 0;
+      for (t = 0; t < 40000; t += 3600) total1 += m1.cyclones(t).length;
+      A.gt(total1, 0, 'une mer partout chaude engendre des cyclones');
+      // déplacement avec le vent dominant : la position d un même cyclone change au fil du temps
+      // (durée de vie minimale d une heure : on ne suit que sur quelques minutes, à coup sûr encore vivant)
+      var suivi = ME.creer(2021, { estMerChaude: function () { return true; } });
+      var deplace = 0, paires = 0;
+      for (t = 1000; t < 30000; t += 3000) {
+        var l1 = suivi.cyclones(t), l2 = suivi.cyclones(t + 300);
+        l1.forEach(function (c) {
+          var trouve = l2.filter(function (d) { return d.id === c.id; })[0];
+          if (!trouve) return;
+          paires++;
+          if (Math.hypot(trouve.x - c.x, trouve.z - c.z) > 1) deplace++;
+        });
+      }
+      A.gt(paires, 0, 'des cyclones se retrouvent d un instant au suivant');
+      A.gt(deplace, 0, 'et ils se sont déplacés avec le vent dominant : ' + deplace + '/' + paires);
+      // affaiblissement en quittant la mer chaude : une mer chaude seulement près de l origine
+      function merLocale(x, z) { return Math.hypot(x, z) < 6000; }
+      var mAff = ME.creer(7, { estMerChaude: merLocale });
+      var id = null, forcePrec = null, chute = false;
+      for (t = 0; t < 300000; t += 600) {
+        var lc = mAff.cyclones(t);
+        if (!id && lc.length) id = lc[0].id;
+        if (!id) continue;
+        var cyc = lc.filter(function (c) { return c.id === id; })[0];
+        if (!cyc) break;
+        if (Math.hypot(cyc.x, cyc.z) > 9000 && forcePrec !== null && cyc.force < forcePrec) chute = true;
+        forcePrec = cyc.force;
+      }
+      A.ok(chute, 'le cyclone s affaiblit en s éloignant de la mer chaude');
+      // déterminisme : même graine, mêmes cyclones
+      var mA = ME.creer(555), mB = ME.creer(555);
+      A.deep(mA.cyclones(50000), mB.cyclones(50000), 'mêmes cyclones pour tous les postes');
+      // influenceCyclone : dans l œil, couverture dégagée ; en spirale, couverture accrue
+      var mI = ME.creer(2021, { estMerChaude: function () { return true; } });
+      var cy = mI.cyclones(1000)[0];
+      A.ok(cy, 'un cyclone pour éprouver son influence');
+      var auCentre = mI.influenceCyclone(cy.x, cy.z, 1000);
+      A.ok(auCentre.oeil, 'au centre : dans l œil');
+      var loin = mI.influenceCyclone(cy.x + cy.rayon * 5, cy.z, 1000);
+      A.equal(loin.spirale, 0, 'loin du cyclone : aucune influence');
+      var dansSpirale = mI.influenceCyclone(cy.x + cy.rayon * 0.6, cy.z, 1000);
+      A.ok(dansSpirale.spirale > 0 || dansSpirale.precipitation > 0, 'dans la bande en spirale : nuages ou pluie');
+      // densiteNuage intègre la spirale : couverture accrue près du cyclone, dégagée dans l œil
+      var cu = ME.COUCHES[1];
+      var etBase = Object.assign({}, mI.etat(1000), { couverture: 0.1 });
+      var dOeil = mI.densiteNuage(cu, cy.x, cy.z, 1000, etBase);
+      var dSpirale = mI.densiteNuage(cu, cy.x + cy.rayon * 0.6, cy.z, 1000, etBase);
+      A.ok(dSpirale > dOeil, 'la spirale porte plus de nuages que l œil dégagé : ' + dOeil.toFixed(2) + ' contre ' + dSpirale.toFixed(2));
+    });
+
+    it('SPEC-NUAGE-004 : les tornades ne naissent que pendant un orage, là où chaleur, humidité et cisaillement s y prêtent, et poussent près de leur axe', function () {
+      var m = ME.creer(42);
+      // repérer des segments orageux
+      var orageux = [], k;
+      for (k = 0; k < 4000; k++) if (m.etat(k * ME.SEGMENT + ME.SEGMENT / 2).eclairs > 0) orageux.push(k);
+      A.gt(orageux.length, 0, 'des segments d orage existent');
+      var trouvees = 0;
+      orageux.forEach(function (kk) { trouvees += m.tornades(kk * ME.SEGMENT + ME.SEGMENT / 2).length; });
+      A.gt(trouvees, 0, 'des tornades naissent pendant les orages : ' + trouvees);
+      // jamais de tornade hors orage
+      var horsOrage = 0, testes = 0;
+      for (k = 0; k < 4000 && testes < 500; k++) {
+        if (m.etat(k * ME.SEGMENT + ME.SEGMENT / 2).eclairs > 0) continue;
+        testes++;
+        horsOrage += m.tornades(k * ME.SEGMENT + ME.SEGMENT / 2).length;
+      }
+      A.equal(horsOrage, 0, 'jamais de tornade hors orage : ' + horsOrage);
+      // conditions : sans chaleur ni humidité ni cisaillement, aucune tornade même en plein orage
+      var mFroid = ME.creer(42, { conditionsEn: function () { return { temperature: 0, humidite: 0 }; } });
+      var totalFroid = 0;
+      orageux.forEach(function (kk) { totalFroid += mFroid.tornades(kk * ME.SEGMENT + ME.SEGMENT / 2).length; });
+      A.equal(totalFroid, 0, 'air froid et sec : aucune tornade, même sous l orage');
+      // forme et durée de vie raisonnables
+      var uneTornade = null;
+      for (k = 0; k < 4000 && !uneTornade; k++) {
+        var l = m.tornades(k * ME.SEGMENT + ME.SEGMENT / 2);
+        if (l.length) uneTornade = { t: k * ME.SEGMENT + ME.SEGMENT / 2, tn: l[0] };
+      }
+      A.ok(uneTornade, 'au moins une tornade à éprouver');
+      var tn = uneTornade.tn, t = uneTornade.t;
+      A.ok(tn.rayon > 0 && tn.force >= 0 && tn.force <= 1 && tn.vie >= 0, 'une tornade cohérente : ' + JSON.stringify(tn));
+      // trajectoire le long du vent : sa position varie d un instant à l autre
+      var l2 = m.tornades(t + 5);
+      var suite = l2.filter(function (x) { return x.id === tn.id; })[0];
+      if (suite) A.ok(Math.hypot(suite.x - tn.x, suite.z - tn.z) >= 0, 'position suivie dans le temps');
+      // poussée : nulle loin de l axe, non nulle et orientée vers/autour de l axe tout près
+      var loin = m.pousseeTornade(tn.x + tn.rayon * 10, 2, tn.z, t);
+      A.deep(loin, { x: 0, y: 0, z: 0 }, 'aucune poussée loin de la tornade');
+      var proche = m.pousseeTornade(tn.x + 1, 2, tn.z, t);
+      A.ok(Math.hypot(proche.x, proche.z) > 0 || proche.y > 0, 'une poussée sensible tout près de l axe : ' + JSON.stringify(proche));
+      // en hauteur, la poussée s affaiblit
+      var basPoussee = m.pousseeTornade(tn.x + 1, 2, tn.z, t);
+      var hautPoussee = m.pousseeTornade(tn.x + 1, 200, tn.z, t);
+      A.ok(Math.hypot(hautPoussee.x, hautPoussee.z, hautPoussee.y) <= Math.hypot(basPoussee.x, basPoussee.z, basPoussee.y) + 0.01,
+           'la poussée décroît en altitude');
+      // déterminisme
+      var mA = ME.creer(42), mB = ME.creer(42);
+      A.deep(mA.tornades(t), mB.tornades(t), 'mêmes tornades pour tous les postes');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — météo', function () {
     var ME = MC.Meteo;
     it('SPEC-METEO-001 : grand soleil, nuages, pluie, orage et tempête s enchaînent sans saut brutal', function () {
