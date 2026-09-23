@@ -520,13 +520,13 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-EAU-001 | L'eau se classe en écoulement, chute, rivière, lac, mer et océan, selon sa génération et sa situation | classement de colonnes connues | ⏳ |
-| SPEC-EAU-002 | Chaque type ondule à sa façon (amplitude, longueur d'onde, vitesse, écume) : clapot du lac, houle de l'océan, courant de la rivière, rideau de la chute | paramètres distincts par type, attributs par sommet | ⏳ |
-| SPEC-EAU-003 | Le sens des ondulations mêle le sens de l'écoulement et le vent : pur courant dans une chute, surtout le vent sur un lac, un mélange sur une rivière | direction résultante selon le type | ⏳ |
-| SPEC-EAU-004 | Des rivières naissent en altitude et descendent jusqu'à la mer ou un lac en creusant leur lit ; là où elles décrochent, une cascade | tracé descendant, lit creusé, cascades | ⏳ |
-| SPEC-EAU-005 | L'eau posée ou libérée s'écoule : elle descend, s'étale sur sept blocs au plus en s'amenuisant, et se retire quand sa source disparaît | simulation d'écoulement | ⏳ |
-| SPEC-EAU-006 | Près des rivages, les vagues se dressent en approchant de la côte (amplitude qui croît quand le fond remonte), déferlent en écume sur la ligne du rivage et courent vers la plage | profondeur et direction du rivage par colonne, amplitude et écume selon la profondeur | ⏳ |
-| SPEC-EAU-007 | Sous l'eau, la lumière est dynamique : des caustiques animées dansent sur le fond et les parois immergées, la lumière du soleil s'atténue et bleuit avec la profondeur | attribut d'immersion par sommet, atténuation selon la profondeur | ⏳ |
+| SPEC-EAU-001 | L'eau se classe en écoulement, chute, rivière, lac, mer et océan, selon sa génération et sa situation | classement de colonnes connues | ✅ |
+| SPEC-EAU-002 | Chaque type ondule à sa façon (amplitude, longueur d'onde, vitesse, écume) : clapot du lac, houle de l'océan, courant de la rivière, rideau de la chute | paramètres distincts par type, attributs par sommet | ✅ |
+| SPEC-EAU-003 | Le sens des ondulations mêle le sens de l'écoulement et le vent : pur courant dans une chute, surtout le vent sur un lac, un mélange sur une rivière | direction résultante selon le type | ✅ |
+| SPEC-EAU-004 | Des rivières naissent en altitude et descendent jusqu'à la mer ou un lac en creusant leur lit ; là où elles décrochent, une cascade | tracé descendant, lit creusé, cascades | ✅ |
+| SPEC-EAU-005 | L'eau posée ou libérée s'écoule : elle descend, s'étale sur sept blocs au plus en s'amenuisant, et se retire quand sa source disparaît | simulation d'écoulement | ✅ |
+| SPEC-EAU-006 | Près des rivages, les vagues se dressent en approchant de la côte (amplitude qui croît quand le fond remonte), déferlent en écume sur la ligne du rivage et courent vers la plage | profondeur et direction du rivage par colonne, amplitude et écume selon la profondeur | ✅ |
+| SPEC-EAU-007 | Sous l'eau, la lumière est dynamique : des caustiques animées dansent sur le fond et les parois immergées, la lumière du soleil s'atténue et bleuit avec la profondeur | attribut d'immersion par sommet, atténuation selon la profondeur | ✅ |
 | SPEC-EAU-008 | La surface de l'eau déforme ce qu'on voit à travers elle : vu du dessus, le fond ondule par réfraction ; vu de dessous, le monde au-dessus et tout le champ de vision ondulent | passe de réfraction et déformation sous l'eau | ⏳ |
 
 ## L16 — vent

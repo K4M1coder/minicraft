@@ -235,7 +235,10 @@
             var k = b * CX + a;
             return eauNature[k] ? eauProf[k] : 0;                // la terre : profondeur nulle
           }
-          var gx = pr(ex + 1, ez) - pr(ex - 1, ez), gz = pr(ex, ez + 1) - pr(ex, ez - 1), gn = Math.hypot(gx, gz);
+          // pente du fond sur quatre colonnes de part et d'autre : les hauts-fonds plats trouvent aussi leur rivage
+          var gx = 0, gz = 0;
+          for (var rr = 1; rr <= 4; rr++) { gx += (pr(ex + rr, ez) - pr(ex - rr, ez)) / rr; gz += (pr(ex, ez + rr) - pr(ex, ez - rr)) / rr; }
+          var gn = Math.hypot(gx, gz);
           if (gn > 0) { eauFlux[ec * 2] = Math.round(-gx / gn * 127); eauFlux[ec * 2 + 1] = Math.round(-gz / gn * 127); }
         }
       }

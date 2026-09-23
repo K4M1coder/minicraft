@@ -90,13 +90,62 @@
   /* `lumiere` (facultatif) : { niveau(lx, ly, lz) } — la lumière des blocs
      propagée par MC.Lumiere, en coordonnées locales. Elle sort dans `lums`,
      un nombre par sommet de 0 (noir) à 1 (plein éclat d'une source). */
-  function buildChunk(chunk, wantPass, sample, lumiere) {
+  /* `eauDe(wx, wz)` (facultatif) : { nature, flux:{x,z}, prof } d'une colonne
+     d'un autre chunk — sans lui, les coins au bord du chunk ne se moyennent
+     qu'avec les colonnes du chunk. */
+  function buildChunk(chunk, wantPass, sample, lumiere, eauDe) {
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
     var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [], ciels = [];
-    /* ondes : [nature, sens x, sens z, profondeur] par sommet d'eau (MC.Eau) ;
-       immerge : hauteur d'eau au-dessus d'une face noyée (caustiques, pénombre bleue) */
-    var ondes = [], immerges = [];
+    /* ondes  : [amplitude, longueur, vitesse, écume] par sommet d'eau ;
+       ondes2 : [sens x, sens z, part du courant, drapeaux (1 surface, 2 chute)] ;
+       immerge : hauteur d'eau au-dessus d'une face noyée (caustiques, pénombre bleue).
+       Les paramètres sont moyennés par COIN sur les colonnes d'eau voisines :
+       deux faces qui partagent un coin l'agitent exactement pareil, sans fissure. */
+    var ondes = [], ondes2 = [], immerges = [];
+    var cacheEau = {};
+    function paramsEau(lx, y, lz) {
+      var cle = lx + ',' + y + ',' + lz;
+      if (cle in cacheEau) return cacheEau[cle];
+      var id = blockAt(lx, y, lz), r = null;
+      if (MC.Eau && C.isWater(id) && C.BLOCKS[id] && C.BLOCKS[id].liquid) {
+        var nat, fx = 0, fz = 0, prof = 3;
+        if (MC.Eau.estCourante(id)) {
+          nat = 'ecoulement'; prof = 1;
+          var fc = MC.Eau.fluxCourant(blockAt, lx, y, lz); fx = fc.x; fz = fc.z;
+        } else {
+          var info = null;
+          if (lx >= 0 && lx < CX && lz >= 0 && lz < CZ && chunk.eau) {
+            var k = lz * CX + lx;
+            if (chunk.eau.nature[k]) info = { nature: chunk.eau.nature[k], flux: { x: chunk.eau.flux[k * 2] / 127, z: chunk.eau.flux[k * 2 + 1] / 127 }, prof: chunk.eau.prof[k] };
+          } else if (eauDe) info = eauDe(baseX + lx, baseZ + lz);
+          nat = info && info.nature ? MC.Eau.NOMS[info.nature] : 'lac';
+          if (info) { fx = info.flux.x; fz = info.flux.z; prof = info.prof; }
+        }
+        var p = MC.Eau.PARAMS[nat];
+        var A = p.amplitude, E = p.ecume, K = p.courant;
+        // vagues de rivage : plus haut, plus d'écume, tournées vers la plage quand le fond remonte
+        if (nat === 'lac' || nat === 'mer' || nat === 'ocean') {
+          var rv = 1 - Math.min(1, prof / 8);
+          A *= 1 + 2.5 * rv; E = Math.max(E, rv > 0.5 ? (rv - 0.5) / 0.5 * 0.9 : 0); K = Math.max(K, rv);
+        }
+        r = { A: A, L: p.longueur, V: p.vitesse, E: E, K: K, fx: fx, fz: fz };
+      }
+      cacheEau[cle] = r;
+      return r;
+    }
+    // moyenne des paramètres des colonnes d'eau autour d'un coin (cx, cz) au niveau y
+    function paramsCoin(cx, y, cz, defaut) {
+      var n = 0, s = { A: 0, L: 0, V: 0, E: 0, K: 0, fx: 0, fz: 0 };
+      for (var a = -1; a <= 0; a++) for (var b = -1; b <= 0; b++) {
+        var p = paramsEau(cx + a, y, cz + b);
+        if (!p) continue;
+        n++; for (var k in s) s[k] += p[k];
+      }
+      if (!n) return defaut;
+      for (var k2 in s) s[k2] /= n;
+      return s;
+    }
     var niv = lumiere ? lumiere.niveau : null;
     // le ciel : sans calcul de lumière, tout est à ciel ouvert
     var nivC = lumiere && lumiere.ciel ? lumiere.ciel : null;
@@ -162,7 +211,7 @@
           normals.push(0, 1, 0);
           pushUV(uvs, d.tiles[0], p[2], p[3]);
           colors.push(1, 1, 1);
-          ondes.push(0, 0, 0, 0); immerges.push(0);
+          ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(0);
           lums.push(lumEn(x, y, z));
           ciels.push(cielEn(x, y + 1, z));
         });
@@ -179,7 +228,7 @@
             normals.push(0, 1, 0);
             pushUV(uvs, d.tiles[0], p[3], p[4]);
             colors.push(1, 1, 1);
-            ondes.push(0, 0, 0, 0); immerges.push(profondeurEau(x, y + 1, z));
+            ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(profondeurEau(x, y + 1, z));
             lums.push(Math.max(lumEn(x, y, z), d.light ? d.light / 15 : 0));
             ciels.push(cielEn(x, y, z));
           }
@@ -189,18 +238,14 @@
       }
 
       // l'eau de ce bloc : hauteur de surface, nature, sens, profondeur
-      var estEau = !!d.liquid && C.isWater(b), ondeT = 0, ondeFx = 0, ondeFz = 0, ondeP = 0, dropEau = 0.12;
+      var estEau = !!d.liquid && C.isWater(b), dropEau = 0.12, pEau = null, surfaceLibre = false, chuteBloc = false;
       if (estEau) {
         var niv8 = MC.Eau ? MC.Eau.niveauDe(b) : 8;
-        dropEau = C.isWater(blockAt(x, y + 1, z)) ? 0 : (niv8 >= 8 ? 0.12 : 1 - niv8 / 8 * 0.88);
-        var colE = z * CX + x, ce = chunk.eau;
-        if (MC.Eau && MC.Eau.estCourante(b)) {
-          ondeT = MC.Eau.TYPES.ecoulement; ondeP = 1;
-          var fc = MC.Eau.fluxCourant(blockAt, x, y, z); ondeFx = fc.x; ondeFz = fc.z;
-        } else if (ce && ce.nature[colE]) {
-          ondeT = ce.nature[colE]; ondeP = ce.prof[colE];
-          ondeFx = ce.flux[colE * 2] / 127; ondeFz = ce.flux[colE * 2 + 1] / 127;
-        } else { ondeT = MC.Eau ? MC.Eau.TYPES.lac : 1; ondeP = 3; }
+        surfaceLibre = !C.isWater(blockAt(x, y + 1, z));
+        dropEau = surfaceLibre ? (niv8 >= 8 ? 0.12 : 1 - niv8 / 8 * 0.88) : 0;
+        pEau = paramsEau(x, y, z);
+        var colE = z * CX + x;
+        chuteBloc = !!(MC.Eau && (MC.Eau.estCourante(b) || (chunk.eau && chunk.eau.nature[colE] === MC.Eau.TYPES.riviere)));
       }
       for (var fi = 0; fi < 6; fi++) {
         var f = FACES[fi];
@@ -218,9 +263,7 @@
         var s = f.shade, start = positions.length / 3;
         var drop = d.liquid ? (estEau ? dropEau : 0.12) : 0;
         // une paroi d'eau qui donne sur le vide : c'est une chute (cascade, filet qui tombe)
-        var ondeFace = ondeT;
-        if (estEau && f.dir[1] === 0 && !C.isWater(nb) && MC.Eau &&
-            (ondeT === MC.Eau.TYPES.ecoulement || ondeT === MC.Eau.TYPES.riviere)) ondeFace = MC.Eau.TYPES.chute;
+        var chuteFace = estEau && f.dir[1] === 0 && !C.isWater(nb) && chuteBloc;
         var immFace = d.liquid ? 0 : profondeurEau(nx, ny, nz);
         var tg = tangents(f.dir), U = tg[0], V = tg[1];
         // l'occlusion ne s'applique pas aux surfaces liquides : elle y produit
@@ -241,8 +284,19 @@
           pushUV(uvs, tile, q2[3], q2[4], vt.rot);
           var c = s * ao[k];
           colors.push(c, c, c);
-          if (estEau) ondes.push(ondeFace, ondeFace === 6 ? f.dir[0] : ondeFx, ondeFace === 6 ? f.dir[2] : ondeFz, ondeP);
-          else ondes.push(0, 0, 0, 0);
+          if (estEau && pEau) {
+            // un sommet de la surface libre s'agite ; ceux du fond ou d'une paroi basse, non
+            var auSommet = q2[1] === 1 && surfaceLibre;
+            var pc = auSommet ? paramsCoin(x + q2[0], y, z + q2[2], pEau) : pEau;
+            if (chuteFace) {
+              var pChute = MC.Eau.PARAMS.chute;
+              ondes.push(pc.A, pChute.longueur, pChute.vitesse, pChute.ecume);
+              ondes2.push(f.dir[0], f.dir[2], 1, (auSommet ? 1 : 0) + 2);
+            } else {
+              ondes.push(pc.A, pc.L, pc.V, pc.E);
+              ondes2.push(pc.fx, pc.fz, pc.K, auSommet ? 1 : 0);
+            }
+          } else { ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); }
           immerges.push(immFace);
           if (niv) {
             var suL = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
@@ -269,7 +323,7 @@
 
     if (!indices.length) return null;
     return { positions: positions, normals: normals, uvs: uvs,
-             colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, immerges: immerges };
+             colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, ondes2: ondes2, immerges: immerges };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,

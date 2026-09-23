@@ -1832,6 +1832,31 @@
     await reset(g);
   });
 
+  e2e('SPEC-EAU-008 : la surface de l eau deforme ce qu on voit a travers elle, dessus comme dessous', async function (g) {
+    var s = await reset(g);
+    // la mer la plus proche : une colonne d'eau profonde autour du point de départ
+    var cible = null;
+    for (var r = 0; r < 400 && !cible; r += 4) for (var a2 = 0; a2 < 12 && !cible; a2++) {
+      var x = Math.round(Math.cos(a2 / 12 * 6.283) * r), z = Math.round(Math.sin(a2 / 12 * 6.283) * r);
+      var col = g.world.bio.colonne(x, z);
+      if (col.eau - col.h >= 4) cible = { x: x, z: z, eau: col.eau };
+    }
+    A.ok(cible, 'une mer existe près du départ');
+    s.flying = true;
+    s.pos.x = cible.x + 0.5; s.pos.z = cible.z + 0.5; s.pos.y = cible.eau + 6; s.pitch = -0.9;
+    g.render.setDistance(5);
+    g.streamChunks(true);
+    for (var i = 0; i < 30; i++) await frames(1);
+    A.gt(g.render.eau.enVue, 0, 'de l eau dans le champ');
+    A.equal(g.render.eau.refraction.value, 1, 'au-dessus : la passe de réfraction relit le fond en le déformant');
+    // plongée
+    s.pos.y = cible.eau - 2;
+    for (var j = 0; j < 20; j++) await frames(1);
+    A.ok(g.render.eau.sousLEau, 'sous l eau : tout le champ passe par le calque qui ondule');
+    s.flying = false;
+    await reset(g);
+  });
+
   /* En dernier : ce test change de partie (mode histoire, autre graine). */
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);

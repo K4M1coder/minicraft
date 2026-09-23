@@ -99,8 +99,48 @@
        comme une lueur chaude par-dessus l'éclairage du ciel. Plus discrète en
        plein jour, où le soleil domine, qu'au cœur de la nuit ou d'une grotte. */
     var forceTorches = { value: 1 };
-    function avecLumiereDesBlocs(mat) {
+    /* Eau : vent de surface et passe de réfraction (le décor vu à travers la
+       surface, sans l'eau). Les paramètres d'onde arrivent par sommet. */
+    var ventEau = { value: new THREE.Vector2(1, 0) };
+    var refractionTex = { value: null }, refractionActive = { value: 0 }, tailleEcran = { value: new THREE.Vector2(1, 1) };
+    var GLSL_CAUSTIQUES = [
+      'float caustique(vec2 p, float t) {',
+      '  vec2 q = p * 1.4;',
+      '  float a = sin(q.x + t * 1.1 + sin(q.y * 1.7 + t)) * sin(q.y * 1.2 - t * 0.8 + sin(q.x * 1.3 - t * 0.6));',
+      '  float b = sin(q.x * 0.7 - t * 0.9 + sin(q.y * 1.1)) * sin(q.y * 0.9 + t * 1.2);',
+      '  return pow(abs(a * 0.6 + b * 0.4), 3.0) * 2.2;',
+      '}', ''].join('\n');
+    function avecLumiereDesBlocs(mat, eau) {
       mat.onBeforeCompile = function (sh) {
+        sh.uniforms.tempsEau = UN.temps; sh.uniforms.ventEau = ventEau;
+        sh.vertexShader = 'attribute float immerge;\nvarying float vImmerge;\n' +
+          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vImmerge = immerge;');
+        sh.fragmentShader = 'uniform float tempsEau;\nvarying float vImmerge;\n' + GLSL_CAUSTIQUES + sh.fragmentShader;
+        if (eau) {
+          sh.uniforms.refractionTex = refractionTex; sh.uniforms.refractionActive = refractionActive;
+          sh.uniforms.tailleEcran = tailleEcran;
+          /* Ondes : la nature (onde.x) choisit amplitude, longueur, vitesse et
+             écume ; le sens mêle courant (onde.yz) et vent (MC.Eau.directionOnde).
+             Près du rivage (onde.w : profondeur), la vague se dresse et déferle. */
+          sh.vertexShader = 'attribute vec4 onde;\nattribute vec4 onde2;\nuniform float tempsEau; uniform vec2 ventEau;\n' +
+            'varying float vType; varying float vPhase; varying float vEcume; varying float vVit;\n' +
+            sh.vertexShader.replace('#include <begin_vertex>', [
+              '#include <begin_vertex>',
+              '  vType = 0.0; vPhase = 0.0; vEcume = 0.0; vVit = 0.0;',
+              '  if (onde.y > 0.0) {',
+              '    float A = onde.x, L = onde.y, Vt = onde.z, E = onde.w, K = onde2.z;',
+              '    vec2 vd = length(ventEau) > 0.001 ? normalize(ventEau) : vec2(1.0, 0.0);',
+              '    vec2 fl = onde2.xy;',
+              '    vec2 dir = length(fl) > 0.01 ? normalize(mix(vd, normalize(fl), K)) : vd;',
+              '    vec4 wpE = modelMatrix * vec4(transformed, 1.0);',
+              '    float ph = dot(wpE.xz, dir) * 6.2832 / L - tempsEau * Vt * 6.2832 / L;',
+              '    float surf = mod(onde2.w, 2.0), chute = step(1.5, onde2.w);',
+              '    transformed.y += surf * (sin(ph) + 0.35 * sin(ph * 2.3 + 1.7)) * A;',
+              '    vType = 1.0 + chute * 5.0; vPhase = ph; vEcume = E; vVit = Vt;',
+              '  }'].join('\n'));
+          sh.fragmentShader = 'uniform sampler2D refractionTex; uniform float refractionActive; uniform vec2 tailleEcran;\n' +
+            'varying float vType; varying float vPhase; varying float vEcume; varying float vVit;\n' + sh.fragmentShader;
+        }
         sh.uniforms.forceTorches = forceTorches;
         sh.uniforms.carteNuages = UN.carte; sh.uniforms.deriveNuages = UN.derive; sh.uniforms.tempsNuages = UN.temps;
         sh.uniforms.couvNuages = UN.couvertureCiel; sh.uniforms.soleilDir = soleilDir; sh.uniforms.forceOmbreNuages = forceOmbreNuages;
@@ -113,7 +153,27 @@
           GLSL_OMBRE_NUAGES +
           sh.fragmentShader.replace('#include <emissivemap_fragment>',
             '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.8, 0.55) * pow(vLum, 2.2) * forceTorches;' +
-            '\n  diffuseColor.rgb *= max(0.03, pow(vCiel, 1.3)) * ombreNuages(vMondeO);');
+            '\n  diffuseColor.rgb *= max(0.03, pow(vCiel, 1.3)) * ombreNuages(vMondeO);' +
+            /* sous l'eau : la lumière bleuit et s'atténue avec la profondeur, et les
+               caustiques dansent sur le fond (seulement de jour, sous le ciel) */
+            '\n  if (vImmerge > 0.5) {' +
+            '\n    float attE = exp(-vImmerge * 0.13);' +
+            '\n    diffuseColor.rgb *= mix(vec3(1.0), vec3(0.5, 0.78, 1.0), min(1.0, vImmerge / 5.0)) * (0.35 + 0.65 * attE);' +
+            '\n    totalEmissiveRadiance += diffuseColor.rgb * caustique(vMondeO.xz, tempsEau) * 0.45 * attE * forceOmbreNuages * vCiel;' +
+            '\n  }' +
+            (eau ? '\n  if (vType > 0.5) {' +
+                   '\n    float fo = vType > 5.5 ? step(0.55, fract(vMondeO.y * 1.3 + tempsEau * vVit * 0.25 + sin(vMondeO.x * 2.0 + vMondeO.z * 1.7) * 0.2))' +
+                   '\n                           : smoothstep(0.55, 1.0, sin(vPhase));' +
+                   '\n    diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.92, 0.96, 1.0), fo * vEcume);' +
+                   /* réfraction : le décor, vu à travers la surface, ondule */
+                   '\n    if (refractionActive > 0.5) {' +
+                   '\n      vec2 uvR = gl_FragCoord.xy / tailleEcran + vec2(sin(vPhase), cos(vPhase * 1.3)) * 0.012;' +
+                   '\n      vec3 fondR = texture2D(refractionTex, uvR).rgb;' +
+                   '\n      totalEmissiveRadiance += fondR * 0.5 * (1.0 - fo * vEcume);' +
+                   '\n      diffuseColor.rgb *= 0.55;' +
+                   '\n      diffuseColor.a = 1.0;' +
+                   '\n    }' +
+                   '\n  }' : ''));
       };
       return mat;
     }
@@ -136,7 +196,7 @@
       '  float d = clamp((n - (0.62 - couv * 0.34)) * 5.0, 0.0, 1.0);',
       '  return 1.0 - 0.5 * d * forceOmbreNuages;',
       '}', ''].join('\n');
-    [matOpaque, matCutout, matBlend].forEach(avecLumiereDesBlocs);
+    avecLumiereDesBlocs(matOpaque); avecLumiereDesBlocs(matCutout); avecLumiereDesBlocs(matBlend, true);
 
     // contour du bloc visé
     var highlight = new THREE.LineSegments(
@@ -156,6 +216,13 @@
                                                                : new Float32Array(raw.positions.length / 3), 1));
       g.setAttribute('ciel', new THREE.Float32BufferAttribute(raw.ciels && raw.ciels.length ? raw.ciels
                                                                 : new Float32Array(raw.positions.length / 3).fill(1), 1));
+      var nv = raw.positions.length / 3;
+      g.setAttribute('onde', new THREE.Float32BufferAttribute(raw.ondes && raw.ondes.length === nv * 4 ? raw.ondes
+                                                                : new Float32Array(nv * 4), 4));
+      g.setAttribute('onde2', new THREE.Float32BufferAttribute(raw.ondes2 && raw.ondes2.length === nv * 4 ? raw.ondes2
+                                                                 : new Float32Array(nv * 4), 4));
+      g.setAttribute('immerge', new THREE.Float32BufferAttribute(raw.immerges && raw.immerges.length === nv ? raw.immerges
+                                                                   : new Float32Array(nv), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return g;
@@ -168,24 +235,34 @@
                   ['meshC', matCutout, 'cutout', 1],
                   ['meshT', matBlend, 'blend', 2]];
 
+    var maillagesEau = new Set();
     function syncChunk(world, chunk) {
       var sample = world.getBlock;
       var passes = PASSES;
       // une propagation de lumière par chunk, partagée par ses quatre passes
       var lumiere = MC.Lumiere && world.chunkDe ? MC.Lumiere.eclairer(world.chunkDe, chunk.cx, chunk.cz) : null;
+      // l'eau des chunks voisins : les coins partagés s'agitent pareil des deux côtés
+      function eauDe(wx, wz) {
+        var c2 = world.chunkDe && world.chunkDe(Math.floor(wx / C.CHUNK_X), Math.floor(wz / C.CHUNK_Z));
+        if (!c2 || !c2.eau) return null;
+        var k = (wz - c2.cz * C.CHUNK_Z) * C.CHUNK_X + (wx - c2.cx * C.CHUNK_X);
+        if (!c2.eau.nature[k]) return null;
+        return { nature: c2.eau.nature[k], flux: { x: c2.eau.flux[k * 2] / 127, z: c2.eau.flux[k * 2 + 1] / 127 }, prof: c2.eau.prof[k] };
+      }
       chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
       // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
       chunk.lumiere = lumiere;
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
-        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere);
-        if (chunk[key]) { scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
+        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe);
+        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);
           m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
           m.renderOrder = passes[i][3];
           m.castShadow = pass !== 'blend';
           m.receiveShadow = true;
+          if (pass === 'blend') maillagesEau.add(m);
           scene.add(m);
           chunk[key] = m;
         }
@@ -196,7 +273,7 @@
     function disposeChunk(chunk) {
       PASSES.forEach(function (p) {
         var k = p[0];
-        if (chunk[k]) { scene.remove(chunk[k]); chunk[k].geometry.dispose(); chunk[k] = null; }
+        if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); chunk[k].geometry.dispose(); chunk[k] = null; }
       });
     }
 
@@ -1011,6 +1088,7 @@
     function majMeteo(et, derive) {
       meteoCiel = et;
       if (derive) UN.derive.value.set(derive.x, derive.z);
+      if (et && et.vent) ventEau.value.set(et.vent.x, et.vent.z);
       if (et) {
         UN.couvertureCiel.value = et.couverture;
         UN.sombre.value = Math.max(0, (et.couverture - 0.6) / 0.4) * 0.8;
@@ -1189,6 +1267,7 @@
     var GRIS_ORAGE = new THREE.Color(0.42, 0.45, 0.5), BLANC_ECLAIR = new THREE.Color(0.85, 0.88, 1);
     var derniereAmbiance = 0, eclairs = [];
     function updateAmbience(time, submerged) {
+      sousLEau = !!submerged;
       var maintenant = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
       var dtA = Math.min(0.1, Math.max(0, maintenant - (derniereAmbiance || maintenant)));
       derniereAmbiance = maintenant;
@@ -1333,15 +1412,77 @@
        rectangle : sans lui, effacer le tampon pour la deuxième vue effacerait
        la première. WebGL compte les Y depuis le bas, l'interface depuis le
        haut : d'où l'inversion. */
+    /* ── Eau : réfraction et vue sous l'eau ───────────────────────────────
+       Au-dessus de l'eau proche, une passe du décor sans l'eau (à demi-
+       résolution) : la surface la relit en la déformant. Sous l'eau, toute
+       l'image passe par un calque qui l'ondule et la bleuit. */
+    var rtRefraction = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+    var rtEcran = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+    var tailleTampon = new THREE.Vector2();
+    var calque = (function () {
+      var sc = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var mat = new THREE.ShaderMaterial({
+        uniforms: { image: { value: null }, temps: UN.temps, force: { value: 1 } },
+        depthTest: false, depthWrite: false,
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: 'uniform sampler2D image; uniform float temps; uniform float force; varying vec2 vUv;' +
+          'void main(){ vec2 d = vec2(sin(vUv.y * 22.0 + temps * 2.1), cos(vUv.x * 18.0 + temps * 1.7)) * 0.006 * force;' +
+          ' vec3 c = texture2D(image, vUv + d).rgb; gl_FragColor = vec4(mix(c, c * vec3(0.55, 0.8, 1.0), 0.35 * force), 1.0); }',
+      });
+      sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      return { scene: sc, camera: cam, mat: mat };
+    })();
+    var sousLEau = false, eauEnVue = 0;
+    function eauProche(cam) {
+      var n = 0;
+      maillagesEau.forEach(function (m) {
+        if (!m.visible) return;
+        var dx = m.position.x + 8 - cam.position.x, dz = m.position.z + 8 - cam.position.z;
+        if (dx * dx + dz * dz < 96 * 96) n++;
+      });
+      return n;
+    }
+    function passeRefraction(cam) {
+      renderer.getDrawingBufferSize(tailleTampon);
+      var w = Math.max(4, tailleTampon.x >> 1), h = Math.max(4, tailleTampon.y >> 1);
+      if (rtRefraction.width !== w || rtRefraction.height !== h) rtRefraction.setSize(w, h);
+      tailleEcran.value.set(tailleTampon.x, tailleTampon.y);
+      maillagesEau.forEach(function (m) { m.userData.vuAvant = m.visible; m.visible = false; });
+      renderer.setRenderTarget(rtRefraction);
+      renderer.render(scene, cam);
+      renderer.setRenderTarget(null);
+      maillagesEau.forEach(function (m) { m.visible = m.userData.vuAvant; });
+      refractionTex.value = rtRefraction.texture;
+      refractionActive.value = 1;
+    }
+    function rendreVue(cam) {
+      eauEnVue = eauProche(cam);
+      refractionActive.value = 0;
+      if (sousLEau) {
+        renderer.getDrawingBufferSize(tailleTampon);
+        if (rtEcran.width !== tailleTampon.x || rtEcran.height !== tailleTampon.y) rtEcran.setSize(tailleTampon.x, tailleTampon.y);
+        renderer.setRenderTarget(rtEcran);
+        renderer.render(scene, cam);
+        renderer.setRenderTarget(null);
+        calque.mat.uniforms.image.value = rtEcran.texture;
+        renderer.render(calque.scene, calque.camera);
+        return;
+      }
+      if (eauEnVue > 0 && optionsRendu.refraction) passeRefraction(cam);
+      renderer.render(scene, cam);
+    }
+    var optionsRendu = { refraction: true };
+
     function renderViews(vues) {
       var taille = hostSize();
       if (!vues || vues.length <= 1) {
         renderer.setScissorTest(false);
         renderer.setViewport(0, 0, taille[0], taille[1]);
         placerCiel(camera);
-        renderer.render(scene, camera);
+        rendreVue(camera);
         return 1;
       }
+      refractionActive.value = 0;
       var H = taille[1];
       renderer.setScissorTest(true);
       for (var i = 0; i < vues.length; i++) {
@@ -1377,6 +1518,8 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      eau: { maillages: maillagesEau, refraction: refractionActive, options: optionsRendu, ventEau: ventEau,
+             get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; } },
       ombres: { soleil: sun, cadre: CADRE_OMBRE, soleilDir: soleilDir, forceNuages: forceOmbreNuages, ombrerLointain: ombrerLointain },
       majPrecipitations: majPrecipitations, precipitations: { pluie: pluie, neige: neige },
       get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },
