@@ -5,6 +5,12 @@
 
   var MC = G.MC = G.MC || {};
 
+  // ─── versions ──────────────────────────────────────────────────────────────
+  // version du jeu en cours ; la génération de terrain a changé 5 fois
+  // (une vieille sauvegarde garde la version d'origine de sa carte, voir saves.js)
+  var VERSION_JEU = '0.15.0';
+  var VERSION_GENERATION = 5;
+
   // ─── géométrie du monde ────────────────────────────────────────────────────
   var CHUNK_X = 16, CHUNK_Z = 16, WORLD_H = 128, SEA_LEVEL = 26;
 
@@ -558,6 +564,7 @@
   }
 
   MC.Core = {
+    VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
     FIRST_ITEM: FIRST_ITEM, DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,

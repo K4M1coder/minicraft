@@ -5,10 +5,11 @@
   var MC = G.MC = G.MC || {};
   var C = MC.Core, Inv = MC.Inventory, DC = MC.DayCycle, C_Chat = MC.Chat;
 
-  function createUI(root, atlas, hooks) {
+  function createUI(root, atlas, hooks, registre) {
     var Livre = MC.Livre;
     hooks = hooks || {};
     var ICON = 32;
+    var Hud = MC.Hud;
 
     /* Icône d'un objet : on découpe l'atlas en fond CSS plutôt que de créer
        un canvas par case — beaucoup moins d'objets pour 36 cases rafraîchies. */
@@ -346,6 +347,23 @@
         for (var j = 1; j < vues.length; j++) hudDe(j);
         placerHuds(vues);
       }
+      appliquerHud();
+    }
+
+    /* Applique l'état du registre au DOM (SPEC-HUD-001 à 012) : chaque
+       composant masqué reçoit `hud-masque` (display:none !important dans
+       ui.css) sur TOUS ses sélecteurs, y compris dans les calques d'écran
+       partagé créés dynamiquement par hudDe — d'où la recherche à chaque
+       appel plutôt qu'une capture d'éléments figée à la construction. */
+    function appliquerHud() {
+      if (!registre) return;
+      Hud.COMPOSANTS.forEach(function (c) {
+        var vis = registre.visible(c.id);
+        c.selecteurs.forEach(function (sel) {
+          var els = root.querySelectorAll(sel);
+          for (var i = 0; i < els.length; i++) els[i].classList.toggle('hud-masque', !vis);
+        });
+      });
     }
 
     var crosshair = el('div', 'crosshair');
@@ -537,17 +555,24 @@
        Tout ce qui est propre a un joueur (vie, faim, barre d'action, viseur)
        passe par updateHUDJoueur — sinon les deux s'ecrasent mutuellement. */
     function updateHUD(g) {
+      appliquerHud();
       var p = g.player.state;
       damageFlash.style.opacity = Math.max(0, p.hurtFlash) * 0.9;
       var tp = typeof p.temperature === 'number' ? p.temperature : null;
       voileClimat.className = 'voile-climat' + (tp !== null && tp <= -10 ? ' gel' : tp !== null && tp >= 38 ? ' fournaise' : '');
       updateChat(g.chat);
 
+      // graine, versions de génération de carte et du jeu, orientation du regard (SPEC-HUD-002)
+      var o = Hud.orientation(p.yaw, p.pitch);
+      var graine = g.graine !== undefined && g.graine !== null ? g.graine : g.world.seed;
       debug.innerHTML =
         'FPS <b>' + g.fps + '</b> · chunks <b>' + g.world.chunks.size + '</b>' +
         ' · entités <b>' + g.entities.list.length + '</b>' +
         (g.nbLocaux > 1 ? ' · joueurs <b>' + g.nbLocaux + '</b>' : '') + '<br>' +
-        'XYZ <b>' + p.pos.x.toFixed(1) + ' / ' + p.pos.y.toFixed(1) + ' / ' + p.pos.z.toFixed(1) + '</b><br>' +
+        'Graine <b>' + graine + '</b> · carte v<b>' + (g.versionCarte === undefined ? 'inconnue' : g.versionCarte) +
+        '</b> · jeu v<b>' + C.VERSION_JEU + '</b><br>' +
+        'XYZ <b>' + p.pos.x.toFixed(1) + ' / ' + p.pos.y.toFixed(1) + ' / ' + p.pos.z.toFixed(1) + '</b>' +
+        ' · cap <b>' + o.cap + '°</b> ' + o.cardinal + ' · inclinaison <b>' + o.inclinaison + '°</b><br>' +
         DC.clockString(g.time) + ' <b>' + (DC.isNight(g.time) ? 'nuit' : 'jour') + '</b>' +
         ' · ' + (p.flying ? 'vol' : p.swimming ? 'nage' : p.onGround ? "au sol" : "en l" + String.fromCharCode(39) + "air") +
         (g.regles && g.regles.mode ? ' · ' + g.regles.mode.nom : '') +
@@ -601,6 +626,7 @@
       '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
       '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
       '<tr><td>F5</td><td>sauvegarder</td></tr>' +
+      '<tr><td>F1</td><td>afficher ou masquer tout le HUD</td></tr>' +
       '<tr><td>échap</td><td>pause</td></tr>' +
       '</table>';
 
@@ -867,8 +893,10 @@
       if (bn) bn.onclick = function () { hooks.onPlay && hooks.onPlay(true); };
     }
 
+    var dernieresInfosPause = {};
     function menuPause(infos) {
-      infos = infos || {};
+      infos = infos || dernieresInfosPause;
+      dernieresInfosPause = infos;
       showScreen(
         '<div class="panel">' +
         '<h1>Pause</h1>' +
@@ -881,13 +909,55 @@
         '<div class="row">' +
         '<button id="btn-resume" class="primary">Reprendre</button>' +
         '<button id="btn-save">Sauvegarder</button>' +
+        '<button id="btn-affichage">Affichage</button>' +
         '<button id="btn-quit">Menu principal</button>' +
         '</div>' +
         '<p class="hint" id="lock-hint"></p>' +
         '</div>');
       overlay.querySelector('#btn-resume').onclick = function () { hooks.onResume && hooks.onResume(); };
       overlay.querySelector('#btn-save').onclick = function () { hooks.onSave && hooks.onSave(); };
+      overlay.querySelector('#btn-affichage').onclick = function () { ecranAffichage(); };
       overlay.querySelector('#btn-quit').onclick = function () { hooks.onQuit && hooks.onQuit(); };
+    }
+
+    /* Panneau « Affichage » : une case par composant du HUD (SPEC-HUD-001,
+       003 à 012), accessible depuis la pause. Sans registre (aucun stockage
+       injecté), on affiche un simple avertissement plutôt qu'un panneau vide. */
+    function ecranAffichage() {
+      if (!registre) {
+        showScreen(
+          '<div class="panel"><h1>Affichage</h1><p class="sub">Indisponible</p>' +
+          '<div class="row"><button id="btn-retour" class="primary">Retour</button></div></div>');
+        overlay.querySelector('#btn-retour').onclick = function () { menuPause(); };
+        return;
+      }
+      var lignes = Hud.COMPOSANTS.map(function (c) {
+        var coche = registre.visible(c.id) ? ' checked' : '';
+        return '<label class="aff-ligne"><input type="checkbox" data-id="' + c.id + '"' + coche + '> ' +
+               ech(c.nom) + '</label>';
+      }).join('');
+      showScreen(
+        '<div class="panel">' +
+        '<h1>Affichage</h1>' +
+        '<div class="aff-liste">' + lignes + '</div>' +
+        '<div class="row">' +
+        '<button id="btn-aff-tout">Tout afficher</button>' +
+        '<button id="btn-aff-rien">Tout masquer</button>' +
+        '</div>' +
+        '<div class="row"><button id="btn-retour" class="primary">Retour</button></div>' +
+        '</div>');
+      var cases = overlay.querySelectorAll('input[type=checkbox]');
+      for (var i = 0; i < cases.length; i++) {
+        (function (cb) {
+          cb.addEventListener('change', function () {
+            registre.regler(cb.getAttribute('data-id'), cb.checked);
+            appliquerHud();
+          });
+        })(cases[i]);
+      }
+      overlay.querySelector('#btn-aff-tout').onclick = function () { registre.toutAfficher(); appliquerHud(); ecranAffichage(); };
+      overlay.querySelector('#btn-aff-rien').onclick = function () { registre.toutMasquer(); appliquerHud(); ecranAffichage(); };
+      overlay.querySelector('#btn-retour').onclick = function () { menuPause(); };
     }
 
     function ecranMort() {
@@ -1380,6 +1450,7 @@
       panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
+      ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,
       objectifHistoire: objectifHistoire, dialogueHistoire: dialogueHistoire, dialogueOuvert: dialogueOuvert,

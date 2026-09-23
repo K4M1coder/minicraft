@@ -63,6 +63,9 @@
       difficulte: opts.difficulte || 'facile',
       graine: opts.graine === undefined || opts.graine === null
         ? MC.Modes.graineAleatoire() : (opts.graine | 0),
+      // version de génération d'origine de la carte, figée à la création
+      // (SPEC-HUD-002) : elle ne bouge pas si le générateur change ensuite
+      versionCarte: MC.Core.VERSION_GENERATION,
       creeLe: Date.now(),
       majLe: Date.now(),
       duree: 0,

@@ -1782,6 +1782,56 @@
     await reset(g);
   });
 
+  e2e('SPEC-HUD-001 / SPEC-HUD-003 : une bascule masque .debug seul, F1 masque puis rétablit tout le HUD', async function (g) {
+    await reset(g);
+    var debug = document.querySelector('.debug');
+    var hotbar = document.querySelector('.hotbar');
+    A.notOk(debug.classList.contains('hud-masque'), 'les infos sont visibles au départ');
+    A.notOk(hotbar.classList.contains('hud-masque'), 'la barre d objets aussi');
+
+    // bascule d'un seul composant : les autres ne bougent pas
+    g.hud.basculer('infos');
+    g.ui.appliquerHud();
+    A.ok(debug.classList.contains('hud-masque'), 'les infos se masquent seules');
+    A.notOk(hotbar.classList.contains('hud-masque'), 'la barre d objets reste visible');
+    g.hud.basculer('infos');
+    g.ui.appliquerHud();
+    A.notOk(debug.classList.contains('hud-masque'), 'et se rétablissent');
+
+    // F1 : bascule générale, tout le HUD à la fois
+    key('F1');
+    await frames(2);
+    A.ok(debug.classList.contains('hud-masque'), 'F1 masque les infos');
+    A.ok(hotbar.classList.contains('hud-masque'), 'F1 masque aussi la barre d objets');
+    key('F1');
+    await frames(2);
+    A.notOk(debug.classList.contains('hud-masque'), 'F1 rétablit les infos');
+    A.notOk(hotbar.classList.contains('hud-masque'), 'et la barre d objets');
+  });
+
+  e2e('SPEC-HUD-002 / SPEC-HUD-008 : les infos donnent graine et cap cardinal, T rouvre le chat même masqué', async function (g) {
+    var s = await reset(g);
+    var debug = document.querySelector('.debug');
+    await frames(2);
+    A.ok(new RegExp('Graine <b>' + g.world.seed).test(debug.innerHTML), 'la graine figure dans les infos');
+    A.ok(/\b(N|NE|E|SE|S|SO|O|NO)\b/.test(debug.textContent), 'un point cardinal figure dans les infos');
+
+    // le chat est masqué (bascule individuelle) : T doit quand même l'ouvrir
+    g.hud.regler('chat', false);
+    g.ui.appliquerHud();
+    var chatBox = document.querySelector('.chat');
+    A.ok(chatBox.classList.contains('hud-masque'), 'le chat est masqué au départ');
+    key('KeyT');
+    await frames(2);
+    A.ok(g.chat.enSaisie, 'la saisie est ouverte');
+    A.notOk(chatBox.classList.contains('hud-masque'), 'T a rouvert le chat malgré le masquage');
+    g.chat.annuler();
+    g.input.setSaisie(false);
+    g.hud.regler('chat', true);
+    g.ui.appliquerHud();
+    await reset(g);
+  });
+
   /* En dernier : ce test change de partie (mode histoire, autre graine). */
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);

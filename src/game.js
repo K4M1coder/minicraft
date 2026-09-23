@@ -103,10 +103,15 @@
       },
     });
 
+    // registre d'affichage du HUD (SPEC-HUD-001) : conservé d'une partie à
+    // l'autre via localStorage, quand il est disponible
+    var hudStockage = (function () { try { return window.localStorage; } catch (e) { return null; } })();
+    var hud = MC.Hud.creerRegistre(hudStockage);
+
     var g = {
       world: world, entities: entities, player: player, render: render,
       time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
-      equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net,
+      equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
     };
 
@@ -126,7 +131,7 @@
       onSupprimer: supprimerPartie,
       onCreer: creerPartie,
       onRejoindre: rejoindreServeur,
-    });
+    }, hud);
 
     var input = MC.createInput(canvas, {
       onLook: function (dyaw, dpitch) {
@@ -202,6 +207,8 @@
       g.regles = regles;
       ui.setRegles(regles);
       g.graine = meta.graine;
+      // une partie créée avant SPEC-HUD-002 n'a pas ce champ dans ses métadonnées
+      g.versionCarte = meta.versionCarte === undefined ? 'inconnue' : meta.versionCarte;
     }
 
     function creerPartie(opts) {
@@ -1145,10 +1152,17 @@
         input.setState('ui');
       } else if (code === 'F5') {
         doSave(true);
+      } else if (code === 'F1') {
+        // bascule générale du HUD (SPEC-HUD-001)
+        hud.basculerTout();
+        ui.appliquerHud();
       } else if (code === 'KeyT') {
+        // même masqué, T doit rouvrir le chat pour pouvoir y écrire (SPEC-HUD-008)
+        if (!hud.visible('chat')) hud.regler('chat', true);
         chat.ouvrir();
         input.setSaisie(true);
       } else if (code === 'Slash') {
+        if (!hud.visible('chat')) hud.regler('chat', true);
         chat.ouvrir(); chat.saisie = '/';
         input.setSaisie(true);
       } else if (code === 'KeyM') {
