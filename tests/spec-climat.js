@@ -314,7 +314,8 @@
       var t = L.chunksTouches(r.chunkDe, 2, 11, 2, 0, B.TORCH);
       A.ok(t.length >= 2 && t.some(function (c) { return c[0] === 0 && c[1] === 0; }), 'poser une torche : son chunk et ses voisins proches');
       A.ok(t.some(function (c) { return c[0] === -1 && c[1] === -1; }), 'près d un coin, le chunk en diagonale aussi');
-      A.equal(L.chunksTouches(r.chunkDe, 8, 30, 8, 0, B.STONE).length, 0, 'un bloc loin de toute source ne coûte rien');
+      A.equal(L.chunksTouches(r.chunkDe, 8, 5, 8, B.STONE, B.COBBLE).length, 0, 'un bloc qui ne change ni la lumière ni l opacité ne coûte rien');
+      A.gt(L.chunksTouches(r.chunkDe, 8, 30, 8, 0, B.STONE).length, 0, 'un bloc opaque posé en plein air fait de l ombre : on recalcule');
       r.poser(8, 11, 8, B.TORCH);
       A.ok(L.chunksTouches(r.chunkDe, 10, 11, 8, 0, B.STONE).length > 0, 'fermer un passage près d une torche rééclaire');
       A.equal(L.chunksTouches(r.chunkDe, 10, 11, 8, B.TALL_GRASS, 0).length, 0, 'une herbe ne change rien à la lumière');
@@ -332,6 +333,84 @@
       w.setBlock(40 * 16 + 3, 60, 40 * 16 + 3, B.TORCH);
       A.equal(ch.emetteurs, null, 'un bloc changé vide le cache du chunk');
       w.setBlock(40 * 16 + 3, 60, 40 * 16 + 3, 0);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — lumière du ciel', function () {
+    var L = MC.Lumiere, CX = C.CHUNK_X, CZ = C.CHUNK_Z;
+    function region() {
+      var chunks = new Map();
+      for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) {
+        var bl = new Uint8Array(CX * C.WORLD_H * CZ);
+        for (var y = 0; y <= 10; y++) for (var z = 0; z < CZ; z++) for (var x = 0; x < CX; x++) bl[C.idx(x, y, z)] = B.STONE;
+        chunks.set(a + ',' + b, { cx: a, cz: b, blocks: bl });
+      }
+      function chunkDe(a, b) { return chunks.get(a + ',' + b) || null; }
+      function poser(wx, wy, wz, id) {
+        var c = chunkDe(Math.floor(wx / CX), Math.floor(wz / CZ));
+        c.blocks[C.idx(((wx % CX) + CX) % CX, wy, ((wz % CZ) + CZ) % CZ)] = id;
+        c.emetteurs = null;
+      }
+      return { chunkDe: chunkDe, poser: poser };
+    }
+
+    it('SPEC-LUMIERE-004 : le jour descend jusqu au premier bloc opaque puis se répand ; une grotte close est noire', function () {
+      var r = region();
+      // un surplomb : dalle de pierre en y = 15 au-dessus de x, z ∈ [4, 12]
+      for (var x = 4; x <= 12; x++) for (var z = 4; z <= 12; z++) r.poser(x, 15, z, B.STONE);
+      // une grotte close dans la pierre : x, z ∈ [6, 10], y ∈ [4, 7]
+      for (var gx = 6; gx <= 10; gx++) for (var gz = 6; gz <= 10; gz++) for (var gy = 4; gy <= 7; gy++) r.poser(gx, gy, gz, 0);
+      // une colonne d'eau profonde ailleurs
+      for (var wy = 1; wy <= 30; wy++) r.poser(-6, wy, -6, B.WATER);
+      var e = L.eclairer(r.chunkDe, 0, 0);
+      A.equal(e.ciel(2, 20, 2), 15, 'plein jour en plein air');
+      A.equal(e.ciel(2, 11, 2), 15, 'jusqu au sol');
+      var sous = e.ciel(8, 11, 8);
+      A.ok(sous > 0 && sous < 15, 'sous le surplomb, la pénombre : ' + sous);
+      A.ok(e.ciel(8, 11, 8) < e.ciel(5, 11, 5), 'plus sombre au cœur qu au bord de l abri');
+      A.equal(e.ciel(8, 5, 8), 0, 'la grotte close est noire');
+      A.equal(e.ciel(8, 9, 8), 0, 'la pierre aussi, évidemment');
+      var eau = L.eclairer(r.chunkDe, -1, -1);
+      A.ok(eau.ciel(10, 25, 10) > eau.ciel(10, 5, 10), 'le fond de l eau est plus sombre que sa surface : ' +
+           eau.ciel(10, 25, 10) + ' → ' + eau.ciel(10, 5, 10));
+    });
+
+    it('SPEC-LUMIERE-005 : ciel et sources se combinent — dehors le jour domine, la nuit seules les sources éclairent', function () {
+      var r = region();
+      for (var gx = 6; gx <= 10; gx++) for (var gz = 6; gz <= 10; gz++) for (var gy = 4; gy <= 7; gy++) r.poser(gx, gy, gz, 0);
+      r.poser(7, 4, 7, B.TORCH);
+      var e = L.eclairer(r.chunkDe, 0, 0);
+      var raw = MC.Mesher.buildChunk(r.chunkDe(0, 0), 'opaque', function (wx, wy) { return wy <= 10 ? B.STONE : 0; }, e);
+      A.equal(raw.ciels.length, raw.positions.length / 3, 'un ciel par sommet');
+      var dehors = 0, dedans = 0;
+      for (var i = 0; i < raw.ciels.length; i++) {
+        if (raw.positions[i * 3 + 1] > 10.5) { if (raw.ciels[i] === 1) dehors++; }
+        else if (raw.positions[i * 3 + 1] < 8) { if (raw.ciels[i] === 0) dedans++; }
+      }
+      A.gt(dehors, 100, 'le sol en plein air reçoit tout le ciel');
+      A.gt(dedans, 20, 'les parois de la grotte, aucun');
+      // la règle de combinaison, commune au terrain et aux créatures
+      var jour = 1, nuit = 0;
+      A.ok(L.eclat(1, 0, jour) > 0.95, 'dehors, de jour : pleine lumière');
+      A.ok(L.eclat(1, 0, nuit) < 0.4 && L.eclat(1, 0, nuit) > 0.2, 'dehors, de nuit : pénombre lunaire');
+      A.ok(L.eclat(0, 0, jour) < 0.05, 'dans une grotte, même en plein jour : le noir');
+      A.ok(L.eclat(0, 1, nuit) > 0.8, 'près d une torche : on y voit');
+      A.ok(L.eclat(0, 1, jour) < L.eclat(0, 1, nuit) + 0.01, 'une torche compte moins en plein jour');
+    });
+
+    it('SPEC-LUMIERE-006 : une créature prend la lumière de sa case', function () {
+      var r = region();
+      for (var gx = 6; gx <= 10; gx++) for (var gz = 6; gz <= 10; gz++) for (var gy = 4; gy <= 7; gy++) r.poser(gx, gy, gz, 0);
+      r.poser(10, 4, 10, B.TORCH);
+      var c = r.chunkDe(0, 0);
+      c.lumiere = L.eclairer(r.chunkDe, 0, 0);
+      var dehors = L.lumiereEn(r.chunkDe, 3.5, 11.2, 3.5), grotte = L.lumiereEn(r.chunkDe, 6.5, 4.5, 6.5),
+          torche = L.lumiereEn(r.chunkDe, 9.5, 4.5, 9.5);
+      A.equal(dehors.ciel, 1, 'dehors : tout le ciel');
+      A.equal(grotte.ciel, 0, 'au fond de la grotte : aucun');
+      A.gt(torche.bloc, grotte.bloc, 'près de la torche : sa lueur');
+      A.deep(L.lumiereEn(r.chunkDe, 100, 20, 100), { ciel: 1, bloc: 0 }, 'hors des chunks calculés : plein jour par défaut');
     });
   });
 

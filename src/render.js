@@ -82,11 +82,14 @@
     function avecLumiereDesBlocs(mat) {
       mat.onBeforeCompile = function (sh) {
         sh.uniforms.forceTorches = forceTorches;
-        sh.vertexShader = 'attribute float lum;\nvarying float vLum;\n' +
-          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLum = lum;');
-        sh.fragmentShader = 'uniform float forceTorches;\nvarying float vLum;\n' +
+        sh.vertexShader = 'attribute float lum;\nattribute float ciel;\nvarying float vLum;\nvarying float vCiel;\n' +
+          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vLum = lum;\n  vCiel = ciel;');
+        /* Les sources ajoutent leur lueur ; le ciel, lui, dose toute la
+           lumière du soleil et de l'atmosphère : une grotte close est noire. */
+        sh.fragmentShader = 'uniform float forceTorches;\nvarying float vLum;\nvarying float vCiel;\n' +
           sh.fragmentShader.replace('#include <emissivemap_fragment>',
-            '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.8, 0.55) * pow(vLum, 2.2) * forceTorches;');
+            '#include <emissivemap_fragment>\n  totalEmissiveRadiance += diffuseColor.rgb * vec3(1.0, 0.8, 0.55) * pow(vLum, 2.2) * forceTorches;' +
+            '\n  diffuseColor.rgb *= max(0.03, pow(vCiel, 1.3));');
       };
       return mat;
     }
@@ -108,6 +111,8 @@
       g.setAttribute('color', new THREE.Float32BufferAttribute(raw.colors, 3));
       g.setAttribute('lum', new THREE.Float32BufferAttribute(raw.lums && raw.lums.length ? raw.lums
                                                                : new Float32Array(raw.positions.length / 3), 1));
+      g.setAttribute('ciel', new THREE.Float32BufferAttribute(raw.ciels && raw.ciels.length ? raw.ciels
+                                                                : new Float32Array(raw.positions.length / 3).fill(1), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return g;
@@ -126,6 +131,8 @@
       // une propagation de lumière par chunk, partagée par ses quatre passes
       var lumiere = MC.Lumiere && world.chunkDe ? MC.Lumiere.eclairer(world.chunkDe, chunk.cx, chunk.cz) : null;
       chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
+      // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
+      chunk.lumiere = lumiere;
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
         var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere);
@@ -220,7 +227,10 @@
     function mat(couleur, extra) {
       var o = { color: couleur };
       if (extra) for (var k in extra) o[k] = extra[k];
-      return new THREE.MeshLambertMaterial(o);
+      var m = new THREE.MeshLambertMaterial(o);
+      // couleur d'origine : l'éclat de la case où se tient la créature la module
+      m.userData.base = m.color.clone();
+      return m;
     }
     function boite(w, h, d, couleur, x, y, z) {
       var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat(couleur));
@@ -596,7 +606,21 @@
       });
     }
 
-    function syncEntities(entities, net) {
+    /* Éclat d'une créature : la lumière de sa case (ciel et sources), selon
+       la même règle que le terrain — une créature ne luit pas au fond d'une grotte. */
+    var TORCHE = new THREE.Color(1, 0.8, 0.55), ROUGE = new THREE.Color(0x661111);
+    function eclairerEntite(m, e, lumiereEn, jour) {
+      var l = lumiereEn(e.pos.x, e.pos.y + (e.h || 1) * 0.6, e.pos.z);
+      var k = Math.max(0.03, Math.pow(l.ciel, 1.3)), t = Math.pow(l.bloc, 2.2) * (0.95 - 0.6 * jour);
+      m.userData.eclat = k + t;
+      m.traverse(function (o) {
+        var mt = o.material;
+        if (!mt || !mt.userData || !mt.userData.base) return;
+        mt.color.copy(mt.userData.base).multiplyScalar(k);
+        if (mt.emissive && !m.userData.blesse) mt.emissive.copy(mt.userData.base).multiply(TORCHE).multiplyScalar(t);
+      });
+    }
+    function syncEntities(entities, net, lumiereEn, jour) {
       if (net) syncDistants(net);
       var seen = new Set();
       for (var i = 0; i < entities.list.length; i++) {
@@ -622,14 +646,18 @@
           // l'avion se cabre quand il monte, pique quand il descend
           if (e.vehicule === 'avion') m.rotation.x = Math.max(-0.5, Math.min(0.5, e.vel.y * 0.06));
           animer(m, e);
+          if (lumiereEn) {
+            m.userData.lumT = (m.userData.lumT || 0) - 1;
+            if (m.userData.lumT <= 0) { m.userData.lumT = 8; eclairerEntite(m, e, lumiereEn, jour || 0); }
+          }
           // clignotement rouge quand le mob vient d'être touché — seulement au changement
           var hurt = e.hurtCd > 0;
           if (m.userData.blesse !== hurt) {
             m.userData.blesse = hurt;
             m.traverse(function (o) {
-              if (o.material && o.material.emissive)
-                o.material.emissive.setHex(hurt ? 0x661111 : 0x000000);
+              if (o.material && o.material.emissive) o.material.emissive.copy(hurt ? ROUGE : new THREE.Color(0));
             });
+            m.userData.lumT = 0;
           }
         }
       }

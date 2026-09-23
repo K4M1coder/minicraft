@@ -10,9 +10,9 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.join(__dirname, '..');
-const SRC = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'histoire', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const SRC = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'histoire', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
              'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes', 'chat', 'split', 'gamepad', 'net-protocol', 'livre', 'audio'];
-const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-histoire'];
+const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-histoire', 'spec-succes', 'spec-ombres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,

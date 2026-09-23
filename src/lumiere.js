@@ -27,6 +27,15 @@
     OPAQUE[id] = (!d.plant && !d.liquid && !d.transparent && !d.plat &&
                   (d.pass || 'opaque') !== 'cutout' && (d.pass || 'opaque') !== 'blend') ? 1 : 0;
   }
+  /* Ce qui laisse passer le ciel en l'affaiblissant : l'eau et le feuillage
+     retiennent un peu de jour à chaque bloc — le fond de la mer s'assombrit. */
+  var FILTRE = new Uint8Array(256);
+  for (var id2 = 1; id2 < 256; id2++) {
+    var d2 = C.BLOCKS[id2];
+    if (!d2 || OPAQUE[id2]) continue;
+    if (d2.liquid) FILTRE[id2] = 2;
+    else if (C.isLeaves && C.isLeaves(id2)) FILTRE[id2] = 1;
+  }
   function emission(id) { return EMISSION[id]; }
   function opaque(id) { return OPAQUE[id] === 1; }
 
@@ -59,7 +68,7 @@
 
   /* Fenêtre de calcul, réutilisée d'un chunk à l'autre : 48 × 48 × WH octets. */
   var W = 3 * CX, WZ = 3 * CZ, TAILLE = W * WZ * WH;
-  var niveaux = null, file = null;
+  var niveaux = null, file = null, cielN = null, hauts = null, fileC = null;
   function wi(x, y, z) { return (y * WZ + z) * W + x; }
 
   /* Lumière du chunk (cx, cz). `chunkDe(cx, cz)` rend un chunk chargé ou null.
@@ -67,8 +76,12 @@
      valable de -16 à 31 (le voisinage immédiat compris), et le nombre de
      sources prises en compte. */
   function eclairer(chunkDe, cx, cz) {
-    if (!niveaux) { niveaux = new Uint8Array(TAILLE); file = new Int32Array(TAILLE); }
+    if (!niveaux) {
+      niveaux = new Uint8Array(TAILLE); file = new Int32Array(TAILLE);
+      cielN = new Uint8Array(TAILLE); hauts = new Int16Array(W * WZ); fileC = new Int32Array(TAILLE);
+    }
     niveaux.fill(0);
+    cielN.fill(0);
     var blocs = [], tete = 0, queue = 0, sources = 0;
     for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) {
       var c = chunkDe(cx + dx, cz + dz);
@@ -93,6 +106,7 @@
       return OPAQUE[b[idx(x % CX, y, z % CZ)]] === 1;
     }
     var PLAN = W * WZ;
+    lumiereDuCiel(blocs, PLAN);
     while (tete < queue) {
       var p = file[tete++], n = niveaux[p];
       if (n <= 1) continue;
@@ -106,16 +120,95 @@
       if (queue >= TAILLE - 6) break;                    // garde-fou : jamais atteint en pratique
     }
     // copie de la zone utile (chunk + une case de marge) : la fenêtre est partagée
-    var M = 1, LX = CX + 2 * M, LZ = CZ + 2 * M, copie = new Uint8Array(LX * LZ * WH);
+    var M = 1, LX = CX + 2 * M, LZ = CZ + 2 * M, copie = new Uint8Array(LX * LZ * WH), copieC = new Uint8Array(LX * LZ * WH);
     for (var yy = 0; yy < WH; yy++) for (var zz = 0; zz < LZ; zz++) {
       var src = wi(CX - M, yy, CZ - M + zz), dst = (yy * LZ + zz) * LX;
       copie.set(niveaux.subarray(src, src + LX), dst);
+      copieC.set(cielN.subarray(src, src + LX), dst);
     }
     function niveau(lx, ly, lz) {
       if (ly < 0 || ly >= WH || lx < -M || lx >= CX + M || lz < -M || lz >= CZ + M) return 0;
       return copie[(ly * LZ + lz + M) * LX + lx + M];
     }
-    return { niveau: niveau, sources: sources };
+    // au-dessus du monde, c'est le plein ciel ; hors de la fenêtre, on ne sait pas : plein ciel aussi
+    function ciel(lx, ly, lz) {
+      if (ly >= WH) return MAX;
+      if (ly < 0) return 0;
+      if (lx < -M || lx >= CX + M || lz < -M || lz >= CZ + M) return MAX;
+      return copieC[(ly * LZ + lz + M) * LX + lx + M];
+    }
+    return { niveau: niveau, ciel: ciel, sources: sources };
+  }
+
+  /* ─── lumière du ciel ────────────────────────────────────────────────────
+     1. Chaque colonne reçoit le plein jour (15) du haut du monde jusqu'au
+        premier bloc opaque ; l'eau et le feuillage l'affaiblissent au passage.
+     2. Le jour déborde ensuite de proche en proche sous les surplombs et dans
+        les entrées de grottes, un cran par bloc. On ne lance cette diffusion
+        que depuis le flanc des colonnes plus hautes que leurs voisines : partir
+        de toutes les cases éclairées coûterait cent fois plus. */
+  function lumiereDuCiel(blocs, PLAN) {
+    var x, z, y;
+    function blocEn(x2, y2, z2) {
+      var b = blocs[((z2 / CZ) | 0) * 3 + ((x2 / CX) | 0)];
+      return b ? b[idx(x2 % CX, y2, z2 % CZ)] : -1;
+    }
+    for (z = 0; z < WZ; z++) for (x = 0; x < W; x++) {
+      var L = MAX, h = -1;
+      if (!blocs[((z / CZ) | 0) * 3 + ((x / CX) | 0)]) { hauts[z * W + x] = WH; continue; }
+      for (y = WH - 1; y >= 0; y--) {
+        var id = blocEn(x, y, z);
+        if (OPAQUE[id]) { h = y; break; }
+        L = Math.max(0, L - FILTRE[id]);
+        cielN[wi(x, y, z)] = L;
+        if (!L) { h = y; break; }
+      }
+      hauts[z * W + x] = h;
+    }
+    var tete = 0, queue = 0;
+    for (z = 0; z < WZ; z++) for (x = 0; x < W; x++) {
+      var hc = hauts[z * W + x];
+      if (hc >= WH) continue;
+      var hv = hc;
+      if (x > 0) hv = Math.max(hv, hauts[z * W + x - 1]);
+      if (x < W - 1) hv = Math.max(hv, hauts[z * W + x + 1]);
+      if (z > 0) hv = Math.max(hv, hauts[(z - 1) * W + x]);
+      if (z < WZ - 1) hv = Math.max(hv, hauts[(z + 1) * W + x]);
+      if (hv >= WH) hv = WH - 1;
+      for (y = hc + 1; y <= hv; y++) {
+        var j = wi(x, y, z);
+        if (cielN[j] > 1) fileC[queue++] = j;
+      }
+    }
+    function passe(x2, y2, z2) { var id = blocEn(x2, y2, z2); return id >= 0 && !OPAQUE[id]; }
+    while (tete < queue) {
+      var p = fileC[tete++], n = cielN[p];
+      if (n <= 1) continue;
+      var px = p % W, pz = ((p / W) | 0) % WZ, py = (p / PLAN) | 0, m = n - 1;
+      if (px > 0 && cielN[p - 1] < m && passe(px - 1, py, pz)) { cielN[p - 1] = m; fileC[queue++] = p - 1; }
+      if (px < W - 1 && cielN[p + 1] < m && passe(px + 1, py, pz)) { cielN[p + 1] = m; fileC[queue++] = p + 1; }
+      if (pz > 0 && cielN[p - W] < m && passe(px, py, pz - 1)) { cielN[p - W] = m; fileC[queue++] = p - W; }
+      if (pz < WZ - 1 && cielN[p + W] < m && passe(px, py, pz + 1)) { cielN[p + W] = m; fileC[queue++] = p + W; }
+      if (py > 0 && cielN[p - PLAN] < m && passe(px, py - 1, pz)) { cielN[p - PLAN] = m; fileC[queue++] = p - PLAN; }
+      if (py < WH - 1 && cielN[p + PLAN] < m && passe(px, py + 1, pz)) { cielN[p + PLAN] = m; fileC[queue++] = p + PLAN; }
+      if (queue >= TAILLE - 6) break;
+    }
+  }
+
+  /* Lumière d'une case pour un objet qui s'y tient : { ciel, bloc } de 0 à 1,
+     lue dans l'éclairage calculé au maillage du chunk (`chunk.lumiere`). */
+  function lumiereEn(chunkDe, wx, wy, wz) {
+    var cx = Math.floor(wx / CX), cz = Math.floor(wz / CZ), c = chunkDe(cx, cz);
+    if (!c || !c.lumiere) return { ciel: 1, bloc: 0 };
+    var lx = Math.floor(wx) - cx * CX, ly = Math.floor(wy), lz = Math.floor(wz) - cz * CZ;
+    return { ciel: c.lumiere.ciel(lx, ly, lz) / MAX, bloc: c.lumiere.niveau(lx, ly, lz) / MAX };
+  }
+  /* Éclat d'une surface : le ciel pèse selon le jour (plancher nocturne pour
+     garder le relief lisible), les sources s'ajoutent. C'est la même règle que
+     le shader des chunks, pour que créatures et terrain s'accordent. */
+  function eclat(ciel, bloc, jour) {
+    var c = Math.pow(ciel, 1.3) * (0.32 + 0.68 * jour);
+    return Math.min(1.25, Math.max(0.03, c) + Math.pow(bloc, 2.2) * (0.95 - 0.6 * jour));
   }
 
   /* Un bloc modifié en (wx, wy, wz) : quels chunks doivent recalculer leur
@@ -125,7 +218,9 @@
   function chunksTouches(chunkDe, wx, wy, wz, avant, apres) {
     var cx = Math.floor(wx / CX), cz = Math.floor(wz / CZ), out = [];
     var enJeu = EMISSION[avant] > 0 || EMISSION[apres] > 0;
-    if (!enJeu && OPAQUE[avant] === OPAQUE[apres]) return out;
+    if (!enJeu && OPAQUE[avant] === OPAQUE[apres] && FILTRE[avant] === FILTRE[apres]) return out;
+    // le ciel : ouvrir ou fermer une colonne change l'ombre alentour, sur quinze blocs
+    if (!enJeu) enJeu = true;
     if (!enJeu) {
       // un passage s'ouvre ou se ferme : seulement si une source est à portée
       for (var dz = -1; dz <= 1 && !enJeu; dz++) for (var dx = -1; dx <= 1 && !enJeu; dx++) {
@@ -151,5 +246,5 @@
   }
 
   MC.Lumiere = { MAX: MAX, emission: emission, opaque: opaque, emetteurs: emetteurs,
-                 eclairer: eclairer, chunksTouches: chunksTouches };
+                 eclairer: eclairer, chunksTouches: chunksTouches, lumiereEn: lumiereEn, eclat: eclat };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

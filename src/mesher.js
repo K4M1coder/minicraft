@@ -93,24 +93,28 @@
   function buildChunk(chunk, wantPass, sample, lumiere) {
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
-    var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [];
+    var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [], ciels = [];
     var niv = lumiere ? lumiere.niveau : null;
+    // le ciel : sans calcul de lumière, tout est à ciel ouvert
+    var nivC = lumiere && lumiere.ciel ? lumiere.ciel : null;
+    function cielEn(x, y, z) { return nivC ? nivC(x, y, z) / 15 : 1; }
     // lumière d'une case, ramenée à [0, 1]
     function lumEn(x, y, z) { return niv ? niv(x, y, z) / 15 : 0; }
     /* Lumière lissée d'un coin de face : moyenne des cases non opaques parmi
        les quatre qui touchent ce coin côté air (même voisinage que l'AO). */
-    function lumCoin(bx, by, bz, dir, U, V, su, sv) {
-      if (!niv) return 0;
+    function lumCoin(bx, by, bz, dir, U, V, su, sv, f) {
+      var fn = f || niv;
+      if (!fn) return 0;
       var nx = bx + dir[0], ny = by + dir[1], nz = bz + dir[2];
-      var s = niv(nx, ny, nz), n = 1;
+      var s = fn(nx, ny, nz), n = 1;
       var ax = nx + U[0] * su, ay = ny + U[1] * su, az = nz + U[2] * su;
       var bx2 = nx + V[0] * sv, by2 = ny + V[1] * sv, bz2 = nz + V[2] * sv;
       var o1 = occupied(ax, ay, az), o2 = occupied(bx2, by2, bz2);
-      if (!o1) { s += niv(ax, ay, az); n++; }
-      if (!o2) { s += niv(bx2, by2, bz2); n++; }
+      if (!o1) { s += fn(ax, ay, az); n++; }
+      if (!o2) { s += fn(bx2, by2, bz2); n++; }
       if (!(o1 && o2)) {
         var cx2 = nx + U[0] * su + V[0] * sv, cy2 = ny + U[1] * su + V[1] * sv, cz2 = nz + U[2] * su + V[2] * sv;
-        if (!occupied(cx2, cy2, cz2)) { s += niv(cx2, cy2, cz2); n++; }
+        if (!occupied(cx2, cy2, cz2)) { s += fn(cx2, cy2, cz2); n++; }
       }
       return s / n / 15;
     }
@@ -150,6 +154,7 @@
           pushUV(uvs, d.tiles[0], p[2], p[3]);
           colors.push(1, 1, 1);
           lums.push(lumEn(x, y, z));
+          ciels.push(cielEn(x, y + 1, z));
         });
         indices.push(s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3);
         continue;
@@ -165,6 +170,7 @@
             pushUV(uvs, d.tiles[0], p[3], p[4]);
             colors.push(1, 1, 1);
             lums.push(Math.max(lumEn(x, y, z), d.light ? d.light / 15 : 0));
+            ciels.push(cielEn(x, y, z));
           }
           indices.push(start0, start0 + 1, start0 + 2, start0 + 2, start0 + 1, start0 + 3);
         }
@@ -210,6 +216,11 @@
             var svL = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
             lums.push(withAO ? lumCoin(x, y, z, f.dir, U, V, suL, svL) : lumEn(nx, ny, nz));
           } else lums.push(0);
+          if (nivC) {
+            var suC = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
+            var svC = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
+            ciels.push(withAO ? lumCoin(x, y, z, f.dir, U, V, suC, svC, nivC) : cielEn(nx, ny, nz));
+          } else ciels.push(1);
         }
 
         /* Le quad se découpe en deux triangles ; choisir la mauvaise diagonale
@@ -225,7 +236,7 @@
 
     if (!indices.length) return null;
     return { positions: positions, normals: normals, uvs: uvs,
-             colors: colors, indices: indices, lums: lums };
+             colors: colors, indices: indices, lums: lums, ciels: ciels };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,

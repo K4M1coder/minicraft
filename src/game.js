@@ -1550,7 +1550,8 @@
          alors vides et la meme boucle de reconciliation retire les maillages
          des joueurs partis. Appeler la synchronisation seulement en ligne
          laissait des joueurs fantomes dans la scene apres une deconnexion. */
-      render.syncEntities(entities, net);
+      render.syncEntities(entities, net, function (x, y, z) { return MC.Lumiere.lumiereEn(world.chunkDe, x, y, z); },
+                          DC.sunIntensity(g.time));
 
       // une camera par joueur, puis un rendu par vue
       var taille = [host.clientWidth || innerWidth, host.clientHeight || innerHeight];

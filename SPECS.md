@@ -1,4 +1,4 @@
-# Spécifications — MiniCraft
+✅ |✅ |✅ |# Spécifications — MiniCraft
 
 Chaque ligne de tableau déclare **une** spec vérifiable, identifiée
 `SPEC-<DOMAINE>-<NNN>`. La colonne « Vérification » dit ce qu'un test doit
@@ -474,7 +474,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-LUMIERE-001 | Une source répand sa lumière de proche en proche, un cran par bloc ; les blocs pleins l'arrêtent, le verre, le feuillage et l'eau la laissent passer | niveaux autour d'une torche, mur, verre | ✅ |
 | SPEC-LUMIERE-002 | Aucune limite au nombre de sources : toutes éclairent, d'un chunk à l'autre, et le mailleur inscrit la lumière dans chaque sommet | 84 sources, lumière du chunk voisin, attribut par sommet | ✅ |
-| SPEC-LUMIERE-003 | Poser ou retirer une source, ou ouvrir un passage près d'elle, recalcule les chunks à portée et eux seuls ; un lac de lave n'éclaire que par sa surface | chunks touchés, cache des sources | ✅ |
+| SPEC-LUMIERE-003 | Poser ou retirer une source, ou un bloc qui ouvre ou ferme le passage à la lumière (ciel compris), recalcule les chunks à portée et eux seuls ; un lac de lave n'éclaire que par sa surface | chunks touchés, cache des sources | ✅ |
 
 ## HABITAT — habitations, villages et villes
 
@@ -601,3 +601,10 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-SUCCES-001 | Des succès récompensent des étapes (premier bloc, premier outil, premier gardien, première ville…) : annoncés une fois, sauvegardés, listés dans un panneau | déclenchement, unicité, sauvegarde | ⏳ |
 | SPEC-OPTION-001 | Un menu d'options règle sensibilité, son, champ de vision, distance de vue maximale et rendu réaliste lointain ; elles sont conservées | options appliquées et conservées | ⏳ |
 | SPEC-CMD-001 | Chaque commande du chat fait ce qu'elle annonce (/aide, /heure, /jour, /nuit, /ou, /graine, /vider, /qui, /meteo, /succes) | toutes les commandes | ⏳ |
+
+## HUD — affichage tête haute
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HUD-001 | Chaque composant du HUD (infos, barres de vie et de faim, barre d'objets, viseur, boussole, objectif, chat, barre du gardien) s'affiche ou se masque indépendamment, ou tous d'un coup ; le choix est conservé | bascules individuelles et globale, conservation | ⏳ |
+| SPEC-HUD-002 | Les infos donnent la graine, la version de génération d'origine de la carte, la version du jeu en cours et l'orientation du regard (cap en degrés et point cardinal, inclinaison) | contenu du panneau d'infos | ⏳ |
