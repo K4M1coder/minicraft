@@ -21,6 +21,13 @@
   /* ─── HUD ─────────────────────────────────────────────────────────────── */
   .hud { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
 
+  /* Registre d'affichage (SPEC-HUD-001 à 012) : masque un composant, où
+     qu'il vive dans le DOM (HUD principal ou calque d'écran partagé). */
+  .hud-masque { display: none !important; }
+
+  .aff-liste { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; text-align: left; }
+  .aff-ligne { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+
   .crosshair { position: absolute; left: 50%; top: 50%; width: 20px; height: 20px;
                margin: -10px 0 0 -10px; opacity: .85; }
   .crosshair:before, .crosshair:after { content: ""; position: absolute; background: #fff;
