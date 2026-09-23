@@ -1,6 +1,7 @@
 # MiniCraft
 
-Prototype de jeu voxel façon Minecraft : deux modes de jeu, quatre difficultés,
+Prototype de jeu voxel façon Minecraft : trois modes de jeu — dont un **mode histoire**
+à quêtes, choix et fins multiples —, quatre difficultés,
 parties multiples avec graine choisie, armes, chat, **écran partagé jusqu'à quatre
 joueurs locaux** et **multijoueur client/serveur**.
 
@@ -40,15 +41,15 @@ MC_GRAINE=4242 MC_DIFFICULTE=difficile node server.js 8080
 ## Tests
 
 ```bash
-node tests/run.js              # 519 tests unitaires et fonctionnels
+node tests/run.js              # 547 tests unitaires et fonctionnels
 node tests/gates.js            # les 6 portes de qualité automatiques
 node tests/integration-net.js  # 37 tests d'intégration réseau (vraies sockets)
 ```
 
-`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 96 tests
+`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 101 tests
 end-to-end qui pilotent une vraie partie.
 
-**652 tests au total**, 258 specs couvertes.
+**685 tests au total** (547 + 101 end-to-end + 37 d'intégration), 293 specs couvertes.
 
 ---
 
@@ -71,6 +72,7 @@ difficulté, une graine et le nombre de joueurs locaux.
 | `F` | descendre du véhicule |
 | `C` | carte (avec une carte en main) : clic pose un repère, clic droit l'enlève |
 | `J` | factions et réputation |
+| `H` | journal de l'histoire (mode histoire) |
 | clic droit sur un véhicule | monter · `Maj` + clic : soute du camion |
 | `T` | chat (`/` ouvre sur une commande) |
 | `M` | couper le son |
@@ -90,6 +92,28 @@ A sauter, L3 courir, LT miner, RT utiliser, LB/RB changer d'objet, Y inventaire.
 
 **Modes.** *Survie* : faim, dégâts, usure des outils, blocs consommés.
 *Créatif* : vol, invulnérabilité, casse instantanée, blocs illimités.
+*Histoire* : une aventure guidée plutôt qu'un bac à sable (voir plus bas).
+
+**Mode histoire — « La Couronne des Saisons ».** Les quatre Gemmes des Saisons ont
+été volées, et le temps se dérègle. Le héros s'éveille sur la place de son village ;
+le récit se lie aux lieux réels du monde généré — ce village, la ville la plus
+proche, la maison d'un ermite, trois donjons de plus en plus lointains.
+- *Quête principale* : jusqu'à huit chapitres et plus de vingt étapes (parler aux
+  bons habitants, rejoindre un lieu, rassembler, livrer, vaincre un gardien,
+  repousser des vagues, survivre à une nuit, choisir) ;
+- *quêtes secondaires* : huit, confiées par les habitants selon leur métier
+  (fermier, forgeron, tisserand, aubergiste, animateur, guide, ermite, banquier) ;
+- *événements* : Nuit de sang, pillards marchant sur le village, orage prophétique
+  (au vrai temps d'orage de la météo), caravane marchande, voyageur ;
+- *six fins* : selon les objectifs atteints (quêtes secondaires, village sauvé ou
+  non) et les choix faits (le banquier, le traître, la Couronne).
+À la création, on règle le héros, la longueur (courte, normale, longue), le nombre
+de quêtes secondaires, les événements, le commerce, le repère automatique, et **ce
+avec quoi l'on peut interagir** : un préréglage (restreinte, modérée, libre) ou des
+catégories de blocs (végétaux, bois, terre, pierre, construction, lumières, mobilier)
+et d'objets (nourriture, armes, outils, véhicules, carte). Le reste ne se casse, ne
+se pose ni ne s'utilise. Dialogues à choix, objectif et repère affichés, journal
+(`H`), écran de fin ; le récit est sauvegardé avec la partie.
 
 **Difficultés.** *Paisible* (aucun monstre, la faim ne tue pas) · *Facile* ·
 *Difficile* · **Cauchemar** : coups doublés, et **à la mort la carte et la
@@ -99,8 +123,45 @@ sauvegarde sont détruites**. En écran partagé, la mort d'un seul joueur suffi
 graine. Une graine textuelle (« vallée perdue ») donne toujours la même carte : deux
 joueurs sur deux machines obtiennent le même monde en tapant le même mot.
 
-**Monde.** Chunks 16×16×80 générés à la volée, océans, plages, grottes creusées au
-bruit 3D, charbon partout, fer en profondeur.
+**Monde.** Chunks 16×16×128 générés à la volée, océans, plages, grottes creusées au
+bruit 3D, charbon partout, fer en profondeur. Au cœur des chaînes, des massifs
+dépassent les 100 blocs.
+
+**Vue lointaine.** La distance de vue en vrais blocs s'adapte à la fluidité (de 4 à
+18 chunks) ; au-delà, un relief simplifié tiré de la génération — couleurs du
+terrain, neige, lave, lacs — porte la vue à un kilomètre. Il se calcule par petits
+lots, sans figer une image.
+
+**Lumière.** Chaque source — torche, lanterne, lave, magma, lanterne marine —
+répand sa lumière de proche en proche, un cran par bloc, arrêtée par les blocs
+pleins. Calculée au maillage et inscrite dans les sommets, elle ne coûte rien au
+rendu : **aucune limite au nombre de sources à l'écran**. Une ville en compte des
+centaines.
+
+**Météo.** Grand soleil, clair, nuageux, couvert, pluie, orage, tempête
+s'enchaînent en fondu, identiques sur tous les postes (fonction de la graine et de
+l'heure). Vent qui pousse la pluie et les nuages ; pluie et neige en particules,
+arrêtées par les toits ; éclairs, flash et tonnerre retardé par la distance, qui
+blessent à découvert ; température selon le climat, l'altitude, l'heure, le temps,
+les feux voisins et l'eau — un froid mordant blesse, une fournaise assoiffe (appliqué
+par le serveur en ligne) ; sons de pluie et de vent.
+
+**Nuages.** Cinq couches de natures différentes : stratus, cumulus épais et bombés,
+altostratus — trois couches que les plus hauts sommets transpercent — puis
+cirrocumulus et cirrus étirés, au-dessus de tout relief. Ils se forment, se
+déforment, se dissipent et se rassemblent en bancs, dérivent au vent, et ne
+traversent pas la roche : ils s'éteignent là où la montagne monte à leur altitude.
+
+**Villes, villages, habitations.** Des maisons isolées (un ermite), des villages
+(3 × 3 parcelles) et des villes (5 × 5 parcelles, rues pavées, immeubles à étages)
+jalonnent le monde, sur un terrain nivelé. Un style par biome — colombages, chalets
+de bouleau, isbas, maisons de grès à toits plats, cases d'acacia, pilotis, adobes,
+chalets de pierre, igloos, maisons-champignons — et une variante urbaine. Bâtiments
+meublés, chacun avec son habitant : *point info* (le guide marque les environs sur
+la carte), *banque* (un compte commun à toutes les banques, sauvegardé), *salons*
+(on y dort jusqu'au matin), *magasins*, *artisans* (forge — le forgeron répare —,
+menuiserie, tisserand), *marché*, *fermes*, *loisirs* (parc, fontaine, théâtre).
+Des centaines de lampadaires éclairent les rues.
 
 **Relief.** *Volcans* de basalte au cratère plein de lave, coulées de magma sur les
 flancs ; *glaciers* de glace bleue fendus de crevasses sur les hauteurs froides ;
@@ -109,7 +170,8 @@ grandes *cavernes* et lacs de lave profonds, jamais au ras du socle. La lave br�
 englue et détruit les objets ; lave, magma et lanternes marines luisent dans le noir.
 
 **Ciel.** Soleil et lune opposés qui traversent le ciel, lune à huit phases (une par
-jour), étoiles la nuit seulement, nuages qui dérivent.
+jour), étoiles la nuit seulement ; le ciel grisaille et le brouillard se resserre
+quand le temps se gâte.
 
 **Textures.** Toujours peintes au runtime, mais *tuilables* (les taches bouclent
 d'un bord à l'autre) et déclinées en variantes choisies par la position du bloc ;
@@ -239,15 +301,16 @@ modules** que le client, plutôt que de réécrire une simulation qui divergerai
 
 ```
 src/
-  core · noise · biomes · donjons · world · mesher · physics           logique pure,
-  faune · factions · carte · synchro · inventory · vehicules · entities
+  core · noise · biomes · donjons · habitats · histoire · carte          logique pure,
+  meteo · lointain · world · lumiere · mesher · physics · faune
+  factions · synchro · inventory · vehicules · entities
   player · daycycle · save · saves · modes · chat · split · gamepad    testable sous
   net-protocol                                                          Node
   audio · atlas · render · ui · input · net · game                     navigateur
   ui.css                                              partagé jeu / page de tests
 server.js                    serveur Node sans dépendance (statique + WebSocket)
 tests/  harness · unit · functional · spec-* · e2e · integration-net · gates · run
-SPECS.md   258 specs identifiées      PLAN.md   méthode et portes de qualité
+SPECS.md   293 specs identifiées      PLAN.md   méthode et portes de qualité
 ```
 
 ### Méthode
@@ -300,9 +363,11 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 
 ## Limites connues
 
-- Pas de propagation de lumière : les torches sont des lumières ponctuelles du
-  moteur, bornées à dix simultanées. L'obscurité n'influence pas l'apparition des
+- La lumière des blocs ne se mêle pas à celle du ciel : un bloc sous terre reste
+  éclairé par l'ambiance nocturne. L'obscurité n'influence pas l'apparition des
   monstres, qui dépend de l'heure seule.
+- Le mode histoire se joue en solo (hors ligne) ; il n'y a qu'une histoire.
+- Les nuages ne projettent pas d'ombre, et la météo ne change pas le vol des avions.
 - En ligne, inventaire, craft, fourneaux et cultures restent côté client ; le
   serveur valide positions, stats, blocs et combats, pas le contenu des sacs.
 - Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
@@ -319,6 +384,8 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - L'avion et le sous-marin se pilotent au clavier ; à la manette, on monte avec
   « utiliser » et l'on descend avec le bouton de vol.
 - Les créatures ne poursuivent que le joueur 1 d'un écran partagé.
+- Les habitants d'un lieu reviennent au prochain chargement de la partie même
+  s'ils avaient été tués (seul le serveur, et la session en cours, s'en souviennent).
 - Pas de greedy meshing ; tout tourne sur le thread principal.
 - Les sauvegardes sont locales au navigateur ; le serveur ne persiste pas son monde
   entre deux démarrages.
