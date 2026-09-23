@@ -67,6 +67,8 @@
       majLe: Date.now(),
       duree: 0,
       morte: false,
+      // mode histoire : héros, longueur, interactions permises…
+      histoire: opts.histoire || null,
     };
     var idx = lireIndex(storage);
     idx.push(meta);

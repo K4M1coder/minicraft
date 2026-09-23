@@ -36,6 +36,8 @@
       reputation: state.world.reputation ? state.world.reputation.serialiser() : null,
       // le compte en banque, commun à toutes les banques du monde
       banque: state.world.banque ? state.world.banque.serialize() : [],
+      // l'avancée du récit : chapitre, étape, choix, quêtes secondaires
+      histoire: state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null,
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
       vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
       player: {
@@ -99,6 +101,11 @@
     if (w.exploration) w.exploration.charger(data.explores || []);
     if (w.reputation) w.reputation.charger(data.reputation);
     if (w.banque) w.banque.load(data.banque || []);
+    if (MC.Histoire) {
+      state.histoire = data.histoire ? MC.Histoire.charger(data.histoire, function (cat) {
+        return MC.Modes.categoriePermise(state.regles, cat);
+      }) : null;
+    }
     if (w.reperes) {
       w.reperes.charger(data.reperes || []);
       w.reperes.suivi = data.suivi || null;

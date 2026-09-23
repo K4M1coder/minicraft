@@ -324,3 +324,24 @@
 .services { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
 .btn-service { background: #2f5a3a; color: #fff; border: 1px solid #4a8a5a; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
 .btn-service:hover { background: #3a7048; }
+
+/* ── mode histoire ── */
+.histoire-params { border: 1px solid var(--line); border-radius: 6px; padding: 8px 12px; margin-top: 8px; display: flex; flex-direction: column; gap: 6px; }
+.histoire-params legend { padding: 0 6px; font-weight: bold; }
+.histoire-params .cases { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center; font-size: 12px; }
+.histoire-params .case { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; flex-direction: row; }
+.objectif-histoire { position: absolute; top: 10px; left: 50%; transform: translateX(-50%); background: var(--panel); border: 1px solid var(--line);
+  border-left: 3px solid #d8b040; border-radius: 5px; padding: 6px 12px; font-size: 13px; text-align: center; pointer-events: none; z-index: 5; max-width: 60%; }
+.objectif-histoire small { opacity: .75; }
+.dialogue-histoire { position: absolute; left: 50%; bottom: 110px; transform: translateX(-50%); width: min(620px, 90%); background: rgba(18, 20, 28, .94);
+  border: 1px solid #c8a040; border-radius: 8px; padding: 12px 16px; z-index: 12; box-shadow: 0 6px 24px rgba(0,0,0,.5); }
+.dialogue-histoire h3 { margin: 0 0 6px; color: #e8c860; }
+.dialogue-histoire p { margin: 0 0 10px; line-height: 1.45; }
+.dialogue-histoire .row { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.choix-histoire { background: #3a3220; color: #fff; border: 1px solid #c8a040; border-radius: 4px; padding: 6px 12px; cursor: pointer; }
+.choix-histoire:hover { background: #5a4a28; }
+.journal-histoire { position: absolute; right: 16px; top: 60px; width: 360px; max-height: 70%; overflow: auto; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 6px; padding: 10px; z-index: 11; font-size: 12px; }
+.journal-histoire h4 { margin: 8px 0 4px; }
+.journal-histoire li.faite { opacity: .6; }
+.fin-histoire .epilogue { font-size: 15px; line-height: 1.5; max-width: 560px; }

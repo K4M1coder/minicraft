@@ -18,7 +18,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification  | État |
 |---|---|---|---|
-| SPEC-MODE-001 | Deux modes existent : `survie` et `creatif` | `Modes.MODES` contient exactement ces deux clés | ✅ |
+| SPEC-MODE-001 | Trois modes existent : `survie`, `creatif` et `histoire` | `Modes.MODES` contient exactement ces trois clés | ✅ |
 | SPEC-MODE-002 | Un identifiant de mode inconnu retombe sur `survie` | `Modes.mode('nawak').id === 'survie'` | ✅ |
 | SPEC-MODE-003 | En créatif le joueur vole, est invulnérable, et n'a pas faim | `regles('creatif',*)` : `vole`, `invulnerable` vrais, `faim` faux | ✅ |
 | SPEC-MODE-004 | En créatif tout bloc cède instantanément, quel que soit l'outil | temps de minage nul y compris à main nue sur la pierre | ✅ |
@@ -487,3 +487,17 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-HABITAT-005 | Les métiers rendent service : le guide indique et marque sur la carte les lieux alentour, le banquier ouvre le compte, l'aubergiste loge (et fait dormir jusqu'au matin), le forgeron répare, l'animateur divertit ; les habitants tués ne renaissent pas aussitôt | services, coûts, délais, habitants manquants | ✅ |
 | SPEC-HABITAT-006 | Le compte en banque, commun à toutes les banques, survit à la sauvegarde ; de nouveaux blocs de construction (planches d'essences, tuiles, ardoise, enduit, pavé, comptoir, coffre-fort, tonneau, enclume, panneau d'information) se fabriquent | aller-retour de sauvegarde, recettes | ✅ |
 | SPEC-HABITAT-007 | En jeu, les habitants d'un lieu apparaissent quand on s'en approche, restent près de leur bâtiment, et parler à l'un d'eux ouvre son dialogue : son métier, sa réplique, ses offres et son service | visite d'un village, dialogue du guide | ✅ |
+
+## HISTOIRE — mode histoire
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HISTOIRE-001 | Un mode histoire, « La Couronne des Saisons », aux paramètres ajustables : héros, longueur de la quête principale (4, 7 ou 8 chapitres, plus de vingt étapes), nombre de quêtes secondaires, événements, commerce, repère automatique | règles et paramètres | ✅ |
+| SPEC-HISTOIRE-002 | On n'interagit qu'avec les blocs et objets que l'histoire permet : préréglages (restreinte, modérée, libre) ou catégories choisies une à une ; le joueur ne casse, ne pose ni n'utilise rien d'autre | permissions, minage et pose refusés | ✅ |
+| SPEC-HISTOIRE-003 | L'histoire se lie aux lieux réels du monde : village de départ, ville, ermite, trois donjons distincts, du plus proche au plus lointain | liens d'un monde généré | ✅ |
+| SPEC-HISTOIRE-004 | La quête principale se joue du début à la fin, chapitre après chapitre, avec dialogues, récompenses et journal ; une étape impossible (interaction interdite, lieu absent) est sautée sans bloquer le récit | partie simulée complète | ✅ |
+| SPEC-HISTOIRE-005 | Les habitants confient des quêtes secondaires selon leur métier, accomplies en rapportant ce qu'ils demandent ou en explorant, et récompensées ; leur nombre suit le paramètre et les interactions permises | proposer, accepter, rendre | ✅ |
+| SPEC-HISTOIRE-006 | Des événements ponctuent l'aventure (Nuit de sang, pillards sur le village de départ, orage prophétique au vrai temps d'orage, caravane, voyageur) ; désactivables ; une défense ratée laisse sa trace | événements déclenchés, échec retenu | ✅ |
+| SPEC-HISTOIRE-007 | Les objectifs atteints et les choix faits décident de la fin : six épilogues (secrète, aube, cendres, souverain, monde brisé, légende oubliée) | fins obtenues selon les parcours | ✅ |
+| SPEC-HISTOIRE-008 | L'avancée du récit (chapitre, étape, choix, quêtes) survit à la sauvegarde | aller-retour | ✅ |
+| SPEC-HISTOIRE-009 | En jeu, le récit s'affiche en dialogues, l'objectif et son repère guident, parler aux bons habitants fait avancer l'histoire, et H ouvre le journal | partie histoire pilotée | ✅ |

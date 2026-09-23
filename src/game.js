@@ -121,6 +121,7 @@
       onNouvelle: function () { ui.menuNouvelle(); },
       onMulti: function () { ui.menuMulti({ pseudo: g.nomJoueur }); },
       onRetourMenu: function () { afficherMenu(); },
+      onContinuerFin: function () { continuerApresFin(); },
       onCharger: chargerPartie,
       onSupprimer: supprimerPartie,
       onCreer: creerPartie,
@@ -197,7 +198,7 @@
     function appliquerPartie(meta) {
       g.partieId = meta.id;
       g.nomPartie = meta.nom;
-      regles = MC.Modes.regles(meta.mode, meta.difficulte);
+      regles = MC.Modes.regles(meta.mode, meta.difficulte, meta.histoire);
       g.regles = regles;
       ui.setRegles(regles);
       g.graine = meta.graine;
@@ -209,7 +210,9 @@
       var graine = MC.Modes.graineDepuisTexte(opts.graineTexte);
       var meta = MC.Saves.creer(st, {
         nom: opts.nom, mode: opts.mode, difficulte: opts.difficulte, graine: graine,
+        histoire: opts.mode === 'histoire' ? MC.Histoire.parametres(opts.histoire) : null,
       });
+      g.histoire = null;
       appliquerPartie(meta);
       // le monde doit repartir de la bonne graine
       remplacerMonde(meta.graine);
@@ -221,7 +224,10 @@
       chat.systeme('Nouvelle partie « ' + meta.nom + ' » — graine ' + meta.graine);
       ui.toast('Partie créée');
       input.setState('playing');
+      if (meta.mode === 'histoire') demarrerHistoire(meta.histoire || MC.Histoire.parametres({}));
     }
+
+    g.creerPartie = creerPartie;
 
     function chargerPartie(id) {
       var st = storage();
@@ -243,6 +249,9 @@
       chat.systeme('Partie « ' + meta.nom + ' » chargée — graine ' + meta.graine);
       ui.toast(r.vierge ? 'Nouvelle carte' : 'Partie chargée');
       input.setState('playing');
+      if (meta.mode !== 'histoire') g.histoire = null;
+      else if (!g.histoire) demarrerHistoire(meta.histoire || MC.Histoire.parametres({}));
+      repereObjectif = null;
     }
 
     function supprimerPartie(id) {
@@ -391,6 +400,7 @@
     /* Parler à un habitant : son métier décide du titre, de la réplique, des
        offres et du service proposé. Un village hostile ne commerce plus. */
     function parlerA(ent) {
+      if (g.histoire && !g.histoire.fin && parlerHistoire(ent)) return;
       if (world.reputation && !MC.Factions.commerceOuvert(world.reputation)) {
         ui.toast('Les villageois refusent de commercer avec vous', 'warn');
         return;
@@ -449,6 +459,181 @@
       });
     }
     g.peuplerLieux = peuplerLieux;
+    // ─── mode histoire ───────────────────────────────────────────────────────
+    var histoireT = 0, choixAffiche = null, fileRecit = [], repereObjectif = null;
+    function peutCategorie(cat) { return MC.Modes.categoriePermise(regles, cat); }
+    /* Démarre le récit : il se lie aux lieux réels autour du départ, et le
+       héros s'éveille sur la place de son village. */
+    function demarrerHistoire(params) {
+      var s = player.state;
+      var liens = MC.Histoire.lier(world, s.pos.x, s.pos.z);
+      g.histoire = MC.Histoire.creer(params, liens, peutCategorie);
+      fileRecit.length = 0; choixAffiche = null; repereObjectif = null;
+      if (liens.depart) {
+        var px = Math.floor(liens.depart.x), pz = Math.floor(liens.depart.z) + 3;
+        s.pos.x = px + 0.5; s.pos.z = pz + 0.5; s.pos.y = C.WORLD_H - 2;
+        s.vel.x = s.vel.y = s.vel.z = 0;
+        streamChunks(true);
+        s.pos.y = world.groundAt(px, pz, true) + 1.2;
+        g.spawnPoint = { x: s.pos.x, y: s.pos.y, z: s.pos.z };
+      }
+      presenter(MC.Histoire.commencer(g.histoire));
+      return g.histoire;
+    }
+    g.demarrerHistoire = demarrerHistoire;
+    function signalerHistoire(ev, ctx) {
+      if (!g.histoire || g.histoire.fin) return [];
+      ev.t = g.time;
+      var n = MC.Histoire.signaler(g.histoire, ev, ctx);
+      presenter(n);
+      return n;
+    }
+    g.signalerHistoire = signalerHistoire;
+    function compteur() { var inv = player.state.inv; return { compter: function (id) { return inv.count(id); } }; }
+    /* Ce que le moteur demande : raconter, donner, prendre, faire apparaître. */
+    function presenter(notifs) {
+      (notifs || []).forEach(function (n) {
+        switch (n.type) {
+          case 'chapitre': fileRecit.push({ titre: n.titre, texte: n.texte }); chat.systeme('— ' + n.titre + ' —'); break;
+          case 'dialogue': fileRecit.push({ titre: n.titre, texte: n.texte }); break;
+          case 'evenement': fileRecit.push({ titre: n.titre, texte: n.texte }); faireApparaitre(n); break;
+          case 'etape': ui.toast(n.texte); audio.play('craft'); break;
+          case 'quete': ui.toast(n.texte); audio.play('echange'); break;
+          case 'info': ui.toast(n.texte); break;
+          case 'echec': ui.toast(n.texte, 'warn'); break;
+          case 'recompense':
+            n.objets.forEach(function (o) {
+              var reste = player.pickUp(o.id, o.n);
+              if (reste) entities.dropItem(player.state.pos.x, player.state.pos.y + 0.5, player.state.pos.z, o.id, reste);
+              ui.toast('Récompense : ' + o.n + ' ' + C.nameOf(o.id));
+            });
+            break;
+          case 'prendre': {
+            var inv = player.state.inv, reste2 = n.objets[0].n;
+            (n.parmi || [n.objets[0].id]).forEach(function (id) {
+              var k = Math.min(reste2, inv.count(id));
+              if (k > 0) { inv.remove(id, k); reste2 -= k; }
+            });
+            break;
+          }
+          case 'fin': finHistoire(n); break;
+        }
+      });
+      afficherRecit();
+    }
+    function fermerRecit() {
+      if (!ui.dialogueOuvert() && input.state === 'ui' && !ui.isContainerOpen()) input.setState('playing');
+    }
+    /* Une réplique à la fois ; puis, s'il y en a un, le choix en attente. */
+    function afficherRecit() {
+      if (!g.histoire || ui.dialogueOuvert() || input.state === 'menu' || input.state === 'dead') return;
+      var d = fileRecit.shift();
+      if (d) {
+        if (ui.isContainerOpen()) forceCloseContainer();
+        input.setState('ui');
+        ui.dialogueHistoire(d, function () { afficherRecit(); fermerRecit(); });
+        return;
+      }
+      var c = MC.Histoire.choixEnAttente(g.histoire);
+      if (c && choixAffiche !== c.id) {
+        choixAffiche = c.id;
+        if (ui.isContainerOpen()) forceCloseContainer();
+        input.setState('ui');
+        ui.dialogueHistoire({ titre: 'Votre choix', texte: c.texte,
+                              choix: c.options.map(function (o) { return { id: o.id, texte: o.texte }; }) },
+                            function (opt) {
+                              choixAffiche = null;
+                              presenter(MC.Histoire.choisir(g.histoire, c.id, opt));
+                              fermerRecit();
+                            });
+      }
+    }
+    // les créatures d'un événement : autour du joueur, ou autour du village de départ
+    function faireApparaitre(n) {
+      var ctr = n.pres && n.pres !== 'joueur' && world.estCharge(n.pres.x, n.pres.z) ? n.pres : player.state.pos;
+      (n.apparitions || []).forEach(function (a, ia) {
+        for (var k = 0; k < a.n; k++) {
+          var ang = (k + ia * 3) * 2.1, d = 8 + (k % 3) * 3;
+          var x = Math.floor(ctr.x + Math.cos(ang) * d), z = Math.floor(ctr.z + Math.sin(ang) * d);
+          if (!world.estCharge(x, z)) continue;
+          var y = world.groundAt(x, z, true) + 1;
+          entities.spawn(a.type, x + 0.5, y, z + 0.5, a.role ? { role: a.role, nom: 'le caravanier' } : { histoire: n.id });
+        }
+      });
+    }
+    /* Parler à un habitant pendant le récit : l'histoire d'abord, puis ses
+       quêtes, et le commerce seulement si l'histoire l'autorise. */
+    function parlerHistoire(ent) {
+      var H = MC.Histoire, h = g.histoire, role = ent.role || 'habitant';
+      var R0 = MC.Habitats.ROLES[role] || MC.Habitats.ROLES.habitant;
+      var nom = R0.nom + (ent.nom ? ' — ' + ent.nom : '');
+      var n1 = signalerHistoire({ type: 'parler', role: role, lieu: ent.lieu, nom: nom }, compteur());
+      if (n1.some(function (n) { return n.type === 'dialogue' || n.type === 'info' || n.type === 'etape'; })) return true;
+      var n2 = H.rendreQuete(h, role, compteur());
+      if (n2.some(function (n) { return n.type === 'quete'; })) { presenter(n2); return true; }
+      var q = H.queteProposee(h, role);
+      if (q) {
+        input.setState('ui');
+        ui.dialogueHistoire({ titre: nom, texte: q.texte + ' — « ' + q.titre + ' »',
+                              choix: [{ id: 'oui', texte: 'Accepter la quête' }, { id: 'non', texte: 'Refuser' }] },
+                            function (c) {
+                              if (c === 'oui' && H.accepter(h, q.id)) { ui.toast('Quête acceptée : ' + q.titre); chat.systeme('Quête : ' + q.titre); }
+                              fermerRecit();
+                            });
+        return true;
+      }
+      if (n2.length) { presenter(n2); return true; }
+      if (!regles.commerce) {
+        input.setState('ui');
+        ui.dialogueHistoire({ titre: nom, texte: R0.repliques[(ent.eid || 0) % R0.repliques.length] }, fermerRecit);
+        return true;
+      }
+      return false;
+    }
+    function finHistoire(n) {
+      var h = g.histoire;
+      var stats = h ? 'Quêtes secondaires : ' + h.secondairesFaites + '/' + h.secondairesPrevues +
+                      ' · Chapitres : ' + Math.min(h.chap + 1, h.chapitres.length) + '/' + h.chapitres.length : '';
+      g.finHistoire = n;
+      chat.systeme('Fin : ' + n.titre);
+      ui.objectifHistoire(null);
+      forceCloseContainer();
+      input.setState('menu');
+      ui.ecranFin(n, stats);
+      if (g.partieId) doSave(false);
+    }
+    function continuerApresFin() {
+      if (g.partieId) input.setState('playing');
+      else afficherMenu();
+    }
+    /* Deux fois par seconde : où l'on est, ce qu'on porte, l'heure, le ciel. */
+    function majHistoire(dt) {
+      if (!g.histoire || net.enLigne()) { ui.objectifHistoire(null); return; }
+      var h = g.histoire, s = player.state;
+      if (!h.fin) ui.objectifHistoire(MC.Histoire.objectif(h), s.pos);
+      histoireT -= dt;
+      if (histoireT > 0 || h.fin) return;
+      histoireT = 0.5;
+      signalerHistoire({ type: 'position', x: s.pos.x, z: s.pos.z });
+      signalerHistoire({ type: 'biome', id: world.biomeAt(Math.floor(s.pos.x), Math.floor(s.pos.z)).id });
+      signalerHistoire({ type: 'inventaire' }, compteur());
+      signalerHistoire({ type: 'temps', nuit: DC.isNight(g.time) });
+      if (g.meteo) signalerHistoire({ type: 'meteo', meteo: g.meteo.type });
+      // le repère de l'objectif, suivi par la boussole
+      var o = MC.Histoire.objectif(h);
+      if (world.reperes && h.params.reperes) {
+        var cible = o && o.cible;
+        if (repereObjectif && (!cible || repereObjectif.x !== Math.round(cible.x) || repereObjectif.z !== Math.round(cible.z))) {
+          world.reperes.retirer(repereObjectif.id); repereObjectif = null;
+        }
+        if (cible && !repereObjectif) {
+          repereObjectif = world.reperes.ajouter('★ ' + cible.nom, cible.x, cible.z, '#e8c040');
+          world.reperes.suivi = repereObjectif.id;
+        }
+      }
+      afficherRecit();
+    }
+
     // entrer dans un lieu : on l'annonce
     function annoncerLieu() {
       if (!world.habitats) return;
@@ -458,6 +643,7 @@
         lieuActuel = l;
         g.lieu = l;
         if (l) ui.toast('Bienvenue à ' + l.nom + ' — ' + MC.Habitats.LIEUX[l.kind].nom.toLowerCase() + ', ' + l.style.toLowerCase());
+        if (l && g.histoire) signalerHistoire({ type: 'lieu', id: l.id });
       }
     }
 
@@ -675,6 +861,8 @@
          gardien se relevait aussitôt. */
       var evts = entities.evenements();
       for (var k = 0; k < evts.length; k++) {
+        if (g.histoire && evts[k].type === 'mort' && evts[k].parJoueur) signalerHistoire({ type: 'tuer', mob: evts[k].victime });
+        if (g.histoire && evts[k].type === 'boss_vaincu') signalerHistoire({ type: 'boss', donjon: evts[k].donjon });
         // une mort de la main du joueur change ce que les factions pensent de lui
         if (evts[k].type === 'mort' && evts[k].parJoueur && world.reputation) {
           MC.Factions.surMort(evts[k].victime, world.reputation).forEach(function (c) {
@@ -907,6 +1095,7 @@
       var mange = player.heldId();
       var res = player.useOn(target);
       if (!res) return;
+      if (res === 'interdit') { ui.toast('Cette histoire ne vous permet pas de l\'utiliser', 'warn'); return; }
       if (res === 'eat' && net.enLigne()) net.manger(mange, 0);
       if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target); return; }
       if (res === 'carte') { ouvrirCarte(); return; }
@@ -967,6 +1156,9 @@
       } else if (code === 'KeyC') {
         if (aUneCarte(player)) ouvrirCarte();
         else ui.toast('Il faut une carte dans l\'inventaire', 'warn');
+      } else if (code === 'KeyH') {
+        if (g.histoire) { ui.journalHistoire(g.histoire); input.setState('ui'); }
+        else ui.toast('Le journal n\'existe qu\'en mode histoire', 'warn');
       } else if (code === 'KeyJ') {
         ui.panneauFactions(world.reputation);
         input.setState('ui');
@@ -984,6 +1176,7 @@
       if (code === 'KeyE') closeUI();
       else if (code === 'KeyC' && ui.carteOuverte()) closeUI();
       else if (code === 'KeyJ' && ui.factionsOuvertes()) closeUI();
+      else if (code === 'KeyH' && ui.journalOuvert()) closeUI();
       else if (code === 'KeyL') ui.toggleLivre();
     }
 
@@ -1008,7 +1201,10 @@
     function closeUI() {
       ui.fermerCarte();
       ui.fermerFactions();
+      if (ui.fermerJournal) ui.fermerJournal();
       forceCloseContainer();
+      // une réplique du récit attend sa réponse : on garde la main sur l'interface
+      if (ui.dialogueOuvert && ui.dialogueOuvert()) return;
       input.setState('playing');
     }
 
@@ -1185,6 +1381,10 @@
         var outil = pl.heldId();
         var nAvant = entities.list.length;
         var res = pl.mineTick(dt, cible);
+        if (pl.state.interdit === 'casser') {
+          pl.state.interdit = null;
+          if (!(g.interditT > g.time)) { g.interditT = g.time + 3; ui.toast('Cette histoire ne vous permet pas de casser ce bloc', 'warn'); }
+        }
         if (res) {
           if (net.enLigne()) {
             // le serveur calcule le butin et nous le donne : pas de double compte
@@ -1330,7 +1530,11 @@
         if (autoSaveT >= 60) { autoSaveT = 0; doSave(false); }
 
         // mort : en cauchemar, un seul joueur suffit a perdre la partie
-        if (MC.Split.partiePerdue(equipe, regles)) { perdrePartie(); }
+        if (MC.Split.partiePerdue(equipe, regles)) {
+          var finT = g.histoire && !g.histoire.fin ? MC.Histoire.signaler(g.histoire, { type: 'mort' }) : [];
+          perdrePartie();
+          finT.forEach(function (n) { if (n.type === 'fin') finHistoire(n); });
+        }
         else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
@@ -1364,7 +1568,7 @@
       grille.avancer(LOINTAIN_BUDGET);
       render.majLointain(grille);
       majMeteo(dt);
-      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); }
+      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); majHistoire(dt); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);

@@ -23,9 +23,9 @@
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — modes de jeu', function () {
 
-    it('SPEC-MODE-001 : deux modes existent, survie et creatif', function () {
+    it('SPEC-MODE-001 : trois modes existent, survie, creatif et histoire', function () {
       var cles = Object.keys(M.MODES).sort();
-      A.deep(cles, ['creatif', 'survie'], 'exactement ces deux modes');
+      A.deep(cles, ['creatif', 'histoire', 'survie'], 'exactement ces trois modes');
       A.equal(M.MODES.survie.id, 'survie');
       A.equal(M.MODES.creatif.id, 'creatif');
     });

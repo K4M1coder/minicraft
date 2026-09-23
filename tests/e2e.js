@@ -1163,9 +1163,20 @@
     await frames(3);
     A.ok(document.querySelector('#f-nom'), 'champ nom');
     A.ok(document.querySelector('#f-graine'), 'champ graine');
-    A.equal(document.querySelectorAll('.choix[data-nom="mode"] .opt').length, 2, 'deux modes');
+    A.equal(document.querySelectorAll('.choix[data-nom="mode"] .opt').length, 3, 'trois modes : survie, créatif, histoire');
     A.equal(document.querySelectorAll('.choix[data-nom="diff"] .opt').length, 4, 'quatre difficultes');
     A.equal(document.querySelectorAll('.choix[data-nom="joueurs"] .opt').length, 4, 'un a quatre joueurs');
+    // le mode histoire déplie ses paramètres
+    var fsH = document.querySelector('#f-histoire');
+    A.equal(fsH.style.display, 'none', 'paramètres d histoire repliés hors du mode histoire');
+    document.querySelector('.choix[data-nom="mode"] .opt[data-val="histoire"]').click();
+    A.ok(fsH.style.display !== 'none', 'dépliés en mode histoire');
+    A.ok(document.querySelector('#f-heros') && document.querySelectorAll('.choix[data-nom="longueur"] .opt').length === 3, 'héros et longueur');
+    document.querySelector('.choix[data-nom="interactions"] .opt[data-val="restreinte"]').click();
+    var pierre = document.querySelector('.cat-bloc[value="pierre"]'), vegetal = document.querySelector('.cat-bloc[value="vegetal"]');
+    A.ok(!pierre.checked && vegetal.checked, 'le préréglage coche ses catégories');
+    document.querySelector('.choix[data-nom="interactions"] .opt[data-val="libre"]').click();
+    A.ok(pierre.checked, 'libre : tout coché');
   });
 
   e2e('SPEC-MENU-004 : une graine textuelle est convertie', async function (g) {
@@ -1769,6 +1780,55 @@
     A.notOk(P.collides(g.world, s.pos.x, s.pos.y, s.pos.z, 0.6, 1.8), 'à côté de la voiture, pas dedans');
     g.entities.remove(auto);
     await reset(g);
+  });
+
+  /* En dernier : ce test change de partie (mode histoire, autre graine). */
+  e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
+    await reset(g);
+    videParties();
+    g.render.setDistance(5);
+    g.creerPartie({ nom: 'Récit', mode: 'histoire', difficulte: 'facile', graineTexte: 'couronne', joueurs: 1,
+                    histoire: { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
+    await frames(5);
+    A.ok(g.histoire && g.regles.histoire, 'le récit est lancé');
+    var dlg = document.querySelector('.dialogue-histoire');
+    A.ok(dlg && dlg.style.display !== 'none', 'le premier chapitre est raconté');
+    A.ok(/réveil/i.test(dlg.textContent), 'Le réveil du village : ' + dlg.querySelector('h3').textContent);
+    A.equal(g.input.state, 'ui', 'la main est à l interface pendant le récit');
+    dlg.querySelector('button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await frames(3);
+    A.equal(g.input.state, 'playing', 'on reprend la main après « Continuer »');
+    fakeLock(g, true);
+    for (var i = 0; i < 40; i++) await frames(1);
+    var obj = document.querySelector('.objectif-histoire');
+    A.ok(obj && obj.style.display !== 'none' && /guide/i.test(obj.textContent), 'l objectif s affiche : ' + (obj && obj.textContent));
+    A.ok(g.world.reperes.liste.some(function (r) { return /★/.test(r.nom); }), 'un repère marque l objectif');
+    // interactions restreintes : la pierre ne se casse pas
+    A.notOk(MC.Modes.peutCasser(g.regles, B.STONE), 'la pierre est hors de l histoire');
+    // le guide du village : l'histoire avance
+    var guide = null;
+    for (var t = 0; t < 240 && !guide; t++) {
+      await frames(1);
+      guide = g.entities.list.filter(function (e) { return e.role === 'guide' && g.histoire.liens.depart && e.lieu === g.histoire.liens.depart.id; })[0];
+    }
+    A.ok(guide, 'le guide du village de départ est là');
+    var avant = g.histoire.etape + g.histoire.chap * 10;
+    g.parlerA(guide);
+    await frames(3);
+    A.ok(document.querySelector('.dialogue-histoire').style.display !== 'none', 'il raconte');
+    A.gt(g.histoire.etape + g.histoire.chap * 10, avant, 'et l histoire avance');
+    document.querySelector('.dialogue-histoire button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await frames(3);
+    // le journal
+    fakeLock(g, true);
+    g.input.setState('playing');
+    key('KeyH');
+    await frames(2);
+    var j = document.querySelector('.journal-histoire');
+    A.ok(j && j.style.display !== 'none' && /Couronne des Saisons/.test(j.textContent), 'H ouvre le journal');
+    key('KeyH');
+    await frames(2);
+    A.equal(j.style.display, 'none', 'H le referme');
   });
 
   // ─── exécution ─────────────────────────────────────────────────────────────

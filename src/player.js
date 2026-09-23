@@ -217,6 +217,11 @@
     /* Renvoie {broken:true, id, drops} au moment où le bloc cède, sinon null.
        `rand` injectable pour des tests déterministes. */
     function mineTick(dt, target, rand) {
+      // mode histoire : ce bloc ne se casse pas dans cette aventure
+      if (target && MC.Modes && !MC.Modes.peutCasser(R, target.block)) {
+        pl.mining = null; pl.interdit = 'casser';
+        return null;
+      }
       if (!target) { pl.mining = null; return null; }
       var same = pl.mining && pl.mining.x === target.x
               && pl.mining.y === target.y && pl.mining.z === target.z;
@@ -280,6 +285,8 @@
 
       if (!id) return null;
       var idef = C.def(id);
+      // mode histoire : cet objet ou ce bloc n'a pas sa place dans l'aventure
+      if (MC.Modes && !MC.Modes.peutUtiliser(R, id)) { pl.interdit = 'utiliser'; return 'interdit'; }
 
       // la carte s'ouvre d'un clic droit
       if (idef && idef.carte) return 'carte';

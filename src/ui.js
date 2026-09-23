@@ -192,6 +192,73 @@
     factionsEl.style.display = 'none';
     root.appendChild(factionsEl);
     var factionsVisibles = false;
+
+    // ─── mode histoire : objectif, dialogue, journal, fin ─────────────────────
+    var objectifEl = el('div', 'objectif-histoire');
+    objectifEl.style.display = 'none';
+    root.appendChild(objectifEl);
+    function objectifHistoire(o, pos) {
+      if (!o) { objectifEl.style.display = 'none'; return; }
+      var dist = '';
+      if (o.cible && pos) {
+        var d = Math.round(Math.hypot(o.cible.x - pos.x, o.cible.z - pos.z));
+        dist = ' · ' + d + ' m';
+      }
+      var prog = o.n ? ' (' + o.progres + '/' + o.n + ')' : '';
+      objectifEl.innerHTML = '<small>Chapitre ' + o.numero + '/' + o.total + ' — ' + ech(o.chapitre) + '</small><br>' +
+                             ech(o.texte) + prog + dist;
+      objectifEl.style.display = '';
+    }
+    var dialogueEl = el('div', 'dialogue-histoire');
+    dialogueEl.style.display = 'none';
+    root.appendChild(dialogueEl);
+    /* Une réplique du récit : un titre, un texte, et des choix (ou « Continuer »).
+       `surChoix(id)` reçoit l'option retenue, ou null. */
+    function dialogueHistoire(d, surChoix) {
+      var choix = d.choix && d.choix.length ? d.choix : [{ id: null, texte: 'Continuer' }];
+      dialogueEl.innerHTML = '<h3>' + ech(d.titre || '') + '</h3><p>' + ech(d.texte || '') + '</p><div class="row"></div>';
+      var row = dialogueEl.querySelector('.row');
+      choix.forEach(function (c) {
+        var b = el('button', c.id === null ? 'primary' : 'choix-histoire', ech(c.texte));
+        b.addEventListener('mousedown', function (ev) {
+          ev.preventDefault(); ev.stopPropagation();
+          dialogueEl.style.display = 'none';
+          if (surChoix) surChoix(c.id);
+        });
+        row.appendChild(b);
+      });
+      dialogueEl.style.display = '';
+    }
+    function dialogueOuvert() { return dialogueEl.style.display !== 'none'; }
+    var journalEl = el('div', 'journal-histoire');
+    journalEl.style.display = 'none';
+    root.appendChild(journalEl);
+    function journalHistoire(etat) {
+      var H = MC.Histoire;
+      if (!etat || !H) { journalEl.style.display = 'none'; return false; }
+      var o = H.objectif(etat), q = H.quetesActives(etat);
+      journalEl.innerHTML = '<div class="carte-tete"><b>' + ech(H.TITRE) + '</b><span class="carte-aide">H pour fermer</span></div>' +
+        (o ? '<p><b>Chapitre ' + o.numero + '/' + o.total + ' — ' + ech(o.chapitre) + '</b><br>' + ech(o.texte) + '</p>'
+           : '<p><b>' + (etat.fin ? 'Fin : ' + ech(H.finDe(etat.fin).titre) : 'Histoire terminée') + '</b></p>') +
+        '<h4>Quêtes secondaires (' + etat.secondairesFaites + '/' + etat.secondairesPrevues + ')</h4>' +
+        (q.length ? '<ul>' + q.map(function (x) {
+          return '<li class="' + x.etat + '">' + ech(x.titre) + ' — ' + ech(x.texte) + (x.etat === 'faite' ? ' ✔' : '') + '</li>';
+        }).join('') + '</ul>' : '<p class="aide">Parlez aux habitants : fermiers, forgerons, aubergistes… ont besoin d\'aide.</p>') +
+        '<h4>Journal</h4><ul class="journal">' + etat.journal.slice(-12).reverse().map(function (t) { return '<li>' + ech(t) + '</li>'; }).join('') + '</ul>';
+      journalEl.style.display = '';
+      return true;
+    }
+    function fermerJournal() { var o = journalEl.style.display !== 'none'; journalEl.style.display = 'none'; return o; }
+    function journalOuvert() { return journalEl.style.display !== 'none'; }
+    function ecranFin(f, stats) {
+      showScreen('<div class="panel large fin-histoire"><p class="sub">' + ech(MC.Histoire ? MC.Histoire.TITRE : '') + '</p>' +
+        '<h1>' + ech(f.titre) + '</h1><p class="epilogue">' + ech(f.texte) + '</p>' +
+        (stats ? '<p class="hint">' + ech(stats) + '</p>' : '') +
+        '<div class="row"><button id="btn-continuer" class="primary">Continuer à explorer</button>' +
+        '<button id="btn-menu-fin">Menu principal</button></div></div>');
+      overlay.querySelector('#btn-continuer').onclick = function () { hooks.onContinuerFin && hooks.onContinuerFin(); };
+      overlay.querySelector('#btn-menu-fin').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
+    }
     var LIBELLES = { hostile: 'Hostile', neutre: 'Neutre', amical: 'Amical' };
     function panneauFactions(rep) {
       var F = MC.Factions;
@@ -529,6 +596,7 @@
       '<tr><td>F</td><td>descendre du véhicule</td></tr>' +
       '<tr><td>C</td><td>carte et points de repère</td></tr>' +
       '<tr><td>J</td><td>factions et réputation</td></tr>' +
+      '<tr><td>H</td><td>journal de l\'histoire (mode histoire)</td></tr>' +
       '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
       '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
       '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
@@ -648,21 +716,96 @@
         boutonsRadio('joueurs', [{ id: '1', nom: '1' }, { id: '2', nom: '2' },
                                  { id: '3', nom: '3' }, { id: '4', nom: '4' }], '1') +
         '<span class="aide">joueur 1 au clavier, les suivants à la manette</span></label>' +
+        formHistoire() +
         '</div>' +
         '<div class="row">' +
         '<button id="btn-creer" class="primary">Créer et jouer</button>' +
         '<button id="btn-retour">Retour</button>' +
         '</div><p class="hint" id="lock-hint"></p></div>');
       brancherChoix(overlay);
+      brancherHistoire();
       overlay.querySelector('#btn-retour').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
       overlay.querySelector('#btn-creer').onclick = function () {
+        var mode = valeurChoix('mode') || 'survie';
         hooks.onCreer && hooks.onCreer({
           nom: overlay.querySelector('#f-nom').value || 'Ma partie',
-          mode: valeurChoix('mode') || 'survie',
+          mode: mode,
           difficulte: valeurChoix('diff') || 'facile',
           graineTexte: overlay.querySelector('#f-graine').value,
-          joueurs: parseInt(valeurChoix('joueurs') || '1', 10),
+          joueurs: mode === 'histoire' ? 1 : parseInt(valeurChoix('joueurs') || '1', 10),
+          histoire: mode === 'histoire' ? lireHistoire() : null,
         });
+      };
+    }
+
+    /* ── Mode histoire : paramètres ajustables à la création ──────────────── */
+    function formHistoire() {
+      var H = MC.Histoire, M = MC.Modes;
+      if (!H) return '';
+      var longueurs = Object.keys(H.LONGUEURS).map(function (k) { return { id: k, nom: H.LONGUEURS[k].nom }; });
+      var presets = Object.keys(M.PRESETS_INTERACTIONS).map(function (k) {
+        return { id: k, nom: M.PRESETS_INTERACTIONS[k].nom, titre: M.PRESETS_INTERACTIONS[k].description };
+      });
+      var cb = M.categoriesBlocs(), co = M.CATEGORIES_OBJETS;
+      function cases(cls, table) {
+        return Object.keys(table).map(function (k) {
+          return '<label class="case"><input type="checkbox" class="' + cls + '" value="' + k + '"> ' + ech(table[k].nom) + '</label>';
+        }).join('');
+      }
+      return '<fieldset id="f-histoire" class="histoire-params" style="display:none">' +
+        '<legend>' + ech(H.TITRE) + '</legend>' +
+        '<label>Héros<input id="f-heros" type="text" maxlength="20" value="Aube"></label>' +
+        '<label>Longueur de la quête principale' + boutonsRadio('longueur', longueurs, 'normale') + '</label>' +
+        '<label>Quêtes secondaires <input id="f-secondaires" type="number" min="0" max="8" value="5"></label>' +
+        '<label>Interactions avec le monde' + boutonsRadio('interactions', presets, 'moderee') + '</label>' +
+        '<div class="cases"><b>Blocs</b>' + cases('cat-bloc', cb) + '</div>' +
+        '<div class="cases"><b>Objets</b>' + cases('cat-objet', co) + '</div>' +
+        '<label class="case"><input type="checkbox" id="f-evenements" checked> Événements (nuit de sang, pillards, caravanes…)</label>' +
+        '<label class="case"><input type="checkbox" id="f-commerce" checked> Commerce avec les habitants</label>' +
+        '<label class="case"><input type="checkbox" id="f-reperes" checked> Repère automatique sur l\'objectif</label>' +
+        '</fieldset>';
+    }
+    function cocherPreset(id) {
+      var p = MC.Modes.PRESETS_INTERACTIONS[id];
+      if (!p) return;
+      Array.prototype.forEach.call(overlay.querySelectorAll('.cat-bloc'), function (c) { c.checked = p.blocs.indexOf(c.value) >= 0; });
+      Array.prototype.forEach.call(overlay.querySelectorAll('.cat-objet'), function (c) { c.checked = p.objets.indexOf(c.value) >= 0; });
+    }
+    function brancherHistoire() {
+      var fs2 = overlay.querySelector('#f-histoire');
+      if (!fs2) return;
+      function maj() { fs2.style.display = valeurChoix('mode') === 'histoire' ? '' : 'none'; }
+      Array.prototype.forEach.call(overlay.querySelectorAll('.choix[data-nom="mode"] .opt'), function (b) {
+        var avant = b.onclick;
+        b.onclick = function () { avant && avant(); maj(); };
+      });
+      Array.prototype.forEach.call(overlay.querySelectorAll('.choix[data-nom="interactions"] .opt'), function (b) {
+        var avant = b.onclick;
+        b.onclick = function () { avant && avant(); cocherPreset(b.getAttribute('data-val')); };
+      });
+      Array.prototype.forEach.call(overlay.querySelectorAll('.choix[data-nom="longueur"] .opt'), function (b) {
+        var avant = b.onclick;
+        b.onclick = function () {
+          avant && avant();
+          overlay.querySelector('#f-secondaires').value = MC.Histoire.LONGUEURS[b.getAttribute('data-val')].secondaires;
+        };
+      });
+      cocherPreset('moderee');
+      maj();
+    }
+    function lireHistoire() {
+      function coches(cls) {
+        return Array.prototype.filter.call(overlay.querySelectorAll('.' + cls), function (c) { return c.checked; })
+          .map(function (c) { return c.value; });
+      }
+      return {
+        heros: overlay.querySelector('#f-heros').value || 'Aube',
+        longueur: valeurChoix('longueur') || 'normale',
+        secondaires: parseInt(overlay.querySelector('#f-secondaires').value, 10) || 0,
+        evenements: overlay.querySelector('#f-evenements').checked,
+        commerce: overlay.querySelector('#f-commerce').checked,
+        reperes: overlay.querySelector('#f-reperes').checked,
+        interactions: { preset: valeurChoix('interactions') || 'moderee', blocs: coches('cat-bloc'), objets: coches('cat-objet') },
       };
     }
 
@@ -1239,6 +1382,8 @@
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,
+      objectifHistoire: objectifHistoire, dialogueHistoire: dialogueHistoire, dialogueOuvert: dialogueOuvert,
+      journalHistoire: journalHistoire, fermerJournal: fermerJournal, journalOuvert: journalOuvert, ecranFin: ecranFin,
       isContainerOpen: isContainerOpen, renderContainer: renderContainer,
       refreshFurnace: refreshFurnace,
       setRegles: setRegles, toggleLivre: toggleLivre, estCreatif: estCreatif,
