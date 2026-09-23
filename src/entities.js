@@ -604,6 +604,7 @@
       return act;
     }
 
+    var RAYON_FOYER = 8;
     /* IA : poursuite pour les hostiles, errance pour les autres. */
     function stepAI(e, dt, player, rand, agressifImpose) {
       var r = rand || Math.random;
@@ -699,6 +700,12 @@
           e.wanderCd = 2 + r() * 4;
           if (r() < 0.4) { e.wanderDir = null; }
           else { e.wanderDir = r() * Math.PI * 2; }
+        }
+        /* Un habitant reste près de son foyer (son bâtiment) : trop loin, il
+           y retourne au lieu de se perdre dans la campagne. */
+        if (e.foyer) {
+          var hx = e.foyer.x - e.pos.x, hz = e.foyer.z - e.pos.z, hd = Math.hypot(hx, hz);
+          if (hd > RAYON_FOYER) { e.wanderDir = Math.atan2(hz, hx); e.wanderCd = 1; }
         }
         if (e.wanderDir === null || e.wanderDir === undefined) {
           e.vel.x = P.approach(e.vel.x, 0, 6, dt);

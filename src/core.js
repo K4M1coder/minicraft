@@ -43,6 +43,10 @@
     WOOL_RED: 80, WOOL_BLUE: 81, WOOL_YELLOW: 82, WOOL_GREEN: 83, LADDER: 84,
     // volcans et glaciers
     LAVA: 85, BASALT: 86, MAGMA: 87, BLUE_ICE: 88,
+    // habitations, villages et villes
+    PLANCHES_SAPIN: 89, PLANCHES_BOULEAU: 90, PLANCHES_ACACIA: 91, PLANCHES_JUNGLE: 92,
+    TUILES: 93, ARDOISE: 94, CHAUX: 95, PAVE: 96, COMPTOIR: 97, COFFRE_FORT: 98,
+    TONNEAU: 99, ENCLUME: 100, PANNEAU_INFO: 101,
   };
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
@@ -253,6 +257,24 @@
                                 tool: 'pickaxe', needsTool: true });
   defBlock(B.ICE_BRICK, { name: 'Briques de glace', tiles: [114, 114, 114], hardness: 1.2,
                           tool: 'pickaxe', needsTool: true });
+  // ─── habitations : essences de bois, toitures, enduits, mobilier ──────────
+  defBlock(B.PLANCHES_SAPIN,   { name: 'Planches de sapin', tiles: [173, 173, 173], hardness: 2.0, tool: 'axe' });
+  defBlock(B.PLANCHES_BOULEAU, { name: 'Planches de bouleau', tiles: [174, 174, 174], hardness: 2.0, tool: 'axe' });
+  defBlock(B.PLANCHES_ACACIA,  { name: "Planches d'acacia", tiles: [175, 175, 175], hardness: 2.0, tool: 'axe' });
+  defBlock(B.PLANCHES_JUNGLE,  { name: 'Planches de jungle', tiles: [176, 176, 176], hardness: 2.0, tool: 'axe' });
+  defBlock(B.TUILES,  { name: 'Tuiles', tiles: [177, 177, 177], hardness: 1.6, tool: 'pickaxe' });
+  defBlock(B.ARDOISE, { name: 'Ardoise', tiles: [178, 178, 178], hardness: 1.8, tool: 'pickaxe' });
+  defBlock(B.CHAUX,   { name: 'Enduit à la chaux', tiles: [179, 179, 179], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.PAVE,    { name: 'Pavé de rue', tiles: [180, 180, 180], hardness: 1.8, tool: 'pickaxe', needsTool: true });
+  defBlock(B.COMPTOIR, { name: 'Comptoir', tiles: [181, 182, 8], hardness: 2.0, tool: 'axe' });
+  // le coffre-fort ouvre le compte en banque, commun à toutes les banques
+  defBlock(B.COFFRE_FORT, { name: 'Coffre-fort', tiles: [183, 183, 183], hardness: 6, tool: 'pickaxe',
+                            needsTool: true, minTier: 2, interactive: 'banque' });
+  defBlock(B.TONNEAU, { name: 'Tonneau', tiles: [184, 185, 184], hardness: 2.0, tool: 'axe' });
+  defBlock(B.ENCLUME, { name: 'Enclume', tiles: [186, 186, 186], hardness: 5, tool: 'pickaxe', needsTool: true });
+  // le panneau d'un point info : il indique les lieux alentour
+  defBlock(B.PANNEAU_INFO, { name: "Panneau d'information", tiles: [187, 8, 8], hardness: 1.0, tool: 'axe',
+                             interactive: 'info' });
   defBlock(B.OBSIDIAN, { name: 'Obsidienne', tiles: [115, 115, 115], hardness: 12, tool: 'pickaxe',
                          needsTool: true, minTier: 4 });
   // la toile se traverse, mais on s'y englue (voir player.updateMovement)

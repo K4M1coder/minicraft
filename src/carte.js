@@ -26,6 +26,10 @@
   couleur(B.ICE_BRICK, [170, 206, 240]); couleur(B.PRISMARINE_BRICK, [80, 150, 136]); couleur(B.OBSIDIAN, [30, 20, 44]);
   couleur(B.CORAL_RED, [200, 60, 70]); couleur(B.CORAL_YELLOW, [220, 190, 50]); couleur(B.CORAL_BLUE, [60, 90, 210]);
   couleur(B.FARMLAND, [96, 66, 40]); couleur(B.GOLD_BLOCK, [236, 196, 60]);
+  couleur(B.PLANCHES_SAPIN, [110, 80, 48]); couleur(B.PLANCHES_BOULEAU, [206, 190, 138]);
+  couleur(B.PLANCHES_ACACIA, [178, 96, 52]); couleur(B.PLANCHES_JUNGLE, [168, 118, 80]);
+  couleur(B.TUILES, [172, 70, 50]); couleur(B.ARDOISE, [70, 74, 86]); couleur(B.CHAUX, [232, 228, 214]);
+  couleur(B.PAVE, [104, 104, 110]); couleur(B.HAY, [200, 170, 60]); couleur(B.ICE_BRICK, [170, 206, 240]);
   var GRIS = [120, 120, 120];
 
   /* Couleur d'une colonne : le premier bloc visible depuis le ciel, ombré

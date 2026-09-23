@@ -160,7 +160,7 @@
           (m.mobs || []).forEach(function (e) {
             var d = mobsDistants.get(e.e);
             if (!d) mobsDistants.set(e.e, { eid: e.e, type: e.t, item: e.i, genre: e.g, arme: e.a,
-                                            variante: e.v, w: 0.6, h: 1.8,
+                                            variante: e.v, role: e.r, nom: e.n, w: 0.6, h: 1.8,
                                             pos: { x: e.x, y: e.y, z: e.z },
                                             cible: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw });
             else { d.cible.x = e.x; d.cible.y = e.y; d.cible.z = e.z; d.yaw = e.yaw; }

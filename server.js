@@ -19,7 +19,7 @@ const RACINE = __dirname;
 const PORT = parseInt(process.argv[2], 10) || 8080;
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'biomes', 'donjons', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol'];
 
@@ -56,6 +56,28 @@ const entites = MC.createEntities(monde);
 const chat = MC.Chat.creer({ max: 120 });
 let heure = 60;
 let meteoT = null;
+/* Les habitants des villes et villages proches des joueurs : le serveur les
+   fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
+const pnjsMorts = new Set(), pnjsSuivis = new Map();
+function peuplerLieux() {
+  if (!monde.habitats) return;
+  pnjsSuivis.forEach((e, id) => {
+    if (entites.list.indexOf(e) >= 0) return;
+    if (e.hp <= 0) pnjsMorts.add(id);
+    pnjsSuivis.delete(id);
+  });
+  const lieux = [];
+  tousLesJoueurs().forEach(({ js }) => {
+    const p = js.joueur.state.pos;
+    monde.habitats.lieuxProches(p.x, p.z, 90).forEach(l => { if (lieux.indexOf(l) < 0) lieux.push(l); });
+  });
+  MC.Habitats.pnjsManquants(lieux, entites.list, pnjsMorts).forEach(p => {
+    if (!monde.estCharge(p.x, p.z)) return;
+    const e = entites.spawn('villager', p.x, p.y + 0.05, p.z,
+                            { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
+    pnjsSuivis.set(p.id, e);
+  });
+}
 // sommet de colonne : qui s'abrite échappe à la foudre
 function abriServeur(x, z) {
   for (let y = C.WORLD_H - 1; y > 0; y--) {
@@ -398,6 +420,7 @@ setInterval(() => {
     });
     monde.chunksVoulus(centres, 3).forEach(v => monde.getChunk(v[1], v[2], true));
     monde.unloadLoin(centres, 5);
+    peuplerLieux();
   }
 
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :
@@ -491,18 +514,25 @@ setInterval(() => {
                  z: +st.pos.z.toFixed(2), yaw: +st.yaw.toFixed(2), mort: st.dead ? 1 : 0 };
       });
       // créatures, objets au sol et projectiles : tout ce qui vit dans le monde
-      const mobs = entites.list.slice(0, 80).map(e => {
+      const decrire = e => {
         const o = { e: e.eid, t: e.type, x: +e.pos.x.toFixed(2), y: +e.pos.y.toFixed(2),
                     z: +e.pos.z.toFixed(2), yaw: +(e.yaw || 0).toFixed(2) };
         if (e.type === 'item') o.i = e.item;
         if (e.genre) o.g = e.genre;
         if (e.arme) o.a = e.arme;
         if (e.variante !== undefined) o.v = e.variante;
+        if (e.role) { o.r = e.role; o.n = e.nom; }
         return o;
-      });
-      const commun = { t: NP.MSG.ETAT, joueurs: js, mobs, heure: +heure.toFixed(1) };
+      };
+      const commun = { t: NP.MSG.ETAT, joueurs: js, mobs: [], heure: +heure.toFixed(1) };
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
+        /* À chacun les créatures les plus proches de SES joueurs : avec les
+           habitants des villes, les 80 premières de la liste pouvaient être
+           à l'autre bout du monde. */
+        const pos = c.joueurs.map(x => x.joueur.state.pos);
+        const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
+        commun.mobs = entites.list.filter(e => d2(e) < 96 * 96).sort((a, b) => d2(a) - d2(b)).slice(0, 80).map(decrire);
         commun.toi = c.joueurs.map(x => SY.etatJoueur(x.joueur, x.dernier));
         envoyer(c, commun);
       });

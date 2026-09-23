@@ -821,6 +821,84 @@
       g.strokeStyle = '#8a6a3a'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
     })();
 
+    // ─── habitations (173-187) ───────────────────────────────────────────────
+    function planches(i, base, veine) {
+      var o = grain(i, base, 16);
+      g.fillStyle = veine;
+      for (var y = 3; y < TILE; y += 4) g.fillRect(o[0], o[1] + y, TILE, 1);
+      for (var r = 0; r < 4; r++) g.fillRect(o[0] + ((rnd() * 14) | 0), o[1] + r * 4, 1, 3);
+      return o;
+    }
+    planches(173, [110, 80, 48], 'rgba(60,40,22,.6)');                // 173 planches de sapin
+    planches(174, [206, 190, 138], 'rgba(150,130,84,.55)');            // 174 planches de bouleau
+    planches(175, [178, 96, 52], 'rgba(110,52,24,.55)');               // 175 planches d'acacia
+    planches(176, [168, 118, 80], 'rgba(100,66,40,.55)');              // 176 planches de jungle
+    (function () {                                                    // 177 tuiles
+      var o = grain(177, [172, 70, 50], 14);
+      for (var y = 0; y < TILE; y += 4) {
+        g.fillStyle = 'rgba(90,30,20,.7)'; g.fillRect(o[0], o[1] + y + 3, TILE, 1);
+        for (var x = (y % 8 ? 2 : 6); x < TILE; x += 8) {
+          g.fillStyle = 'rgba(210,110,80,.5)'; g.fillRect(o[0] + x, o[1] + y, 3, 2);
+        }
+      }
+    })();
+    (function () {                                                    // 178 ardoise
+      var o = grain(178, [70, 74, 86], 12);
+      g.fillStyle = 'rgba(30,32,40,.7)';
+      for (var y = 0; y < TILE; y += 4) {
+        g.fillRect(o[0], o[1] + y + 3, TILE, 1);
+        for (var x = (y % 8 ? 0 : 4); x < TILE; x += 8) g.fillRect(o[0] + x, o[1] + y, 1, 4);
+      }
+    })();
+    taches(179, [232, 228, 214], 8, 'rgba(200,194,176,.6)', 10, 2);   // 179 enduit à la chaux
+    (function () {                                                    // 180 pavé de rue
+      var o = grain(180, [104, 104, 110], 18);
+      g.strokeStyle = 'rgba(50,50,56,.75)';
+      for (var y = 0; y < 4; y++) for (var x = 0; x < 4; x++) {
+        g.strokeRect(o[0] + x * 4 + (y % 2 ? 2 : 0) + 0.5, o[1] + y * 4 + 0.5, 4, 4);
+      }
+    })();
+    (function () {                                                    // 181 comptoir dessus
+      var o = grain(181, [150, 104, 60], 12);
+      g.fillStyle = 'rgba(80,50,26,.7)'; g.fillRect(o[0], o[1], TILE, 1); g.fillRect(o[0], o[1] + 15, TILE, 1);
+    })();
+    (function () {                                                    // 182 comptoir côté
+      var o = grain(182, [130, 88, 50], 12);
+      g.fillStyle = 'rgba(70,44,22,.75)';
+      g.fillRect(o[0], o[1] + 2, TILE, 2);
+      for (var x = 1; x < TILE; x += 5) g.fillRect(o[0] + x, o[1] + 4, 1, 12);
+    })();
+    (function () {                                                    // 183 coffre-fort
+      var o = grain(183, [96, 98, 104], 8);
+      g.fillStyle = '#4a4c54'; g.fillRect(o[0] + 2, o[1] + 2, 12, 12);
+      g.fillStyle = '#b8bcc6'; g.fillRect(o[0] + 3, o[1] + 3, 10, 10);
+      g.fillStyle = '#e0b030'; g.fillRect(o[0] + 7, o[1] + 6, 3, 3);
+      g.fillStyle = '#6a6c74'; g.fillRect(o[0] + 8, o[1] + 9, 1, 3);
+    })();
+    (function () {                                                    // 184 tonneau dessus
+      var o = grain(184, [140, 98, 56], 12);
+      g.strokeStyle = 'rgba(70,50,30,.85)'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+      g.fillStyle = 'rgba(70,50,30,.6)'; g.fillRect(o[0] + 7, o[1] + 2, 1, 12);
+    })();
+    (function () {                                                    // 185 tonneau côté
+      var o = grain(185, [134, 92, 52], 12);
+      g.fillStyle = 'rgba(80,58,34,.6)';
+      for (var x = 2; x < TILE; x += 4) g.fillRect(o[0] + x, o[1], 1, TILE);
+      g.fillStyle = '#5a5a60'; g.fillRect(o[0], o[1] + 3, TILE, 2); g.fillRect(o[0], o[1] + 11, TILE, 2);
+    })();
+    (function () {                                                    // 186 enclume
+      var o = grain(186, [70, 70, 76], 10);
+      g.fillStyle = '#2e2e34';
+      g.fillRect(o[0] + 1, o[1] + 2, 14, 4); g.fillRect(o[0] + 5, o[1] + 6, 6, 5); g.fillRect(o[0] + 3, o[1] + 11, 10, 3);
+      g.fillStyle = 'rgba(200,200,210,.35)'; g.fillRect(o[0] + 1, o[1] + 2, 14, 1);
+    })();
+    (function () {                                                    // 187 panneau d'information
+      var o = grain(187, [176, 136, 84], 10);
+      g.fillStyle = '#f2ead0'; g.fillRect(o[0] + 2, o[1] + 2, 12, 12);
+      g.fillStyle = '#2a64c8'; g.fillRect(o[0] + 7, o[1] + 3, 2, 2); g.fillRect(o[0] + 7, o[1] + 6, 2, 6);
+      g.strokeStyle = '#6a4a28'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+    })();
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec

@@ -276,6 +276,8 @@
       world = MC.createWorld(graine);
       reconstruireDependances();
       grille = creerGrilleLointaine();
+      // les habitants tués l'étaient dans l'ancien monde
+      pnjsMorts.clear(); pnjsSuivis.clear();
       return world;
     }
     g.remplacerMonde = remplacerMonde;
@@ -364,6 +366,99 @@
         }
         if (g.surEclair) g.surEclair(e, lieu, ySol);
       });
+    }
+
+    // ─── habitants, métiers et lieux ─────────────────────────────────────────
+    var pnjsMorts = new Set(), pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null;
+    function ouvrirBanque() {
+      if (!world.banque) return;
+      ui.openContainer('chest', player.state.inv, world.banque, 'banque');
+      input.setState('ui');
+    }
+    function rendreService(service, ent) {
+      var st = player.state;
+      var r = MC.Habitats.servir(service, {
+        inv: st.inv, etat: st, temps: g.time, dureeJour: DC.DAY_LENGTH, estNuit: DC.isNight(g.time),
+        habitats: world.habitats, reperes: world.reperes, x: st.pos.x, z: st.pos.z,
+        lieu: world.habitats ? world.habitats.lieuA(Math.floor(st.pos.x), Math.floor(st.pos.z)) : null,
+        pvMax: player.MAX_HP || 20,
+      });
+      if (r.temps !== undefined && !net.enLigne()) g.time = r.temps;
+      if (r.ouvrir === 'banque') ouvrirBanque();
+      return r;
+    }
+    g.rendreService = rendreService;
+    /* Parler à un habitant : son métier décide du titre, de la réplique, des
+       offres et du service proposé. Un village hostile ne commerce plus. */
+    function parlerA(ent) {
+      if (world.reputation && !MC.Factions.commerceOuvert(world.reputation)) {
+        ui.toast('Les villageois refusent de commercer avec vous', 'warn');
+        return;
+      }
+      MC.Factions.surEchange(world.reputation);
+      // un villageois né dans la campagne, sans métier, garde ses échanges d'origine
+      var role = ent.role ? (MC.Habitats.ROLES[ent.role] || MC.Habitats.ROLES.habitant)
+                          : { nom: 'Villageois', service: null, offres: Inv.TRADES, repliques: ['Bonjour, voyageur.'] };
+      var LIBELLES = { info: 'Indiquez-moi les environs', banque: 'Ouvrir mon compte', repos: 'Se reposer (1 émeraude)',
+                       reparer: 'Réparer l\'outil en main', detente: 'Profiter du spectacle' };
+      var h = ((ent.eid || 0) * 7 + Math.floor(g.time / 20)) % role.repliques.length;
+      var opts = {
+        titre: role.nom + (ent.nom ? ' — ' + ent.nom : ''),
+        villageois: !ent.role,
+        replique: role.repliques[h],
+        offres: role.offres,
+        services: role.service ? [{ id: role.service, libelle: LIBELLES[role.service] }] : [],
+        onService: function (id) {
+          var r = rendreService(id, ent);
+          ui.toast(r.message, r.ok ? null : 'warn');
+          if (r.ok && id === 'info' && chat) chat.systeme(r.message);
+          return r;
+        },
+      };
+      g.dernierDialogue = { role: ent.role || 'habitant', nom: ent.nom, service: role.service };
+      ui.openContainer('trade', player.state.inv, opts, ent.eid);
+      input.setState('ui');
+    }
+    g.parlerA = parlerA;
+
+    /* Les habitants des lieux proches apparaissent quand leur coin est chargé.
+       Un habitant tué ne renaît pas de la partie. Hors ligne seulement : en
+       ligne, c'est le serveur qui les fait vivre. */
+    function peuplerLieux(dt) {
+      if (!world.habitats || net.enLigne()) return;
+      pnjT -= dt;
+      if (pnjT > 0) return;
+      pnjT = 1;
+      /* Qui a disparu depuis la dernière fois ? S'il est tombé sous les coups,
+         il est mort ; sinon (liste vidée par une nouvelle partie), on l'oublie. */
+      pnjsSuivis.forEach(function (e, id) {
+        if (entities.list.indexOf(e) >= 0) return;
+        if (e.hp <= 0) pnjsMorts.add(id);
+        pnjsSuivis.delete(id);
+      });
+      var lieux = [];
+      equipe.forEach(function (j) {
+        var p = j.player.state.pos;
+        world.habitats.lieuxProches(p.x, p.z, 90).forEach(function (l) { if (lieux.indexOf(l) < 0) lieux.push(l); });
+      });
+      MC.Habitats.pnjsManquants(lieux, entities.list, pnjsMorts).forEach(function (p) {
+        if (!world.estCharge(p.x, p.z)) return;
+        var e = entities.spawn('villager', p.x, p.y + 0.05, p.z,
+                               { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
+        pnjsSuivis.set(p.id, e);
+      });
+    }
+    g.peuplerLieux = peuplerLieux;
+    // entrer dans un lieu : on l'annonce
+    function annoncerLieu() {
+      if (!world.habitats) return;
+      var p = player.state.pos;
+      var l = world.habitats.lieuA(Math.floor(p.x), Math.floor(p.z));
+      if (l !== lieuActuel) {
+        lieuActuel = l;
+        g.lieu = l;
+        if (l) ui.toast('Bienvenue à ' + l.nom + ' — ' + MC.Habitats.LIEUX[l.kind].nom.toLowerCase() + ', ' + l.style.toLowerCase());
+      }
     }
 
     /* Distance de vue : réévaluée toutes les deux secondes selon la fluidité. */
@@ -800,17 +895,12 @@
       // interagir avec un PNJ a priorité sur le bloc derrière lui
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
       if (ent && ent.vehicule && interagirVehicule(equipe[0], ent, input.actions().sprint)) return;
-      if (ent && entities.SPECS[ent.type].npc) {
-        // un village hostile ne commerce plus
-        if (world.reputation && !MC.Factions.commerceOuvert(world.reputation)) {
-          ui.toast('Les villageois refusent de commercer avec vous', 'warn');
-          return;
-        }
-        MC.Factions.surEchange(world.reputation);
-        ui.openContainer('trade', player.state.inv, null, ent.eid);
-        input.setState('ui');
-        return;
+      // en ligne, les habitants appartiennent au serveur : on vise leur reflet
+      if (!ent && net.enLigne()) {
+        var md = mobDistantVise(player);
+        if (md && MC.EntitySpecs[md.type] && MC.EntitySpecs[md.type].npc) ent = md;
       }
+      if (ent && entities.SPECS[ent.type] && entities.SPECS[ent.type].npc) { parlerA(ent); return; }
 
       var target = player.aim();
       if (!target) return;
@@ -829,6 +919,15 @@
         } else if (kind === 'chest') {
           if (!coffreDe(target.x, target.y, target.z)) chests[k] = Inv.create(27);
           ui.openContainer('chest', player.state.inv, chests[k], k);
+        } else if (kind === 'banque') {
+          // un coffre-fort ouvre le compte, le même dans toutes les banques
+          ouvrirBanque();
+          return;
+        } else if (kind === 'info') {
+          var ri = rendreService('info', null);
+          ui.toast(ri.message);
+          if (chat) chat.systeme(ri.message);
+          return;
         } else {
           ui.openContainer('craft', player.state.inv);
         }
@@ -1265,7 +1364,7 @@
       grille.avancer(LOINTAIN_BUDGET);
       render.majLointain(grille);
       majMeteo(dt);
-      if (st === 'playing' || st === 'ui') ajusterVue(dt);
+      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);

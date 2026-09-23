@@ -1459,6 +1459,44 @@
     await frames(3);
   });
 
+  e2e('SPEC-HABITAT-007 : les habitants d un village apparaissent et parlent selon leur metier', async function (g) {
+    var s = await reset(g);
+    // le village le plus proche de l'origine
+    var H = MC.Habitats, v = null;
+    for (var r = 0; r < 12 && !v; r++) for (var rx = -r; rx <= r && !v; rx++) for (var rz = -r; rz <= r && !v; rz++) {
+      if (Math.max(Math.abs(rx), Math.abs(rz)) !== r) continue;
+      v = g.world.habitats.lieuDeRegion('village', rx, rz);
+    }
+    A.ok(v, 'un village existe');
+    s.flying = true;
+    s.pos.x = v.x + 0.5; s.pos.z = v.z + 0.5; s.pos.y = v.h0 + 3;
+    g.render.setDistance(5);                 // la génération forcée reste raisonnable
+    g.streamChunks(true);
+    // le repeuplement passe une fois par seconde : on l'attend
+    var pnjs = [];
+    for (var i = 0; i < 240 && pnjs.length < v.pnjs.length; i++) {
+      await frames(1);
+      pnjs = g.entities.list.filter(function (e) { return e.pnj && e.lieu === v.id; });
+    }
+    A.equal(pnjs.length, v.pnjs.length, 'ses ' + v.pnjs.length + ' habitants sont là');
+    var guide = pnjs.filter(function (e) { return e.role === 'guide'; })[0];
+    A.ok(guide && guide.foyer, 'le guide, attaché à son point info');
+    A.equal(g.lieu && g.lieu.id, v.id, 'on sait qu on est à ' + v.nom);
+    g.parlerA(guide);
+    await frames(2);
+    A.ok(g.ui.isContainerOpen(), 'le dialogue s ouvre');
+    A.ok(/Guide/.test(document.querySelector('.inv-box h2').textContent), 'titré par son métier : ' + document.querySelector('.inv-box h2').textContent);
+    A.ok(document.querySelector('.replique') && document.querySelector('.btn-service'), 'une réplique et un service');
+    var avant = g.world.reperes.liste.length;
+    document.querySelector('.btn-service').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await frames(2);
+    A.gt(g.world.reperes.liste.length, avant, 'le guide a marqué les environs sur la carte');
+    g.ui.closeContainer();
+    g.input.setState('playing');
+    s.flying = false;
+    await reset(g);
+  });
+
   e2e('explorer ne fait pas exploser le nombre de chunks', async function (g) {
     var s = await reset(g);
     s.flying = true;

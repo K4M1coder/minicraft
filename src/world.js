@@ -31,6 +31,12 @@
     var donjons = MC.Donjons.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); });
+    // habitations, villages et villes : même principe que les donjons
+    var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
+      return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
+    }, function (x, z) { return biomeAt(x, z); }) : null;
+    // le compte en banque du joueur, commun à toutes les banques
+    var banque = MC.Inventory ? MC.Inventory.create(27) : null;
     // donjons dont le gardien est tombé : persistés par la sauvegarde
     var donjonsVaincus = new Set();
     // la carte : chunks explorés et points de repère, propres à cette partie
@@ -206,6 +212,11 @@
       // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
       donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
         if (by <= 0 || by >= WH) return;                  // le socle reste intact
+        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+      });
+      // villes, villages et maisons : terrain nivelé, rues, bâtiments
+      if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id) {
+        if (by <= 0 || by >= WH) return;
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
 
@@ -570,6 +581,7 @@
       if (exploration) exploration.charger([]);
       if (reperes) { reperes.charger([]); reperes.suivi = null; }
       if (reputation) reputation.remettre();
+      if (MC.Inventory) banque = MC.Inventory.create(27);
       return true;
     }
 
@@ -655,7 +667,8 @@
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,
-      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain,
+      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats,
+      get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
     };
   }

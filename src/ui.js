@@ -1004,7 +1004,7 @@
       var box = el('div', 'inv-box');
       var titre = container.kind === 'craft' ? 'Établi'
                 : container.kind === 'furnace' ? 'Fourneau'
-                : container.kind === 'trade' ? 'Villageois'
+                : container.kind === 'trade' ? ((container.pnj && container.pnj.titre) || 'Villageois')
                 : container.kind === 'chest' ? 'Coffre' : 'Inventaire';
       box.appendChild(el('h2', null, titre));
 
@@ -1023,8 +1023,26 @@
 
       // ── échanges : liste d'offres cliquables
       if (container.kind === 'trade') {
+        var pnj = container.pnj;
+        if (pnj && pnj.replique) box.appendChild(el('p', 'replique', '« ' + pnj.replique + ' »'));
+        if (pnj && pnj.services && pnj.services.length) {
+          var sv = el('div', 'services');
+          pnj.services.forEach(function (s) {
+            var bt = el('button', 'btn-service', s.libelle);
+            bt.addEventListener('mousedown', function (ev) {
+              ev.preventDefault(); ev.stopPropagation();
+              var r = pnj.onService ? pnj.onService(s.id) : null;
+              // la banque ouvre son propre écran : on ne redessine pas par-dessus
+              if (r && r.ouvrir) return;
+              if (r && r.message) pnj.replique = r.message;
+              renderContainer();
+            });
+            sv.appendChild(bt);
+          });
+          box.appendChild(sv);
+        }
         var liste = el('div', 'trades');
-        Inv.TRADES.forEach(function (tr) {
+        ((pnj && pnj.offres) || Inv.TRADES).forEach(function (tr) {
           var possible = Inv.canTrade(inv, tr);
           var row = el('div', 'trade' + (possible ? '' : ' ko'));
           tr.give.forEach(function (gv) {
@@ -1181,6 +1199,7 @@
                     result: null,
                     furnace: kind === 'furnace' ? extra : null,
                     chest: kind === 'chest' ? extra : null,
+                pnj: kind === 'trade' ? extra : null,
                     livre: false, livreFiltre: '',
                     pos: pos };
       renderContainer();

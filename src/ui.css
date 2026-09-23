@@ -318,3 +318,9 @@
 .voile-climat { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s; z-index: 4; }
 .voile-climat.gel { opacity: 1; box-shadow: inset 0 0 120px 40px rgba(190, 225, 255, 0.55); }
 .voile-climat.fournaise { opacity: 1; box-shadow: inset 0 0 140px 30px rgba(255, 140, 40, 0.35); }
+
+/* ── habitants : réplique et services ── */
+.replique { font-style: italic; opacity: .9; margin: 4px 0 8px; max-width: 460px; line-height: 1.35; }
+.services { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+.btn-service { background: #2f5a3a; color: #fff; border: 1px solid #4a8a5a; border-radius: 4px; padding: 5px 10px; cursor: pointer; }
+.btn-service:hover { background: #3a7048; }

@@ -34,6 +34,8 @@
       reperes: state.world.reperes ? state.world.reperes.serialiser() : [],
       suivi: state.world.reperes && state.world.reperes.suivi ? state.world.reperes.suivi : 0,
       reputation: state.world.reputation ? state.world.reputation.serialiser() : null,
+      // le compte en banque, commun à toutes les banques du monde
+      banque: state.world.banque ? state.world.banque.serialize() : [],
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
       vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
       player: {
@@ -96,6 +98,7 @@
     }
     if (w.exploration) w.exploration.charger(data.explores || []);
     if (w.reputation) w.reputation.charger(data.reputation);
+    if (w.banque) w.banque.load(data.banque || []);
     if (w.reperes) {
       w.reperes.charger(data.reperes || []);
       w.reperes.suivi = data.suivi || null;

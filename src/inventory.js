@@ -181,6 +181,24 @@
   shaped(I.WAGONNET, 1, ['I I', 'III'], { I: I.IRON_INGOT });
   // pas de papier dans ce monde : une carte de laine tendue sur un cadre de bois
   shaped(I.CARTE, 1, ['SSS', 'SWS', 'SSS'], { S: I.STICK, W: B.WOOL });
+  // habitations : deux troncs d'une essence donnent ses planches ; elles se refondent en planches communes
+  shaped(B.PLANCHES_SAPIN, 8, ['LL'], { L: B.SPRUCE_LOG });
+  shaped(B.PLANCHES_BOULEAU, 8, ['LL'], { L: B.BIRCH_LOG });
+  shaped(B.PLANCHES_ACACIA, 8, ['LL'], { L: B.ACACIA_LOG });
+  shaped(B.PLANCHES_JUNGLE, 8, ['LL'], { L: B.JUNGLE_LOG });
+  shapeless(B.PLANKS, 1, [B.PLANCHES_SAPIN]);
+  shapeless(B.PLANKS, 1, [B.PLANCHES_BOULEAU]);
+  shapeless(B.PLANKS, 1, [B.PLANCHES_ACACIA]);
+  shapeless(B.PLANKS, 1, [B.PLANCHES_JUNGLE]);
+  shaped(B.TUILES, 4, ['TT', 'TT'], { T: B.TERRACOTTA_RED });
+  shaped(B.ARDOISE, 4, ['SC', 'CS'], { S: B.STONE, C: I.COAL });
+  shaped(B.CHAUX, 4, ['SB', 'BS'], { S: B.SAND, B: I.BONE_MEAL });
+  shaped(B.PAVE, 4, ['GG', 'GG'], { G: B.GRAVEL });
+  shaped(B.COMPTOIR, 2, ['PPP', 'C C'], { P: B.PLANKS, C: B.COBBLE });
+  shaped(B.COFFRE_FORT, 1, ['III', 'ICI', 'III'], { I: I.IRON_INGOT, C: B.CHEST });
+  shaped(B.TONNEAU, 1, ['PSP', 'P P', 'PSP'], { P: B.PLANKS, S: I.STICK });
+  shaped(B.ENCLUME, 1, ['III', ' I ', 'III'], { I: I.IRON_INGOT });
+  shaped(B.PANNEAU_INFO, 1, ['PPP', 'PPP', ' S '], { P: B.PLANKS, S: I.STICK });
   shaped(I.SOUS_MARIN, 1, ['GIG', 'IMI', 'III'], { G: B.GLASS, I: I.IRON_INGOT, M: I.MOTEUR });
   shaped(I.STICK, 4, ['P', 'P'], { P: B.PLANKS });
   shaped(B.CRAFTING_TABLE, 1, ['PP', 'PP'], { P: B.PLANKS });

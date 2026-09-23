@@ -475,3 +475,15 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-LUMIERE-001 | Une source répand sa lumière de proche en proche, un cran par bloc ; les blocs pleins l'arrêtent, le verre, le feuillage et l'eau la laissent passer | niveaux autour d'une torche, mur, verre | ✅ |
 | SPEC-LUMIERE-002 | Aucune limite au nombre de sources : toutes éclairent, d'un chunk à l'autre, et le mailleur inscrit la lumière dans chaque sommet | 84 sources, lumière du chunk voisin, attribut par sommet | ✅ |
 | SPEC-LUMIERE-003 | Poser ou retirer une source, ou ouvrir un passage près d'elle, recalcule les chunks à portée et eux seuls ; un lac de lave n'éclaire que par sa surface | chunks touchés, cache des sources | ✅ |
+
+## HABITAT — habitations, villages et villes
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HABITAT-001 | Des habitations isolées, des villages et des villes jalonnent le monde, au sec, sans se chevaucher, au même endroit pour une même graine | comptages, chevauchements, déterminisme | ✅ |
+| SPEC-HABITAT-002 | Chaque biome a son style de construction (colombages, isbas, grès à toits plats, cases, pilotis, adobes, chalets, igloos, maisons-champignons) et les villes leur variante urbaine (rues pavées, brique, enduits) | styles, formes de toit, variante urbaine | ✅ |
+| SPEC-HABITAT-003 | Villes et villages comptent point info, salons, magasins, artisans (forgeron, menuisier, tisserand), marché, fermes et loisirs — la banque est affaire de ville ; chaque bâtiment qui sert a son habitant, son métier, ses répliques et ses offres ; une maison isolée abrite un ermite | programmes et métiers | ✅ |
+| SPEC-HABITAT-004 | Un lieu se pose dans ses chunks : terrain nivelé et dégagé, rues, bâtiments meublés (coffres-forts de la banque…), lampadaires par centaines ; on sait dans quel lieu et quel bâtiment on se trouve | chunks générés, plateforme, lanternes, lieu et bâtiment | ✅ |
+| SPEC-HABITAT-005 | Les métiers rendent service : le guide indique et marque sur la carte les lieux alentour, le banquier ouvre le compte, l'aubergiste loge (et fait dormir jusqu'au matin), le forgeron répare, l'animateur divertit ; les habitants tués ne renaissent pas aussitôt | services, coûts, délais, habitants manquants | ✅ |
+| SPEC-HABITAT-006 | Le compte en banque, commun à toutes les banques, survit à la sauvegarde ; de nouveaux blocs de construction (planches d'essences, tuiles, ardoise, enduit, pavé, comptoir, coffre-fort, tonneau, enclume, panneau d'information) se fabriquent | aller-retour de sauvegarde, recettes | ✅ |
+| SPEC-HABITAT-007 | En jeu, les habitants d'un lieu apparaissent quand on s'en approche, restent près de leur bâtiment, et parler à l'un d'eux ouvre son dialogue : son métier, sa réplique, ses offres et son service | visite d'un village, dialogue du guide | ✅ |

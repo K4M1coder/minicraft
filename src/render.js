@@ -998,7 +998,8 @@
       obj.visible = false;
       scene.add(obj);
       return { obj: obj, pos: pos, x: new Float32Array(n), y: new Float32Array(n), z: new Float32Array(n),
-               sol: new Float32Array(n), vivant: new Uint8Array(n), n: n, pluie: estPluie, actifs: 0 };
+               sol: new Float32Array(n), vivant: new Uint8Array(n), col: new Int32Array(n * 2),
+               n: n, pluie: estPluie, actifs: 0 };
     }
     var pluie = systeme(PLUIE_MAX, true), neige = systeme(NEIGE_MAX, false);
     var tempsP = 0;
@@ -1006,6 +1007,7 @@
       var x = cam.x + (Math.random() * 2 - 1) * BOITE, z = cam.z + (Math.random() * 2 - 1) * BOITE;
       var sol = abri ? abri(Math.floor(x), Math.floor(z)) + 1 : -1e9;
       sys.x[i] = x; sys.z[i] = z; sys.sol[i] = sol;
+      sys.col[i * 2] = Math.floor(x); sys.col[i * 2 + 1] = Math.floor(z);
       sys.y[i] = enHaut ? cam.y + HAUT_P * (0.8 + Math.random() * 0.2) : cam.y - 8 + Math.random() * (HAUT_P + 8);
       // sous un toit qui couvre toute la hauteur visible : particule en sommeil
       sys.vivant[i] = sol < cam.y + HAUT_P ? 1 : 0;
@@ -1023,6 +1025,12 @@
         var y = sys.y[i] - chute * dt;
         x += vx * derive * dt; z += vz * derive * dt;
         if (!sys.pluie) { x += Math.sin(tempsP * 1.7 + i) * 0.4 * dt; z += Math.cos(tempsP * 1.3 + i * 0.7) * 0.4 * dt; }
+        // poussée par le vent dans une autre colonne : le toit de celle-ci compte désormais
+        var fx = Math.floor(x), fz = Math.floor(z);
+        if (abri && (fx !== sys.col[i * 2] || fz !== sys.col[i * 2 + 1])) {
+          sys.col[i * 2] = fx; sys.col[i * 2 + 1] = fz;
+          sys.sol[i] = abri(fx, fz) + 1;
+        }
         if (y < sys.sol[i] || y < cam.y - 12) { renaitre(sys, i, cam, abri, true); x = sys.x[i]; y = sys.y[i]; z = sys.z[i]; }
         sys.x[i] = x; sys.y[i] = y; sys.z[i] = z;
         var cache = !sys.vivant[i];
