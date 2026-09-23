@@ -1857,6 +1857,35 @@
     await reset(g);
   });
 
+  e2e('SPEC-SUCCES-001 : casser un bloc débloque « Premier bloc » (toast) et K ouvre le panneau des succès',
+      async function (g) {
+    var s = await reset(g);
+    g.succes = MC.Succes.creer();          // suivi vierge, indépendant des tests précédents
+    s.inv.add(I.IRON_SHOVEL, 1); s.selected = 0;
+    s.pitch = -Math.PI / 2 + 0.05;
+    await frames(2);
+    var t = g.player.aim();
+    A.ok(t, 'un bloc est visé sous le joueur');
+    var avant = g.world.getBlock(t.x, t.y, t.z);
+    mouseDown(g, 0);
+    for (var i = 0; i < 240 && g.world.getBlock(t.x, t.y, t.z) === avant; i++) await frames(1);
+    mouseUp(0);
+    await frames(2);
+    A.ok(g.succes.estDebloque('premier_bloc'), 'le suivi de la partie a débloqué « premier bloc »');
+    var toastVisible = Array.prototype.some.call(document.querySelectorAll('.toasts .toast'),
+      function (el) { return /Premier bloc/.test(el.textContent); });
+    A.ok(toastVisible, 'un toast « Premier bloc » est affiché');
+
+    key('KeyK');
+    await frames(2);
+    var panneau = document.querySelector('.succes-panneau');
+    A.ok(panneau && panneau.style.display !== 'none', 'K ouvre le panneau des succès');
+    A.ok(/Premier bloc/.test(panneau.textContent), 'le panneau liste « Premier bloc »');
+    key('KeyK');
+    await frames(2);
+    A.equal(panneau.style.display, 'none', 'un second K referme le panneau');
+  });
+
   /* En dernier : ce test change de partie (mode histoire, autre graine). */
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);

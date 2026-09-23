@@ -113,7 +113,21 @@
       time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
+      succes: MC.Succes.creer(),
     };
+
+    /* SPEC-SUCCES-001 : signale un événement au suivi de la partie ; ce qui
+       vient de se débloquer s'annonce une seule fois (toast, chat, son). */
+    function signalerSucces(ev) {
+      var nouveaux = g.succes.signaler(ev);
+      nouveaux.forEach(function (n) {
+        ui.toast('Succès : ' + n.nom);
+        chat.systeme('Succès débloqué : ' + n.nom + ' — ' + n.description);
+        audio.play('craft');
+      });
+      return nouveaux;
+    }
+    g.signalerSucces = signalerSucces;
 
     var ui = MC.createUI(host, atlas, {
       onSelectSlot: selectSlot,
@@ -131,6 +145,9 @@
       onSupprimer: supprimerPartie,
       onCreer: creerPartie,
       onRejoindre: rejoindreServeur,
+      onFabrique: function (id) { signalerSucces({ type: 'fabriquer', id: id }); },
+      onEchange: function () { signalerSucces({ type: 'echange' }); },
+      onSucces: function () { ui.panneauSucces(g.succes); input.setState('ui'); },
     }, hud);
 
     var input = MC.createInput(canvas, {
@@ -220,6 +237,7 @@
         histoire: opts.mode === 'histoire' ? MC.Histoire.parametres(opts.histoire) : null,
       });
       g.histoire = null;
+      g.succes = MC.Succes.creer();
       appliquerPartie(meta);
       // le monde doit repartir de la bonne graine
       remplacerMonde(meta.graine);
@@ -373,6 +391,7 @@
             if (!st.dead && me.foudroie(lieu, st.pos, abri)) {
               j.player.hurt(me.DEGATS_FOUDRE);
               if (j.index === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); }
+              if (!st.dead) signalerSucces({ type: 'foudre' });
             }
           });
           entities.list.forEach(function (en) {
@@ -390,6 +409,7 @@
       if (!world.banque) return;
       ui.openContainer('chest', player.state.inv, world.banque, 'banque');
       input.setState('ui');
+      signalerSucces({ type: 'banque' });
     }
     function rendreService(service, ent) {
       var st = player.state;
@@ -602,6 +622,7 @@
       var stats = h ? 'Quêtes secondaires : ' + h.secondairesFaites + '/' + h.secondairesPrevues +
                       ' · Chapitres : ' + Math.min(h.chap + 1, h.chapitres.length) + '/' + h.chapitres.length : '';
       g.finHistoire = n;
+      signalerSucces({ type: 'histoire', fin: n.id });
       chat.systeme('Fin : ' + n.titre);
       ui.objectifHistoire(null);
       forceCloseContainer();
@@ -651,6 +672,7 @@
         g.lieu = l;
         if (l) ui.toast('Bienvenue à ' + l.nom + ' — ' + MC.Habitats.LIEUX[l.kind].nom.toLowerCase() + ', ' + l.style.toLowerCase());
         if (l && g.histoire) signalerHistoire({ type: 'lieu', id: l.id });
+        if (l) signalerSucces({ type: 'lieu', kind: l.kind });
       }
     }
 
@@ -708,6 +730,7 @@
       s.hp = 20; s.hunger = 20; s.air = 10; s.dead = false;
       s.flying = false; s.selected = 0; s.exhaustion = 0;
       g.time = 60;
+      g.succes = MC.Succes.creer();
       placeAtSpawn();
       prime();
       ui.toast('Nouveau monde');
@@ -870,6 +893,8 @@
       for (var k = 0; k < evts.length; k++) {
         if (g.histoire && evts[k].type === 'mort' && evts[k].parJoueur) signalerHistoire({ type: 'tuer', mob: evts[k].victime });
         if (g.histoire && evts[k].type === 'boss_vaincu') signalerHistoire({ type: 'boss', donjon: evts[k].donjon });
+        if (evts[k].type === 'mort' && evts[k].parJoueur) signalerSucces({ type: 'tuer', mob: evts[k].victime });
+        if (evts[k].type === 'boss_vaincu') signalerSucces({ type: 'boss', donjon: evts[k].donjon });
         // une mort de la main du joueur change ce que les factions pensent de lui
         if (evts[k].type === 'mort' && evts[k].parJoueur && world.reputation) {
           MC.Factions.surMort(evts[k].victime, world.reputation).forEach(function (c) {
@@ -979,6 +1004,7 @@
       if (V.monter(st, e)) {
         if (j.index === 0) ui.toast(V.DEFS[e.vehicule].nom + ' — ZQSD pour conduire, F pour descendre');
         audio.play('poser');
+        signalerSucces({ type: 'vehicule', vehicule: e.vehicule });
       }
       return true;
     }
@@ -1017,6 +1043,32 @@
       return lache;
     }
     g.spillContainer = spillContainer;
+
+    /* SPEC-SUCCES-001 : altitude, distance parcourue et nuit survécue se
+       vérifient au fil du temps plutôt qu'à un événement précis. Hors ligne
+       seulement : en ligne, plusieurs joueurs partagent l'équipe et rien ne
+       fait autorité sur « la » position à suivre. */
+    var succesT = 0, succesDist = 0, succesPosPrec = null, succesNuit = DC.isNight(60);
+    function tickerSucces(dt) {
+      if (net.enLigne()) return;
+      var pos = player.state.pos;
+      if (succesPosPrec && !player.state.dead) {
+        var d = Math.hypot(pos.x - succesPosPrec.x, pos.y - succesPosPrec.y, pos.z - succesPosPrec.z);
+        // une téléportation (respawn, nouvelle partie) ne compte pas comme un déplacement
+        if (isFinite(d) && d < 20) succesDist += d;
+      }
+      succesPosPrec = { x: pos.x, y: pos.y, z: pos.z };
+
+      var nuitActuelle = DC.isNight(g.time);
+      if (succesNuit && !nuitActuelle && !player.state.dead) signalerSucces({ type: 'nuit' });
+      succesNuit = nuitActuelle;
+
+      succesT -= dt;
+      if (succesT > 0) return;
+      succesT = 1;
+      signalerSucces({ type: 'altitude', y: pos.y });
+      if (succesDist > 0) { signalerSucces({ type: 'distance', blocs: succesDist }); succesDist = 0; }
+    }
 
     function selectSlot(i) {
       if (i < 0 || i >= Inv.HOTBAR_SIZE) return;
@@ -1136,7 +1188,7 @@
         net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0);
       }
       if (res === 'place') audio.play('poser');
-      else if (res === 'eat') audio.play('manger');
+      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: mange }); }
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
       else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
@@ -1176,6 +1228,9 @@
       } else if (code === 'KeyJ') {
         ui.panneauFactions(world.reputation);
         input.setState('ui');
+      } else if (code === 'KeyK') {
+        ui.panneauSucces(g.succes);
+        input.setState('ui');
       } else if (code === 'KeyF') {
         descendreDe(equipe[0]);
       } else if (code === 'KeyG') {
@@ -1191,6 +1246,7 @@
       else if (code === 'KeyC' && ui.carteOuverte()) closeUI();
       else if (code === 'KeyJ' && ui.factionsOuvertes()) closeUI();
       else if (code === 'KeyH' && ui.journalOuvert()) closeUI();
+      else if (code === 'KeyK' && ui.succesOuverts()) closeUI();
       else if (code === 'KeyL') ui.toggleLivre();
     }
 
@@ -1215,6 +1271,7 @@
     function closeUI() {
       ui.fermerCarte();
       ui.fermerFactions();
+      ui.fermerSucces();
       if (ui.fermerJournal) ui.fermerJournal();
       forceCloseContainer();
       // une réplique du récit attend sa réponse : on garde la main sur l'interface
@@ -1233,45 +1290,37 @@
       if (g.net && g.net.envoyerChat) g.net.envoyerChat(m.texte);
     }
 
+    /* SPEC-CMD-001 : toute la logique des commandes vit dans MC.Commandes
+       (module pur, testable sous Node) ; ici on ne fait que rassembler le
+       contexte et appliquer les actions qu'il renvoie. */
     function executerCommande(cmd) {
       var s = player.state;
-      switch (cmd.nom) {
-        case 'heure':
-          chat.systeme('Il est ' + DC.clockString(g.time) +
-                       (DC.isNight(g.time) ? ' — il fait nuit' : ' — il fait jour'));
-          break;
-        case 'jour': g.time = DC.DAY_LENGTH * 0.2; chat.systeme('Le jour se lève.'); break;
-        case 'nuit': g.time = DC.DAY_LENGTH * 0.7; chat.systeme('La nuit tombe.'); break;
-        case 'ou':
-        case 'pos':
-          chat.systeme('Vous êtes en ' + s.pos.x.toFixed(1) + ' / ' +
-                       s.pos.y.toFixed(1) + ' / ' + s.pos.z.toFixed(1));
-          break;
-        case 'graine': chat.systeme('Graine du monde : ' + world.seed); break;
-        case 'aide':
-          chat.systeme('Commandes : /heure /jour /nuit /ou /graine /vider /aide ' +
-                       '/rejoindre [adresse] /quitter /qui');
-          break;
-        case 'rejoindre': {
-          var hote = cmd.args[0] || '';
-          chat.systeme('Connexion' + (hote ? ' a ' + hote : ' au serveur local') + '…');
-          net.connecter(hote, g.nomJoueur || 'Joueur', equipe.length);
-          break;
+      var noms = [];
+      if (net.enLigne()) net.distants.forEach(function (d) { noms.push(d.nom); });
+      var j0 = equipe[0];
+      var ctx = {
+        temps: g.time,
+        dureeJour: DC.DAY_LENGTH,
+        graine: world.seed,
+        position: s.pos,
+        meteo: g.meteo ? {
+          nom: g.meteo.nom, vent: g.meteo.vent,
+          temperature: (j0 && j0.temperature) ? j0.temperature.temperature : null,
+        } : null,
+        succes: g.succes,
+        enLigne: net.enLigne(),
+        joueurs: noms,
+      };
+      var res = MC.Commandes.executer(cmd, ctx);
+      res.messages.forEach(function (m) { chat.systeme(m); });
+      res.actions.forEach(function (a) {
+        switch (a.type) {
+          case 'heure': if (!net.enLigne()) g.time = a.valeur; break;
+          case 'vider': chat.vider(); break;
+          case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
+          case 'quitter': net.deconnecter(); break;
         }
-        case 'quitter':
-          net.deconnecter();
-          chat.systeme('Deconnecte. Partie en solo.');
-          break;
-        case 'qui': {
-          if (!net.enLigne()) { chat.systeme('Hors ligne.'); break; }
-          var noms = [];
-          net.distants.forEach(function (d) { noms.push(d.nom); });
-          chat.systeme('En ligne : vous' + (noms.length ? ', ' + noms.join(', ') : ' (seul)'));
-          break;
-        }
-        case 'vider': chat.vider(); break;
-        default: chat.systeme('Commande inconnue : /' + cmd.nom);
-      }
+      });
     }
     g.traiterMessage = traiterMessage;
 
@@ -1404,7 +1453,7 @@
             // le serveur calcule le butin et nous le donne : pas de double compte
             entities.list.splice(nAvant);
             net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
-          }
+          } else signalerSucces({ type: 'casser', bloc: res.id });
           if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive) spillContainer(pos.x, pos.y, pos.z);
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
@@ -1462,7 +1511,7 @@
         return;
       }
       if (res === 'place') audio.play('poser');
-      else if (res === 'eat') audio.play('manger');
+      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: enMain && enMain.id }); }
       else if (res === 'till' || res === 'plant') audio.play('poser');
     }
 
@@ -1521,6 +1570,7 @@
         }
         entities.mergeItems();
         surveillerDonjons();
+        tickerSucces(dt);
 
         // temps, apparitions, cultures
         g.time += dt;

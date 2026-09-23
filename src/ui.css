@@ -321,6 +321,12 @@
   .faction-jauge i { position: absolute; top: -2px; width: 1px; height: 12px; background: #fff8; }
   .faction small { opacity: .7; }
 
+  /* succès (SPEC-SUCCES-001) : même style que le panneau des factions */
+  .succes-panneau { max-height: 80vh; overflow: auto; }
+  .succes-liste .succes { margin: 10px 0; }
+  .succes-liste .succes.fait b { color: #8fdf9a; }
+  .succes-liste .succes small { opacity: .7; }
+
 /* ── climat : givre quand on gèle, halo brûlant en pleine fournaise ── */
 .voile-climat { position: absolute; inset: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s; z-index: 4; }
 .voile-climat.gel { opacity: 1; box-shadow: inset 0 0 120px 40px rgba(190, 225, 255, 0.55); }

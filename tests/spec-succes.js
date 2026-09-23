@@ -172,5 +172,33 @@
       vide.charger({ compte: 'pas un objet', debloques: null });
       A.deep(vide.debloques(), [], 'des champs du mauvais type sont ignorés sans planter');
     });
+
+    it('SPEC-SUCCES-001 : le suivi d\'une partie survit à la sauvegarde (MC.Save)', function () {
+      var etat = G.etatMinimal(2026);
+      etat.succes = S.creer();
+      etat.succes.signaler({ type: 'casser', bloc: C.B.STONE });
+      for (var i = 0; i < 4; i++) etat.succes.signaler({ type: 'tuer', mob: 'zombie' });
+
+      var mem = {}, st = { getItem: function (k) { return mem[k] || null; }, setItem: function (k, v) { mem[k] = v; },
+                           removeItem: function (k) { delete mem[k]; } };
+      A.ok(MC.Save.save(st, etat), 'sauvegardé');
+
+      // une nouvelle partie, avant chargement : suivi vierge
+      etat.succes = S.creer();
+      A.equal(etat.succes.debloques().length, 0, 'vierge avant chargement');
+
+      A.ok(MC.Save.load(st, etat), 'rechargé');
+      A.ok(etat.succes.estDebloque('premier_bloc'), 'premier_bloc revient de la sauvegarde');
+      A.equal(etat.succes.progression().filter(function (l) { return l.id === 'dix_hostiles'; })[0].compte, 4,
+        'le compteur des hostiles est revenu à 4');
+
+      // une sauvegarde d'avant ce module (pas de champ succes) ne fait pas planter le chargement
+      var brut = JSON.parse(mem[MC.Save.KEY]);
+      delete brut.succes;
+      mem[MC.Save.KEY] = JSON.stringify(brut);
+      etat.succes = S.creer();
+      A.ok(MC.Save.load(st, etat), 'chargement toléré sans le champ succes');
+      A.deep(etat.succes.debloques(), [], 'suivi resté vierge, sans planter');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

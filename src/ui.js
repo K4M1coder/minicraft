@@ -194,6 +194,34 @@
     root.appendChild(factionsEl);
     var factionsVisibles = false;
 
+    // ══════════════════════════════════════════════════════════════════════
+    // Succès (SPEC-SUCCES-001) : progression de chaque succès de la partie
+    // ══════════════════════════════════════════════════════════════════════
+    var succesEl = el('div', 'factions-panneau succes-panneau');
+    succesEl.style.display = 'none';
+    root.appendChild(succesEl);
+    var succesVisibles = false;
+    function panneauSucces(suivi) {
+      var lignes = suivi ? suivi.progression() : [];
+      var faits = lignes.filter(function (l) { return l.fait; }).length;
+      succesEl.innerHTML = '<div class="carte-tete"><b>Succès (' + faits + '/' + lignes.length + ')</b>' +
+        '<span class="carte-aide">K pour fermer</span></div>' +
+        '<div class="succes-liste">' + lignes.map(function (l) {
+          var pct = l.seuil ? Math.min(100, Math.round((l.compte / l.seuil) * 100)) : 100;
+          return '<div class="succes' + (l.fait ? ' fait' : '') + '">' +
+            '<div class="faction-l"><b>' + ech(l.nom) + '</b>' +
+            '<span class="st ' + (l.fait ? 'amical' : 'neutre') + '">' +
+            (l.fait ? 'Débloqué' : l.compte + '/' + l.seuil) + '</span></div>' +
+            '<div class="faction-jauge"><div style="width:' + pct + '%"></div></div>' +
+            '<small>' + ech(l.description) + '</small></div>';
+        }).join('') + '</div>';
+      succesEl.style.display = '';
+      succesVisibles = true;
+      return succesEl;
+    }
+    function fermerSucces() { var o = succesVisibles; succesEl.style.display = 'none'; succesVisibles = false; return o; }
+    function succesOuverts() { return succesVisibles; }
+
     // ─── mode histoire : objectif, dialogue, journal, fin ─────────────────────
     var objectifEl = el('div', 'objectif-histoire');
     objectifEl.style.display = 'none';
@@ -621,6 +649,7 @@
       '<tr><td>F</td><td>descendre du véhicule</td></tr>' +
       '<tr><td>C</td><td>carte et points de repère</td></tr>' +
       '<tr><td>J</td><td>factions et réputation</td></tr>' +
+      '<tr><td>K</td><td>succès et progression</td></tr>' +
       '<tr><td>H</td><td>journal de l\'histoire (mode histoire)</td></tr>' +
       '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
       '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
@@ -910,6 +939,7 @@
         '<button id="btn-resume" class="primary">Reprendre</button>' +
         '<button id="btn-save">Sauvegarder</button>' +
         '<button id="btn-affichage">Affichage</button>' +
+        '<button id="btn-succes">Succès</button>' +
         '<button id="btn-quit">Menu principal</button>' +
         '</div>' +
         '<p class="hint" id="lock-hint"></p>' +
@@ -917,6 +947,7 @@
       overlay.querySelector('#btn-resume').onclick = function () { hooks.onResume && hooks.onResume(); };
       overlay.querySelector('#btn-save').onclick = function () { hooks.onSave && hooks.onSave(); };
       overlay.querySelector('#btn-affichage').onclick = function () { ecranAffichage(); };
+      overlay.querySelector('#btn-succes').onclick = function () { hooks.onSucces && hooks.onSucces(); };
       overlay.querySelector('#btn-quit').onclick = function () { hooks.onQuit && hooks.onQuit(); };
     }
 
@@ -1080,6 +1111,7 @@
       if (heldStack) heldStack.n += r.n;
       else heldStack = { id: r.id, n: r.n };
       if (hooks.onSound) hooks.onSound('craft');
+      if (hooks.onFabrique) hooks.onFabrique(r.id);
       recomputeResult();
     }
 
@@ -1268,7 +1300,7 @@
             if (!Inv.canTrade(inv, tr)) return;
             var reste = Inv.doTrade(inv, tr);
             if (reste === null) toast('Pas de place dans l\'inventaire', 'warn');
-            else toast('Échange conclu : ' + C.nameOf(tr.get.id));
+            else { toast('Échange conclu : ' + C.nameOf(tr.get.id)); if (hooks.onEchange) hooks.onEchange(); }
             renderContainer();
           });
           liste.appendChild(row);
@@ -1448,6 +1480,7 @@
       barreBoss: barreBoss, ouvrirCarte: ouvrirCarte, fermerCarte: fermerCarte, carteOuverte: carteOuverte,
       dessinerCarte: dessinerCarte, boussole: boussole,
       panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
+      panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
       ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
