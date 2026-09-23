@@ -533,12 +533,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-VENT-001 | Le vent varie avec l'altitude : sa direction tourne et sa force croît en montant ; chaque couche de nuages suit le vent de son altitude | vent à plusieurs altitudes, dérive par couche | ⏳ |
+| SPEC-VENT-001 | Le vent varie avec l'altitude : sa direction tourne et sa force croît en montant, avec des rafales ; chaque couche de nuages, la brume, la pluie et la neige suivent le vent de leur altitude ; le vent est le même pour tous les postes | vent à plusieurs altitudes, rafales, dérive par couche, déterminisme | ⏳ |
 | SPEC-VENT-002 | Herbes, fleurs, cultures, buissons et feuillages ondulent au vent : sommet mobile, pied fixe, selon le vent au sol ; les blocs pleins ne bougent pas | souplesse par sommet | ⏳ |
 | SPEC-VENT-003 | Des bancs de brume se forment dans les vallées et au-dessus de l'eau le matin et par temps humide, et dérivent avec le vent de surface | densité de brume selon l'heure, l'humidité, le relief ; dérive | ⏳ |
 | SPEC-VENT-004 | Buissons et prairies fleuries couvrent plaines, savanes et forêts claires | buissons et fleurs générés | ⏳ |
-| SPEC-NUAGE-003 | Des cyclones naissent sur les mers chaudes et humides quand le vent s'y prête : une vaste spirale de nuages autour d'un œil calme, qui tourne, se déplace avec le vent dominant, apporte vents violents et pluies, et s'affaiblit en touchant terre ou des eaux froides | naissance selon température, humidité et vent ; spirale, œil, trajectoire, affaiblissement | ⏳ |
-| SPEC-NUAGE-004 | Des tornades se forment sous les orages quand la chaleur, l'humidité et le cisaillement du vent (entre le sol et les nuages) sont réunis : un entonnoir qui descend du nuage, se déplace, soulève et projette ce qu'il touche, puis se dissipe | conditions de formation, trajectoire, poussée, durée de vie | ⏳ |
+| SPEC-NUAGE-003 | Des cyclones naissent sur les mers chaudes et humides quand le vent s'y prête : une vaste spirale de nuages autour d'un œil calme, qui tourne, se déplace avec le vent dominant, apporte vents violents et pluies, et s'affaiblit en touchant terre ou des eaux froides ; comme la météo, ils sont les mêmes pour tous les postes (fonction de la graine et de l'heure) | naissance selon température, humidité et vent ; spirale, œil, trajectoire, affaiblissement ; déterminisme | ⏳ |
+| SPEC-NUAGE-004 | Des tornades se forment sous les orages quand la chaleur, l'humidité et le cisaillement du vent (entre le sol et les nuages) sont réunis : un entonnoir qui descend du nuage, se déplace, soulève et projette créatures, joueurs et objets au sol, arrache feuillage et plantes, puis se dissipe ; mêmes tornades pour tous les postes, dégâts appliqués par le serveur en ligne | conditions de formation, trajectoire, poussée, dégâts, durée de vie, déterminisme | ⏳ |
 
 ## L17 — relief
 
@@ -546,10 +546,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-BIOME-005 | Aux frontières, surfaces, végétation et climat se mêlent sur une large bande : on passe d'un biome à l'autre progressivement, sans ligne nette | mélange des surfaces dans la bande de transition | ⏳ |
 | SPEC-BIOME-006 | Le paysage est vaste : continents, chaînes de montagnes et bassins s'étendent sur plusieurs kilomètres | tailles des structures du relief | ⏳ |
+| SPEC-BIOME-007 | Les climats forment de grandes régions cohérentes, sur des milliers de blocs : on ne passe pas d'un désert à une banquise en cent mètres ; froid et chaud, sec et humide s'ordonnent en gradients | distances entre biomes incompatibles | ⏳ |
 | SPEC-RELIEF-007 | Un volcan se dresse sur une montagne ou une chaîne, jamais au milieu d'une plaine | position des volcans | ⏳ |
 | SPEC-RELIEF-008 | Des volcans s'alignent parfois en chaîne le long d'une crête | chaînes de volcans | ⏳ |
 | SPEC-RELIEF-009 | Des volcans sont éteints : sans lave, leur cratère porte un lac ou de l'herbe | volcans éteints | ⏳ |
 | SPEC-RELIEF-010 | Plusieurs types de volcans : stratovolcan élancé, volcan bouclier large et plat, caldeira effondrée | profils distincts | ⏳ |
+| SPEC-RELIEF-011 | Un volcan actif fume ; de temps à autre il gronde et crache des projectiles incandescents, la lave déborde de son cratère puis se fige en basalte | panache, éruptions, coulées qui se figent | ⏳ |
 
 ## L18 — peuplement et routes
 
@@ -561,6 +563,8 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-ROUTE-002 | Une route suit le relief sans marche de plus d'un bloc, et contourne ce qui est trop raide | pentes le long des tracés | ⏳ |
 | SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ⏳ |
 | SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ⏳ |
+| SPEC-ROUTE-005 | Aux carrefours, des panneaux indiquent le nom et la distance des lieux ; aux abords des villes, les routes sont éclairées | panneaux, lampadaires | ⏳ |
+| SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme | déplacements le long des tracés | ⏳ |
 
 ## L19 — identités procédurales
 
@@ -568,11 +572,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-HABITAT-010 | Chaque type de bâtiment a plusieurs plans reconnaissables (trois pour la maison, deux au moins pour les autres), agencés procéduralement : deux bâtiments du même type diffèrent | variantes et signatures | ⏳ |
 | SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde | vérification de toutes les variantes | ⏳ |
-| SPEC-DONJON-013 | Les donjons sont grands : plusieurs salles reliées par des couloirs, sur plusieurs niveaux reliés par des escaliers ; le gardien au plus profond | graphe de salles, niveaux, connexité | ⏳ |
+| SPEC-HABITAT-012 | Les villes ont des quartiers cohérents (centre commerçant, quartiers résidentiels, faubourgs agricoles) et leur taille varie de la petite ville à la grande cité | quartiers et tailles | ⏳ |
+| SPEC-DONJON-013 | Les donjons moyens et grands comptent plusieurs salles reliées par des couloirs, les grands plusieurs niveaux reliés par des escaliers ; toute salle est atteignable depuis l'entrée, le gardien se tient au plus profond, et des gardes peuplent les autres salles | graphe de salles, niveaux, connexité depuis l'entrée, gardien au plus profond | ⏳ |
 | SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ⏳ |
 | SPEC-DONJON-015 | Les donjons ont trois tailles : petits (les donjons actuels, une salle et son accès), moyens (plusieurs salles sur un niveau), grands (plusieurs niveaux et une dizaine de salles ou plus) | taille, nombre de salles et de niveaux par catégorie | ⏳ |
 | SPEC-DONJON-016 | La taille dépend du lieu et de la rareté (les grands sont rares et demandent de la place en profondeur ou en surface) ; elle fait croître la difficulté (gardes, sous-gardiens) et le butin | répartition des tailles, gardes et butins selon la taille | ⏳ |
-| SPEC-MOB-010 | Chaque créature a plusieurs variantes d'apparence et un modèle détaillé (tête, corps, membres) animé : marche, attaque, regard | variantes, parties, animations | ⏳ |
+| SPEC-MOB-010 | Chaque créature, chaque habitant et chaque avatar de joueur a plusieurs variantes d'apparence (tailles, couleurs, vêtements selon le métier, accessoires) et un modèle détaillé (tête, corps, membres), animé : marche, course, nage, attaque, regard vers sa cible ; au loin, un modèle simplifié le remplace | variantes, parties, animations, niveau de détail selon la distance | ⏳ |
 
 ## L20 — rendu lointain
 
@@ -582,6 +587,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-VUE-004 | Villes et villages se voient de loin en silhouettes, éclairées la nuit | silhouettes des lieux | ⏳ |
 | SPEC-VUE-005 | Une perspective atmosphérique commune bleuit et éclaircit ce qui s'éloigne, sans rupture entre vrais blocs et relief lointain | même fonction de couleur par distance | ⏳ |
 | SPEC-VUE-006 | Une option « rendu réaliste lointain » active imposteurs, ombres lointaines et perspective atmosphérique | option et effets | ⏳ |
+| SPEC-VUE-007 | Les chunks lointains encore affichés en vrais blocs passent à un maillage simplifié (moins de faces) sans saut visible, pour allonger la distance à fréquence d'images égale | niveaux de détail des chunks | ⏳ |
 
 ## L21 — histoires procédurales
 
@@ -596,17 +602,19 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-PORTE-001 | Des portes (deux blocs) s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas | collisions porte ouverte / fermée | ⏳ |
-| SPEC-PORTE-002 | Des trappes s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe | collisions trappe ouverte / fermée | ⏳ |
+| SPEC-PORTE-001 | Des portes (deux blocs) se fabriquent, s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas, les habitants si ; les bâtiments générés ont leurs portes | recette, collisions porte ouverte / fermée, créatures, portes des bâtiments | ⏳ |
+| SPEC-PORTE-002 | Des trappes se fabriquent, s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe à travers, et une échelle dessous se grimpe jusqu'à elles | recette, collisions trappe ouverte / fermée, échelle | ⏳ |
 | SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ⏳ |
 | SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ⏳ |
-| SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP, avec les mêmes armes | attaque d'un joueur par un autre | ⏳ |
+| SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP (réglage du serveur, désactivé par défaut), avec les mêmes armes, reculs et délais qu'en PvE ; le serveur fait foi et annonce qui a vaincu qui | attaque d'un joueur par un autre, réglage du serveur, annonce | ⏳ |
 | SPEC-PHYS-001 | Gravité, dégâts de chute (amortis par l'eau), collisions et marche d'un bloc suivent des règles fixes | chutes, collisions | ⏳ |
 | SPEC-VEHIC-012 | Chaque véhicule se fabrique, se pose, se monte, se conduit et se quitte | parcours de chaque véhicule | ⏳ |
 | SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ⏳ |
 | SPEC-DROP-001 | Chaque bloc cassable rend son butin, chaque créature le sien ; aucun butin n'est un identifiant inconnu | butins | ⏳ |
 | SPEC-SUCCES-001 | Des succès récompensent des étapes (premier bloc, premier outil, premier gardien, première ville…) : annoncés une fois, sauvegardés, listés dans un panneau | déclenchement, unicité, sauvegarde | ⏳ |
-| SPEC-OPTION-001 | Un menu d'options règle sensibilité, son, champ de vision, distance de vue maximale et rendu réaliste lointain ; elles sont conservées | options appliquées et conservées | ⏳ |
+| SPEC-OPTION-001 | Un menu d'options règle sensibilité de la souris, volume du son, champ de vision, distance de vue maximale, rendu réaliste lointain et ombres ; chaque réglage s'applique aussitôt et est conservé | options appliquées et conservées | ⏳ |
+| SPEC-OPTION-002 | Chaque bouton et chaque option des menus (principal, parties, création, multijoueur, pause, options, affichage, aide) fait ce qu'il annonce | parcours de tous les menus | ⏳ |
+| SPEC-OPTION-003 | Les touches se reconfigurent (déplacements, actions, panneaux) ; un conflit est signalé ; le choix est conservé et l'aide affiche les touches en vigueur | remappage, conflit, conservation, aide | ⏳ |
 | SPEC-CMD-001 | Chaque commande du chat fait ce qu'elle annonce (/aide, /heure, /jour, /nuit, /ou, /graine, /vider, /qui, /meteo, /succes) | toutes les commandes | ⏳ |
 
 ## HUD — affichage tête haute
