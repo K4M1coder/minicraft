@@ -501,3 +501,103 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-HISTOIRE-007 | Les objectifs atteints et les choix faits décident de la fin : six épilogues (secrète, aube, cendres, souverain, monde brisé, légende oubliée) | fins obtenues selon les parcours | ✅ |
 | SPEC-HISTOIRE-008 | L'avancée du récit (chapitre, étape, choix, quêtes) survit à la sauvegarde | aller-retour | ✅ |
 | SPEC-HISTOIRE-009 | En jeu, le récit s'affiche en dialogues, l'objectif et son repère guident, parler aux bons habitants fait avancer l'histoire, et H ouvre le journal | partie histoire pilotée | ✅ |
+
+## L14 — lumière du ciel, ombres, population
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-LUMIERE-004 | La lumière du ciel descend dans chaque colonne jusqu'au premier bloc opaque, puis se répand de proche en proche : une grotte fermée est noire, un surplomb reste dans la pénombre | niveaux de ciel en plein air, sous un surplomb, dans une grotte close | ⏳ |
+| SPEC-LUMIERE-005 | Lumière du ciel et lumière des blocs se combinent par sommet : le jour le ciel domine dehors, la nuit seules les sources éclairent ; une grotte reste sombre de jour, sauf près de ses torches | attributs par sommet, formule de combinaison | ⏳ |
+| SPEC-LUMIERE-006 | Créatures et objets prennent la lumière de la case qu'ils occupent (ciel et blocs) | éclairage d'une entité dehors, dans une grotte, près d'une torche | ⏳ |
+| SPEC-OMBRE-001 | Le soleil, ou la lune la nuit, projette des ombres nettes à courte distance, en cascades qui suivent la caméra et s'orientent selon l'astre | cadres des cascades selon la direction de l'astre | ⏳ |
+| SPEC-OMBRE-002 | Au loin, le relief s'ombre lui-même selon la hauteur du soleil : versants à contre-jour et vallées encaissées s'assombrissent au couchant | ombrage du relief lointain selon le soleil | ⏳ |
+| SPEC-OMBRE-003 | Les nuages projettent au sol leur ombre, décalée selon la direction du soleil, et elle se déplace avec eux | ombre au sol sous un nuage dense, décalage, dérive | ⏳ |
+| SPEC-POP-001 | Un habitant tué reste mort, hors ligne comme en ligne : la sauvegarde ou le serveur le retient, il ne réapparaît pas au chargement | mort sauvegardée, rechargée ; serveur | ⏳ |
+| SPEC-POP-002 | Un lieu en sous-effectif accueille avec le temps de nouveaux habitants (naissances, arrivées), jusqu'à sa capacité | repeuplement progressif jusqu'à la capacité | ⏳ |
+| SPEC-POP-003 | Deux animaux de même espèce proches l'un de l'autre engendrent un petit tant que la population alentour reste sous son plafond ; le petit grandit | naissances, plafond, croissance | ⏳ |
+
+## L15 — eau
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-EAU-001 | L'eau se classe en écoulement, chute, rivière, lac, mer et océan, selon sa génération et sa situation | classement de colonnes connues | ⏳ |
+| SPEC-EAU-002 | Chaque type ondule à sa façon (amplitude, longueur d'onde, vitesse, écume) : clapot du lac, houle de l'océan, courant de la rivière, rideau de la chute | paramètres distincts par type, attributs par sommet | ⏳ |
+| SPEC-EAU-003 | Le sens des ondulations mêle le sens de l'écoulement et le vent : pur courant dans une chute, surtout le vent sur un lac, un mélange sur une rivière | direction résultante selon le type | ⏳ |
+| SPEC-EAU-004 | Des rivières naissent en altitude et descendent jusqu'à la mer ou un lac en creusant leur lit ; là où elles décrochent, une cascade | tracé descendant, lit creusé, cascades | ⏳ |
+| SPEC-EAU-005 | L'eau posée ou libérée s'écoule : elle descend, s'étale sur sept blocs au plus en s'amenuisant, et se retire quand sa source disparaît | simulation d'écoulement | ⏳ |
+
+## L16 — vent
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-VENT-001 | Le vent varie avec l'altitude : sa direction tourne et sa force croît en montant ; chaque couche de nuages suit le vent de son altitude | vent à plusieurs altitudes, dérive par couche | ⏳ |
+| SPEC-VENT-002 | Herbes, fleurs, cultures, buissons et feuillages ondulent au vent : sommet mobile, pied fixe, selon le vent au sol ; les blocs pleins ne bougent pas | souplesse par sommet | ⏳ |
+| SPEC-VENT-003 | Des bancs de brume se forment dans les vallées et au-dessus de l'eau le matin et par temps humide, et dérivent avec le vent de surface | densité de brume selon l'heure, l'humidité, le relief ; dérive | ⏳ |
+| SPEC-VENT-004 | Buissons et prairies fleuries couvrent plaines, savanes et forêts claires | buissons et fleurs générés | ⏳ |
+
+## L17 — relief
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-BIOME-005 | Aux frontières, surfaces, végétation et climat se mêlent sur une large bande : on passe d'un biome à l'autre progressivement, sans ligne nette | mélange des surfaces dans la bande de transition | ⏳ |
+| SPEC-BIOME-006 | Le paysage est vaste : continents, chaînes de montagnes et bassins s'étendent sur plusieurs kilomètres | tailles des structures du relief | ⏳ |
+| SPEC-RELIEF-007 | Un volcan se dresse sur une montagne ou une chaîne, jamais au milieu d'une plaine | position des volcans | ⏳ |
+| SPEC-RELIEF-008 | Des volcans s'alignent parfois en chaîne le long d'une crête | chaînes de volcans | ⏳ |
+| SPEC-RELIEF-009 | Des volcans sont éteints : sans lave, leur cratère porte un lac ou de l'herbe | volcans éteints | ⏳ |
+| SPEC-RELIEF-010 | Plusieurs types de volcans : stratovolcan élancé, volcan bouclier large et plat, caldeira effondrée | profils distincts | ⏳ |
+
+## L18 — peuplement et routes
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HABITAT-008 | Les lieux suivent l'habitabilité à des échelles réalistes : villes au bord de l'eau ou en plaine, espacées de plusieurs kilomètres ; villages autour, fermes et hameaux dans les campagnes ; montagnes et déserts presque vides | densités et distances par région | ⏳ |
+| SPEC-HABITAT-009 | Les bâtiments s'adaptent au relief — fondations ou pilotis sur la pente — ou l'évitent quand elle est trop forte ; le terrain n'est plus arasé en bloc | fondations, parcelles sur pente | ⏳ |
+| SPEC-ROUTE-001 | Des routes de commerce relient chaque ville à ses voisines et aux villages alentour | graphe des routes | ⏳ |
+| SPEC-ROUTE-002 | Une route suit le relief sans marche de plus d'un bloc, et contourne ce qui est trop raide | pentes le long des tracés | ⏳ |
+| SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ⏳ |
+| SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ⏳ |
+
+## L19 — identités procédurales
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HABITAT-010 | Chaque type de bâtiment a plusieurs plans reconnaissables (trois pour la maison, deux au moins pour les autres), agencés procéduralement : deux bâtiments du même type diffèrent | variantes et signatures | ⏳ |
+| SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde | vérification de toutes les variantes | ⏳ |
+| SPEC-DONJON-013 | Les donjons sont grands : plusieurs salles reliées par des couloirs, sur plusieurs niveaux reliés par des escaliers ; le gardien au plus profond | graphe de salles, niveaux, connexité | ⏳ |
+| SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ⏳ |
+| SPEC-MOB-010 | Chaque créature a plusieurs variantes d'apparence et un modèle détaillé (tête, corps, membres) animé : marche, attaque, regard | variantes, parties, animations | ⏳ |
+
+## L20 — rendu lointain
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-VUE-003 | Au-delà des chunks, les forêts apparaissent en imposteurs d'arbres selon la densité et l'essence du biome | imposteurs par densité | ⏳ |
+| SPEC-VUE-004 | Villes et villages se voient de loin en silhouettes, éclairées la nuit | silhouettes des lieux | ⏳ |
+| SPEC-VUE-005 | Une perspective atmosphérique commune bleuit et éclaircit ce qui s'éloigne, sans rupture entre vrais blocs et relief lointain | même fonction de couleur par distance | ⏳ |
+| SPEC-VUE-006 | Une option « rendu réaliste lointain » active imposteurs, ombres lointaines et perspective atmosphérique | option et effets | ⏳ |
+
+## L21 — histoires procédurales
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-HISTOIRE-010 | Trois archétypes très différents : épopée (quête des gemmes), enquête (un crime à élucider), colonie (fonder et défendre un établissement), au choix à la création | trois archétypes jouables | ⏳ |
+| SPEC-HISTOIRE-011 | Chaque histoire est générée depuis la graine : lieux, personnages, indices, ennemis et rebondissements changent d'une partie à l'autre, et la même graine redonne la même histoire | déterminisme et variété | ⏳ |
+| SPEC-HISTOIRE-012 | L'enquête : des suspects aux alibis, des indices à trouver, un coupable à désigner ; la fin dépend de l'accusation et des indices réunis | enquête jouée jusqu'à ses fins | ⏳ |
+| SPEC-HISTOIRE-013 | La colonie : bâtir les bâtiments requis, attirer des habitants, tenir face aux vagues ; la fin dépend de la prospérité atteinte | colonie jouée jusqu'à ses fins | ⏳ |
+
+## L22 — couverture des interactions
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-PORTE-001 | Des portes (deux blocs) s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas | collisions porte ouverte / fermée | ⏳ |
+| SPEC-PORTE-002 | Des trappes s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe | collisions trappe ouverte / fermée | ⏳ |
+| SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ⏳ |
+| SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ⏳ |
+| SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP, avec les mêmes armes | attaque d'un joueur par un autre | ⏳ |
+| SPEC-PHYS-001 | Gravité, dégâts de chute (amortis par l'eau), collisions et marche d'un bloc suivent des règles fixes | chutes, collisions | ⏳ |
+| SPEC-VEHIC-012 | Chaque véhicule se fabrique, se pose, se monte, se conduit et se quitte | parcours de chaque véhicule | ⏳ |
+| SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ⏳ |
+| SPEC-DROP-001 | Chaque bloc cassable rend son butin, chaque créature le sien ; aucun butin n'est un identifiant inconnu | butins | ⏳ |
+| SPEC-SUCCES-001 | Des succès récompensent des étapes (premier bloc, premier outil, premier gardien, première ville…) : annoncés une fois, sauvegardés, listés dans un panneau | déclenchement, unicité, sauvegarde | ⏳ |
+| SPEC-OPTION-001 | Un menu d'options règle sensibilité, son, champ de vision, distance de vue maximale et rendu réaliste lointain ; elles sont conservées | options appliquées et conservées | ⏳ |
+| SPEC-CMD-001 | Chaque commande du chat fait ce qu'elle annonce (/aide, /heure, /jour, /nuit, /ou, /graine, /vider, /qui, /meteo, /succes) | toutes les commandes | ⏳ |

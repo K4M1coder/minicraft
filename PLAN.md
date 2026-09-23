@@ -69,6 +69,25 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L8** | Multijoueur client/serveur | `NET` | fait |
 | **L9** | Menus (parties, création, multijoueur), documentation | `MENU` | fait |
 | **L10** | Corps solides, nage, grille 3×3, livre des recettes et des objets | `IA` `COLL` `NAGE` `GRILLE` `LIVRE` | fait |
+| **L11** | Biomes, mer, faune, donjons à gardiens, véhicules | `BIOME` `MER` `FAUNE` `DONJON` `VEHIC` | fait |
+| **L12** | Ciel, textures, relief, carte, factions, serveur autoritaire | `CIEL` `TEXTURE` `RELIEF` `CARTE` `FACTION` `SYNC` | fait |
+| **L13** | Vue lointaine, lumière des blocs, météo, villes et villages, mode histoire | `VUE` `LUMIERE` `METEO` `NUAGE` `HABITAT` `HISTOIRE` | fait |
+| **L14** | Correctifs : lumière du ciel, ombres (soleil, nuages, près et loin), habitants tués qui le restent, reproduction | `LUMIERE` `OMBRE` `POP` | à faire |
+| **L15** | Eau : rivières, cascades, écoulement, six ondulations, sens courant + vent | `EAU` | à faire |
+| **L16** | Vent : par altitude, végétation qui ondule, buissons et prairies, brume | `VENT` | à faire |
+| **L17** | Relief : transitions progressives, paysages vastes, volcans cohérents (sommets, chaînes, éteints, types) | `BIOME` `RELIEF` | à faire |
+| **L18** | Peuplement et routes : habitabilité, échelles réalistes, routes de commerce et de tourisme, ponts, bâtiments sur le relief | `HABITAT` `ROUTE` | à faire |
+| **L19** | Identités : variantes procédurales des bâtiments, donjons à salles et niveaux, créatures détaillées et animées | `HABITAT` `DONJON` `MOB` | à faire |
+| **L20** | Rendu lointain : imposteurs, silhouettes des villes, perspective atmosphérique, option réaliste | `VUE` | à faire |
+| **L21** | Trois archétypes d'histoires procédurales : épopée, enquête, colonie | `HISTOIRE` | à faire |
+| **L22** | Couverture : portes, trappes, échelles, lianes, combat (PvE, PvP), physique, véhicules, recettes, butins, succès, options, commandes | `PORTE` `COMBAT` `PHYS` `RECETTE` `DROP` `SUCCES` `OPTION` `CMD` | à faire |
+
+Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
+porte G1 ne les exige qu'une fois implémentés. Chaque lot passe ses specs à ✅
+dans le commit qui les livre. L14 passe en premier parce qu'il corrige des
+défauts visibles (grottes éclairées, absence d'ombres, habitants ressuscités) ;
+L15 à L17 touchent le monde généré, sur lequel L18 et L19 bâtissent ; L20
+s'appuie sur ce qui est généré ; L21 sur les lieux ; L22 couvre l'ensemble.
 
 ### Dépendances entre lots
 
