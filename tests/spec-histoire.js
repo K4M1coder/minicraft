@@ -253,8 +253,12 @@
       A.ok(MC.Save.save(st, etat));
       etat.histoire = null;
       A.ok(MC.Save.load(st, etat));
-      A.ok(etat.histoire && etat.histoire.params.heros === 'Mira', 'le récit revient avec la partie');
-      A.equal(etat.histoire.etape, e.etape);
+      // MC.Save passe désormais par MC.Recits, qui connaît l'archétype : une
+      // épopée (même assignée directement, sans champ « archetype ») revient
+      // enveloppée sous etat.histoire.histoire, comme MC.Recits.generer('epopee', …).
+      A.ok(etat.histoire && etat.histoire.archetype === 'epopee', 'le récit revient comme une épopée');
+      A.ok(etat.histoire.histoire && etat.histoire.histoire.params.heros === 'Mira', 'le récit revient avec la partie');
+      A.equal(etat.histoire.histoire.etape, e.etape);
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

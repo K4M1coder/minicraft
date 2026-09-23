@@ -262,25 +262,37 @@
     var journalEl = el('div', 'journal-histoire');
     journalEl.style.display = 'none';
     root.appendChild(journalEl);
-    function journalHistoire(etat) {
-      var H = MC.Histoire;
-      if (!etat || !H) { journalEl.style.display = 'none'; return false; }
-      var o = H.objectif(etat), q = H.quetesActives(etat);
-      journalEl.innerHTML = '<div class="carte-tete"><b>' + ech(H.TITRE) + '</b><span class="carte-aide">H pour fermer</span></div>' +
+    /* `etat` : l'état MC.Recits (archetype + histoire/enquete/colonie).
+       `finNotif` : la notification de fin déjà reçue par le jeu (son titre
+       complet), pour ne pas dépendre d'une table de fins propre à l'épopée. */
+    function journalHistoire(etat, finNotif) {
+      var R = MC.Recits;
+      if (!etat || !R) { journalEl.style.display = 'none'; return false; }
+      var inner = etat.histoire || etat.enquete || etat.colonie || {};
+      var arche = R.ARCHETYPES[etat.archetype];
+      var titreRecit = arche ? arche.nom : (MC.Histoire ? MC.Histoire.TITRE : '');
+      var o = R.objectif(etat), q = R.quetesActives(etat);
+      var titreQuetes = etat.archetype === 'epopee'
+        ? 'Quêtes secondaires (' + inner.secondairesFaites + '/' + inner.secondairesPrevues + ')' : 'Quêtes';
+      var texteFin = inner.fin
+        ? (finNotif && finNotif.titre ? finNotif.titre
+           : (etat.archetype === 'epopee' && MC.Histoire ? MC.Histoire.finDe(inner.fin).titre : inner.fin))
+        : '';
+      journalEl.innerHTML = '<div class="carte-tete"><b>' + ech(titreRecit) + '</b><span class="carte-aide">H pour fermer</span></div>' +
         (o ? '<p><b>Chapitre ' + o.numero + '/' + o.total + ' — ' + ech(o.chapitre) + '</b><br>' + ech(o.texte) + '</p>'
-           : '<p><b>' + (etat.fin ? 'Fin : ' + ech(H.finDe(etat.fin).titre) : 'Histoire terminée') + '</b></p>') +
-        '<h4>Quêtes secondaires (' + etat.secondairesFaites + '/' + etat.secondairesPrevues + ')</h4>' +
+           : '<p><b>' + (inner.fin ? 'Fin : ' + ech(texteFin) : 'Histoire terminée') + '</b></p>') +
+        '<h4>' + ech(titreQuetes) + '</h4>' +
         (q.length ? '<ul>' + q.map(function (x) {
           return '<li class="' + x.etat + '">' + ech(x.titre) + ' — ' + ech(x.texte) + (x.etat === 'faite' ? ' ✔' : '') + '</li>';
         }).join('') + '</ul>' : '<p class="aide">Parlez aux habitants : fermiers, forgerons, aubergistes… ont besoin d\'aide.</p>') +
-        '<h4>Journal</h4><ul class="journal">' + etat.journal.slice(-12).reverse().map(function (t) { return '<li>' + ech(t) + '</li>'; }).join('') + '</ul>';
+        '<h4>Journal</h4><ul class="journal">' + (inner.journal || []).slice(-12).reverse().map(function (t) { return '<li>' + ech(t) + '</li>'; }).join('') + '</ul>';
       journalEl.style.display = '';
       return true;
     }
     function fermerJournal() { var o = journalEl.style.display !== 'none'; journalEl.style.display = 'none'; return o; }
     function journalOuvert() { return journalEl.style.display !== 'none'; }
-    function ecranFin(f, stats) {
-      showScreen('<div class="panel large fin-histoire"><p class="sub">' + ech(MC.Histoire ? MC.Histoire.TITRE : '') + '</p>' +
+    function ecranFin(f, stats, titreRecit) {
+      showScreen('<div class="panel large fin-histoire"><p class="sub">' + ech(titreRecit || (MC.Histoire ? MC.Histoire.TITRE : '')) + '</p>' +
         '<h1>' + ech(f.titre) + '</h1><p class="epilogue">' + ech(f.texte) + '</p>' +
         (stats ? '<p class="hint">' + ech(stats) + '</p>' : '') +
         '<div class="row"><button id="btn-continuer" class="primary">Continuer à explorer</button>' +
@@ -795,8 +807,11 @@
 
     /* ── Mode histoire : paramètres ajustables à la création ──────────────── */
     function formHistoire() {
-      var H = MC.Histoire, M = MC.Modes;
+      var H = MC.Histoire, M = MC.Modes, R = MC.Recits;
       if (!H) return '';
+      var archetypes = R ? Object.keys(R.ARCHETYPES).map(function (k) {
+        return { id: k, nom: R.ARCHETYPES[k].nom, titre: R.ARCHETYPES[k].description };
+      }) : [];
       var longueurs = Object.keys(H.LONGUEURS).map(function (k) { return { id: k, nom: H.LONGUEURS[k].nom }; });
       var presets = Object.keys(M.PRESETS_INTERACTIONS).map(function (k) {
         return { id: k, nom: M.PRESETS_INTERACTIONS[k].nom, titre: M.PRESETS_INTERACTIONS[k].description };
@@ -808,7 +823,8 @@
         }).join('');
       }
       return '<fieldset id="f-histoire" class="histoire-params" style="display:none">' +
-        '<legend>' + ech(H.TITRE) + '</legend>' +
+        '<legend>Mode histoire</legend>' +
+        (archetypes.length ? '<label>Archétype' + boutonsRadio('archetype', archetypes, 'epopee') + '</label>' : '') +
         '<label>Héros<input id="f-heros" type="text" maxlength="20" value="Aube"></label>' +
         '<label>Longueur de la quête principale' + boutonsRadio('longueur', longueurs, 'normale') + '</label>' +
         '<label>Quêtes secondaires <input id="f-secondaires" type="number" min="0" max="8" value="5"></label>' +
@@ -854,6 +870,7 @@
           .map(function (c) { return c.value; });
       }
       return {
+        archetype: valeurChoix('archetype') || 'epopee',
         heros: overlay.querySelector('#f-heros').value || 'Aube',
         longueur: valeurChoix('longueur') || 'normale',
         secondaires: parseInt(overlay.querySelector('#f-secondaires').value, 10) || 0,
