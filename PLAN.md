@@ -127,3 +127,25 @@ Une fonctionnalité est terminée quand :
 4. le comportement a été observé manuellement dans le jeu (capture à l'appui) ;
 5. le README reflète l'état réel, limites comprises ;
 6. c'est commité.
+
+---
+
+## 6. Suite proposée (à valider)
+
+Ces lots ne sont **pas encore spécifiés** : une fois validés, chacun devient une
+série de specs ⏳ dans `SPECS.md`, puis suit le cycle S1→S7.
+
+| Lot | Proposition | Specs pressenties |
+|---|---|---|
+| **L23** | **Saisons** : printemps, été, automne, hiver sur une année de jeu — feuillages qui roussissent puis tombent, neige saisonnière, lacs gelés l'hiver, durée du jour qui varie, cultures qui ne poussent qu'en saison | `SAISON` |
+| **L24** | **Construction fine** : escaliers, dalles, clôtures et portillons, vitres, lits (dormir fait passer la nuit et fixe le point de réapparition), panneaux où l'on écrit | `BLOC` `LIT` |
+| **L25** | **Armures et équipement** : casque, plastron, jambières, bottes en cuir, fer, diamant ; réduction des dégâts, usure, visibles sur l'avatar | `ARMURE` |
+| **L26** | **Agriculture et élevage** : plusieurs cultures (carottes, pommes de terre, citrouilles, canne), arrosage par proximité de l'eau, nourrir les animaux pour les faire se reproduire, enclos | `CULTURE` `ELEVAGE` |
+| **L27** | **Économie vivante** : prix des habitants qui varient avec l'offre et la demande, spécialités régionales, commerce entre villes par les caravanes des routes, monnaie | `ECO` |
+| **L28** | **Faune sociale** : troupeaux et meutes, migrations d'oiseaux, chaîne alimentaire (loups et moutons), pêche à la canne | `FAUNE` `PECHE` |
+| **L29** | **Mécanismes** : leviers, boutons, plaques de pression, portes et trappes automatiques, rails alimentés | `MECA` |
+| **L30** | **Son spatial** : sons positionnés en 3D, ambiances par biome et par lieu (forêt, ville, grotte, mer), musique procédurale selon le moment et l'histoire | `AUDIO` |
+| **L31** | **Accessibilité** : sous-titres des sons, modes daltoniens, taille du texte et du HUD, commandes tactiles | `ACCES` |
+| **L32** | **Serveur persistant** : le monde du serveur sauvegardé entre deux démarrages, profils de joueurs, chat de proximité, histoires jouées en coopération | `NET` `HISTOIRE` |
+| **L33** | **Performances** : génération et maillage dans des Web Workers, maillage glouton (greedy meshing), pour allonger encore la distance de vue | `PERF` |
+| **L34** | **Commandes pures** : les commandes du chat extraites de `game.js` dans un module pur testable (préalable à `SPEC-CMD-001`), et commandes d'administration du serveur | `CMD` |
