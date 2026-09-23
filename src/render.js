@@ -251,7 +251,7 @@
                   ['meshT', matBlend, 'blend', 2]];
 
     var maillagesEau = new Set();
-    function syncChunk(world, chunk) {
+    function syncChunk(world, chunk, simplifie) {
       var sample = world.getBlock;
       var passes = PASSES;
       // une propagation de lumière par chunk, partagée par ses quatre passes
@@ -269,7 +269,7 @@
       chunk.lumiere = lumiere;
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
-        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe);
+        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie);
         if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);
@@ -283,6 +283,7 @@
         }
       }
       chunk.dirty = false;
+      chunk.simplifie = !!simplifie;
     }
 
     function disposeChunk(chunk) {
@@ -1059,7 +1060,8 @@
       if (soleilOmbre && Math.abs(soleilOmbre.x - astre.x) + Math.abs(soleilOmbre.y - astre.y) + Math.abs(soleilOmbre.z - astre.z) < 0.01) return false;
       soleilOmbre = { x: astre.x, y: astre.y, z: astre.z }; ombreT = t;
       var a = grilleLointaine.actif;
-      var f = MC.Ombres.ombrerRelief({ cote: grilleLointaine.cote, pas: grilleLointaine.pas, sol: a.sol, eau: a.eau }, astre);
+      var f = optionsLointain.realiste ? MC.Ombres.ombrerRelief({ cote: grilleLointaine.cote, pas: grilleLointaine.pas, sol: a.sol, eau: a.eau }, astre)
+                                       : new Float32Array(grilleLointaine.cote * grilleLointaine.cote).fill(1);
       var col = lointain.geometry.attributes.color;
       for (var i = 0; i < f.length; i++) {
         col.array[i * 3] = baseLointain[i * 3] * f[i];
@@ -1084,10 +1086,135 @@
       if (lointain) { scene.remove(lointain); lointain.geometry.dispose(); }
       lointain = new THREE.Mesh(g, matLointain);
       scene.add(lointain);
+      majArbresLointains(grille);
       lointainEtendue = raw.etendue;
       recalerBrouillard();
       return true;
     }
+    /* ── Au loin : arbres en imposteurs, lieux en silhouettes ──────────────
+       Des panneaux croisés instanciés pour les forêts, des boîtes pour les
+       bâtiments ; les uns comme les autres s'effacent dans le disque des
+       vrais chunks, comme le relief lointain. Tout suit l'option « rendu
+       réaliste lointain ». */
+    var optionsLointain = { realiste: true };
+    var planche = (function () {
+      var cv = document.createElement('canvas'), W = 32, H = 64, N = 7;
+      cv.width = W * N; cv.height = H;
+      var c = cv.getContext('2d');
+      function tronc(i, col, larg, haut) { c.fillStyle = col; c.fillRect(i * W + W / 2 - larg / 2, H - haut, larg, haut); }
+      function boule(i, col, cx, cy, r) { c.fillStyle = col; c.beginPath(); c.arc(i * W + cx, cy, r, 0, 6.2832); c.fill(); }
+      // 1 feuillu, 2 bouleau, 3 conifère, 4 tropical, 5 acacia, 6 cactus, 7 champignon
+      tronc(0, '#6a4a2a', 4, 24); boule(0, '#3f7a32', 16, 24, 13); boule(0, '#4f8e3a', 11, 30, 8); boule(0, '#4f8e3a', 21, 29, 8);
+      tronc(1, '#e8e2d0', 3, 30); boule(1, '#6aa446', 16, 22, 11); boule(1, '#7ab452', 16, 30, 9);
+      tronc(2, '#5a3e22', 3, 14);
+      c.fillStyle = '#2e5a3a';
+      for (var k = 0; k < 4; k++) { c.beginPath(); c.moveTo(2 * W + 16, 6 + k * 10); c.lineTo(2 * W + 4 + k, 26 + k * 10); c.lineTo(2 * W + 28 - k, 26 + k * 10); c.fill(); }
+      tronc(3, '#7a5a32', 4, 44); boule(3, '#2f8a2e', 16, 14, 13); boule(3, '#3a9a36', 8, 18, 7); boule(3, '#3a9a36', 24, 18, 7);
+      tronc(4, '#8a5a30', 3, 28); c.fillStyle = '#7a8e30'; c.fillRect(4 * W + 2, 28, 28, 7); c.fillRect(4 * W + 6, 23, 20, 6);
+      c.fillStyle = '#4a8a36'; c.fillRect(5 * W + 12, 18, 8, 46); c.fillRect(5 * W + 5, 30, 6, 4); c.fillRect(5 * W + 5, 24, 3, 8);
+      c.fillRect(5 * W + 21, 34, 6, 4); c.fillRect(5 * W + 24, 26, 3, 10);
+      tronc(6, '#d8ccb4', 6, 34); c.fillStyle = '#b8302a'; c.beginPath(); c.ellipse(6 * W + 16, 30, 15, 9, 0, 3.1416, 6.2832); c.fill();
+      var t = new THREE.CanvasTexture(cv);
+      t.magFilter = THREE.NearestFilter;
+      return t;
+    })();
+    var matArbres = new THREE.MeshLambertMaterial({ map: planche, alphaTest: 0.5, side: THREE.DoubleSide });
+    matArbres.onBeforeCompile = function (sh) {
+      sh.uniforms.trou = trouLointain;
+      sh.vertexShader = 'attribute float essence;\nvarying vec3 vMondeI;\n' +
+        sh.vertexShader.replace('#include <uv_vertex>', '#include <uv_vertex>\n  vUv.x = (vUv.x + essence - 1.0) / 7.0;')
+          .replace('#include <project_vertex>', '#include <project_vertex>\n  vMondeI = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;');
+      sh.fragmentShader = 'uniform vec3 trou; varying vec3 vMondeI;\n' + sh.fragmentShader.replace('void main() {',
+        'void main() {\n  if (length(vMondeI.xz - trou.xy) < trou.z) discard;');
+    };
+    var geoArbre = (function () {
+      var pos = [], uv = [], idx = [], nor = [];
+      [[1, 0], [0, 1]].forEach(function (d, q) {
+        var b = pos.length / 3, ax = d[0] * 0.5, az = d[1] * 0.5;
+        pos.push(-ax, 0, -az, ax, 0, az, -ax, 1, -az, ax, 1, az);
+        uv.push(0, 0, 1, 0, 0, 1, 1, 1);
+        for (var k = 0; k < 4; k++) nor.push(0, 1, 0);
+        idx.push(b, b + 1, b + 2, b + 2, b + 1, b + 3);
+      });
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+      g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+      g.setIndex(idx);
+      return g;
+    })();
+    var arbresLointains = null;
+    function majArbresLointains(grille) {
+      if (arbresLointains) { scene.remove(arbresLointains); arbresLointains.dispose && arbresLointains.dispose(); arbresLointains = null; }
+      var l = MC.Lointain.imposteurs(grille, { max: 50000 });
+      if (!l.length) return 0;
+      var g = geoArbre.clone();
+      var ess = new Float32Array(l.length);
+      var m = new THREE.InstancedMesh(g, matArbres, l.length), mat4 = new THREE.Matrix4();
+      l.forEach(function (a, i) {
+        mat4.makeScale(a.taille * 0.7, a.taille, a.taille * 0.7).setPosition(a.x, a.y - 1.5, a.z);
+        m.setMatrixAt(i, mat4);
+        ess[i] = a.essence;
+      });
+      g.setAttribute('essence', new THREE.InstancedBufferAttribute(ess, 1));
+      m.instanceMatrix.needsUpdate = true;
+      m.frustumCulled = false;
+      m.visible = optionsLointain.realiste;
+      scene.add(m);
+      arbresLointains = m;
+      return l.length;
+    }
+    // silhouettes des lieux : boîtes, fenêtres allumées la nuit
+    var nuitLointaine = { value: 0 };
+    var matSilhouettes = new THREE.MeshLambertMaterial({ vertexColors: false });
+    matSilhouettes.onBeforeCompile = function (sh) {
+      sh.uniforms.trou = trouLointain; sh.uniforms.nuit = nuitLointaine;
+      sh.vertexShader = 'varying vec3 vMondeS; varying vec3 vNormS;\n' +
+        sh.vertexShader.replace('#include <project_vertex>', '#include <project_vertex>\n  vMondeS = (modelMatrix * instanceMatrix * vec4(transformed, 1.0)).xyz;\n  vNormS = normal;');
+      sh.fragmentShader = 'uniform vec3 trou; uniform float nuit; varying vec3 vMondeS; varying vec3 vNormS;\n' +
+        sh.fragmentShader.replace('void main() {', 'void main() {\n  if (length(vMondeS.xz - trou.xy) < trou.z) discard;')
+          .replace('#include <emissivemap_fragment>', '#include <emissivemap_fragment>\n' +
+            '  float fen = step(0.55, fract(vMondeS.y * 0.33)) * step(0.5, fract((vMondeS.x + vMondeS.z) * 0.3)) * step(abs(vNormS.y), 0.5);\n' +
+            '  totalEmissiveRadiance += vec3(1.0, 0.8, 0.45) * fen * nuit * 0.9;');
+    };
+    var COULEURS_LIEUX = { desert: 0xd8c898, badlands: 0xb86a44, taiga: 0x6a4a2e, pics_glaces: 0xc8dcf0, glacier: 0xc8dcf0,
+                           jungle: 0x9a6a40, marais: 0x8a6a42, savane: 0xa86a3a, champignons: 0xb03028, montagnes: 0x8a8a92 };
+    var silhouettesLointaines = null, sigSilhouettes = '';
+    function majSilhouettes(lieux) {
+      var sig = (lieux || []).map(function (l) { return l.id; }).join('|');
+      if (sig === sigSilhouettes) return false;
+      sigSilhouettes = sig;
+      if (silhouettesLointaines) { scene.remove(silhouettesLointaines); silhouettesLointaines.dispose && silhouettesLointaines.dispose(); silhouettesLointaines = null; }
+      var boites = MC.Lointain.silhouettes(lieux);
+      if (!boites.length) return true;
+      var parLieu = {};
+      (lieux || []).forEach(function (l) { parLieu[l.id] = l; });
+      var geo = new THREE.BoxGeometry(1, 1, 1);
+      geo.translate(0, 0.5, 0);
+      var m = new THREE.InstancedMesh(geo, matSilhouettes, boites.length), mat4 = new THREE.Matrix4(), col = new THREE.Color();
+      boites.forEach(function (b, i) {
+        mat4.makeScale(b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0).setPosition((b.x0 + b.x1) / 2, b.y0, (b.z0 + b.z1) / 2);
+        m.setMatrixAt(i, mat4);
+        var l = parLieu[b.lieu];
+        col.setHex((l && COULEURS_LIEUX[l.biome]) || 0xb89a70);
+        m.setColorAt(i, col);
+      });
+      m.instanceMatrix.needsUpdate = true;
+      if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      m.frustumCulled = false;
+      m.visible = optionsLointain.realiste;
+      scene.add(m);
+      silhouettesLointaines = m;
+      return true;
+    }
+    function reglerRealiste(v) {
+      optionsLointain.realiste = !!v;
+      if (arbresLointains) arbresLointains.visible = optionsLointain.realiste;
+      if (silhouettesLointaines) silhouettesLointaines.visible = optionsLointain.realiste;
+      soleilOmbre = null;              // l'ombrage du relief se recalcule (ou s'efface)
+      return optionsLointain.realiste;
+    }
+
     // le disque découpé suit le joueur de la vue en cours
     function placerTrou(cam) {
       trouLointain.value.set(cam.position.x, cam.position.z, Math.max(0, (RENDER_DIST - 0.7) * C.CHUNK_X));
@@ -1280,6 +1407,7 @@
     var UNDERWATER = new THREE.Color(0x2a5f9e);
 
     var GRIS_ORAGE = new THREE.Color(0.42, 0.45, 0.5), BLANC_ECLAIR = new THREE.Color(0.85, 0.88, 1);
+    var VOILE_AIR = new THREE.Color(0.62, 0.74, 0.92);
     var derniereAmbiance = 0, eclairs = [];
     function updateAmbience(time, submerged) {
       sousLEau = !!submerged;
@@ -1306,13 +1434,19 @@
         lum = me.lumiere;
       }
       if (flash > 0) skyC.lerp(BLANC_ECLAIR, flash * 0.8);
+      /* Perspective atmosphérique : au loin, les couleurs bleuissent et
+         s'éclaircissent. Le brouillard est commun à tout (vrais blocs, relief
+         lointain, imposteurs) : on teinte sa couleur d'un voile d'air bleu. */
+      var brume = skyC.clone();
+      if (optionsLointain.realiste) brume.lerp(VOILE_AIR, 0.3 * DC.sunIntensity(time) * (me ? 1 - me.couverture * 0.6 : 1));
+      nuitLointaine.value = 1 - DC.sunIntensity(time);
       if (submerged) {
         scene.background.copy(UNDERWATER);
         scene.fog.color.copy(UNDERWATER);
         scene.fog.near = 0.5; scene.fog.far = 22;
       } else {
         scene.background.copy(skyC);
-        scene.fog.color.copy(skyC);
+        scene.fog.color.copy(brume);
         scene.fog.near = FOG_NEAR * vis; scene.fog.far = Math.max(60, FOG_FAR * vis);
       }
       var inten = DC.sunIntensity(time);
@@ -1533,6 +1667,9 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      majSilhouettes: majSilhouettes, reglerRealiste: reglerRealiste,
+      loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },
+              get brouillard() { return scene.fog; } },
       eau: { maillages: maillagesEau, refraction: refractionActive, options: optionsRendu, ventEau: ventEau,
              get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; } },
       ombres: { soleil: sun, cadre: CADRE_OMBRE, soleilDir: soleilDir, forceNuages: forceOmbreNuages, ombrerLointain: ombrerLointain },

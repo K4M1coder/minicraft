@@ -51,7 +51,8 @@
     /* Une colonne vue de loin, pour le relief lointain : hauteur, eau, couleur. */
     function echantillonLointain(wx, wz) {
       var e = Bio.echantillon(wx, wz);
-      return { h: Math.min(WH - 1, e.h), eau: e.eau,
+      var ar = MC.Lointain ? MC.Lointain.essenceDe(e) : { arbres: 0, essence: 0 };
+      return { h: Math.min(WH - 1, e.h), eau: e.eau, arbres: ar.arbres, essence: ar.essence,
                couleur: MC.Lointain ? MC.Lointain.couleurLointaine(e) : [120, 120, 120] };
     }
     // coffres de donjon dont le butin a déjà été tiré (ouverts ou cassés)

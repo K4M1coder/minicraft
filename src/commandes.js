@@ -12,14 +12,14 @@
   var MC = G.MC = G.MC || {};
 
   var LISTE = ['aide', 'heure', 'jour', 'nuit', 'ou', 'graine', 'vider',
-               'rejoindre', 'quitter', 'qui', 'meteo', 'succes'];
+               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu'];
 
   function msg(texte) { return { messages: texte ? [texte] : [], actions: [] }; }
   function action(texte, act) { return { messages: texte ? [texte] : [], actions: [act] }; }
 
   function aide() {
     return 'Commandes : /heure /jour /nuit /ou /graine /vider /aide /meteo /succes ' +
-           '/rejoindre [adresse] /quitter /qui';
+           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui';
   }
 
   function executer(cmd, ctx) {
@@ -74,6 +74,15 @@
         if (!s || typeof s.debloques !== 'function') return msg('Succès indisponibles.');
         var faits = s.debloques().length;
         return msg('Succès : ' + faits + '/' + total + ' débloqué(s).');
+      }
+      /* /rendu realiste | simple : imposteurs d'arbres, silhouettes des lieux,
+         ombrage du relief et voile d'air au loin — ou un rendu plus sobre. */
+      case 'rendu': {
+        var v = (cmd.args && cmd.args[0] || '').toLowerCase();
+        if (v !== 'realiste' && v !== 'simple') {
+          return msg('Rendu lointain : ' + (ctx.renduRealiste === false ? 'simple' : 'réaliste') + ' — /rendu realiste ou /rendu simple');
+        }
+        return action('Rendu lointain ' + (v === 'realiste' ? 'réaliste' : 'simple') + '.', { type: 'rendu', realiste: v === 'realiste' });
       }
       default:
         return msg('Commande inconnue : /' + cmd.nom);

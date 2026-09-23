@@ -8,6 +8,7 @@
 
   var GEN_BUDGET = 2, MESH_BUDGET = 2;     // par frame, pour ne pas saccader
   var LOINTAIN_BUDGET = 1200;              // colonnes lointaines échantillonnées par frame
+  var PROCHE_SIMPLE = 6;                   // en chunks : en deçà, toujours le maillage complet
   var SPAWN_INTERVAL = 3.5;
 
   function createGame(host) {
@@ -857,13 +858,20 @@
         // voisinage 3×3 complet, sinon coutures et ombres de contact fausses
         // bord du disque : ses voisins en diagonale ne seront jamais générés, ce n'est pas un retard
         if (!world.voisinsCharges(mx, mz)) continue;
-        render.syncChunk(world, c);
+        // au loin, un maillage allégé ; il reprend ses plantes quand on s'approche
+        render.syncChunk(world, c, aMailler[j][0] > PROCHE_SIMPLE * PROCHE_SIMPLE && aMailler[j][0] > (R * 0.55) * (R * 0.55));
         meshed++;
       }
       // chunks voulus pas encore affichés : la distance de vue n'avance que s'ils sont rattrapés
       g.enAttente = attente + manquants;
 
       world.unloadLoin(centres, R + 3, render.disposeChunk);
+      // un chunk allégé qu'on approche redevient complet
+      for (var jj = 0; jj < aMailler.length && jj < 200; jj++) {
+        if (aMailler[jj][0] > PROCHE_SIMPLE * PROCHE_SIMPLE) break;
+        var cs = world.chunks.get(world.key(aMailler[jj][1], aMailler[jj][2]));
+        if (cs && cs.simplifie) cs.dirty = true;
+      }
     }
     g.streamChunks = streamChunks;
 
@@ -1308,6 +1316,7 @@
           temperature: (j0 && j0.temperature) ? j0.temperature.temperature : null,
         } : null,
         succes: g.succes,
+        renduRealiste: render.loin ? render.loin.options.realiste : true,
         enLigne: net.enLigne(),
         joueurs: noms,
       };
@@ -1319,6 +1328,7 @@
           case 'vider': chat.vider(); break;
           case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
           case 'quitter': net.deconnecter(); break;
+          case 'rendu': render.reglerRealiste(a.realiste); break;
         }
       });
     }
@@ -1631,7 +1641,10 @@
       // relief lointain, météo, distance de vue
       grille.recentrer(s2.pos.x, s2.pos.z);
       grille.avancer(LOINTAIN_BUDGET);
-      render.majLointain(grille);
+      if (render.majLointain(grille) && world.habitats) {
+        // la grille a bougé : les silhouettes des lieux alentour la suivent
+        render.majSilhouettes(world.habitats.lieuxProches(s2.pos.x, s2.pos.z, 1000));
+      }
       majMeteo(dt);
       if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); majHistoire(dt); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);

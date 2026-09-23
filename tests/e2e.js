@@ -1887,6 +1887,30 @@
     A.equal(panneau.style.display, 'none', 'un second K referme le panneau');
   });
 
+  e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
+    await reset(g);
+    g.time = MC.DayCycle.DAY_LENGTH * 0.2;
+    g.render.reglerRealiste(true);
+    for (var i = 0; i < 60 && !g.render.lointain; i++) await frames(1);
+    A.ok(g.render.lointain, 'le relief lointain est là');
+    // un seul brouillard pour tous : vrais blocs, relief lointain, imposteurs
+    [g.render.materials.opaque, g.render.materials.cutout, g.render.lointain.material].forEach(function (m) {
+      A.ok(m.fog !== false, 'chaque matériau lointain ou proche prend le même voile');
+    });
+    if (g.render.loin.arbres) A.ok(g.render.loin.arbres.material.fog !== false, 'les imposteurs aussi');
+    var f = g.render.loin.brouillard.color, ciel = g.render.scene.background;
+    A.ok(f.b >= ciel.b - 0.02 && (f.r < ciel.r + 0.05), 'de jour, le voile bleuit le lointain');
+    // la nuit, les silhouettes des lieux s'éclairent
+    g.time = MC.DayCycle.DAY_LENGTH * 0.72;
+    await frames(3);
+    g.render.reglerRealiste(false);
+    A.equal(g.render.loin.options.realiste, false, 'l option se coupe');
+    if (g.render.loin.arbres) A.equal(g.render.loin.arbres.visible, false, 'et les imposteurs s effacent');
+    g.render.reglerRealiste(true);
+    g.time = 60;
+    await reset(g);
+  });
+
   /* En dernier : ce test change de partie (mode histoire, autre graine). */
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);

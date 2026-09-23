@@ -93,7 +93,9 @@
   /* `eauDe(wx, wz)` (facultatif) : { nature, flux:{x,z}, prof } d'une colonne
      d'un autre chunk — sans lui, les coins au bord du chunk ne se moyennent
      qu'avec les colonnes du chunk. */
-  function buildChunk(chunk, wantPass, sample, lumiere, eauDe) {
+  /* `simplifie` : un chunk lointain se passe des petites plantes (herbes,
+     fleurs) — autant de faces en moins, invisibles à cette distance. */
+  function buildChunk(chunk, wantPass, sample, lumiere, eauDe, simplifie) {
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
     var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [], ciels = [];
@@ -252,6 +254,7 @@
         }
         continue;
       }
+      if (d.plant && simplifie && plantePliable(d) && !d.aquatique) continue;
       if (d.plant) {
         // plante : deux quads croisés, visibles des deux côtés
         for (var q = 0; q < 2; q++) {

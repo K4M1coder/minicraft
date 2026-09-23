@@ -583,11 +583,11 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-VUE-003 | Au-delà des chunks, les forêts apparaissent en imposteurs d'arbres selon la densité et l'essence du biome | imposteurs par densité | ⏳ |
-| SPEC-VUE-004 | Villes et villages se voient de loin en silhouettes, éclairées la nuit | silhouettes des lieux | ⏳ |
+| SPEC-VUE-003 | Au-delà des chunks, les forêts apparaissent en imposteurs d'arbres selon la densité et l'essence du biome | imposteurs par densité | ✅ |
+| SPEC-VUE-004 | Villes et villages se voient de loin en silhouettes, éclairées la nuit | silhouettes des lieux | ✅ |
 | SPEC-VUE-005 | Une perspective atmosphérique commune bleuit et éclaircit ce qui s'éloigne, sans rupture entre vrais blocs et relief lointain | même fonction de couleur par distance | ⏳ |
-| SPEC-VUE-006 | Une option « rendu réaliste lointain » active imposteurs, ombres lointaines et perspective atmosphérique | option et effets | ⏳ |
-| SPEC-VUE-007 | Les chunks lointains encore affichés en vrais blocs passent à un maillage simplifié (moins de faces) sans saut visible, pour allonger la distance à fréquence d'images égale | niveaux de détail des chunks | ⏳ |
+| SPEC-VUE-006 | Une option « rendu réaliste lointain » active imposteurs, ombres lointaines et perspective atmosphérique | option et effets | ✅ |
+| SPEC-VUE-007 | Les chunks lointains encore affichés en vrais blocs passent à un maillage simplifié (moins de faces) sans saut visible, pour allonger la distance à fréquence d'images égale | niveaux de détail des chunks | ✅ |
 
 ## L21 — histoires procédurales
 

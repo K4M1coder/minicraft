@@ -23,7 +23,7 @@
 
     function tampon() {
       return { x0: 0, z0: 0, sol: new Float32Array(n), eau: new Float32Array(n),
-               couleurs: new Uint8Array(n * 3), rempli: 0 };
+               couleurs: new Uint8Array(n * 3), arbres: new Float32Array(n), essences: new Uint8Array(n), rempli: 0 };
     }
     var actif = null, chantier = null, cible = null, version = 0;
 
@@ -47,6 +47,7 @@
         t.sol[i] = e.h; t.eau[i] = e.eau || 0;
         var c = e.couleur || [120, 120, 120];
         t.couleurs[i * 3] = c[0]; t.couleurs[i * 3 + 1] = c[1]; t.couleurs[i * 3 + 2] = c[2];
+        t.arbres[i] = e.arbres || 0; t.essences[i] = e.essence || 0;
       }
       t.rempli = fin;
       if (fin < n) return false;
@@ -107,6 +108,17 @@
   /* Couleur d'une colonne vue de loin : le bloc de surface du biome, la neige
      et la roche des hauteurs, la lave des cratères, et la teinte du feuillage
      là où les arbres sont serrés. Ombrée selon l'altitude, comme la carte. */
+  /* Densité d'arbres (par bloc) et essence dominante d'une colonne vue de loin. */
+  function essenceDe(col) {
+    var bio = col.biome || {}, total = 0, dom = 0, pmax = 0;
+    if (col.eau > col.h || (MC.Core && col.h <= MC.Core.SEA_LEVEL + 1)) return { arbres: 0, essence: 0 };
+    (bio.arbres || []).forEach(function (a) {
+      if (!ESSENCES[a.type]) return;
+      total += a.p;
+      if (a.p > pmax) { pmax = a.p; dom = ESSENCES[a.type]; }
+    });
+    return { arbres: total, essence: dom };
+  }
   function couleurLointaine(col) {
     var C = MC.Core, B = C.B, bio = col.biome || {}, h = col.h;
     var COUL = MC.Carte ? MC.Carte.COULEURS : {};
@@ -126,6 +138,54 @@
     return c.map(function (v) { return Math.max(0, Math.min(255, Math.round(v * ombre))); });
   }
 
+  /* ─── imposteurs d'arbres ─────────────────────────────────────────────────
+     Au-delà des chunks, chaque échantillon de la grille porte des arbres
+     selon la densité et l'essence de son biome : autant qu'il en pousserait
+     sur ses pas × pas blocs, posés à des places tirées de leur position.
+     Essences : 1 feuillu, 2 bouleau, 3 conifère, 4 tropical, 5 acacia,
+     6 cactus, 7 champignon géant. */
+  var ESSENCES = { chene: 1, chene_marais: 1, bouleau: 2, sapin: 3, tropical: 4, acacia: 5, cactus: 6, champignon_geant: 7 };
+  var HAUTEURS = [0, 7, 8, 9, 13, 6, 3, 8];
+  function hache(a, b, k) {
+    var h = Math.imul(a | 0, 73856093) ^ Math.imul(b | 0, 19349663) ^ Math.imul(k | 0, 83492791);
+    h = Math.imul(h ^ (h >>> 13), 1274126177);
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+  function imposteurs(grille, opts) {
+    opts = opts || {};
+    var a = grille.actif, out = [];
+    if (!a || !a.arbres) return out;
+    var pas = grille.pas, cote = grille.cote, max = opts.max || 60000;
+    for (var i = 0; i < cote * cote && out.length < max; i++) {
+      var p = a.arbres[i];
+      if (!(p > 0) || a.eau[i] > a.sol[i]) continue;
+      var gx = i % cote, gz = (i / cote) | 0, x0 = a.x0 + gx * pas, z0 = a.z0 + gz * pas;
+      var attendu = p * pas * pas, nb = Math.floor(attendu) + (hache(x0, z0, 1) < attendu % 1 ? 1 : 0);
+      var ess = a.essences[i] || 1;
+      for (var k = 0; k < nb && out.length < max; k++) {
+        var x = x0 + (hache(x0, z0, 10 + k) - 0.5) * pas, z = z0 + (hache(z0, x0, 20 + k) - 0.5) * pas;
+        out.push({ x: x, y: a.sol[i] + 1, z: z, essence: ess,
+                   taille: HAUTEURS[ess] * (0.8 + hache(x0 + k, z0, 3) * 0.45) });
+      }
+    }
+    return out;
+  }
+
+  /* ─── silhouettes des lieux ───────────────────────────────────────────────
+     Chaque bâtiment d'un lieu devient une boîte (son emprise, sa hauteur) aux
+     couleurs de son style, éclairée la nuit par ses fenêtres. */
+  function silhouettes(lieux) {
+    var out = [];
+    (lieux || []).forEach(function (l) {
+      (l.batiments || []).forEach(function (b) {
+        if (b.type === 'place') return;
+        out.push({ x0: b.x0, y0: b.y0 - 1, z0: b.z0, x1: b.x1 + 1, y1: Math.max(b.y0 + 2, b.y1), z1: b.z1 + 1,
+                   lieu: l.id, fenetres: b.type !== 'ferme' && b.type !== 'marche' && b.type !== 'loisirs' });
+      });
+    });
+    return out;
+  }
+
   /* Distance de vue adaptative, en chunks : on l'allonge tant que l'image
      reste fluide et que le chargement a rattrapé son retard ; on la raccourcit
      dès que la fluidité se dégrade. Deux seuils écartés évitent l'oscillation. */
@@ -138,5 +198,6 @@
   }
 
   MC.Lointain = { creerGrille: creerGrille, maillage: maillage, couleurLointaine: couleurLointaine,
-                  ajusterDistance: ajusterDistance, VUE: VUE };
+                  ajusterDistance: ajusterDistance, VUE: VUE, imposteurs: imposteurs, silhouettes: silhouettes,
+                  ESSENCES: ESSENCES, essenceDe: essenceDe };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
