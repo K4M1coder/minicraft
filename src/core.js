@@ -6,7 +6,7 @@
   var MC = G.MC = G.MC || {};
 
   // ─── géométrie du monde ────────────────────────────────────────────────────
-  var CHUNK_X = 16, CHUNK_Z = 16, WORLD_H = 80, SEA_LEVEL = 26;
+  var CHUNK_X = 16, CHUNK_Z = 16, WORLD_H = 128, SEA_LEVEL = 26;
 
   // index dans le tableau plat d'un chunk
   function idx(x, y, z) { return (y * CHUNK_Z + z) * CHUNK_X + x; }

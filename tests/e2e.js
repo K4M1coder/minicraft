@@ -1058,7 +1058,8 @@
     g.net.connecter('', 'Poseur', 1);
     await wait(700);
     var s2 = g.player.state;
-    var bx = Math.floor(s2.pos.x) + 5, bz = Math.floor(s2.pos.z) + 5;
+    // à portée du serveur (7 blocs depuis les yeux) : une case voisine, pas à 7,07 blocs
+    var bx = Math.floor(s2.pos.x) + 2, bz = Math.floor(s2.pos.z) + 2;
     var by = g.world.groundAt(bx, bz, true) + 1;
     g.world.setBlock(bx, by, bz, 0);
     g.net.poserBloc(bx, by, bz, B.BRICK);
@@ -1075,7 +1076,7 @@
     g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
     await frames(4);
     g.net.connecter('', 'Duo', g.equipe.length);
-    await wait(800);
+    for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
     A.equal(g.net.etat, 'en ligne', 'connecte malgre l ecran partage');
     A.equal(g.equipe.length, 2, 'toujours deux joueurs locaux');
     A.equal(g.vues.length, 2, 'toujours deux vues');
@@ -1374,7 +1375,11 @@
     for (var i = 0; i < 180; i++) await frames(1);
     key('KeyW', 'keyup');
     s.flying = false;
-    A.lt(g.world.chunks.size, 200, 'les chunks lointains sont déchargés (' + g.world.chunks.size + ')');
+    // la distance de vue est adaptative : on vérifie qu'aucun chunk ne traîne au-delà de sa marge
+    var R = g.render.RENDER_DIST, ccx = Math.floor(s.pos.x / 16), ccz = Math.floor(s.pos.z / 16), loin = 0;
+    g.world.chunks.forEach(function (c) { if (Math.hypot(c.cx - ccx, c.cz - ccz) > R + 5) loin++; });
+    A.equal(loin, 0, 'les chunks lointains sont déchargés (' + g.world.chunks.size + ' chargés, R = ' + R + ')');
+    A.lt(g.world.chunks.size, Math.PI * (R + 5) * (R + 5) * 1.5, 'et leur nombre reste borné par la distance de vue');
     await reset(g);
   });
 

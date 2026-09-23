@@ -31,8 +31,14 @@
   }
   function ecrireIndex(storage, idx) { return ecrireJSON(storage, INDEX_KEY, idx); }
 
+  /* Horodatage + compteur + hasard : le compteur exclut toute collision dans
+     une même session (deux tirages dans la même milliseconde se heurtaient
+     une fois sur cent), le hasard les rend improbables d'un onglet à l'autre. */
+  var compteurId = 0;
   function nouvelId() {
-    return 'p' + Date.now().toString(36) + Math.floor(Math.random() * 1679616).toString(36);
+    compteurId = (compteurId + 1) % 1296;
+    return 'p' + Date.now().toString(36) + '-' + compteurId.toString(36) +
+           Math.floor(Math.random() * 1679616).toString(36);
   }
 
   /* Liste les parties, la plus récemment jouée en tête. */

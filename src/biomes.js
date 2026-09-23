@@ -62,7 +62,7 @@
     montagnes: {
       id: 'montagnes', nom: 'Montagnes', surface: B.GRASS, sousSol: B.DIRT,
       // au-dessus de ces altitudes, la roche affleure puis la neige tient
-      rocheDes: 46, neigeDes: 54,
+      rocheDes: 52, neigeDes: 64,
       arbres: [{ type: 'sapin', p: 0.005 }],
       plantes: [{ id: B.TALL_GRASS, p: 0.03 }],
       mobsJour: { sheep: 3, goat: 4 },
@@ -324,6 +324,14 @@
       if (c.montagne > 0) {
         var ridge = 1 - Math.abs(N.signed(N.fbm((wx + 300) / 85, (wz - 170) / 85, 3, 2, 0.5)));
         h += c.montagne * (12 + ridge * ridge * 30);
+        /* Grands massifs : au cœur des chaînes les plus hautes, les crêtes
+           se dressent encore et percent la première couche de nuages. Le
+           massif est large (bruit à 190 blocs) : la pente reste gravissable. */
+        var massif = smoothstep(0.80, 0.99, c.r) * c.montagne;
+        if (massif > 0) {
+          var pic = N.fbm((wx - 911) / 190, (wz + 613) / 190, 3, 2, 0.5);
+          h += massif * (16 + smoothstep(0.3, 0.8, pic) * 36);
+        }
       }
       // badlands : des mesas, plateaux étagés de quatre blocs
       if (c.badlands > 0) {
@@ -355,7 +363,7 @@
       }
       c.escarpement = zoneEsc;
       // plafond souple : pas de plateaux tranchés net au sommet du monde
-      if (h > 56) h = 56 + (h - 56) * 0.45;
+      if (h > 92) h = 92 + (h - 92) * 0.45;
       return Math.max(3, Math.floor(h));
     }
 

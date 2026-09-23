@@ -10,6 +10,17 @@
     var RENDER_DIST = opts.renderDist || 5;
     var FOG_NEAR = RENDER_DIST * C.CHUNK_X * 0.55;
     var FOG_FAR = RENDER_DIST * C.CHUNK_X * 0.98;
+    // au-delà des chunks, le relief lointain porte la vue jusqu'à LOINTAIN_VUE blocs
+    var lointainEtendue = 0;
+    function recalerBrouillard() {
+      var proche = RENDER_DIST * C.CHUNK_X;
+      if (lointainEtendue > 0) {
+        FOG_FAR = lointainEtendue * 0.47;
+        FOG_NEAR = Math.min(proche * 0.9, FOG_FAR * 0.5);
+      } else {
+        FOG_NEAR = proche * 0.55; FOG_FAR = proche * 0.98;
+      }
+    }
 
     var scene = new THREE.Scene();
     scene.background = new THREE.Color(0x87b7e8);
@@ -24,7 +35,7 @@
       return [Math.max(1, w), Math.max(1, h)];
     }
     var sz = hostSize();
-    var camera = new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 1000);
+    var camera = new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 3000);
 
     /* Écran partagé : une caméra par joueur local, allouées à la demande.
        La première est `camera` ci-dessus, qui reste celle du joueur 1 — tout
@@ -32,7 +43,7 @@
     var cameras = [camera];
     function cameraDe(i) {
       while (cameras.length <= i) {
-        cameras.push(new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 1000));
+        cameras.push(new THREE.PerspectiveCamera(72, sz[0] / sz[1], 0.1, 3000));
       }
       return cameras[i];
     }
@@ -610,7 +621,8 @@
        le fond de la scène (dessinés en premier, sans écrire la profondeur, le
        relief passe donc devant). Ils échappent au brouillard, qui sinon les
        noierait dans la couleur du ciel. */
-    var DIST_CIEL = 420;
+    // le ciel doit rester DEVANT le relief lointain, et DERRIÈRE rien d'autre
+    var DIST_CIEL = 2000, KC = DIST_CIEL / 420;
     var ciel = new THREE.Group();
     ciel.renderOrder = -10;
     scene.add(ciel);
@@ -628,14 +640,14 @@
     }
 
     // soleil : un disque carré, pixellisé comme le reste, et un halo additif
-    var soleil = new THREE.Mesh(new THREE.PlaneGeometry(34, 34), matCiel({
+    var soleil = new THREE.Mesh(new THREE.PlaneGeometry(34 * KC, 34 * KC), matCiel({
       map: texture(16, function (c) {
         c.fillStyle = '#fff4c0'; c.fillRect(2, 2, 12, 12);
         c.fillStyle = '#ffe070'; c.fillRect(2, 2, 12, 2); c.fillRect(2, 12, 12, 2);
         c.fillStyle = '#fffbe8'; c.fillRect(5, 5, 6, 6);
       }),
     }));
-    var halo = new THREE.Mesh(new THREE.PlaneGeometry(130, 130), matCiel({
+    var halo = new THREE.Mesh(new THREE.PlaneGeometry(130 * KC, 130 * KC), matCiel({
       map: (function () {
         var t = texture(64, function (c) {
           var gr = c.createRadialGradient(32, 32, 2, 32, 32, 32);
@@ -656,7 +668,7 @@
     luneCanvas.width = luneCanvas.height = 16;
     var luneTex = new THREE.CanvasTexture(luneCanvas);
     luneTex.magFilter = THREE.NearestFilter;
-    var lune = new THREE.Mesh(new THREE.PlaneGeometry(26, 26), matCiel({ map: luneTex }));
+    var lune = new THREE.Mesh(new THREE.PlaneGeometry(26 * KC, 26 * KC), matCiel({ map: luneTex }));
     ciel.add(lune);
     var phaseDessinee = -1;
     function dessinerLune(ph) {
@@ -699,7 +711,6 @@
     /* Nuages : une grande nappe texturée par un bruit TUILABLE (le motif
        boucle sans couture), qui dérive avec le vent. Un fondu radial calculé
        dans le shader les efface vers l'horizon, là où le brouillard n'agit pas. */
-    var NUAGES_Y = 104;
     var nuagesTex = (function () {
       var N = 128, cv = document.createElement('canvas');
       cv.width = cv.height = N;
@@ -721,36 +732,193 @@
       for (var y = 0; y < N; y++) for (var x = 0; x < N; x++) {
         var v = bruit(octaves[0], x, y) * 0.5 + bruit(octaves[1], x, y) * 0.25 +
                 bruit(octaves[2], x, y) * 0.15 + bruit(octaves[3], x, y) * 0.1;
-        var a = Math.max(0, Math.min(1, (v - 0.52) * 5));
+        // on garde le bruit BRUT : le seuil (la couverture du ciel) se règle
+        // dans le shader, sans repeindre la texture quand le temps change
         var k2 = (y * N + x) * 4;
         img.data[k2] = img.data[k2 + 1] = img.data[k2 + 2] = 255;
-        img.data[k2 + 3] = Math.round(a * 230);
+        img.data[k2 + 3] = Math.round(Math.max(0, Math.min(1, v)) * 255);
       }
       c.putImageData(img, 0, 0);
       var t = new THREE.CanvasTexture(cv);
       t.wrapS = t.wrapT = THREE.RepeatWrapping;
-      t.magFilter = THREE.NearestFilter;               // des nuages en gros pixels, comme les blocs
+      // lissés : à plusieurs centaines de blocs par motif, des pixels francs feraient des dalles
+      t.magFilter = THREE.LinearFilter;
       return t;
     })();
-    var nuagesMat = new THREE.ShaderMaterial({
-      transparent: true, depthWrite: false, fog: false, side: THREE.DoubleSide,
-      uniforms: { carte: { value: nuagesTex }, decalage: { value: new THREE.Vector2(0, 0) },
-                  teinte: { value: new THREE.Color(1, 1, 1) }, echelle: { value: 3.2 } },
-      vertexShader: 'varying vec2 vUv; varying vec2 vPos;' +
-        'void main(){ vUv = uv; vPos = position.xy; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-      fragmentShader: 'uniform sampler2D carte; uniform vec2 decalage; uniform vec3 teinte; uniform float echelle;' +
-        'varying vec2 vUv; varying vec2 vPos;' +
-        'void main(){ vec4 t = texture2D(carte, vUv * echelle + decalage);' +
-        ' float fondu = 1.0 - smoothstep(180.0, 460.0, length(vPos));' +
-        ' gl_FragColor = vec4(teinte, t.a * 0.85 * fondu); if (gl_FragColor.a < 0.01) discard; }',
+    /* Cinq couches (MC.Meteo.COUCHES), chacune faite de tranches empilées :
+       un cumulus a de l'épaisseur, un cirrus n'est qu'un voile. Le shader
+       reprend la formule de Meteo.densiteNuage sur une texture de bruit :
+       - la forme se déforme avec le temps (deux lectures qui glissent l'une
+         sur l'autre, mêlées selon une phase propre à chaque point) ;
+       - un champ lent de rassemblement forme et dissipe des bancs entiers ;
+       - la couverture suit la météo ;
+       - une carte du relief éteint le nuage là où la roche monte : il
+         contourne les sommets au lieu de les traverser. */
+    var ME = MC.Meteo;
+    var reliefTex = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1, THREE.RGBAFormat);
+    reliefTex.magFilter = reliefTex.minFilter = THREE.LinearFilter;
+    var UN = {
+      carte: { value: nuagesTex }, relief: { value: reliefTex },
+      zoneRelief: { value: new THREE.Vector4(0, 0, 1, 0) },
+      derive: { value: new THREE.Vector2() }, temps: { value: 0 },
+      couvertureCiel: { value: 0.3 }, teinte: { value: new THREE.Color(1, 1, 1) }, sombre: { value: 0 },
+    };
+    // le vecteur caméra → point s'interpole bien, pas sa longueur : on la prend par pixel
+    var VS_NUAGE = 'varying vec2 vMonde; varying vec2 vRel;' +
+      'void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vMonde = w.xz;' +
+      ' vRel = w.xz - cameraPosition.xz; gl_Position = projectionMatrix * viewMatrix * w; }';
+    var FS_NUAGE = [
+      'uniform sampler2D carte; uniform sampler2D relief; uniform vec4 zoneRelief;',
+      'uniform vec2 derive; uniform float temps; uniform float couvertureCiel; uniform vec3 teinte; uniform float sombre;',
+      'uniform float motif; uniform float etire; uniform float vent; uniform float couvCouche; uniform float opacite;',
+      'uniform float ySlice; uniform float frac; uniform float dome; uniform float taille; uniform float graine;',
+      'varying vec2 vMonde; varying vec2 vRel;',
+      'void main(){',
+      '  float vDist = length(vRel);',
+      '  vec2 p = (vMonde - derive * vent) / motif; p.x /= etire;',
+      '  float e = temps / ' + ME.EVOLUTION.toFixed(1) + ';',
+      '  float nA = texture2D(carte, p + vec2(e * 0.031, e * 0.017) + graine).a;',
+      '  float nB = texture2D(carte, p * 1.37 + vec2(-e * 0.023, e * 0.029) + 0.5 + graine).a;',
+      '  float n = mix(nA, nB, 0.5 + 0.5 * sin(e * 1.3 + nA * 6.2832));',
+      '  float champ = texture2D(carte, (vMonde - derive) / 9600.0 + vec2(temps / 60000.0, 0.0)).a;',
+      '  float couv = clamp(couvCouche + (couvertureCiel - 0.3) * 0.95 + (champ - 0.5) * 0.9, 0.0, 1.0);',
+      '  float seuil = 0.62 - couv * 0.34 + dome * frac * frac * 0.12;',
+      '  float d = clamp((n - seuil) * 5.0, 0.0, 1.0);',
+      '  if (zoneRelief.w > 0.5) {',
+      '    vec2 r = (vMonde - zoneRelief.xy) / zoneRelief.z;',
+      '    if (r.x > 0.0 && r.y > 0.0 && r.x < 1.0 && r.y < 1.0) {',
+      '      float h = texture2D(relief, r).r * 255.0;',
+      '      d *= clamp((ySlice - h - 1.0) / 3.0, 0.0, 1.0);',
+      '    }',
+      '  }',
+      '  float a = d * opacite * (1.0 - smoothstep(taille * 0.2, taille * 0.48, vDist));',
+      '  if (a < 0.01) discard;',
+      '  gl_FragColor = vec4(teinte * (0.7 + 0.3 * frac) * (1.0 - sombre * (0.3 + 0.45 * d)), a);',
+      '}'].join('\n');
+    var tranches = [];
+    ME.COUCHES.forEach(function (co, ci) {
+      var geo = new THREE.PlaneGeometry(co.taille, co.taille);
+      for (var s = 0; s < co.tranches; s++) {
+        var frac = co.tranches > 1 ? s / (co.tranches - 1) : 0;
+        var y = co.y + frac * co.epaisseur;
+        var u = Object.assign({}, UN, {
+          motif: { value: co.motif }, etire: { value: co.etire || 1 }, vent: { value: co.vent },
+          couvCouche: { value: co.couverture },
+          // N tranches superposées rendent l'opacité voulue de la couche
+          opacite: { value: 1 - Math.pow(1 - co.opacite, 1 / co.tranches) },
+          ySlice: { value: y }, frac: { value: frac }, dome: { value: co.dome ? 1 : 0 },
+          taille: { value: co.taille }, graine: { value: ci * 0.137 },
+        });
+        var mat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, fog: false,
+          side: THREE.DoubleSide, uniforms: u, vertexShader: VS_NUAGE, fragmentShader: FS_NUAGE });
+        var tr = new THREE.Mesh(geo, mat);
+        tr.rotation.x = -Math.PI / 2;
+        // après l'eau : vu d'au-dessus des nuages, la mer ne doit pas les traverser
+        tr.renderOrder = 5;
+        tr.frustumCulled = false;
+        tr.userData = { y: y, couche: co.nom };
+        scene.add(tr);
+        tranches.push(tr);
+      }
     });
-    var nuages = new THREE.Mesh(new THREE.PlaneGeometry(1000, 1000), nuagesMat);
-    nuages.rotation.x = -Math.PI / 2;
-    nuages.renderOrder = -5;
-    scene.add(nuages);
+    var nuages = tranches[0];
 
-    var VENT = 1.6;                                     // blocs par seconde
+    /* Relief sous les nuages : la grille du relief lointain, en texture. */
+    var versionRelief = -1;
+    function majReliefNuages(grille) {
+      if (!grille || !grille.pret || grille.version === versionRelief) return false;
+      versionRelief = grille.version;
+      var a = grille.actif, n = grille.cote, px = new Uint8Array(n * n * 4);
+      for (var i = 0; i < n * n; i++) {
+        px[i * 4] = Math.max(0, Math.min(255, Math.round(Math.max(a.sol[i], a.eau[i]))));
+        px[i * 4 + 3] = 255;
+      }
+      var t = new THREE.DataTexture(px, n, n, THREE.RGBAFormat);
+      t.magFilter = t.minFilter = THREE.LinearFilter;
+      t.needsUpdate = true;
+      if (UN.relief.value !== reliefTex) UN.relief.value.dispose();
+      UN.relief.value = t;
+      UN.zoneRelief.value.set(a.x0 - grille.pas / 2, a.z0 - grille.pas / 2, n * grille.pas, 1);
+      return true;
+    }
+
+    /* ── Relief lointain ──────────────────────────────────────────────────
+       Un maillage grossier jusqu'à l'horizon. Là où les vrais chunks sont
+       maillés, un disque est découpé dans le shader (`trou`) : pas besoin de
+       reconstruire le maillage à chaque pas du joueur. */
+    var matLointain = new THREE.MeshLambertMaterial({ vertexColors: true });
+    var trouLointain = { value: new THREE.Vector3(0, 0, 0) };
+    matLointain.onBeforeCompile = function (sh) {
+      sh.uniforms.trou = trouLointain;
+      sh.vertexShader = 'varying vec3 vMondeL;\n' + sh.vertexShader.replace('#include <project_vertex>',
+        '#include <project_vertex>\n  vMondeL = (modelMatrix * vec4(transformed, 1.0)).xyz;');
+      sh.fragmentShader = 'uniform vec3 trou; varying vec3 vMondeL;\n' + sh.fragmentShader.replace('void main() {',
+        'void main() {\n  if (length(vMondeL.xz - trou.xy) < trou.z) discard;');
+    };
+    var lointain = null, versionLointain = -1;
+    function majLointain(grille) {
+      majReliefNuages(grille);
+      if (!grille || !grille.pret || grille.version === versionLointain) return false;
+      versionLointain = grille.version;
+      var raw = MC.Lointain.maillage(grille, 1.5);
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.BufferAttribute(raw.positions, 3));
+      g.setAttribute('color', new THREE.BufferAttribute(raw.colors, 3));
+      g.setIndex(new THREE.BufferAttribute(raw.indices, 1));
+      g.computeVertexNormals();
+      g.computeBoundingSphere();
+      if (lointain) { scene.remove(lointain); lointain.geometry.dispose(); }
+      lointain = new THREE.Mesh(g, matLointain);
+      scene.add(lointain);
+      lointainEtendue = raw.etendue;
+      recalerBrouillard();
+      return true;
+    }
+    // le disque découpé suit le joueur de la vue en cours
+    function placerTrou(cam) {
+      trouLointain.value.set(cam.position.x, cam.position.z, Math.max(0, (RENDER_DIST - 0.7) * C.CHUNK_X));
+    }
+    function setDistance(r) {
+      RENDER_DIST = Math.max(2, r | 0);
+      recalerBrouillard();
+      return RENDER_DIST;
+    }
+
+    /* Météo transmise par le jeu : état du ciel et dérive des nuages. */
+    var meteoCiel = null, flash = 0;
+    function majMeteo(et, derive) {
+      meteoCiel = et;
+      if (derive) UN.derive.value.set(derive.x, derive.z);
+      if (et) {
+        UN.couvertureCiel.value = et.couverture;
+        UN.sombre.value = Math.max(0, (et.couverture - 0.6) / 0.4) * 0.8;
+      }
+    }
+    /* Un éclair : un trait brisé du nuage au sol, et un flash qui blanchit
+       ciel et lumière un instant. */
+    function eclair(x, ySol, z, force) {
+      var pts = [], y = ME.COUCHES[1].y + 4, px = x, pz = z;
+      var graine = (x * 73856093) ^ (z * 19349663);
+      function r() { graine = (graine * 16807 + 12345) % 2147483647; return (graine % 1000) / 1000; }
+      while (y > ySol) {
+        var ny = Math.max(ySol, y - 3 - r() * 5);
+        var nx = px + (r() - 0.5) * 5, nz = pz + (r() - 0.5) * 5;
+        if (ny <= ySol) { nx = x; nz = z; }
+        pts.push(px, y, pz, nx, ny, nz);
+        px = nx; pz = nz; y = ny;
+      }
+      var g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pts, 3));
+      var m = new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color: 0xeef2ff, transparent: true,
+                                                                       opacity: 1, fog: false }));
+      m.renderOrder = 6;
+      scene.add(m);
+      eclairs.push({ mesh: m, vie: 0.35 });
+      flash = Math.max(flash, force === undefined ? 1 : force);
+      return m;
+    }
     function majCiel(time) {
+      UN.temps.value = time;
       var a = DC.astres(time);
       if (a.phaseLune !== phaseDessinee) dessinerLune(a.phaseLune);
       etoilesMat.opacity = a.etoiles;
@@ -759,16 +927,14 @@
       soleil.visible = halo.visible = a.soleil.y > -0.12;
       lune.visible = a.lune.y > -0.12;
       ciel.userData.astres = a;
-      // nuages : dérive au vent ; blancs le jour, rosés à l'aube et au soir, gris la nuit
-      var p = DC.phase(time);
-      // dérive du vent, en unités de texture
-      ciel.userData.vent = (time * VENT) / 1000 * nuagesMat.uniforms.echelle.value;
+      // nuages : blancs le jour, rosés à l'aube et au soir, gris la nuit
       var jour = DC.sunIntensity(time);
       var s = DC.skyColor(time);
       var crep = DC.isDusk(time) || DC.isDawn(time);
-      nuagesMat.uniforms.teinte.value.setRGB(
-        0.25 + jour * 0.75 + (crep ? 0.15 : 0), 0.27 + jour * 0.73 - (crep ? 0.05 : 0), 0.34 + jour * 0.66);
-      if (!jour) nuagesMat.uniforms.teinte.value.lerp(new THREE.Color(s[0], s[1], s[2]), 0.3);
+      var te = UN.teinte.value;
+      te.setRGB(0.25 + jour * 0.75 + (crep ? 0.15 : 0), 0.27 + jour * 0.73 - (crep ? 0.05 : 0), 0.34 + jour * 0.66);
+      if (!jour) te.lerp(new THREE.Color(s[0], s[1], s[2]), 0.3);
+      if (flash > 0) te.lerp(new THREE.Color(0.9, 0.92, 1), flash);
       return a;
     }
     /* Recentre le ciel sur une caméra (une par vue en écran partagé). Les
@@ -784,11 +950,11 @@
       }
       poser(soleil, a.soleil, DIST_CIEL); poser(halo, a.soleil, DIST_CIEL + 5);
       poser(lune, a.lune, DIST_CIEL);
-      nuages.position.set(cam.position.x, NUAGES_Y, cam.position.z);
-      // la nappe (1000 blocs) suit la caméra ; sa texture compense ce déplacement
-      var u = nuagesMat.uniforms;
-      u.decalage.value.set((cam.position.x / 1000) * u.echelle.value + (ciel.userData.vent || 0),
-                           (-cam.position.z / 1000) * u.echelle.value);
+      // chaque tranche suit la caméra ; le shader lit le monde en coordonnées absolues
+      for (var i = 0; i < tranches.length; i++) {
+        tranches[i].position.set(cam.position.x, tranches[i].userData.y, cam.position.z);
+      }
+      placerTrou(cam);
     }
 
     // ─── repères : une colonne de lumière, visible de loin ─────────────────────
@@ -817,9 +983,32 @@
     var skyC = new THREE.Color();
     var UNDERWATER = new THREE.Color(0x2a5f9e);
 
+    var GRIS_ORAGE = new THREE.Color(0.42, 0.45, 0.5), BLANC_ECLAIR = new THREE.Color(0.85, 0.88, 1);
+    var derniereAmbiance = 0, eclairs = [];
     function updateAmbience(time, submerged) {
+      var maintenant = (typeof performance !== 'undefined' ? performance.now() : Date.now()) / 1000;
+      var dtA = Math.min(0.1, Math.max(0, maintenant - (derniereAmbiance || maintenant)));
+      derniereAmbiance = maintenant;
+      flash = Math.max(0, flash - dtA * 3.2);
+      eclairs = eclairs.filter(function (e) {
+        e.vie -= dtA;
+        e.mesh.material.opacity = Math.max(0, e.vie / 0.35);
+        if (e.vie > 0) return true;
+        scene.remove(e.mesh); e.mesh.geometry.dispose(); e.mesh.material.dispose();
+        return false;
+      });
       var s = DC.skyColor(time);
       skyC.setRGB(s[0], s[1], s[2]);
+      var me = meteoCiel, vis = 1, lum = 1;
+      if (me) {
+        // ciel qui se couvre : il grisaille, d'autant plus sombre que c'est bouché
+        var k = Math.max(0, (me.couverture - 0.45) / 0.55) * 0.7;
+        var g2 = GRIS_ORAGE.clone().multiplyScalar(0.35 + 0.65 * DC.sunIntensity(time));
+        skyC.lerp(g2, k);
+        vis = 1 - me.precipitation * 0.72;
+        lum = me.lumiere;
+      }
+      if (flash > 0) skyC.lerp(BLANC_ECLAIR, flash * 0.8);
       if (submerged) {
         scene.background.copy(UNDERWATER);
         scene.fog.color.copy(UNDERWATER);
@@ -827,14 +1016,14 @@
       } else {
         scene.background.copy(skyC);
         scene.fog.color.copy(skyC);
-        scene.fog.near = FOG_NEAR; scene.fog.far = FOG_FAR;
+        scene.fog.near = FOG_NEAR * vis; scene.fog.far = Math.max(60, FOG_FAR * vis);
       }
       var inten = DC.sunIntensity(time);
       // Plancher d'éclairage nocturne : une nuit physiquement correcte serait
       // noire, donc injouable. On garde le contraste jour/nuit tout en laissant
       // le relief lisible (et les zombies visibles avant qu'ils ne mordent).
-      sun.intensity = 0.12 + inten * 0.48;
-      hemi.intensity = 0.46 + inten * 0.52;
+      sun.intensity = (0.12 + inten * 0.48) * Math.min(1.2, lum * (lum < 1 ? 0.8 : 1)) + flash * 0.8;
+      hemi.intensity = (0.46 + inten * 0.52) * (0.75 + 0.25 * lum) + flash * 0.9;
       // la lumière hémisphérique vire au bleu nuit quand le soleil se couche
       hemi.color.setRGB(0.55 + s[0] * 0.45, 0.62 + s[1] * 0.38, 0.72 + s[2] * 0.28);
       var ast = majCiel(time);
@@ -961,11 +1150,16 @@
       maillagesDistants: maillagesDistants,
       get materiauxLiberes() { return liberees; },
       resize: resize, render: render, renderViews: renderViews,
-      cameraDe: cameraDe, cameras: cameras, RENDER_DIST: RENDER_DIST,
+      cameraDe: cameraDe, cameras: cameras,
+      get RENDER_DIST() { return RENDER_DIST; },
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
-      ciel: { groupe: ciel, soleil: soleil, lune: lune, etoiles: etoiles, nuages: nuages,
+      majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },
+      get lointain() { return lointain; },
+      get brouillard() { return { near: FOG_NEAR, far: FOG_FAR }; },
+      ciel: { groupe: ciel, soleil: soleil, lune: lune, etoiles: etoiles, nuages: nuages, tranches: tranches,
               maj: majCiel, placer: placerCiel },
     };
   }

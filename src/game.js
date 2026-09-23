@@ -7,11 +7,12 @@
   var B = C.B, I = C.I;
 
   var GEN_BUDGET = 2, MESH_BUDGET = 2;     // par frame, pour ne pas saccader
+  var LOINTAIN_BUDGET = 1200;              // colonnes lointaines échantillonnées par frame
   var SPAWN_INTERVAL = 3.5;
 
   function createGame(host) {
     var atlas = MC.buildAtlas();
-    var render = MC.createRenderer(host, atlas, { renderDist: 5 });
+    var render = MC.createRenderer(host, atlas, { renderDist: 6 });
     var canvas = render.renderer.domElement;
 
     var SEED = 20260921;
@@ -274,12 +275,54 @@
       render.libererToutesEntites();
       world = MC.createWorld(graine);
       reconstruireDependances();
+      grille = creerGrilleLointaine();
       return world;
     }
     g.remplacerMonde = remplacerMonde;
 
     /* Le monde est recree a chaque partie (graine differente) : entites,
        joueur et registres doivent le suivre, sinon ils pointent sur l ancien. */
+    /* Relief lointain : une grille de 256 × 256 colonnes, une tous les 8 blocs,
+       soit deux kilomètres de côté. Elle suit le monde courant. */
+    function creerGrilleLointaine() {
+      var w = world;
+      return MC.Lointain.creerGrille({ pas: 8, cote: 256,
+                                       echantillon: function (x, z) { return w.echantillonLointain(x, z); } });
+    }
+    var grille = creerGrilleLointaine();
+
+    /* Météo : même graine, même ciel que le serveur et les autres postes. */
+    var meteoT = null;
+    function majMeteo() {
+      var me = world.meteo;
+      if (!me) return;
+      var et = me.etat(g.time);
+      g.meteo = et;
+      render.majMeteo(et, me.derive(g.time));
+      // éclairs tombés depuis la dernière image (après un saut d'heure, on ne rattrape pas)
+      if (meteoT === null || g.time < meteoT || g.time - meteoT > 5) meteoT = g.time;
+      var l = me.eclairs(meteoT, g.time);
+      meteoT = g.time;
+      var pc = player.state.pos;
+      l.forEach(function (e) {
+        var lieu = me.lieuEclair(e, pc.x, pc.z);
+        var ySol = world.estCharge(lieu.x, lieu.z) ? world.groundAt(lieu.x, lieu.z) : world.heightAt(lieu.x, lieu.z);
+        render.eclair(lieu.x, ySol + 1, lieu.z, e.force);
+        g.eclairs = (g.eclairs || 0) + 1;
+        if (g.surEclair) g.surEclair(e, lieu, ySol);
+      });
+    }
+
+    /* Distance de vue : réévaluée toutes les deux secondes selon la fluidité. */
+    var vueT = 0;
+    function ajusterVue(dt) {
+      vueT += dt;
+      if (vueT < 2) return;
+      vueT = 0;
+      var r = MC.Lointain.ajusterDistance(render.RENDER_DIST, g.fps, g.enAttente || 0);
+      if (r !== render.RENDER_DIST) render.setDistance(r);
+    }
+
     function reconstruireDependances() {
       entities = MC.createEntities(world);
       g.world = world;
@@ -430,26 +473,31 @@
       var aMailler = world.chunksVoulus(centres, R);
 
       var genMax = unlimited ? 1e9 : GEN_BUDGET, meshMax = unlimited ? 1e9 : MESH_BUDGET;
-      var gen = 0;
-      for (var i = 0; i < aGenerer.length && gen < genMax; i++) {
+      var gen = 0, manquants = 0;
+      for (var i = 0; i < aGenerer.length; i++) {
         var cx = aGenerer[i][1], cz = aGenerer[i][2];
         if (world.chunks.has(world.key(cx, cz))) continue;
+        if (gen >= genMax) { manquants++; continue; }
         world.getChunk(cx, cz, true);
         // les 8 voisins : leurs faces de bordure ET leur occlusion ambiante changent
         world.marquerVoisins(cx, cz);
         gen++;
       }
 
-      var meshed = 0;
-      for (var j = 0; j < aMailler.length && meshed < meshMax; j++) {
+      var meshed = 0, attente = 0;
+      for (var j = 0; j < aMailler.length; j++) {
+        if (meshed >= meshMax) { attente++; continue; }
         var mx = aMailler[j][1], mz = aMailler[j][2];
         var c = world.chunks.get(world.key(mx, mz));
         if (!c || !c.dirty) continue;
         // voisinage 3×3 complet, sinon coutures et ombres de contact fausses
+        // bord du disque : ses voisins en diagonale ne seront jamais générés, ce n'est pas un retard
         if (!world.voisinsCharges(mx, mz)) continue;
         render.syncChunk(world, c);
         meshed++;
       }
+      // chunks voulus pas encore affichés : la distance de vue n'avance que s'ils sont rattrapés
+      g.enAttente = attente + manquants;
 
       world.unloadLoin(centres, R + 3, render.disposeChunk);
     }
@@ -1141,6 +1189,12 @@
                          sj.yaw, sj.pitch, vi);
       }
       var s2 = player.state;
+      // relief lointain, météo, distance de vue
+      grille.recentrer(s2.pos.x, s2.pos.z);
+      grille.avancer(LOINTAIN_BUDGET);
+      render.majLointain(grille);
+      majMeteo();
+      if (st === 'playing' || st === 'ui') ajusterVue(dt);
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);

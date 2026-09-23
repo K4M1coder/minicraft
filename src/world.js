@@ -38,6 +38,14 @@
     var reperes = MC.Carte ? MC.Carte.creerReperes() : null;
     // ce que chaque faction pense du joueur
     var reputation = MC.Factions ? MC.Factions.creerReputations() : null;
+    // le ciel de ce monde : même graine, même météo, sur tous les postes
+    var meteo = MC.Meteo ? MC.Meteo.creer(seed === undefined ? 20260921 : seed) : null;
+    /* Une colonne vue de loin, pour le relief lointain : hauteur, eau, couleur. */
+    function echantillonLointain(wx, wz) {
+      var e = Bio.echantillon(wx, wz);
+      return { h: Math.min(WH - 1, e.h), eau: e.eau,
+               couleur: MC.Lointain ? MC.Lointain.couleurLointaine(e) : [120, 120, 120] };
+    }
     // coffres de donjon dont le butin a déjà été tiré (ouverts ou cassés)
     var coffresPilles = new Set();
 
@@ -638,6 +646,7 @@
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,
+      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain,
       key: key, key3: key3,
     };
   }

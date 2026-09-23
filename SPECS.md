@@ -401,6 +401,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-RELIEF-003 | Des falaises côtières et des escarpements coupent le relief | paroi d'au moins sept blocs | ✅ |
 | SPEC-RELIEF-004 | Les hauteurs froides portent des glaciers de glace bleue, gardés par une forteresse ; aucun donjon dans un volcan | glace bleue générée ; type de donjon | ✅ |
 | SPEC-RELIEF-005 | Grottes, cavernes et lacs de lave profonds creusent le sous-sol, jamais au ras du socle | vides souterrains, lave au fond | ✅ |
+| SPEC-RELIEF-006 | Le monde monte à 128 blocs ; cinq couches de nuages étagées, d'épaisseur propre à leur nature (cumulus épais, cirrus sans épaisseur) : les trois basses sous les plus hauts sommets, qui les percent, les deux hautes au-dessus de tout relief | couches, épaisseurs, sommets rares et montagneux au-dessus de la troisième | ✅ |
 
 ## LAVE — lave et magma
 
@@ -438,3 +439,26 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-SYNC-004 | Un client ne peut pas simuler plus de temps qu'il ne s'en écoule | budget de temps | ✅ |
 | SPEC-SYNC-005 | Position et statistiques (vie, faim, air, mort) du serveur font foi | état envoyé et appliqué | ✅ |
 | SPEC-SYNC-006 | Le protocole valide entrées, attaques, tirs, repas et renaissance, et borne chaque valeur | messages valides, bornés, ou refusés | ✅ |
+
+## NUAGE — nuages dynamiques
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-NUAGE-001 | Les nuages se forment, se déforment, se dissipent et se rassemblent en bancs ; ils dérivent au vent, sans saut quand le vent tourne ; un ciel qui se couvre en porte plus | naissances et disparitions en un point, dérive continue, champ de rassemblement, couverture | ✅ |
+| SPEC-NUAGE-002 | Un nuage ne traverse pas la roche : sa densité s'éteint là où le relief atteint son altitude ; un cumulus est bombé, un cirrus étiré | densité nulle contre la montagne, intacte au-dessus des vallées, dôme | ✅ |
+
+## METEO — météo et température
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-METEO-001 | Grand soleil, clair, nuageux, couvert, pluie, orage et tempête s'enchaînent par transitions permises, en fondu, identiques sur tous les postes pour une même graine ; le vent a une direction et une force | chaîne de Markov, déterminisme, couverture continue | ✅ |
+| SPEC-METEO-002 | La température dépend du climat, de l'altitude, de l'heure et du temps : sommets et pôles glacés, désert brûlant le jour et froid la nuit ; un ressenti en découle | températures comparées, ressentis | ✅ |
+| SPEC-METEO-003 | Il pleut, ou il neige quand il gèle, là où les nuages se sont rassemblés ; jamais au désert ni par beau temps | formes et intensités de précipitation | ✅ |
+| SPEC-METEO-004 | Les éclairs ne tombent que par orage ou tempête, aux mêmes instants et aux mêmes lieux pour tous les postes | éclairs pendant les orages, déterministes, lieu partagé | ✅ |
+
+## VUE — distance de vue
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-VUE-001 | Au-delà des chunks, un relief simplifié (couleurs du terrain, neige, lave, eau) porte la vue à plus d'un kilomètre ; sa grille se remplit sur plusieurs images sans en figer aucune | remplissage progressif, fidélité des hauteurs, étendue, couleurs | ✅ |
+| SPEC-VUE-002 | La distance de vue en vrais blocs s'allonge tant que l'image reste fluide et le chargement à jour, et recule dès que la fluidité se dégrade | réglage adaptatif et bornes | ✅ |
