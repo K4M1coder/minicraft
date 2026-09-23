@@ -527,7 +527,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-EAU-005 | L'eau posée ou libérée s'écoule : elle descend, s'étale sur sept blocs au plus en s'amenuisant, et se retire quand sa source disparaît | simulation d'écoulement | ✅ |
 | SPEC-EAU-006 | Près des rivages, les vagues se dressent en approchant de la côte (amplitude qui croît quand le fond remonte), déferlent en écume sur la ligne du rivage et courent vers la plage | profondeur et direction du rivage par colonne, amplitude et écume selon la profondeur | ✅ |
 | SPEC-EAU-007 | Sous l'eau, la lumière est dynamique : des caustiques animées dansent sur le fond et les parois immergées, la lumière du soleil s'atténue et bleuit avec la profondeur | attribut d'immersion par sommet, atténuation selon la profondeur | ✅ |
-| SPEC-EAU-008 | La surface de l'eau déforme ce qu'on voit à travers elle : vu du dessus, le fond ondule par réfraction ; vu de dessous, le monde au-dessus et tout le champ de vision ondulent | passe de réfraction et déformation sous l'eau | ⏳ |
+| SPEC-EAU-008 | La surface de l'eau déforme ce qu'on voit à travers elle : vu du dessus, le fond ondule par réfraction ; vu de dessous, le monde au-dessus et tout le champ de vision ondulent | passe de réfraction et déformation sous l'eau | ✅ |
 
 ## L16 — vent
 

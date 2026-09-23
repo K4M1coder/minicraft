@@ -735,10 +735,11 @@
     var mobs = [];
     for (var i = 0; i < 5; i++) mobs.push(g.entities.spawn('zombie', s.pos.x + 3 + i, s.pos.y, s.pos.z));
     await frames(3);
-    A.equal(g.render.entityMeshes.size, 5, 'cinq maillages crees');
+    // d'autres créatures peuvent naître entre-temps (habitants, petits) : on suit les nôtres
+    A.equal(mobs.filter(function (m) { return g.render.entityMeshes.has(m.eid); }).length, 5, 'cinq maillages crees');
     mobs.forEach(function (m) { g.entities.remove(m); });
     await frames(3);
-    A.equal(g.render.entityMeshes.size, 0, 'maillages retires');
+    A.equal(mobs.filter(function (m) { return g.render.entityMeshes.has(m.eid); }).length, 0, 'maillages retires');
     A.ok(g.render.materiauxLiberes > avant,
       'des materiaux ont ete liberes (' + (g.render.materiauxLiberes - avant) + ')');
   });
