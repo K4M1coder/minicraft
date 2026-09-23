@@ -727,10 +727,12 @@
 
     // ─── donjons ─────────────────────────────────────────────────────────────
     function salleDonjon(x, y, z) { return donjons.salleA(x, y, z); }
+    /* La salle d'un donjon moyen ou grand où se tient ce point : { donjon, index }. */
+    function pieceDonjon(x, y, z) { return donjons.salleDe(x, y, z); }
     /* Butin d'un coffre de donjon jamais ouvert, ou null pour un coffre ordinaire. */
     function butinCoffre(x, y, z) {
-      var d = donjons.coffreA(x, y, z);
-      return d ? donjons.butin(d) : null;
+      var c = donjons.coffreA(x, y, z);
+      return c ? donjons.butin(c.donjon, c.indice) : null;
     }
 
     return {
@@ -744,7 +746,7 @@
       chunkDe: function (cx, cz) { return chunks.get(key(cx, cz)) || null; },
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
-      salleDonjon: salleDonjon, butinCoffre: butinCoffre,
+      salleDonjon: salleDonjon, pieceDonjon: pieceDonjon, butinCoffre: butinCoffre,
       meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, pnjsMorts: pnjsMorts,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       get banque() { return banque; }, set banque(b) { banque = b; },

@@ -87,9 +87,184 @@
         id: rx + ',' + rz, type: type, nom: TYPES[type].nom, x: x, z: z, surface: surf,
         boss: liste[Math.floor(N.hash2(rx * 53 + 7, rz * 41 - 3) * liste.length) % liste.length],
         salle: null, coffre: null, spawn: null, entree: null, blocs: [],
+        taille: tailleDe(rx, rz, type, surf), salles: [], niveaux: 1, gardes: [], coffres: [],
       };
-      BATISSEURS[type](d, outilsPour(d), rx, rz);
+      var o = outilsPour(d);
+      BATISSEURS[type](d, o, rx, rz);
+      // le petit donjon d'origine : une salle, et son coffre
+      d.salles.push({ x0: d.salle.x0, y0: d.salle.y0, z0: d.salle.z0, x1: d.salle.x1, y1: d.salle.y1, z1: d.salle.z1, niveau: 0, vestibule: true });
+      d.coffres.push(d.coffre);
+      if (d.taille !== 'petit') complexe(d, o, rx, rz);
       return d;
+    }
+
+    /* ─── Tailles et complexes ────────────────────────────────────────────────
+       Un donjon est petit (la salle d'origine et son accès), moyen (plusieurs
+       salles sur un niveau) ou grand (plusieurs niveaux). Les grands sont
+       rares et demandent de la profondeur sous eux. Le plan est tiré de la
+       graine : des salles posées sur une grille, reliées par un arbre de
+       couloirs, les niveaux joints par des escaliers ; le gardien descend dans
+       la plus grande salle du niveau le plus profond. */
+    function tailleDe(rx, rz, type, surf) {
+      if (TYPES[type].marin || type === 'hutte') return 'petit';     // sous l'eau, sur pilotis : une seule pièce
+      var r = N.hash2(rx * 613 + 11, rz * 227 - 5);
+      var place = surf - 4;                                   // profondeur disponible sous la surface
+      if (r < 0.14 && place >= 40) return 'grand';
+      if (r < 0.46 && place >= 22) return 'moyen';
+      return 'petit';
+    }
+    /* Identité de chaque type : matériaux, décor, lumière, gardes. */
+    var THEMES = {
+      crypte:           { mur: 'mousse', sol: B.STONE_BRICK, pilier: B.STONE_BRICK, deco: [B.COBWEB, B.BOOKSHELF], lumiere: B.TORCH, gardes: ['zombie', 'skeleton'] },
+      mine:             { mur: B.PLANKS, sol: B.GRAVEL, pilier: B.LOG, deco: [B.RAIL, B.COBWEB, B.COAL_ORE], lumiere: B.LANTERN, gardes: ['spider', 'zombie'] },
+      pyramide:         { mur: B.SANDSTONE_BRICK, sol: B.SANDSTONE, pilier: B.SANDSTONE_BRICK, deco: [B.GOLD_BLOCK, B.TERRACOTTA_YELLOW], lumiere: B.TORCH, gardes: ['mummy', 'skeleton'] },
+      forteresse_glace: { mur: B.ICE_BRICK, sol: B.PACKED_ICE, pilier: B.BLUE_ICE, deco: [B.PACKED_ICE, B.SNOW], lumiere: B.LANTERN, gardes: ['skeleton', 'zombie'] },
+      temple:           { mur: B.MOSSY_COBBLE, sol: B.MOSSY_COBBLE, pilier: B.JUNGLE_LOG, deco: [B.VINES, B.JUNGLE_LEAVES], lumiere: B.TORCH, gardes: ['spider', 'skeleton'] },
+      hutte:            { mur: B.PLANKS, sol: B.PLANKS, pilier: B.LOG, deco: [B.MUSHROOM, B.COBWEB], lumiere: B.LANTERN, gardes: ['slime', 'zombie'] },
+      citadelle:        { mur: B.STONE_BRICK, sol: B.OBSIDIAN, pilier: B.OBSIDIAN, deco: [B.GOLD_BLOCK, B.LANTERN], lumiere: B.LANTERN, gardes: ['skeleton', 'pillager'] },
+    };
+    var CELLULE = 15, ETAGE = 10;
+    function complexe(d, o, rx, rz) {
+      var th = THEMES[d.type] || THEMES.crypte;
+      var s = 0;
+      function r() { s++; return N.hash3(rx * 131 + s * 7, s * 17 - rz, rz * 97 + s); }
+      function entre(a, b) { return a + Math.floor(r() * (b - a + 1)); }
+      var grand = d.taille === 'grand';
+      var niveaux = grand ? entre(2, 3) : 1;
+      var total = grand ? entre(9, 14) : entre(4, 6);
+      var mur = function (x, y, z) { return th.mur === 'mousse' ? o.mousse(x, y, z) : th.mur; };
+      var descentes = [];                                      // où l'on descend d'un niveau à l'autre
+      // le complexe s'enfouit sous le point le plus bas de son emprise : une
+      // citadelle de sommet, une pyramide ou un temple y descendent par un puits
+      var yHaut = d.y;
+      for (var ai = -2; ai <= 2; ai++) for (var aj = -2; aj <= 2; aj++) {
+        yHaut = Math.min(yHaut, hauteur(d.x + ai * CELLULE, d.z + aj * CELLULE) - 8);
+      }
+      if (yHaut < d.y) {
+        for (var py = yHaut + 1; py <= d.y; py++) {
+          o.pose(d.x, py, d.z, B.LADDER);
+          o.pose(d.x, py, d.z + 1, 0); o.pose(d.x + 1, py, d.z, 0);  // de quoi tenir sur l'échelle
+        }
+      }
+      // autant de niveaux que la profondeur en permet ; un seul, et le grand n'est plus que moyen
+      niveaux = Math.max(1, Math.min(niveaux, Math.floor((yHaut - 4) / ETAGE) + 1));
+      if (grand && niveaux < 2) { grand = false; d.taille = 'moyen'; total = Math.min(total, 6); }
+      // cellules libres de la grille (5 × 5 autour du vestibule), par niveau
+      var parNiveau = [];
+      for (var n = 0; n < niveaux; n++) parNiveau.push(n === niveaux - 1 ? total - Math.floor(total / niveaux) * (niveaux - 1) : Math.floor(total / niveaux));
+      d.profondeur = d.y - yHaut;
+      for (var nv = 0; nv < niveaux; nv++) {
+        var yN = yHaut - nv * ETAGE;
+        if (yN < 4) { niveaux = nv; break; }
+        var cellules = [];
+        for (var ci = -2; ci <= 2; ci++) for (var cj = -2; cj <= 2; cj++) {
+          if (nv === 0 && Math.abs(ci) <= 0 && Math.abs(cj) <= 0) continue;       // la place du vestibule
+          cellules.push([ci, cj, r()]);
+        }
+        cellules.sort(function (a, b) { return a[2] - b[2]; });
+        // au niveau inférieur, la première salle se tient sous la descente du niveau du dessus
+        if (nv > 0) cellules.unshift([descentes[nv - 1].ci, descentes[nv - 1].cj, 0]);
+        var salles = [];
+        for (var k = 0; salles.length < parNiveau[nv] && k < cellules.length; k++) {
+          var c = cellules[k];
+          if (salles.some(function (sl) { return sl.ci === c[0] && sl.cj === c[1]; })) continue;
+          var w = entre(5, 11), p = entre(5, 11), h = entre(5, 7);
+          var cx = d.x + c[0] * CELLULE, cz = d.z + c[1] * CELLULE;
+          var sl = { ci: c[0], cj: c[1], x0: cx - (w >> 1), z0: cz - (p >> 1), x1: cx + (w >> 1), z1: cz + (p >> 1),
+                     y0: yN + 1, y1: yN + h - 1, niveau: nv, cx: cx, cz: cz, yN: yN };
+          salles.push(sl);
+          o.coque(sl.x0 - 1, yN, sl.z0 - 1, sl.x1 + 1, yN + h, sl.z1 + 1, mur, 0);
+          for (var fx = sl.x0; fx <= sl.x1; fx++) for (var fz = sl.z0; fz <= sl.z1; fz++) o.pose(fx, yN, fz, th.sol);
+          // piliers aux quatre coins intérieurs des grandes salles, une lumière à chacun
+          if (w >= 8 && p >= 8) [[sl.x0 + 1, sl.z0 + 1], [sl.x1 - 1, sl.z0 + 1], [sl.x0 + 1, sl.z1 - 1], [sl.x1 - 1, sl.z1 - 1]].forEach(function (q) {
+            for (var py = yN + 1; py < yN + h; py++) o.pose(q[0], py, q[1], th.pilier);
+          });
+          o.pose(cx, yN + 1, sl.z0, th.lumiere); o.pose(cx, yN + 1, sl.z1, th.lumiere);
+          // décor propre au type, le long des murs
+          for (var dk = 0; dk < 3; dk++) {
+            var dx2 = entre(sl.x0, sl.x1), dz2 = r() < 0.5 ? sl.z0 : sl.z1;
+            o.pose(dx2, yN + 1 + (th.deco[dk % th.deco.length] === B.COBWEB ? h - 3 : 0), dz2, th.deco[dk % th.deco.length]);
+          }
+        }
+        // couloirs : un arbre couvrant (le plus proche d'abord) relie les salles du niveau
+        var relie = [nv === 0 ? { cx: d.x, cz: d.z, yN: yHaut } : salles[0]];
+        var reste = salles.slice(nv === 0 ? 0 : 1);
+        while (reste.length) {
+          var best = null, bi = -1, bj = -1;
+          for (var i2 = 0; i2 < relie.length; i2++) for (var j2 = 0; j2 < reste.length; j2++) {
+            var dd = Math.abs(relie[i2].cx - reste[j2].cx) + Math.abs(relie[i2].cz - reste[j2].cz);
+            if (!best || dd < best) { best = dd; bi = i2; bj = j2; }
+          }
+          couloir(o, th, relie[bi].cx, relie[bi].cz, reste[bj].cx, reste[bj].cz, yN);
+          relie.push(reste[bj]); reste.splice(bj, 1);
+        }
+        if (nv > 0) { var de = descentes[nv - 1]; escalierInterieur(o, th, de.cx, de.cz, de.yN, yN); }
+        salles.forEach(function (sl2) { d.salles.push(sl2); });
+        // la descente vers le niveau suivant : un escalier dans la dernière salle posée
+        if (nv < niveaux - 1 && salles.length) {
+          var bas = salles[salles.length - 1];
+          descentes.push({ ci: bas.ci, cj: bas.cj, cx: bas.cx, cz: bas.cz, yN: yN });
+        }
+        d.niveaux = nv + 1;
+      }
+      // le gardien : dans la plus grande salle du niveau le plus profond
+      var fond = d.salles.filter(function (sl3) { return sl3.niveau === d.niveaux - 1 && !sl3.vestibule; });
+      if (!fond.length) return;
+      fond.sort(function (a, b) { return (b.x1 - b.x0) * (b.z1 - b.z0) - (a.x1 - a.x0) * (a.z1 - a.z0); });
+      var boss = fond[0];
+      boss.gardien = true;
+      d.salle = { x0: boss.x0, y0: boss.y0, z0: boss.z0, x1: boss.x1, y1: boss.y1, z1: boss.z1 };
+      d.spawn = { x: boss.cx + 0.5, y: boss.y0, z: boss.cz + 0.5 };
+      // le trésor suit le gardien ; d'autres coffres dans quelques salles
+      var tresor = { x: boss.cx, y: boss.y0, z: boss.z1 - 1 };
+      o.pose(tresor.x, tresor.y, tresor.z, B.CHEST);
+      d.coffre = tresor;
+      d.coffres.push(tresor);
+      d.salles.forEach(function (sl4, i4) {
+        if (sl4.vestibule || sl4.gardien) return;
+        // des gardes dans chaque salle ; dans un grand donjon, un sous-gardien par niveau
+        var nG = grand ? 2 : 1;
+        for (var g2 = 0; g2 < nG; g2++) {
+          d.gardes.push({ salle: i4, type: th.gardes[(i4 + g2) % th.gardes.length],
+                          x: sl4.cx + 0.5 + (g2 ? 2 : -2), y: sl4.y0, z: sl4.cz + 0.5 });
+        }
+        if (grand && i4 === d.salles.findIndex(function (q) { return q.niveau === sl4.niveau && !q.vestibule && !q.gardien; })) {
+          d.gardes.push({ salle: i4, type: d.boss, sousGardien: true, x: sl4.cx + 0.5, y: sl4.y0, z: sl4.cz + 0.5 });
+        }
+        if (r() < (grand ? 0.45 : 0.3)) {
+          var cf = { x: sl4.x0 + 1, y: sl4.y0, z: sl4.z1 - 1 };
+          o.pose(cf.x, cf.y, cf.z, B.CHEST);
+          d.coffres.push(cf);
+        }
+      });
+    }
+    // couloir en équerre de trois de large et trois de haut, au niveau yN
+    function couloir(o, th, x0, z0, x1, z1, yN) {
+      function tron(ax, az, bx, bz) {
+        var sx = Math.sign(bx - ax), sz = Math.sign(bz - az), x = ax, z = az;
+        for (var guard = 0; guard < 200; guard++) {
+          for (var w = -1; w <= 1; w++) {
+            var px = sx ? x : x + w, pz = sx ? z + w : z;
+            o.pose(px, yN, pz, th.sol);
+            for (var h = 1; h <= 3; h++) o.pose(px, yN + h, pz, 0);
+          }
+          if (x === bx && z === bz) break;
+          if (x !== bx) x += sx; else if (z !== bz) z += sz;
+        }
+      }
+      tron(x0, z0, x1, z0);
+      tron(x1, z0, x1, z1);
+    }
+    // escalier droit qui descend d'un niveau, trois de large, dans une salle et au-delà
+    function escalierInterieur(o, th, cx, cz, yHaut, yBas) {
+      var n = yHaut - yBas;
+      for (var i = 0; i <= n; i++) {
+        var y = yHaut - i, x = cx - (n >> 1) + i;
+        for (var w = -1; w <= 1; w++) {
+          o.pose(x, y, cz + w, th.sol);
+          for (var h = 1; h <= 4; h++) o.pose(x, y + h, cz + w, 0);
+        }
+      }
     }
 
     /* Petits outils de construction partagés par tous les bâtisseurs. */
@@ -474,12 +649,27 @@
       return null;
     }
 
-    /* Le donjon dont ce bloc est le coffre, ou null. */
+    /* Le donjon dont ce bloc est un coffre, et lequel : { donjon, indice }, ou null. */
     function coffreA(x, y, z) {
       var l = dansZone(x, z, x, z);
       for (var i = 0; i < l.length; i++) {
-        var c = l[i].coffre;
-        if (c.x === x && c.y === y && c.z === z) return l[i];
+        var cs = l[i].coffres && l[i].coffres.length ? l[i].coffres : [l[i].coffre];
+        for (var k = 0; k < cs.length; k++) {
+          var c = cs[k];
+          if (c && c.x === x && c.y === y && c.z === z) return { donjon: l[i], indice: k };
+        }
+      }
+      return null;
+    }
+    /* La salle (de n'importe quel niveau) qui contient ce point : { donjon, index }. */
+    function salleDe(x, y, z) {
+      var l = dansZone(x, z, x, z);
+      for (var i = 0; i < l.length; i++) {
+        var ss = l[i].salles || [];
+        for (var k = 0; k < ss.length; k++) {
+          var s2 = ss[k];
+          if (x >= s2.x0 && x < s2.x1 + 1 && y >= s2.y0 && y < s2.y1 + 1 && z >= s2.z0 && z < s2.z1 + 1) return { donjon: l[i], index: k };
+        }
       }
       return null;
     }
@@ -498,8 +688,9 @@
       monument:         [[I.PRISMARINE_SHARD, 6, 16, 1], [B.SPONGE, 1, 4, 0.8], [B.SEA_LANTERN, 2, 5, 0.7], [I.GOLD_INGOT, 2, 6, 0.7]],
       epave:            [[I.EMERALD, 2, 5, 0.9], [I.COOKED_FISH, 2, 6, 0.8], [I.GOLD_INGOT, 1, 3, 0.6], [I.ARBALETE, 1, 1, 0.2]],
     };
-    function butin(d) {
-      var s = 0;
+    var RICHESSE = { petit: 1, moyen: 1.6, grand: 2.6 };
+    function butin(d, indice) {
+      var s = (indice || 0) * 101;
       function r() { s++; return N.hash3(d.x * 7 + s, (d.y || 0) + s * 13, d.z * 11 - s); }
       function entre(a, b) { return a + Math.floor(r() * (b - a + 1)); }
       var l = [
@@ -511,13 +702,17 @@
       (BUTIN_TYPE[d.type] || []).forEach(function (t) {
         if (r() < t[3]) l.push({ id: t[0], n: entre(t[1], t[2]) });
       });
+      // un grand donjon récompense davantage ; le trésor du gardien plus que les autres coffres
+      var k = RICHESSE[d.taille] || 1;
+      if (k > 1) l.forEach(function (it) { it.n = Math.max(1, Math.round(it.n * k)); });
+      if (d.taille === 'grand' && r() < 0.8) l.push({ id: I.DIAMOND, n: entre(1, 3) });
       return l;
     }
 
     return { deRegion: deRegion, dansZone: dansZone, appliquer: appliquer,
-             salleA: salleA, coffreA: coffreA, butin: butin };
+             salleA: salleA, salleDe: salleDe, coffreA: coffreA, butin: butin };
   }
 
-  MC.Donjons = { creer: creer, typePour: typePour, TYPES: TYPES, REGION: REGION, BOSS: BOSS,
+  MC.Donjons = { creer: creer, typePour: typePour, TYPES: TYPES, REGION: REGION, BOSS: BOSS, TAILLES: ['petit', 'moyen', 'grand'],
                  DEMI: DEMI, HAUT: HAUT, PORTEE: PORTEE };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

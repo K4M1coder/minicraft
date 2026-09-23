@@ -668,7 +668,7 @@
       A.ok(b1 && b1.length >= 4, 'au moins quatre piles');
       A.deep(b1, b2, 'même graine, même butin');
       A.deep(w.donjons.butin(d), b1);
-      A.equal(w.donjons.coffreA(d.coffre.x, d.coffre.y, d.coffre.z), d);
+      A.equal(w.donjons.coffreA(d.coffre.x, d.coffre.y, d.coffre.z).donjon, d);
       A.equal(w.butinCoffre(d.coffre.x + 1, d.coffre.y, d.coffre.z), null, 'un coffre ordinaire : rien');
     });
 

@@ -921,6 +921,11 @@
       for (var i = 0; i < equipe.length; i++) {
         var p = equipe[i].player.state;
         if (p.dead) continue;
+        // les gardes des salles d'un donjon moyen ou grand
+        var pc = world.pieceDonjon && world.pieceDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+        if (pc && !world.donjonsVaincus.has(pc.donjon.id) && entities.invoquerGardes(pc.donjon, pc.index).length) {
+          ui.toast('Des gardes vous barrent la route !', 'warn');
+        }
         var d = world.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
         if (!d || world.donjonsVaincus.has(d.id)) continue;
         var b = entities.invoquerGardien(d);

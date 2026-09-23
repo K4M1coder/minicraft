@@ -1014,6 +1014,20 @@
        Toujours hors de vue immédiate du joueur, sur un sol valide. */
     /* Éveille le gardien d'un donjon au centre de sa salle. Un seul à la
        fois : le rappeler tant qu'il vit ne fait rien. */
+    /* Les gardes d'une salle : ils s'éveillent quand on y entre, une fois. */
+    function invoquerGardes(d, index) {
+      var cle = d.id + ':' + index, n = [];
+      if (gardesEveilles.has(cle)) return n;
+      gardesEveilles.add(cle);
+      (d.gardes || []).forEach(function (g) {
+        if (g.salle !== index || !SPECS[g.type]) return;
+        var e = spawn(g.type, g.x, g.y, g.z, { donjon: d.id, garde: true });
+        if (e) n.push(e);
+      });
+      return n;
+    }
+    var gardesEveilles = new Set();
+
     function invoquerGardien(d) {
       for (var i = 0; i < list.length; i++) {
         if (list[i].donjon === d.id && SPECS[list[i].type].boss && !list[i].dead) return null;
@@ -1140,7 +1154,7 @@
       stepAI: stepAI, evenements: evenements, choisirCible: choisirCible, voitCible: voitCible, viser: viser,
       sbires: sbires, sousPlafond: sousPlafond, zoneChargee: zoneChargee, stepFaune: stepFaune,
       tirerArme: tirerArme, degatsAvecArme: degatsAvecArme, tirDe: tirDe,
-      invoquerGardien: invoquerGardien,
+      invoquerGardien: invoquerGardien, invoquerGardes: invoquerGardes,
     };
   }
 
