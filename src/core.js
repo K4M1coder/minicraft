@@ -47,6 +47,8 @@
     PLANCHES_SAPIN: 89, PLANCHES_BOULEAU: 90, PLANCHES_ACACIA: 91, PLANCHES_JUNGLE: 92,
     TUILES: 93, ARDOISE: 94, CHAUX: 95, PAVE: 96, COMPTOIR: 97, COFFRE_FORT: 98,
     TONNEAU: 99, ENCLUME: 100, PANNEAU_INFO: 101,
+    // eau courante : sept niveaux, du filet (1) au ras de la source (7)
+    EAU_1: 102, EAU_2: 103, EAU_3: 104, EAU_4: 105, EAU_5: 106, EAU_6: 107, EAU_7: 108,
   };
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
@@ -78,6 +80,8 @@
     WAGONNET: 199,
     // exploration
     CARTE: 200,
+    // l'eau se puise et se verse
+    SEAU: 201, SEAU_EAU: 202,
   };
 
   var FIRST_ITEM = 128;
@@ -112,6 +116,12 @@
                      pass: 'blend', drops: [] });
   defBlock(B.WATER,  { name: 'Eau', tiles: [12, 12, 12], transparent: true, liquid: true, pass: 'blend',
                        hardness: -1, drops: [] });
+  /* Eau courante : même matière que l'eau, mais elle coule (MC.Eau.ecouler) et
+     sa surface descend avec son niveau. Elle ne se ramasse pas. */
+  [1, 2, 3, 4, 5, 6, 7].forEach(function (n) {
+    defBlock(B['EAU_' + n], { name: 'Eau courante', tiles: [12, 12, 12], transparent: true, liquid: true, pass: 'blend',
+                              hardness: -1, drops: [], eauCourante: n });
+  });
   defBlock(B.CRAFTING_TABLE, { name: 'Établi', tiles: [13, 14, 8], hardness: 2.5, tool: 'axe',
                                interactive: 'craft' });
   defBlock(B.FURNACE, { name: 'Fourneau', tiles: [16, 15, 16], hardness: 3.5, tool: 'pickaxe',
@@ -416,6 +426,8 @@
   defItem(I.WAGONNET, { name: 'Wagonnet', tile: 171, vehicule: 'wagonnet', maxStack: 1 });
   // la carte montre les environs explorés et porte des points de repère
   defItem(I.CARTE, { name: 'Carte', tile: 172, carte: true, maxStack: 1 });
+  defItem(I.SEAU, { name: 'Seau', tile: 188, seau: 'vide', maxStack: 16 });
+  defItem(I.SEAU_EAU, { name: "Seau d'eau", tile: 189, seau: 'plein', maxStack: 1 });
 
   /* ─── variantes de tuiles ──────────────────────────────────────────────────
      Une même tuile répétée sur un grand sol dessine un quadrillage. Les tuiles
@@ -482,7 +494,7 @@
   function isWater(id) {
     if (id === B.WATER) return true;
     var d = BLOCKS[id];
-    return !!d && !!d.aquatique;
+    return !!d && (!!d.aquatique || !!d.eauCourante);
   }
 
   function isSolid(id) {
@@ -502,6 +514,8 @@
     if (!d) return false;
     // une plante marine baigne dans l'eau : pas de surface entre les deux
     if (self === B.WATER && d.aquatique) return true;
+    // deux eaux qui se touchent, courante ou non : pas de surface entre elles
+    if (isWater(self) && isWater(nb) && (BLOCKS[self].liquid || BLOCKS[self].aquatique) && d.liquid) return true;
     if (d.plant) return false;
     return d.transparent ? nb === self : true;
   }

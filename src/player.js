@@ -270,6 +270,28 @@
 
     function cancelMining() { pl.mining = null; }
 
+    /* Seau : vide, il puise une source d'eau visée ; plein, il la verse devant
+       la face visée (la visée ordinaire traverse l'eau : on relance un rayon
+       qui s'y arrête). */
+    function utiliserSeau(etat) {
+      var hit = P.raycast(world, eyePos(), lookDir(), REACH, function (id) { return id !== 0; });
+      if (!hit) return null;
+      if (etat === 'vide') {
+        if (hit.block !== B.WATER) return null;
+        world.setBlock(hit.x, hit.y, hit.z, 0);
+        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        var reste = pl.inv.add(I.SEAU_EAU, 1);
+        return reste ? 'seau_perdu' : 'puise';
+      }
+      var x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
+      if (C.isWater(hit.block)) { x = hit.x; y = hit.y; z = hit.z; }
+      var ici = world.getBlock(x, y, z);
+      if (!C.isReplaceable(ici)) return null;
+      world.setBlock(x, y, z, B.WATER);
+      if (!R.blocsIllimites) pl.inv.slots[pl.selected] = { id: I.SEAU, n: 1 };
+      return 'verse';
+    }
+
     // ─── poser / utiliser ────────────────────────────────────────────────────
     /* Renvoie une chaîne décrivant ce qui s'est passé : 'place', 'till',
        'plant', 'open:craft', 'open:furnace', 'eat', ou null. */
@@ -290,6 +312,7 @@
 
       // la carte s'ouvre d'un clic droit
       if (idef && idef.carte) return 'carte';
+      if (idef && idef.seau) return utiliserSeau(idef.seau);
       // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
       if (idef && idef.vehicule) return 'vehicule:' + idef.vehicule;
 

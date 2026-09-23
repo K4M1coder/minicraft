@@ -899,6 +899,18 @@
       g.strokeStyle = '#6a4a28'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
     })();
 
+    // ─── seau (188-189) ─────────────────────────────────────────────────────
+    function seau(i, plein) {
+      var o = clear(i);
+      g.fillStyle = '#8a8c94'; g.fillRect(o[0] + 3, o[1] + 5, 10, 9);
+      g.fillStyle = '#b4b6be'; g.fillRect(o[0] + 3, o[1] + 5, 10, 2);
+      g.fillStyle = '#5a5c64'; g.fillRect(o[0] + 4, o[1] + 13, 8, 1);
+      g.strokeStyle = '#6a6c74'; g.beginPath(); g.arc(o[0] + 8, o[1] + 6, 5, Math.PI, 0); g.stroke();
+      if (plein) { g.fillStyle = '#3a78d8'; g.fillRect(o[0] + 4, o[1] + 6, 8, 2); }
+    }
+    seau(188, false);
+    seau(189, true);
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec
