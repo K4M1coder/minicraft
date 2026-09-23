@@ -62,6 +62,36 @@
   // biomes sans précipitations : l'air y est trop sec
   var SECS = { desert: 1, badlands: 1, volcan: 1 };
 
+  /* SPEC-VENT-001 : le vent tourne et forcit avec l'altitude. À 170 blocs
+     (couche des cirrus) il a tourné jusqu'à 60° de plus qu'au sol et forcit
+     de ×2,5. */
+  var ALT_VENT_HAUT = 170;        // altitude de référence pour la rotation/le renforcement max
+  var ROTATION_VENT_HAUT = Math.PI / 3;   // 60°
+  var FORCE_VENT_HAUT = 1.5;      // + 150 % de force, soit ×2,5 au total
+  var RAFALE_AMPLITUDE = 0.5;     // rafales : ± 25 % autour de la force de base
+
+  /* SPEC-NUAGE-003 : cyclones tropicaux. Ils naissent par régions de quelques
+     milliers de blocs, dans des fenêtres de temps, seulement au-dessus d'une
+     mer chaude et humide ; on ne cherche des naissances que dans un rayon
+     raisonnable de cellules autour de l'origine (un monde est infini, mais
+     un jeu n'a besoin que des cyclones dans une région jouable). */
+  var CYCL_REGION = 4000;         // taille d'une cellule génératrice
+  var CYCL_PORTEE = 7;            // rayon de recherche en cellules (15 × 15)
+  var CYCL_EPOCH = 5400;          // fenêtre de temps d'une naissance possible (1 h 30)
+  var CYCL_PROB = 0.12;           // probabilité qu'une cellule chaude engendre un cyclone
+  var CYCL_VIE_MIN = 3600, CYCL_VIE_MAX = 14400;   // durée de vie : 1 à 4 heures
+  var CYCL_STEER = 2.6;           // multiplicateur du vent dominant pour le déplacement
+  var CYCL_TICK = 300;            // pas d'échantillonnage de la surface parcourue
+  var CYCL_RAYON_MIN = 900, CYCL_RAYON_MAX = 1600;
+
+  /* SPEC-NUAGE-004 : tornades. Elles ne naissent que pendant un orage ou une
+     tempête, là où chaleur, humidité et cisaillement dépassent des seuils. */
+  var TORN_REGION = 1500, TORN_PORTEE = 5;
+  var TORN_PROB = 0.2;
+  var TORN_VIE_MIN = 15, TORN_VIE_MAX = 60;       // quelques dizaines de secondes
+  var TORN_RAYON_MIN = 8, TORN_RAYON_MAX = 26;
+  var TORN_SEUIL_CHALEUR = 22, TORN_SEUIL_HUMIDITE = 0.55, TORN_SEUIL_CISAILLEMENT = 0.35;
+
   function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
   function smoothstep(a, b, v) { var t = clamp01((v - a) / (b - a)); return t * t * (3 - 2 * t); }
   function tirer(table, r) {
@@ -72,8 +102,27 @@
     return k;
   }
 
-  function creer(graine) {
+  /* Mer chaude et humide par défaut : des poches de bruit, raisonnable pour
+     les tests. Un monde réel injecterait ici sa propre carte des océans. */
+  function chaudeDefaut(N) {
+    return function (x, z) { return N.value2(x / 5000 + 100.7, z / 5000 - 55.3) > 0.6; };
+  }
+  /* Conditions locales par défaut (température, humidité), indépendantes de
+     l'heure : un monde réel injecterait ici son climat et son relief. */
+  function conditionsDefaut(N) {
+    return function (x, z) {
+      return {
+        temperature: 15 + N.value2(x / 2000 + 11.3, z / 2000 - 7.7) * 20,
+        humidite: clamp01(N.value2(x / 1800 - 3.1, z / 1800 + 2.9)),
+      };
+    };
+  }
+
+  function creer(graine, opts) {
     var N = MC.makeNoise((graine | 0) ^ 0x5eed);
+    opts = opts || {};
+    var estMerChaude = opts.estMerChaude || chaudeDefaut(N);
+    var conditionsEn = opts.conditionsEn || conditionsDefaut(N);
     var types = new Map();
 
     /* Temps du segment k. Remonter toute la chaîne depuis le premier segment
@@ -136,6 +185,46 @@
       return { x: d0.x + v2.x * dt, z: d0.z + v2.z * dt };
     }
 
+    /* SPEC-VENT-001 : le vent au sol tourne et forcit en montant, avec des
+       rafales. `y` : altitude du point considéré (0 au sol). La rotation et
+       le renforcement sont progressifs, maximaux à ALT_VENT_HAUT (couche des
+       cirrus) ; au-delà, ils saturent plutôt que de s'emballer. */
+    function ventEn(temps, y, et) {
+      et = et || etat(temps);
+      var fracAlt = clamp01((y || 0) / ALT_VENT_HAUT);
+      var ang = et.vent.angle + fracAlt * ROTATION_VENT_HAUT;
+      var force = et.vent.force * (1 + FORCE_VENT_HAUT * fracAlt);
+      // rafale : bruit rapide, borné, propre à l'altitude pour ne pas être synchrone partout
+      var rafale = 1 + (N.value2(temps * 0.6, (y || 0) * 0.13 + 9.5) - 0.5) * RAFALE_AMPLITUDE;
+      force *= rafale;
+      return { x: Math.cos(ang) * force, z: Math.sin(ang) * force, force: force, angle: ang };
+    }
+    /* Le vent à l'altitude d'une couche de nuages COUCHES[i]. */
+    function ventCouche(i, temps) { return ventEn(temps, COUCHES[i].y); }
+
+    /* Dérive par couche : chaque couche de nuages dérive selon le vent de son
+       altitude (rotation et renforcement compris), intégrée segment par
+       segment comme `derive`, pour ne jamais sauter quand le vent tourne. */
+    var derivesCouches = [];
+    function vecteurVentCouche(i, k) {
+      var t = TYPES[typeDu(k)], a = angleDu(k);
+      var y = COUCHES[i].y, fracAlt = clamp01(y / ALT_VENT_HAUT);
+      var ang = a + fracAlt * ROTATION_VENT_HAUT;
+      var force = t.vent * VITESSE_VENT * (1 + FORCE_VENT_HAUT * fracAlt);
+      return { x: Math.cos(ang) * force, z: Math.sin(ang) * force };
+    }
+    function deriveCouche(i, temps) {
+      var arr = derivesCouches[i] || (derivesCouches[i] = [{ x: 0, z: 0 }]);
+      var k = Math.max(0, Math.floor(temps / SEGMENT));
+      if (k > 200000) k = 200000;
+      while (arr.length <= k) {
+        var idx = arr.length - 1, v = vecteurVentCouche(i, idx), d = arr[idx];
+        arr.push({ x: d.x + v.x * SEGMENT, z: d.z + v.z * SEGMENT });
+      }
+      var v2 = vecteurVentCouche(i, k), d0 = arr[k], dt = Math.max(0, temps - k * SEGMENT);
+      return { x: d0.x + v2.x * dt, z: d0.z + v2.z * dt };
+    }
+
     /* Champ de rassemblement : de grandes régions où les nuages se regroupent
        et d'autres où ils se dissipent. Il dérive avec le vent et se transforme
        lentement : un banc se forme, grossit, s'effiloche. */
@@ -144,9 +233,197 @@
       return N.fbm3((x - dv.x) / 2400, (z - dv.z) / 2400, temps / 600, 2, 2, 0.5);
     }
 
+    // ── SPEC-NUAGE-003 : cyclones ───────────────────────────────────────────
+    /* Naissances possibles d'une région (cx, cz) dans la fenêtre `e` : liste
+       (0 ou 1 élément) mémorisée une fois pour toutes, indépendante de
+       l'instant d'appel — seule la dynamique (position, force) dépend de
+       `temps`. */
+    var genesesCyclones = new Map();
+    function genesesEpoch(e) {
+      var l = genesesCyclones.get(e);
+      if (l) return l;
+      l = [];
+      for (var cx = -CYCL_PORTEE; cx <= CYCL_PORTEE; cx++) for (var cz = -CYCL_PORTEE; cz <= CYCL_PORTEE; cz++) {
+        var base = e * 1000003 + cx * 9176 + cz * 6971;
+        var roll = N.hash3(cx, cz, e * 7 + 13);
+        var centreX = cx * CYCL_REGION + CYCL_REGION / 2, centreZ = cz * CYCL_REGION + CYCL_REGION / 2;
+        if (roll >= CYCL_PROB || !estMerChaude(centreX, centreZ)) continue;
+        var tBirth = e * CYCL_EPOCH + N.hash3(cx, cz, e * 7 + 91) * CYCL_EPOCH;
+        l.push({
+          id: 'cy' + base,
+          tBirth: tBirth,
+          vie: CYCL_VIE_MIN + N.hash3(cx, cz, e * 7 + 17) * (CYCL_VIE_MAX - CYCL_VIE_MIN),
+          x0: centreX + (N.hash3(cx, cz, e * 7 + 23) - 0.5) * CYCL_REGION * 0.6,
+          z0: centreZ + (N.hash3(cx, cz, e * 7 + 29) - 0.5) * CYCL_REGION * 0.6,
+          forcePic: 0.6 + N.hash3(cx, cz, e * 7 + 5) * 0.4,
+          sens: N.hash3(cx, cz, e * 7 + 3) < 0.5 ? 1 : -1,
+          rayonMax: CYCL_RAYON_MIN + N.hash3(cx, cz, e * 7 + 41) * (CYCL_RAYON_MAX - CYCL_RAYON_MIN),
+          oeilFrac: 0.12 + N.hash3(cx, cz, e * 7 + 47) * 0.08,
+        });
+      }
+      genesesCyclones.set(e, l);
+      return l;
+    }
+    function positionCyclone(g, temps) {
+      var d0 = derive(g.tBirth), d1 = derive(temps);
+      return { x: g.x0 + (d1.x - d0.x) * CYCL_STEER, z: g.z0 + (d1.z - d0.z) * CYCL_STEER };
+    }
+    // fraction du temps écoulé passée au-dessus d'une mer chaude, mémorisée par cyclone
+    var surfaceCyclones = new Map();
+    function fractionChaudeCyclone(g, temps) {
+      var arr = surfaceCyclones.get(g.id);
+      if (!arr) { arr = [0]; surfaceCyclones.set(g.id, arr); }
+      var maxIdx = Math.floor(g.vie / CYCL_TICK);
+      var idx = Math.min(Math.floor((temps - g.tBirth) / CYCL_TICK), maxIdx);
+      if (idx < 0) return 1;
+      while (arr.length <= idx) {
+        var i = arr.length - 1, p = positionCyclone(g, g.tBirth + i * CYCL_TICK);
+        arr.push(arr[i] + (estMerChaude(p.x, p.z) ? 1 : 0));
+      }
+      return idx > 0 ? arr[idx] / idx : (estMerChaude(g.x0, g.z0) ? 1 : 0.35);
+    }
+    function etatCyclone(g, temps) {
+      var age = temps - g.tBirth;
+      var pos = positionCyclone(g, temps);
+      var monte = smoothstep(0, g.vie * 0.15, age), tombe = 1 - smoothstep(g.vie * 0.75, g.vie, age);
+      var enveloppe = clamp01(monte) * clamp01(tombe);
+      var frac = fractionChaudeCyclone(g, temps);
+      var force = clamp01(g.forcePic * enveloppe * (0.35 + 0.65 * frac));
+      var rayon = g.rayonMax * clamp01(0.3 + 0.7 * enveloppe);
+      return { id: g.id, x: pos.x, z: pos.z, rayon: rayon, oeil: rayon * g.oeilFrac, force: force, sens: g.sens };
+    }
+    var cacheCyclonesT = null, cacheCyclonesL = null;
+    /* Cyclones actifs à `temps` : nés d'une mer chaude et humide, ils se
+       déplacent avec le vent dominant, tournent, et s'affaiblissent en
+       vieillissant ou en quittant les eaux chaudes. Mémorisé pour l'instant
+       courant : le rendu interroge cette fonction à chaque image. */
+    function cyclones(temps) {
+      var key = Math.round(temps * 4) / 4;
+      if (cacheCyclonesT === key) return cacheCyclonesL;
+      var l = [];
+      var e0 = Math.floor((temps - CYCL_VIE_MAX) / CYCL_EPOCH), e1 = Math.floor(temps / CYCL_EPOCH);
+      for (var e = e0; e <= e1; e++) genesesEpoch(e).forEach(function (g) {
+        if (temps < g.tBirth || temps > g.tBirth + g.vie) return;
+        var et = etatCyclone(g, temps);
+        if (et.force > 0.05) l.push(et);
+      });
+      cacheCyclonesT = key; cacheCyclonesL = l;
+      return l;
+    }
+    /* Influence d'un cyclone en (x, z) : vent tournant (et légèrement rentrant
+       vers l'œil), pluies intenses, couverture et densité en spirale — dégagé
+       dans l'œil. Combine tous les cyclones dont le rayon couvre ce point. */
+    function influenceCyclone(x, z, temps) {
+      var res = { vent: { x: 0, z: 0, force: 0 }, precipitation: 0, couverture: 0, oeil: false, spirale: 0 };
+      cyclones(temps).forEach(function (c) {
+        var dx = x - c.x, dz = z - c.z, dist = Math.hypot(dx, dz);
+        if (dist >= c.rayon) return;
+        var r = dist / c.rayon, oeilR = c.oeil / c.rayon;
+        if (dist < c.oeil) res.oeil = true;
+        var theta = Math.atan2(dz, dx);
+        var bras = 0.5 + 0.5 * Math.sin(theta * 3 - r * 10 * c.sens + temps * 0.05 * c.sens);
+        var bande = smoothstep(oeilR, oeilR + 0.15, r) * (1 - smoothstep(0.75, 1, r));
+        var spirale = clamp01(bande * (0.5 + 0.5 * bras)) * c.force;
+        res.spirale = Math.max(res.spirale, spirale);
+        res.couverture = Math.max(res.couverture, spirale * 0.95);
+        res.precipitation = Math.max(res.precipitation, c.force * clamp01(r - oeilR) * (1 - r));
+        if (dist > 0.01) {
+          var tang = (1 - r) * c.force * 1.4;
+          res.vent.x += (-dz / dist) * c.sens * tang;
+          res.vent.z += (dx / dist) * c.sens * tang;
+        }
+      });
+      res.vent.force = Math.hypot(res.vent.x, res.vent.z);
+      return res;
+    }
+
+    // ── SPEC-NUAGE-004 : tornades ───────────────────────────────────────────
+    var genesesTornades = new Map();
+    function genesesSegmentTornade(k) {
+      var l = genesesTornades.get(k);
+      if (l) return l;
+      l = [];
+      if (etat(k * SEGMENT + SEGMENT / 2).eclairs > 0) {
+        for (var cx = -TORN_PORTEE; cx <= TORN_PORTEE; cx++) for (var cz = -TORN_PORTEE; cz <= TORN_PORTEE; cz++) {
+          var centreX = cx * TORN_REGION + TORN_REGION / 2, centreZ = cz * TORN_REGION + TORN_REGION / 2;
+          var cond = conditionsEn(centreX, centreZ);
+          var vSol = ventEn(k * SEGMENT, 2), vHaut = ventEn(k * SEGMENT, COUCHES[1].y);
+          var cisaillement = Math.hypot(vHaut.x - vSol.x, vHaut.z - vSol.z);
+          if (cond.temperature < TORN_SEUIL_CHALEUR || cond.humidite < TORN_SEUIL_HUMIDITE ||
+              cisaillement < TORN_SEUIL_CISAILLEMENT) continue;
+          var roll = N.hash3(cx, cz, k * 11 + 5);
+          if (roll >= TORN_PROB) continue;
+          var tBirth = k * SEGMENT + N.hash3(cx, cz, k * 11 + 51) * SEGMENT;
+          l.push({
+            id: 'tn' + (k * 1000003 + cx * 977 + cz * 733),
+            tBirth: tBirth,
+            vie: TORN_VIE_MIN + N.hash3(cx, cz, k * 11 + 61) * (TORN_VIE_MAX - TORN_VIE_MIN),
+            x0: centreX + (N.hash3(cx, cz, k * 11 + 71) - 0.5) * TORN_REGION * 0.6,
+            z0: centreZ + (N.hash3(cx, cz, k * 11 + 81) - 0.5) * TORN_REGION * 0.6,
+            forcePic: 0.5 + N.hash3(cx, cz, k * 11 + 91) * 0.5,
+            sens: N.hash3(cx, cz, k * 11 + 97) < 0.5 ? 1 : -1,
+            rayonMax: TORN_RAYON_MIN + N.hash3(cx, cz, k * 11 + 101) * (TORN_RAYON_MAX - TORN_RAYON_MIN),
+          });
+        }
+      }
+      genesesTornades.set(k, l);
+      return l;
+    }
+    function positionTornade(g, temps) {
+      var d0 = derive(g.tBirth), d1 = derive(temps);
+      return { x: g.x0 + (d1.x - d0.x), z: g.z0 + (d1.z - d0.z) };
+    }
+    var cacheTornadesT = null, cacheTornadesL = null;
+    /* Tornades actives à `temps` : formées sous un orage ou une tempête, là où
+       chaleur, humidité et cisaillement du vent le permettent ; elles suivent
+       le vent puis se dissipent en quelques dizaines de secondes. `vie` :
+       âge en secondes depuis la formation. */
+    function tornades(temps) {
+      var key = Math.round(temps * 4) / 4;
+      if (cacheTornadesT === key) return cacheTornadesL;
+      var l = [];
+      var k0 = Math.floor((temps - TORN_VIE_MAX) / SEGMENT), k1 = Math.floor(temps / SEGMENT);
+      for (var k = k0; k <= k1; k++) genesesSegmentTornade(k).forEach(function (g) {
+        if (temps < g.tBirth || temps > g.tBirth + g.vie) return;
+        var age = temps - g.tBirth;
+        var monte = smoothstep(0, g.vie * 0.25, age), tombe = 1 - smoothstep(g.vie * 0.7, g.vie, age);
+        var enveloppe = clamp01(monte) * clamp01(tombe);
+        if (enveloppe <= 0.02) return;
+        var pos = positionTornade(g, temps);
+        l.push({ id: g.id, x: pos.x, z: pos.z, rayon: g.rayonMax * (0.5 + 0.5 * enveloppe),
+                 force: g.forcePic * enveloppe, vie: age, sens: g.sens });
+      });
+      cacheTornadesT = key; cacheTornadesL = l;
+      return l;
+    }
+    /* Poussée d'une tornade sur un point (x, y, z) : aspiration vers l'axe,
+       rotation autour de lui, soulèvement — nulle au-delà du rayon d'action
+       (un peu plus large que l'entonnoir visible), et affaiblie en altitude. */
+    var TORN_PORTEE_ACTION = 2.2, TORN_HAUTEUR_ACTION = 50;
+    function pousseeTornade(x, y, z, temps) {
+      var px = 0, py = 0, pz = 0;
+      tornades(temps).forEach(function (t) {
+        var dx = x - t.x, dz = z - t.z, dist = Math.hypot(dx, dz);
+        var portee = t.rayon * TORN_PORTEE_ACTION;
+        if (dist >= portee) return;
+        var r = clamp01(dist / portee);
+        var g = 1 - r;
+        var haut = clamp01(1 - y / TORN_HAUTEUR_ACTION);
+        if (dist > 0.01) {
+          var aspiration = t.force * g * 6, tangent = t.force * g * 9;
+          px += (-dx / dist) * aspiration + (-dz / dist) * t.sens * tangent;
+          pz += (-dz / dist) * aspiration + (dx / dist) * t.sens * tangent;
+        }
+        py += t.force * g * haut * 8;
+      });
+      return { x: px, y: py, z: pz };
+    }
+
     /* Densité (0..1) d'une couche de nuages au point (x, z), à l'altitude y
        d'une de ses tranches. `hauteurSol` : le relief sous ce point ; un nuage
-       ne traverse pas la roche — sa densité s'éteint à l'approche du sol. */
+       ne traverse pas la roche — sa densité s'éteint à l'approche du sol.
+       SPEC-NUAGE-003 : un cyclone proche impose sa spirale (couverture
+       accrue, œil dégagé) par-dessus la texture ordinaire des nuages. */
     function densiteNuage(couche, x, z, temps, et, hauteurSol, y) {
       et = et || etat(temps);
       if (y === undefined) y = couche.y;
@@ -163,6 +440,9 @@
         seuil += f * f * 0.12;
       }
       var d = clamp01((n - seuil) * 5);
+      var infl = influenceCyclone(x, z, temps);
+      if (infl.spirale > 0) d = Math.max(d, infl.spirale * 0.95);
+      if (infl.oeil) d *= 0.15;
       if (hauteurSol !== undefined && hauteurSol !== null) d *= clamp01((y - hauteurSol - 1) / 3);
       return d;
     }
@@ -269,7 +549,10 @@
     return { etat: etat, typeDu: typeDu, derive: derive, rassemblement: rassemblement,
              temperatureEn: temperatureEn, ombreNuage: ombreNuage, foudroie: foudroie, DEGATS_FOUDRE: 6,
              densiteNuage: densiteNuage, temperature: temperature, precipitation: precipitation,
-             eclairs: eclairs, lieuEclair: lieuEclair };
+             eclairs: eclairs, lieuEclair: lieuEclair,
+             ventEn: ventEn, ventCouche: ventCouche, deriveCouche: deriveCouche,
+             cyclones: cyclones, influenceCyclone: influenceCyclone,
+             tornades: tornades, pousseeTornade: pousseeTornade };
   }
 
   /* Ressenti d'une température, pour l'interface et la survie. */
