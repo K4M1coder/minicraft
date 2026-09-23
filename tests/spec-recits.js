@@ -353,5 +353,42 @@
       R.commencer(colonie);
       A.ok(R.objectif(colonie).texte, 'un objectif de colonie jouable depuis un monde réel');
     });
+
+    it('SPEC-HISTOIRE-010 : les trois archétypes sont choisissables et jouables', function () {
+      // trois archétypes distincts, chacun avec sa description
+      A.equal(Object.keys(R.ARCHETYPES).length, 3, 'trois archétypes : épopée, enquête, colonie');
+      ['epopee', 'enquete', 'colonie'].forEach(function (a) {
+        A.ok(R.ARCHETYPES[a] && R.ARCHETYPES[a].nom, 'un nom pour ' + a);
+        A.ok(R.ARCHETYPES[a] && R.ARCHETYPES[a].description, 'une description pour ' + a);
+      });
+
+      // chacun se génère et démarre depuis un vrai monde
+      var w = MC.createWorld(20260924);
+      var lieux = w.habitats.lieuxProches(0, 0, 2500);
+      A.gt(lieux.length, 0, 'des lieux existent autour du point de départ');
+      ['epopee', 'enquete', 'colonie'].forEach(function (a) {
+        var etat = R.generer(a, 20260924, lieux, { heros: 'Nael', longueur: 'courte' });
+        A.equal(etat.archetype, a, 'l état porte bien son archétype : ' + a);
+        var n = R.commencer(etat);
+        A.ok(n.some(function (x) { return x.type === 'chapitre'; }), a + ' : commencer renvoie un chapitre');
+        A.ok(R.objectif(etat), a + ' : un objectif suit le démarrage');
+      });
+
+      // aller-retour de sauvegarde MC.Save (comme SPEC-HISTOIRE-008), pour une enquête
+      var M = MC.Modes;
+      var etatEnquete = R.generer('enquete', 4242, lieux, {});
+      R.commencer(etatEnquete);
+      var ents = MC.createEntities(w);
+      var pl = MC.createPlayer(w, ents, M.regles('histoire', 'facile'));
+      var mem = {}, st = { getItem: function (k) { return mem[k] || null; }, setItem: function (k, v) { mem[k] = v; }, removeItem: function (k) { delete mem[k]; } };
+      var partie = { world: w, entities: ents, player: pl, time: 100, furnaces: {}, chests: {}, spawnPoint: { x: 0, y: 40, z: 0 },
+                     histoire: etatEnquete, regles: M.regles('histoire', 'facile') };
+      A.ok(MC.Save.save(st, partie));
+      partie.histoire = null;
+      A.ok(MC.Save.load(st, partie));
+      A.ok(partie.histoire && partie.histoire.archetype === 'enquete', 'l enquête revient avec son archétype');
+      A.equal(partie.histoire.enquete.crime, etatEnquete.enquete.crime, 'même crime après rechargement');
+      A.deep(R.objectif(partie.histoire), R.objectif(etatEnquete), 'même objectif après rechargement');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

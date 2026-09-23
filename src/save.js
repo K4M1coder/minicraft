@@ -38,8 +38,13 @@
       banque: state.world.banque ? state.world.banque.serialize() : [],
       // les habitants tués, et quand : ils ne ressuscitent pas au chargement
       pnjsMorts: state.world.pnjsMorts ? Array.from(state.world.pnjsMorts.entries()) : [],
-      // l'avancée du récit : chapitre, étape, choix, quêtes secondaires
-      histoire: state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null,
+      // l'avancée du récit : chapitre, étape, choix, quêtes — MC.Recits connaît
+      // l'archétype ; un état assigné à la main sans champ « archetype » (les
+      // anciens tests, ou une manipulation directe de MC.Histoire) reste une
+      // épopée, comme avant ce module.
+      histoire: state.histoire && MC.Recits ? MC.Recits.serialiser(
+                  state.histoire.archetype ? state.histoire : { archetype: 'epopee', histoire: state.histoire })
+                : (state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null),
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
       vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
       // les succès débloqués et leurs compteurs (SPEC-SUCCES-001)
@@ -109,7 +114,14 @@
       w.pnjsMorts.clear();
       (data.pnjsMorts || []).forEach(function (m) { if (m && typeof m[0] === 'string') w.pnjsMorts.set(m[0], +m[1] || 0); });
     }
-    if (MC.Histoire) {
+    if (MC.Recits) {
+      var peutHistoire = function (cat) { return MC.Modes.categoriePermise(state.regles, cat); };
+      // une vieille sauvegarde (MC.Histoire.serialiser, sans champ « archetype »)
+      // se recharge comme une épopée
+      state.histoire = data.histoire
+        ? MC.Recits.charger(data.histoire.archetype ? data.histoire : { archetype: 'epopee', histoire: data.histoire }, peutHistoire)
+        : null;
+    } else if (MC.Histoire) {
       state.histoire = data.histoire ? MC.Histoire.charger(data.histoire, function (cat) {
         return MC.Modes.categoriePermise(state.regles, cat);
       }) : null;

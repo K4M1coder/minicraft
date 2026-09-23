@@ -234,7 +234,7 @@
       var graine = MC.Modes.graineDepuisTexte(opts.graineTexte);
       var meta = MC.Saves.creer(st, {
         nom: opts.nom, mode: opts.mode, difficulte: opts.difficulte, graine: graine,
-        histoire: opts.mode === 'histoire' ? MC.Histoire.parametres(opts.histoire) : null,
+        histoire: opts.mode === 'histoire' ? construireParametresHistoire(opts.histoire) : null,
       });
       g.histoire = null;
       g.succes = MC.Succes.creer();
@@ -249,7 +249,7 @@
       chat.systeme('Nouvelle partie « ' + meta.nom + ' » — graine ' + meta.graine);
       ui.toast('Partie créée');
       input.setState('playing');
-      if (meta.mode === 'histoire') demarrerHistoire(meta.histoire || MC.Histoire.parametres({}));
+      if (meta.mode === 'histoire') demarrerHistoire(meta.histoire || construireParametresHistoire({}));
     }
 
     g.creerPartie = creerPartie;
@@ -275,7 +275,7 @@
       ui.toast(r.vierge ? 'Nouvelle carte' : 'Partie chargée');
       input.setState('playing');
       if (meta.mode !== 'histoire') g.histoire = null;
-      else if (!g.histoire) demarrerHistoire(meta.histoire || MC.Histoire.parametres({}));
+      else if (!g.histoire) demarrerHistoire(meta.histoire || construireParametresHistoire({}));
       repereObjectif = null;
     }
 
@@ -427,7 +427,7 @@
     /* Parler à un habitant : son métier décide du titre, de la réplique, des
        offres et du service proposé. Un village hostile ne commerce plus. */
     function parlerA(ent) {
-      if (g.histoire && !g.histoire.fin && parlerHistoire(ent)) return;
+      if (g.histoire && !finRecit(g.histoire) && parlerHistoire(ent)) return;
       if (world.reputation && !MC.Factions.commerceOuvert(world.reputation)) {
         ui.toast('Les villageois refusent de commercer avec vous', 'warn');
         return;
@@ -489,29 +489,59 @@
     // ─── mode histoire ───────────────────────────────────────────────────────
     var histoireT = 0, choixAffiche = null, fileRecit = [], repereObjectif = null;
     function peutCategorie(cat) { return MC.Modes.categoriePermise(regles, cat); }
+    /* Complète les paramètres d histoire génériques (MC.Histoire.parametres)
+       avec ce qui n'appartient qu'à MC.Recits : l'archétype choisi, et les
+       interactions brutes (que parametres() ne connaît pas). */
+    function construireParametresHistoire(o) {
+      var p = MC.Histoire.parametres(o);
+      p.archetype = (o && MC.Recits.ARCHETYPES[o.archetype]) ? o.archetype : 'epopee';
+      p.interactions = o && o.interactions;
+      return p;
+    }
+    // l'archétype en cours, quel que soit son état interne particulier
+    function etatInterne(etat) { return etat && (etat.histoire || etat.enquete || etat.colonie); }
+    function finRecit(etat) { var i = etatInterne(etat); return i ? i.fin : null; }
+    // le lieu où le héros s'éveille, selon l'archétype
+    function pointDepart(etat) {
+      if (!etat) return null;
+      if (etat.archetype === 'epopee') return etat.histoire.liens.depart;
+      if (etat.archetype === 'enquete') return etat.enquete.depart;
+      if (etat.archetype === 'colonie') return etat.colonie.centre;
+      return null;
+    }
     /* Démarre le récit : il se lie aux lieux réels autour du départ, et le
-       héros s'éveille sur la place de son village. */
+       héros s'éveille sur la place de son village. L'épopée se lie au monde
+       réel (donjons compris) via MC.Histoire.lier, que MC.Recits.generer ne
+       connaît pas ; les autres archétypes se génèrent depuis la graine et
+       les lieux proches. */
     function demarrerHistoire(params) {
       var s = player.state;
-      var liens = MC.Histoire.lier(world, s.pos.x, s.pos.z);
-      g.histoire = MC.Histoire.creer(params, liens, peutCategorie);
+      var archetype = (params && MC.Recits.ARCHETYPES[params.archetype]) ? params.archetype : 'epopee';
+      if (archetype === 'epopee') {
+        var liens = MC.Histoire.lier(world, s.pos.x, s.pos.z);
+        g.histoire = { archetype: 'epopee', histoire: MC.Histoire.creer(params, liens, peutCategorie) };
+      } else {
+        var lieux = world.habitats ? world.habitats.lieuxProches(s.pos.x, s.pos.z, 2500) : [];
+        g.histoire = MC.Recits.generer(archetype, world.seed, lieux, params);
+      }
       fileRecit.length = 0; choixAffiche = null; repereObjectif = null;
-      if (liens.depart) {
-        var px = Math.floor(liens.depart.x), pz = Math.floor(liens.depart.z) + 3;
+      var depart = pointDepart(g.histoire);
+      if (depart) {
+        var px = Math.floor(depart.x), pz = Math.floor(depart.z) + 3;
         s.pos.x = px + 0.5; s.pos.z = pz + 0.5; s.pos.y = C.WORLD_H - 2;
         s.vel.x = s.vel.y = s.vel.z = 0;
         streamChunks(true);
         s.pos.y = world.groundAt(px, pz, true) + 1.2;
         g.spawnPoint = { x: s.pos.x, y: s.pos.y, z: s.pos.z };
       }
-      presenter(MC.Histoire.commencer(g.histoire));
+      presenter(MC.Recits.commencer(g.histoire));
       return g.histoire;
     }
     g.demarrerHistoire = demarrerHistoire;
     function signalerHistoire(ev, ctx) {
-      if (!g.histoire || g.histoire.fin) return [];
+      if (!g.histoire || finRecit(g.histoire)) return [];
       ev.t = g.time;
-      var n = MC.Histoire.signaler(g.histoire, ev, ctx);
+      var n = MC.Recits.signaler(g.histoire, ev, ctx);
       presenter(n);
       return n;
     }
@@ -561,7 +591,7 @@
         ui.dialogueHistoire(d, function () { afficherRecit(); fermerRecit(); });
         return;
       }
-      var c = MC.Histoire.choixEnAttente(g.histoire);
+      var c = MC.Recits.choixEnAttente(g.histoire);
       if (c && choixAffiche !== c.id) {
         choixAffiche = c.id;
         if (ui.isContainerOpen()) forceCloseContainer();
@@ -570,7 +600,7 @@
                               choix: c.options.map(function (o) { return { id: o.id, texte: o.texte }; }) },
                             function (opt) {
                               choixAffiche = null;
-                              presenter(MC.Histoire.choisir(g.histoire, c.id, opt));
+                              presenter(MC.Recits.choisir(g.histoire, c.id, opt));
                               fermerRecit();
                             });
       }
@@ -589,27 +619,31 @@
       });
     }
     /* Parler à un habitant pendant le récit : l'histoire d'abord, puis ses
-       quêtes, et le commerce seulement si l'histoire l'autorise. */
+       quêtes (l'épopée seule en propose), et le commerce seulement si
+       l'histoire l'autorise. */
     function parlerHistoire(ent) {
-      var H = MC.Histoire, h = g.histoire, role = ent.role || 'habitant';
+      var h = g.histoire, role = ent.role || 'habitant';
       var R0 = MC.Habitats.ROLES[role] || MC.Habitats.ROLES.habitant;
       var nom = R0.nom + (ent.nom ? ' — ' + ent.nom : '');
-      var n1 = signalerHistoire({ type: 'parler', role: role, lieu: ent.lieu, nom: nom }, compteur());
+      var n1 = signalerHistoire({ type: 'parler', role: role, lieu: ent.lieu, pnj: ent.pnj, nom: nom }, compteur());
       if (n1.some(function (n) { return n.type === 'dialogue' || n.type === 'info' || n.type === 'etape'; })) return true;
-      var n2 = H.rendreQuete(h, role, compteur());
-      if (n2.some(function (n) { return n.type === 'quete'; })) { presenter(n2); return true; }
-      var q = H.queteProposee(h, role);
-      if (q) {
-        input.setState('ui');
-        ui.dialogueHistoire({ titre: nom, texte: q.texte + ' — « ' + q.titre + ' »',
-                              choix: [{ id: 'oui', texte: 'Accepter la quête' }, { id: 'non', texte: 'Refuser' }] },
-                            function (c) {
-                              if (c === 'oui' && H.accepter(h, q.id)) { ui.toast('Quête acceptée : ' + q.titre); chat.systeme('Quête : ' + q.titre); }
-                              fermerRecit();
-                            });
-        return true;
+      if (h.archetype === 'epopee') {
+        var H = MC.Histoire, he = h.histoire;
+        var n2 = H.rendreQuete(he, role, compteur());
+        if (n2.some(function (n) { return n.type === 'quete'; })) { presenter(n2); return true; }
+        var q = H.queteProposee(he, role);
+        if (q) {
+          input.setState('ui');
+          ui.dialogueHistoire({ titre: nom, texte: q.texte + ' — « ' + q.titre + ' »',
+                                choix: [{ id: 'oui', texte: 'Accepter la quête' }, { id: 'non', texte: 'Refuser' }] },
+                              function (c) {
+                                if (c === 'oui' && H.accepter(he, q.id)) { ui.toast('Quête acceptée : ' + q.titre); chat.systeme('Quête : ' + q.titre); }
+                                fermerRecit();
+                              });
+          return true;
+        }
+        if (n2.length) { presenter(n2); return true; }
       }
-      if (n2.length) { presenter(n2); return true; }
       if (!regles.commerce) {
         input.setState('ui');
         ui.dialogueHistoire({ titre: nom, texte: R0.repliques[(ent.eid || 0) % R0.repliques.length] }, fermerRecit);
@@ -618,16 +652,21 @@
       return false;
     }
     function finHistoire(n) {
-      var h = g.histoire;
-      var stats = h ? 'Quêtes secondaires : ' + h.secondairesFaites + '/' + h.secondairesPrevues +
-                      ' · Chapitres : ' + Math.min(h.chap + 1, h.chapitres.length) + '/' + h.chapitres.length : '';
+      var h = g.histoire, i = etatInterne(h);
+      var stats = '';
+      if (i) {
+        stats = h.archetype === 'epopee' ? 'Quêtes secondaires : ' + i.secondairesFaites + '/' + i.secondairesPrevues +
+                                            ' · Chapitres : ' + Math.min(i.chap + 1, i.chapitres.length) + '/' + i.chapitres.length
+                                          : 'Chapitres : ' + Math.min(i.chap + 1, i.chapitres.length) + '/' + i.chapitres.length;
+      }
       g.finHistoire = n;
       signalerSucces({ type: 'histoire', fin: n.id });
       chat.systeme('Fin : ' + n.titre);
       ui.objectifHistoire(null);
       forceCloseContainer();
       input.setState('menu');
-      ui.ecranFin(n, stats);
+      var arche = h && MC.Recits.ARCHETYPES[h.archetype];
+      ui.ecranFin(n, stats, arche ? arche.nom : '');
       if (g.partieId) doSave(false);
     }
     function continuerApresFin() {
@@ -637,19 +676,25 @@
     /* Deux fois par seconde : où l'on est, ce qu'on porte, l'heure, le ciel. */
     function majHistoire(dt) {
       if (!g.histoire || net.enLigne()) { ui.objectifHistoire(null); return; }
-      var h = g.histoire, s = player.state;
-      if (!h.fin) ui.objectifHistoire(MC.Histoire.objectif(h), s.pos);
+      var h = g.histoire, s = player.state, i = etatInterne(h), fin = finRecit(h);
+      if (!fin) ui.objectifHistoire(MC.Recits.objectif(h), s.pos);
       histoireT -= dt;
-      if (histoireT > 0 || h.fin) return;
+      if (histoireT > 0 || fin) return;
       histoireT = 0.5;
       signalerHistoire({ type: 'position', x: s.pos.x, z: s.pos.z });
       signalerHistoire({ type: 'biome', id: world.biomeAt(Math.floor(s.pos.x), Math.floor(s.pos.z)).id });
       signalerHistoire({ type: 'inventaire' }, compteur());
       signalerHistoire({ type: 'temps', nuit: DC.isNight(g.time) });
       if (g.meteo) signalerHistoire({ type: 'meteo', meteo: g.meteo.type });
+      // la colonie attire aussi les habitants déjà présents alentour
+      if (h.archetype === 'colonie' && world.habitats) {
+        var pop = 0;
+        world.habitats.lieuxProches(i.centre.x, i.centre.z, 200).forEach(function (l) { pop += (l.pnjs || []).length; });
+        signalerHistoire({ type: 'habitants', n: pop });
+      }
       // le repère de l'objectif, suivi par la boussole
-      var o = MC.Histoire.objectif(h);
-      if (world.reperes && h.params.reperes) {
+      var o = MC.Recits.objectif(h);
+      if (world.reperes && i && i.params && i.params.reperes) {
         var cible = o && o.cible;
         if (repereObjectif && (!cible || repereObjectif.x !== Math.round(cible.x) || repereObjectif.z !== Math.round(cible.z))) {
           world.reperes.retirer(repereObjectif.id); repereObjectif = null;
@@ -1182,10 +1227,11 @@
         input.setState('ui');
         return;
       }
-      if (res === 'place' && net.enLigne()) {
-        // le serveur fait autorite : on lui annonce la pose
+      if (res === 'place') {
         var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
-        net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0);
+        // le serveur fait autorite : on lui annonce la pose
+        if (net.enLigne()) net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0);
+        else signalerHistoire({ type: 'poser', bloc: mange, x: bx, y: by, z: bz });
       }
       if (res === 'place') audio.play('poser');
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: mange }); }
@@ -1223,7 +1269,7 @@
         if (aUneCarte(player)) ouvrirCarte();
         else ui.toast('Il faut une carte dans l\'inventaire', 'warn');
       } else if (code === 'KeyH') {
-        if (g.histoire) { ui.journalHistoire(g.histoire); input.setState('ui'); }
+        if (g.histoire) { ui.journalHistoire(g.histoire, g.finHistoire); input.setState('ui'); }
         else ui.toast('Le journal n\'existe qu\'en mode histoire', 'warn');
       } else if (code === 'KeyJ') {
         ui.panneauFactions(world.reputation);
@@ -1510,7 +1556,11 @@
         ouvrirConteneur(res.slice(5), target);
         return;
       }
-      if (res === 'place') audio.play('poser');
+      if (res === 'place') {
+        var bxp = target.x + target.nx, byp = target.y + target.ny, bzp = target.z + target.nz;
+        signalerHistoire({ type: 'poser', bloc: enMain && enMain.id, x: bxp, y: byp, z: bzp });
+        audio.play('poser');
+      }
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: enMain && enMain.id }); }
       else if (res === 'till' || res === 'plant') audio.play('poser');
     }
@@ -1595,7 +1645,7 @@
 
         // mort : en cauchemar, un seul joueur suffit a perdre la partie
         if (MC.Split.partiePerdue(equipe, regles)) {
-          var finT = g.histoire && !g.histoire.fin ? MC.Histoire.signaler(g.histoire, { type: 'mort' }) : [];
+          var finT = g.histoire && !finRecit(g.histoire) ? MC.Recits.signaler(g.histoire, { type: 'mort' }) : [];
           perdrePartie();
           finT.forEach(function (n) { if (n.type === 'fin') finHistoire(n); });
         }

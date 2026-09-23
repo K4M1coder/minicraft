@@ -593,7 +593,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-HISTOIRE-010 | Trois archétypes très différents : épopée (quête des gemmes), enquête (un crime à élucider), colonie (fonder et défendre un établissement), au choix à la création | trois archétypes jouables | ⏳ |
+| SPEC-HISTOIRE-010 | Trois archétypes très différents : épopée (quête des gemmes), enquête (un crime à élucider), colonie (fonder et défendre un établissement), au choix à la création | trois archétypes jouables | ✅ |
 | SPEC-HISTOIRE-011 | Chaque histoire est générée depuis la graine : lieux, personnages, indices, ennemis et rebondissements changent d'une partie à l'autre, et la même graine redonne la même histoire | déterminisme et variété | ✅ |
 | SPEC-HISTOIRE-012 | L'enquête : des suspects aux alibis, des indices à trouver, un coupable à désigner ; la fin dépend de l'accusation et des indices réunis | enquête jouée jusqu'à ses fins | ✅ |
 | SPEC-HISTOIRE-013 | La colonie : bâtir les bâtiments requis, attirer des habitants, tenir face aux vagues ; la fin dépend de la prospérité atteinte | colonie jouée jusqu'à ses fins | ✅ |

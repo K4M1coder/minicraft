@@ -1913,14 +1913,14 @@
     var guide = null;
     for (var t = 0; t < 240 && !guide; t++) {
       await frames(1);
-      guide = g.entities.list.filter(function (e) { return e.role === 'guide' && g.histoire.liens.depart && e.lieu === g.histoire.liens.depart.id; })[0];
+      guide = g.entities.list.filter(function (e) { return e.role === 'guide' && g.histoire.histoire.liens.depart && e.lieu === g.histoire.histoire.liens.depart.id; })[0];
     }
     A.ok(guide, 'le guide du village de départ est là');
-    var avant = g.histoire.etape + g.histoire.chap * 10;
+    var avant = g.histoire.histoire.etape + g.histoire.histoire.chap * 10;
     g.parlerA(guide);
     await frames(3);
     A.ok(document.querySelector('.dialogue-histoire').style.display !== 'none', 'il raconte');
-    A.gt(g.histoire.etape + g.histoire.chap * 10, avant, 'et l histoire avance');
+    A.gt(g.histoire.histoire.etape + g.histoire.histoire.chap * 10, avant, 'et l histoire avance');
     document.querySelector('.dialogue-histoire button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
     await frames(3);
     // le journal
@@ -1933,6 +1933,23 @@
     key('KeyH');
     await frames(2);
     A.equal(j.style.display, 'none', 'H le referme');
+  });
+
+  /* Tout à la fin aussi : encore un changement de partie, vers un autre
+     archétype (l enquête). */
+  e2e('SPEC-HISTOIRE-010 : les trois archétypes se choisissent et se jouent — ici, l enquête', async function (g) {
+    await reset(g);
+    videParties();
+    g.render.setDistance(5);
+    g.creerPartie({ nom: 'Enquête', mode: 'histoire', difficulte: 'facile', graineTexte: 'crime', joueurs: 1,
+                    histoire: { archetype: 'enquete', heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
+    await frames(5);
+    A.ok(g.histoire && g.histoire.archetype === 'enquete', 'le récit choisi est bien une enquête');
+    var dlg = document.querySelector('.dialogue-histoire');
+    A.ok(dlg && dlg.style.display !== 'none', 'un dialogue de chapitre s affiche');
+    var obj = document.querySelector('.objectif-histoire');
+    A.ok(obj && obj.style.display !== 'none' && /enquête/i.test(obj.textContent),
+         'l objectif parle de l enquête : ' + (obj && obj.textContent));
   });
 
   // ─── exécution ─────────────────────────────────────────────────────────────
