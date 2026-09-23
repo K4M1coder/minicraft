@@ -570,6 +570,8 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde | vérification de toutes les variantes | ⏳ |
 | SPEC-DONJON-013 | Les donjons sont grands : plusieurs salles reliées par des couloirs, sur plusieurs niveaux reliés par des escaliers ; le gardien au plus profond | graphe de salles, niveaux, connexité | ⏳ |
 | SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ⏳ |
+| SPEC-DONJON-015 | Les donjons ont trois tailles : petits (les donjons actuels, une salle et son accès), moyens (plusieurs salles sur un niveau), grands (plusieurs niveaux et une dizaine de salles ou plus) | taille, nombre de salles et de niveaux par catégorie | ⏳ |
+| SPEC-DONJON-016 | La taille dépend du lieu et de la rareté (les grands sont rares et demandent de la place en profondeur ou en surface) ; elle fait croître la difficulté (gardes, sous-gardiens) et le butin | répartition des tailles, gardes et butins selon la taille | ⏳ |
 | SPEC-MOB-010 | Chaque créature a plusieurs variantes d'apparence et un modèle détaillé (tête, corps, membres) animé : marche, attaque, regard | variantes, parties, animations | ⏳ |
 
 ## L20 — rendu lointain
