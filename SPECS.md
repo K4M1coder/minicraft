@@ -606,5 +606,15 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-HUD-001 | Les composants existants du HUD, consolidés sous un seul registre, s'affichent ou se masquent chacun indépendamment ou tous d'un coup, et le choix est conservé : infos (`.debug`), viseur (`.crosshair`), anneau de minage (`.mining-ring`), barres de vie, faim et air (`.stats`), barre d'objets (`.hotbar`), nom de l'objet tenu (`.held-name`), notifications (`.toasts`), chat (`.chat`), boussole des repères (`.boussole`), barre du gardien (`.barre-boss`), objectif de l'histoire (`.objectif-histoire`), étiquettes des joueurs en écran partagé (`.etiquette`) ; les effets (éclair de dégâts, givre et fournaise) et les panneaux ouverts à la demande (inventaire, carte, factions, journal, livre, dialogues) n'en font pas partie | bascules individuelles et globale sur chaque composant listé, conservation | ⏳ |
+| SPEC-HUD-001 | Un registre unique regroupe les composants existants du HUD (voir HUD-003 à HUD-012) : chacun s'affiche ou se masque indépendamment, une bascule générale les masque ou les rétablit tous, et le choix est conservé d'une partie à l'autre ; effets (éclair de dégâts, givre, fournaise) et panneaux ouverts à la demande (inventaire, carte, factions, journal, livre, dialogues) n'en font pas partie | bascule générale, conservation | ⏳ |
+| SPEC-HUD-003 | Infos (`.debug`) : se masque et se rétablit seul | bascule du composant | ⏳ |
+| SPEC-HUD-004 | Viseur et anneau de minage (`.crosshair`, `.mining-ring`) : se masquent et se rétablissent ensemble | bascule du groupe | ⏳ |
+| SPEC-HUD-005 | Barres de vie, de faim et d'air (`.stats`) : se masquent et se rétablissent ensemble | bascule du groupe | ⏳ |
+| SPEC-HUD-006 | Barre d'objets et nom de l'objet tenu (`.hotbar`, `.held-name`) : se masquent et se rétablissent ensemble | bascule du groupe | ⏳ |
+| SPEC-HUD-007 | Notifications (`.toasts`) : se masquent et se rétablissent seules | bascule du composant | ⏳ |
+| SPEC-HUD-008 | Chat (`.chat`) : se masque et se rétablit seul ; masqué, il se rouvre quand on appuie sur T | bascule, saisie | ⏳ |
+| SPEC-HUD-009 | Boussole des repères (`.boussole`) : se masque et se rétablit seule | bascule du composant | ⏳ |
+| SPEC-HUD-010 | Barre du gardien (`.barre-boss`) : se masque et se rétablit seule | bascule du composant | ⏳ |
+| SPEC-HUD-011 | Objectif de l'histoire (`.objectif-histoire`) : se masque et se rétablit seul | bascule du composant | ⏳ |
+| SPEC-HUD-012 | Étiquettes des joueurs en écran partagé (`.etiquette`) et HUD de chaque vue : les bascules s'appliquent à toutes les vues | bascules en écran partagé | ⏳ |
 | SPEC-HUD-002 | Les infos donnent la graine, la version de génération d'origine de la carte, la version du jeu en cours et l'orientation du regard (cap en degrés et point cardinal, inclinaison) | contenu du panneau d'infos | ⏳ |
