@@ -103,9 +103,14 @@
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — relief', function () {
     var Bi = MC.Biomes.creer(monde().noise);
+    /* Balayage en spirale. Les volcans, désormais cantonnés aux montagnes
+       (SPEC-RELIEF-007), sont plus clairsemés qu'avant : 32 angles par anneau
+       laissaient passer des cratères entiers entre deux rayons. 256 angles
+       referment ces trous, sans coût notable (quelques dizaines de ms). */
     function chercher(pred, pas) {
-      for (var r = 0; r < 6000; r += pas || 29) for (var a = 0; a < 32; a++) {
-        var x = Math.round(Math.cos(a / 32 * 6.283) * r), z = Math.round(Math.sin(a / 32 * 6.283) * r);
+      var angles = 256;
+      for (var r = 0; r < 6000; r += pas || 29) for (var a = 0; a < angles; a++) {
+        var x = Math.round(Math.cos(a / angles * 6.283) * r), z = Math.round(Math.sin(a / angles * 6.283) * r);
         if (pred(x, z)) return [x, z];
       }
       return null;
@@ -174,6 +179,69 @@
       A.ok(vide > 0, 'des vides souterrains');
       A.ok(w.isCave(0, 1, 0, 40) === false, 'jamais au ras du socle');
       A.ok(lave >= 0, 'la lave ne se trouve que tout au fond');
+    });
+
+    /* Régions de volcans balayées directement (volcanDe est pur et bon marché) :
+       pas besoin d'une spirale de recherche pour rassembler un échantillon. */
+    function volcansRegion(rmin, rmax) {
+      var liste = [];
+      for (var rx = rmin; rx <= rmax; rx++) for (var rz = rmin; rz <= rmax; rz++) {
+        var v = Bi.volcanDe(rx, rz);
+        if (v) liste.push(v);
+      }
+      return liste;
+    }
+
+    it('SPEC-RELIEF-007 : un volcan se dresse sur une montagne ou une chaîne, jamais en plaine', function () {
+      var vs = volcansRegion(-18, 18);
+      A.ok(vs.length >= 10, 'assez de volcans échantillonnés (' + vs.length + ')');
+      vs.forEach(function (v) {
+        A.ok(Bi.climat(v.x, v.z).montagne >= 0.25,
+             'volcan à (' + v.x + ',' + v.z + ') sur relief montagneux (montagne=' + Bi.climat(v.x, v.z).montagne.toFixed(2) + ')');
+      });
+    });
+
+    it('SPEC-RELIEF-008 : des volcans s alignent parfois en chaîne le long d une crête', function () {
+      var vs = volcansRegion(-18, 18);
+      var groupes = {};
+      vs.forEach(function (v) { if (v.chaine) (groupes[v.chaine] = groupes[v.chaine] || []).push(v); });
+      var chaine = Object.keys(groupes).map(function (k) { return groupes[k]; }).filter(function (g) { return g.length >= 2; })[0];
+      A.ok(chaine, 'au moins une chaîne de deux volcans ou plus existe');
+      // deux membres consécutifs d'une même chaîne restent des voisins de crête, pas à l'autre bout du monde
+      var d = Math.hypot(chaine[0].x - chaine[1].x, chaine[0].z - chaine[1].z);
+      A.ok(d < 1200, 'les volcans de la chaîne sont proches (' + d.toFixed(0) + ' blocs)');
+      chaine.forEach(function (v) { A.ok(Bi.climat(v.x, v.z).montagne >= 0.25, 'la chaîne suit un relief montagneux'); });
+    });
+
+    it('SPEC-RELIEF-009 : des volcans sont éteints, sans lave, un lac ou de l herbe au cratère', function () {
+      var vs = volcansRegion(-18, 18);
+      var eteints = vs.filter(function (v) { return !v.actif; });
+      A.ok(eteints.length > 0, 'des volcans éteints existent (' + eteints.length + ')');
+      eteints.forEach(function (v) {
+        var col = Bi.colonne(v.x, v.z);
+        A.equal(col.lave, 0, 'aucune lave dans un cratère éteint');
+      });
+      // au centre d'un cratère éteint : soit un lac (eau au-dessus du sol), soit de l'herbe (biome ambiant)
+      var v = eteints[0];
+      var col = Bi.colonne(v.x, v.z);
+      A.ok(col.eau > col.h || Bi.biomeAt(v.x, v.z).id !== 'volcan',
+           'le cratère éteint redevient un lac ou un paysage ordinaire');
+      var w = monde();
+      w.getChunk(Math.floor(v.x / 16), Math.floor(v.z / 16), true);
+      A.notEqual(w.getBlock(v.x, Math.min(C.WORLD_H - 1, col.h + 1), v.z), B.LAVA, 'pas de lave visible dans un cratère éteint');
+    });
+
+    it('SPEC-RELIEF-010 : trois profils de volcans — stratovolcan, bouclier, caldeira', function () {
+      var vs = volcansRegion(-18, 18);
+      var types = {};
+      vs.forEach(function (v) { (types[v.type] = types[v.type] || []).push(v); });
+      ['stratovolcan', 'bouclier', 'caldeira'].forEach(function (t) {
+        A.ok(types[t] && types[t].length > 0, 'le profil ' + t + ' apparaît');
+      });
+      function moyR(t) { return types[t].reduce(function (s, v) { return s + v.R; }, 0) / types[t].length; }
+      function moyRatioCratere(t) { return types[t].reduce(function (s, v) { return s + v.cratere / v.R; }, 0) / types[t].length; }
+      A.ok(moyR('bouclier') > moyR('stratovolcan'), 'le bouclier est plus large que le stratovolcan (élancé)');
+      A.ok(moyRatioCratere('caldeira') > moyRatioCratere('stratovolcan'), 'la caldeira a un cratère bien plus large, relativement à son rayon');
     });
   });
 

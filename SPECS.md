@@ -544,13 +544,13 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-BIOME-005 | Aux frontières, surfaces, végétation et climat se mêlent sur une large bande : on passe d'un biome à l'autre progressivement, sans ligne nette | mélange des surfaces dans la bande de transition | ⏳ |
-| SPEC-BIOME-006 | Le paysage est vaste : continents, chaînes de montagnes et bassins s'étendent sur plusieurs kilomètres | tailles des structures du relief | ⏳ |
-| SPEC-BIOME-007 | Les climats forment de grandes régions cohérentes, sur des milliers de blocs : on ne passe pas d'un désert à une banquise en cent mètres ; froid et chaud, sec et humide s'ordonnent en gradients | distances entre biomes incompatibles | ⏳ |
-| SPEC-RELIEF-007 | Un volcan se dresse sur une montagne ou une chaîne, jamais au milieu d'une plaine | position des volcans | ⏳ |
-| SPEC-RELIEF-008 | Des volcans s'alignent parfois en chaîne le long d'une crête | chaînes de volcans | ⏳ |
-| SPEC-RELIEF-009 | Des volcans sont éteints : sans lave, leur cratère porte un lac ou de l'herbe | volcans éteints | ⏳ |
-| SPEC-RELIEF-010 | Plusieurs types de volcans : stratovolcan élancé, volcan bouclier large et plat, caldeira effondrée | profils distincts | ⏳ |
+| SPEC-BIOME-005 | Aux frontières, surfaces, végétation et climat se mêlent sur une large bande : on passe d'un biome à l'autre progressivement, sans ligne nette | mélange des surfaces dans la bande de transition | ✅ |
+| SPEC-BIOME-006 | Le paysage est vaste : continents, chaînes de montagnes et bassins s'étendent sur plusieurs kilomètres | tailles des structures du relief | ✅ |
+| SPEC-BIOME-007 | Les climats forment de grandes régions cohérentes, sur des milliers de blocs : on ne passe pas d'un désert à une banquise en cent mètres ; froid et chaud, sec et humide s'ordonnent en gradients | distances entre biomes incompatibles | ✅ |
+| SPEC-RELIEF-007 | Un volcan se dresse sur une montagne ou une chaîne, jamais au milieu d'une plaine | position des volcans | ✅ |
+| SPEC-RELIEF-008 | Des volcans s'alignent parfois en chaîne le long d'une crête | chaînes de volcans | ✅ |
+| SPEC-RELIEF-009 | Des volcans sont éteints : sans lave, leur cratère porte un lac ou de l'herbe | volcans éteints | ✅ |
+| SPEC-RELIEF-010 | Plusieurs types de volcans : stratovolcan élancé, volcan bouclier large et plat, caldeira effondrée | profils distincts | ✅ |
 | SPEC-RELIEF-011 | Un volcan actif fume ; de temps à autre il gronde et crache des projectiles incandescents, la lave déborde de son cratère puis se fige en basalte | panache, éruptions, coulées qui se figent | ⏳ |
 
 ## L18 — peuplement et routes
