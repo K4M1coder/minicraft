@@ -305,7 +305,10 @@
     it('des arbres sont générés et reposent sur le sol', function () {
       var w4 = MC.createWorld(20260921);
       var troncs = 0;
-      for (var cx = -3; cx <= 3; cx++) for (var cz = -3; cz <= 3; cz++) {
+      // les régions climatiques étant désormais vastes (SPEC-BIOME-006/007), les environs
+      // immédiats de l'origine peuvent tomber en mer : un rayon plus large reste nécessaire
+      // pour croiser à coup sûr une forêt ou une plaine.
+      for (var cx = -6; cx <= 6; cx++) for (var cz = -6; cz <= 6; cz++) {
         var c = w4.getChunk(cx, cz, true);
         for (var i = 0; i < c.blocks.length; i++) if (c.blocks[i] === B.LOG) troncs++;
       }
@@ -1049,6 +1052,9 @@
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
       var gy = w.groundAt(8, 8, true);
+      // un relief voisin en pente pourrait offrir un appui latéral : on isole
+      // la colonne pour ne tester que la perte du support du dessous
+      [[7, 8], [9, 8], [8, 7], [8, 9]].forEach(function (p) { w.setBlock(p[0], gy + 1, p[1], 0); });
       w.setBlock(8, gy + 1, 8, B.TORCH);
       w.setBlock(8, gy, 8, 0);                       // on retire le support
       var tombees = w.dropUnsupported(8, gy, 8);

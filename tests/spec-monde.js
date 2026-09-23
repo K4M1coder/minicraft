@@ -171,7 +171,9 @@
       A.equal(MC.Biomes.MARINS.length, 5, 'cinq biomes marins');
       A.equal(MC.Biomes.ORDRE.length, 18);
       var vus = {};
-      for (var x = -3000; x <= 3000; x += 37) for (var z = -3000; z <= 3000; z += 41) {
+      // les régions climatiques sont désormais vastes (SPEC-BIOME-006/007) : un
+      // biome aussi rare que l'île aux champignons peut exiger un rayon plus large
+      for (var x = -6000; x <= 6000; x += 53) for (var z = -6000; z <= 6000; z += 59) {
         vus[w.biomeAt(x, z).id] = true;
       }
       MC.Biomes.ORDRE.forEach(function (id) {
@@ -200,11 +202,15 @@
     it('SPEC-BIOME-003 : le relief reste continu aux frontieres de biomes', function () {
       var w = monde(), pire = 0;
       var Bi = MC.Biomes.creer(w.noise);
-      // falaises, mesas, volcans et lacs sont des ruptures VOULUES : on les écarte
+      // falaises, mesas, volcans et lacs sont des ruptures VOULUES : on les écarte.
+      // Les crêtes des grands massifs (SPEC-BIOME-006 : chaînes désormais bien plus
+      // vastes) le sont tout autant — un bruit « ridged » y dessine des escarpements
+      // par construction (cf. hauteurBrute) : ce n'est pas la continuité des BORDS de
+      // biomes que ce test vérifie, mais celle du terrain courant.
       function relief(x, z) {
         var c = Bi.colonne(x, z).climat;
         return c.falaise > 0 || c.escarpement > 0 || c.badlands > 0 || c.volcan || c.lac ||
-               Bi.volcanProche(x, z) || Bi.lacProche(x, z);
+               c.montagne > 0.55 || Bi.volcanProche(x, z) || Bi.lacProche(x, z);
       }
       for (var x = -2500; x <= 2500; x += 13) for (var z = -2500; z <= 2500; z += 197) {
         if (relief(x, z) || relief(x + 1, z) || relief(x, z + 1)) continue;
@@ -247,6 +253,105 @@
       }
       A.ok(trouve, 'une eau gelée existe');
       A.equal(w.getBlock(trouve[0], SEA - 1, trouve[1]), B.WATER, 'eau liquide sous la glace');
+    });
+
+    it('SPEC-BIOME-005 : aux frontières, le mélange se mêle sur une large bande, pas une ligne', function () {
+      var w = monde();
+      var Bi = MC.Biomes.creer(w.noise);
+      var enMelange = 0, total = 0, largeurs = [];
+      var largeurCourante = 0, dansBande = false;
+      for (var x = -3000; x <= 3000; x += 3) {
+        total++;
+        var mel = Bi.melange(x, 777);
+        A.ok(mel.poids >= 0 && mel.poids <= 0.5, 'poids borné dans [0, 0.5]');
+        A.equal(mel.principal, Bi.biomeAt(x, 777).id, 'le principal est bien le biome classé');
+        if (mel.voisin) {
+          enMelange++;
+          A.ok(mel.voisin !== mel.principal, 'le voisin diffère du principal');
+          if (!dansBande) { dansBande = true; largeurCourante = 0; }
+          largeurCourante += 3;
+        } else if (dansBande) {
+          largeurs.push(largeurCourante);
+          dansBande = false;
+        }
+      }
+      A.ok(enMelange > 0 && enMelange < total, 'des zones de mélange existent, sans couvrir tout le monde');
+      A.ok(largeurs.some(function (l) { return l >= 9; }), 'une bande de transition tient sur plusieurs colonnes, pas une seule (' + largeurs.join(',') + ')');
+      // dithering : la fonction est pure (même graine, même résultat)
+      var Bi2 = MC.Biomes.creer(MC.makeNoise(20260921));
+      A.deep(Bi2.melange(1234, -777), Bi.melange(1234, -777), 'melange ne dépend que de la graine et de la position');
+
+      // world.js s'en sert vraiment : un chunk pris dans la bande mélange les
+      // surfaces des deux biomes, au lieu d'un biome de bord unique et net
+      var bande = null;
+      for (var bx = -3000; bx <= 3000 && !bande; bx += 5) for (var bz = -3000; bz <= 3000 && !bande; bz += 53) {
+        var ech = Bi.echantillon(bx, bz);
+        if (ech.biome.marin || ech.h < SEA + 4) continue;
+        var m = Bi.melange(bx, bz, ech);
+        if (m.voisin && m.poids > 0.2) bande = [bx, bz];
+      }
+      A.ok(bande, 'une bande de mélange praticable existe');
+      var cx = Math.floor(bande[0] / 16), cz = Math.floor(bande[1] / 16);
+      var c = w.getChunk(cx, cz, true);
+      var surfaces = {};
+      for (var xx = 0; xx < 16; xx++) for (var zz = 0; zz < 16; zz++) {
+        var wx = cx * 16 + xx, wz = cz * 16 + zz;
+        surfaces[w.getBlock(wx, w.groundAt(wx, wz, true), wz)] = true;
+      }
+      A.ok(Object.keys(surfaces).length >= 2, 'le chunk de la bande mélange plusieurs types de surface');
+    });
+
+    it('SPEC-BIOME-006 : le paysage est vaste — continents, chaînes et bassins sur plusieurs kilomètres', function () {
+      var w = monde();
+      /* Largeur d'un continent/bassin : distance moyenne entre deux passages du
+         bruit qui les façonne (hauteurBrute) au-dessus/au-dessous du seuil des
+         bassins, le long d'une ligne très longue. heightAt lui-même est un
+         mauvais indicateur ici : les collines (échelle bien plus fine) y font
+         basculer le niveau de la mer à chaque creux, sans rapport avec la
+         taille des continents qu'on veut mesurer. */
+      var SEUIL = 0.46;
+      function continent(x, z) { return w.noise.fbm(x / 900, z / 900, 3, 2, 0.5); }
+      var mer = continent(-20000, 500) < SEUIL;
+      var franchissements = 0;
+      for (var x = -20000; x <= 20000; x += 25) {
+        var m = continent(x, 500) < SEUIL;
+        if (m !== mer) { franchissements++; mer = m; }
+      }
+      var largeurMoyenne = 40000 / Math.max(1, franchissements);
+      A.ok(largeurMoyenne > 500, 'continents et bassins larges de plusieurs centaines à quelques milliers de blocs (moyenne ' + largeurMoyenne.toFixed(0) + ')');
+      // les chaînes de montagnes elles-mêmes s'étendent sur une large échelle : une
+      // colonne montagneuse a de bonnes chances de rester montagneuse à 200 blocs
+      var Bi = MC.Biomes.creer(w.noise);
+      var essais = 0, tientEncore = 0;
+      for (var z = -4000; z <= 4000 && essais < 40; z += 211) {
+        for (var x = -4000; x <= 4000 && essais < 40; x += 197) {
+          if (Bi.climat(x, z).montagne < 0.6) continue;
+          essais++;
+          if (Bi.climat(x + 200, z).montagne > 0.3 || Bi.climat(x, z + 200).montagne > 0.3) tientEncore++;
+        }
+      }
+      A.ok(essais >= 5, 'assez de points montagneux échantillonnés');
+      A.ok(tientEncore / essais > 0.5, 'une chaîne reste montagneuse sur plusieurs centaines de blocs (' + tientEncore + '/' + essais + ')');
+    });
+
+    it('SPEC-BIOME-007 : les climats forment de grandes régions cohérentes — pas de désert à cent mètres d une banquise', function () {
+      var w = monde();
+      var chauds = [], froids = [];
+      var pas = 61;
+      for (var x = -9000; x <= 9000; x += pas) for (var z = -9000; z <= 9000; z += pas) {
+        var id = w.biomeAt(x, z).id;
+        if (id === 'desert' || id === 'badlands') chauds.push([x, z]);
+        else if (id === 'pics_glaces' || id === 'glacier') froids.push([x, z]);
+      }
+      A.ok(chauds.length > 0 && froids.length > 0, 'les deux climats extrêmes existent (chauds=' + chauds.length + ', froids=' + froids.length + ')');
+      var minD = Infinity;
+      for (var i = 0; i < chauds.length; i += 5) {
+        for (var j = 0; j < froids.length; j += 5) {
+          var d = Math.hypot(chauds[i][0] - froids[j][0], chauds[i][1] - froids[j][1]);
+          if (d < minD) minD = d;
+        }
+      }
+      A.ok(minD >= 800, 'désert et banquise restent à au moins 800 blocs l un de l autre (' + minD.toFixed(0) + ')');
     });
   });
 

@@ -148,9 +148,21 @@
         var ech = Bio.echantillon(wx, wz);
         var h = Math.max(1, Math.min(WH - 14, ech.h));
         var bio = ech.biome;
+        /* Transition (SPEC-BIOME-005) : dans la bande de mélange, la surface et
+           la végétation piochent parfois dans le biome voisin — un tirage
+           dithéré par colonne, indépendant pour chacune, plutôt qu'un biome de
+           bord unique : c'est ce qui donne à la frontière son grain, au lieu
+           d'un simple second biome en applats. */
+        var bioSurf = bio, bioVege = bio;
+        var mel = Bio.melange(wx, wz, ech);
+        if (mel.voisin) {
+          var voisinBio = MC.Biomes.LISTE[mel.voisin];
+          if (N.hash2(wx * 131 + 7, wz * 151 - 13) < mel.poids) bioSurf = voisinBio;
+          if (N.hash2(wx * 97 - 41, wz * 113 + 23) < mel.poids) bioVege = voisinBio;
+        }
         // le marais garde de l'herbe au ras de l'eau : ses berges ne sont pas des plages
         var beach = bio.berges ? h <= SEA : h <= SEA + 1;
-        var sf = surfaceDe(bio, h, beach);
+        var sf = surfaceDe(bioSurf, h, beach);
 
         var fondRavin = ech.eau > h || ech.lave ? 0 : ravin(wx, wz, h);
         // crevasses : le glacier se fend par endroits, sur une dizaine de blocs
@@ -164,10 +176,10 @@
           else if (isCave(wx, y, wz, h)) b = y <= NIVEAU_LAVE_PROFONDE ? B.LAVA : 0;
           else if (y === h && ech.climat.coulee) b = B.MAGMA;   // coulée sur le flanc du volcan
           else if (y === h) b = sf[0];
-          else if (y > h - 4) b = bio.strates && !beach ? strate(y) : sf[1];
+          else if (y > h - 4) b = bioSurf.strates && !beach ? strate(y) : sf[1];
           // le désert repose sur une couche de grès, les badlands sur leurs strates
-          else if (bio.roche && y > h - 8) b = bio.roche;
-          else if (bio.strates && y > h - 14) b = strate(y);
+          else if (bioSurf.roche && y > h - 8) b = bioSurf.roche;
+          else if (bioSurf.strates && y > h - 14) b = strate(y);
           else b = filon(wx, y, wz, h, bio);
           blocks[idx(x, y, z)] = b;
         }
@@ -196,7 +208,7 @@
         }
         if (beach) continue;
         // arbres : le tronc reste à 3 blocs du bord, la couronne tient dans le chunk
-        var arbre = tirer(bio.arbres, N.hash2(wx * 7, wz * 13));
+        var arbre = tirer(bioVege.arbres, N.hash2(wx * 7, wz * 13));
         var etroit = arbre && arbre.type === 'cactus';
         var auCentre = x > 2 && x < 13 && z > 2 && z < 13;
         if (arbre && (auCentre || etroit)) {
@@ -206,7 +218,7 @@
           continue;
         }
         // végétation basse : un tirage indépendant de celui des arbres
-        var plante = tirer(bio.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
+        var plante = tirer(bioVege.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
         if (plante && blocks[idx(x, h + 1, z)] === 0 && plantePousseSur(plante.id, sf[0])) {
           blocks[idx(x, h + 1, z)] = plante.id;
         }

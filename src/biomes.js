@@ -184,50 +184,111 @@
      « extrêmes » (désert, taïga) n'apparaîtraient presque jamais. */
   function etaler(v) { return clamp01(0.5 + (v - 0.5) * 2.2); }
 
+  /* Poids climatiques dérivés des trois champs bruts (température, humidité,
+     propension montagneuse). Extrait de `climat()` pour être réutilisé sur un
+     triplet perturbé : c'est ce qui permet à `melange()` de repérer un biome
+     voisin sans reéchantillonner le bruit (SPEC-BIOME-005). */
+  function pesee(t, h, r) {
+    var wm = smoothstep(0.76, 0.92, r);
+    var wd = smoothstep(0.60, 0.74, t) * (1 - smoothstep(0.46, 0.60, h)) * (1 - wm);
+    var wb = wd * (1 - smoothstep(0.26, 0.36, h));
+    var ws = smoothstep(0.60, 0.72, h) * smoothstep(0.34, 0.46, t) * (1 - smoothstep(0.54, 0.62, t)) *
+             (1 - wm) * (1 - wd);
+    var wc = smoothstep(0.80, 0.88, h) * (1 - smoothstep(0.18, 0.28, r)) *
+             smoothstep(0.34, 0.40, t) * (1 - smoothstep(0.56, 0.62, t));
+    return { t: t, h: h, r: r, montagne: wm, desert: wd, badlands: wb, marais: ws, champignons: wc };
+  }
+
   // profondeur à partir de laquelle une colonne immergée devient un biome marin
   var PROF_MARINE = 2;
 
+  /* Trois profils de volcans (SPEC-RELIEF-010) : `exp` façonne le profil du
+     cône (haut => flancs raides et étroits, bas => dôme large et plat),
+     `craterFrac` la part du rayon occupée par le cratère, `dd`/`dr` la
+     profondeur du fond du cratère et la remontée vers son rebord, `dl` le
+     niveau de la lave (constant, entre le fond et le rebord — actif seulement). */
+  var TYPES_VOLCAN = {
+    // stratovolcan : élancé, cône étroit et raide
+    stratovolcan: { rMin: 34, rRange: 18, sommetBase: 66, sommetRange: 12, exp: 1.9, craterFrac: 0.16, dd: 7, dl: 4, dr: 5 },
+    // bouclier : large et plat, pentes très douces
+    bouclier: { rMin: 60, rRange: 30, sommetBase: 54, sommetRange: 8, exp: 0.65, craterFrac: 0.10, dd: 4, dl: 2, dr: 3 },
+    // caldeira : sommet effondré, un vaste cratère peu profond au regard de son rayon
+    caldeira: { rMin: 46, rRange: 20, sommetBase: 58, sommetRange: 10, exp: 1.3, craterFrac: 0.52, dd: 15, dl: 9, dr: 11 },
+  };
+
   function creer(N) {
     /* Trois champs indépendants, décalés pour ne pas être corrélés :
-       température, humidité, et propension au relief montagneux. */
+       température, humidité, et propension au relief montagneux.
+       Échelles larges (SPEC-BIOME-006, SPEC-BIOME-007) : les régions
+       climatiques et les massifs s'étendent sur plusieurs kilomètres, si bien
+       qu'un désert et une banquise — climats incompatibles — ne se touchent
+       jamais à moins de plusieurs centaines de blocs. */
     function climat(wx, wz) {
-      var t = etaler(N.fbm((wx + 1733) / 420, (wz - 911) / 420, 3, 2, 0.5));
-      var h = etaler(N.fbm((wx - 5227) / 360, (wz + 3301) / 360, 3, 2, 0.5));
-      var r = etaler(N.fbm((wx + 9127) / 300, (wz + 7411) / 300, 3, 2, 0.5));
-      /* Poids CONTINUS : ils pilotent le relief. Un choix discret de biome
-         appliqué directement à la hauteur ferait des falaises à chaque
-         frontière ; les poids la font varier en douceur. */
-      var wm = smoothstep(0.76, 0.92, r);
-      var wd = smoothstep(0.60, 0.74, t) * (1 - smoothstep(0.46, 0.60, h)) * (1 - wm);
-      // les badlands sont le cœur le plus sec des déserts : mesas en terrasses
-      var wb = wd * (1 - smoothstep(0.26, 0.36, h));
-      // le marais est tempéré : plus chaud et humide, c'est la jungle
-      var ws = smoothstep(0.60, 0.72, h) * smoothstep(0.34, 0.46, t) * (1 - smoothstep(0.54, 0.62, t)) *
-               (1 - wm) * (1 - wd);
-      // îles aux champignons : très humide, relief nul, température douce
-      var wc = smoothstep(0.80, 0.88, h) * (1 - smoothstep(0.18, 0.28, r)) *
-               smoothstep(0.34, 0.40, t) * (1 - smoothstep(0.56, 0.62, t));
-      return { t: t, h: h, r: r, montagne: wm, desert: wd, badlands: wb, marais: ws, champignons: wc };
+      /* La température (t) sépare à elle seule les déserts brûlants des
+         banquises glacées : deux octaves sur une très large échelle (SPEC-BIOME-007)
+         empêchent la moindre poche fine de contredire la tendance régionale, si
+         bien qu'aucun désert ne touche une banquise à moins de 800 blocs. */
+      var t = etaler(N.fbm((wx - 9000) / 4200, (wz - 2200) / 4200, 2, 2, 0.32));
+      var h = etaler(N.fbm((wx - 5227) / 900, (wz + 3301) / 900, 3, 2, 0.5));
+      var r = etaler(N.fbm((wx + 9127) / 640, (wz + 7411) / 640, 3, 2, 0.5));
+      // poids CONTINUS : ils pilotent le relief autant que le classement du biome
+      return pesee(t, h, r);
     }
 
     /* ── Volcans ───────────────────────────────────────────────────────────
-       Un au plus par région de 384 blocs, un sur trois environ. Un cône qui
-       s'élève du relief (ou de la mer : c'est alors une île), un cratère au
-       sommet, rempli de lave. Tout est fonction pure de la graine. */
+       Au plus un par région de 384 blocs. Un cône qui s'élève du relief (ou de
+       la mer : c'est alors une île), un cratère au sommet. Tout est fonction
+       pure de la graine — y compris la chaîne (SPEC-RELIEF-008), qui ne
+       consulte que le résultat, déjà pur, de la région précédente : le monde
+       ne dépend jamais de l'ordre dans lequel il est exploré. */
     var REGION_VOLCAN = 384;
     var volcans = new Map();
+    var GRILLE_VOLCAN = 4;          // 4×4 points sondés par région, à la recherche d'un relief
     function volcanDe(rx, rz) {
       var k = rx + ',' + rz;
       if (volcans.has(k)) return volcans.get(k);
       var v = null;
-      if (N.hash2(rx * 7919 + 3, rz * 104729 - 11) < 0.34) {
-        var m = 80;
-        v = { x: rx * REGION_VOLCAN + m + Math.floor(N.hash2(rx * 31, rz * 57) * (REGION_VOLCAN - 2 * m)),
-              z: rz * REGION_VOLCAN + m + Math.floor(N.hash2(rx * 83, rz * 29) * (REGION_VOLCAN - 2 * m)),
-              R: 42 + Math.floor(N.hash2(rx * 5, rz * 13) * 22) };
-        v.sommet = 60 + Math.floor(N.hash2(rx * 17, rz * 3) * 4);
-        v.cratere = 7;
-        v.lave = v.sommet - 4;
+      var m = 80;
+      // on sonde une petite grille de la région : un volcan a besoin d'un
+      // vrai relief montagneux (SPEC-RELIEF-007 — jamais au milieu d'une
+      // plaine), qu'une seule position tirée au hasard risquerait de manquer
+      var meilleur = -1, mx = 0, mz = 0;
+      for (var gx = 0; gx < GRILLE_VOLCAN; gx++) for (var gz = 0; gz < GRILLE_VOLCAN; gz++) {
+        var px = rx * REGION_VOLCAN + m + Math.round((gx + 0.5) / GRILLE_VOLCAN * (REGION_VOLCAN - 2 * m));
+        var pz = rz * REGION_VOLCAN + m + Math.round((gz + 0.5) / GRILLE_VOLCAN * (REGION_VOLCAN - 2 * m));
+        var wm = climat(px, pz).montagne;
+        if (wm > meilleur) { meilleur = wm; mx = px; mz = pz; }
+      }
+      if (meilleur >= 0.35 && N.hash2(rx * 7919 + 3, rz * 104729 - 11) < 0.34) {
+        // léger jitter autour du meilleur point sondé, pour ne pas s'aligner sur la grille —
+        // annulé s'il retombe hors du relief montagneux qui a justifié ce volcan
+        var jx = Math.floor((N.hash2(rx * 31, rz * 57) - 0.5) * 20);
+        var jz = Math.floor((N.hash2(rx * 83, rz * 29) - 0.5) * 20);
+        var cx = mx, cz = mz;
+        if (climat(mx + jx, mz + jz).montagne >= 0.30) { cx = mx + jx; cz = mz + jz; }
+        cx = Math.max(rx * REGION_VOLCAN + m, Math.min(rx * REGION_VOLCAN + REGION_VOLCAN - m, cx));
+        cz = Math.max(rz * REGION_VOLCAN + m, Math.min(rz * REGION_VOLCAN + REGION_VOLCAN - m, cz));
+        // trois profils distincts (SPEC-RELIEF-010)
+        var tirage = N.hash2(rx * 211 + 3, rz * 307 - 7);
+        var type = tirage < 0.45 ? 'stratovolcan' : tirage < 0.8 ? 'bouclier' : 'caldeira';
+        var td = TYPES_VOLCAN[type];
+        var R = td.rMin + Math.floor(N.hash2(rx * 5, rz * 13) * td.rRange);
+        v = { x: cx, z: cz, R: R, type: type };
+        v.sommet = td.sommetBase + Math.floor(N.hash2(rx * 17, rz * 3) * td.sommetRange);
+        v.cratere = Math.max(4, Math.round(R * td.craterFrac));
+        // éteint un peu moins d'une fois sur deux (SPEC-RELIEF-009) : plus de
+        // lave, le cratère se referme alors en lac ou en herbe
+        v.actif = N.hash2(rx * 617 - 3, rz * 911 + 5) < 0.6;
+        v.lave = v.actif ? v.sommet - td.dl : 0;
+        v.lac = !v.actif && N.hash2(rx * 313 + 9, rz * 419 - 17) < 0.5;
+        // chaîne (SPEC-RELIEF-008) : parfois, ce volcan prolonge la crête de
+        // son voisin immédiat (la région à l'ouest)
+        var ouest = volcanDe(rx - 1, rz);
+        if (ouest && ouest.chaine && N.hash2(rx * 41 - 9, rz * 23 + 1) < 0.55) {
+          v.chaine = ouest.chaine;
+        } else if (N.hash2(rx * 97 + 11, rz * 131 - 3) < 0.35) {
+          v.chaine = rx + ',' + rz;
+        }
       }
       volcans.set(k, v);
       return v;
@@ -305,10 +366,43 @@
       return classerTerre(c);
     }
 
+    /* ── Transitions (SPEC-BIOME-005) ─────────────────────────────────────────
+       Le classement ci-dessus tranche net à 0,5 sur des poids pourtant continus :
+       vu du sol, un pas suffirait à faire basculer l'herbe en sable. `melange`
+       perturbe légèrement les trois champs bruts, dans une direction choisie par
+       un bruit fin (le « dithering »), et reclasse : si un si petit écart suffit
+       à changer de biome, c'est qu'on est près d'une frontière — le voisin ainsi
+       trouvé et un poids (bruit indépendant, jusqu'à 0,5) disent de combien le
+       mélanger. Loin de toute frontière, le moindre écart ne change rien : le
+       poids retombe à 0 tout seul. Volcans, glaciers, lacs et rivières restent
+       des ruptures nettes, voulues (cf. SPEC-BIOME-003) : on ne les mélange pas. */
+    var BANDE_MEL = 0.05;               // demi-largeur, en climat, de la bande perturbée
+    function melange(wx, wz, col) {
+      col = col || colonne(wx, wz);
+      var c = col.climat;
+      var principal = classer(c, col.h);
+      var bioP = LISTE[principal];
+      if (bioP.marin || c.volcan || c.glacier || c.lac || c.riviere) {
+        return { principal: principal, voisin: null, poids: 0 };
+      }
+      // dithering : un bruit fin décale localement les champs, plutôt qu'une
+      // ligne nette suivant une simple courbe de niveau du climat
+      var dith = N.fbm((wx + 4001) / 9, (wz - 2207) / 9, 2, 2, 0.5) * 2 - 1;
+      var c2 = pesee(clamp01(c.t + dith * BANDE_MEL), clamp01(c.h + dith * BANDE_MEL), clamp01(c.r + dith * BANDE_MEL));
+      var voisin = classerTerre(c2);
+      if (voisin === principal) return { principal: principal, voisin: null, poids: 0 };
+      // poids : un bruit indépendant, triangulaire, maximal au cœur de la bande
+      var g = N.fbm((wx - 733) / 9, (wz + 511) / 9, 2, 2, 0.5);
+      var poids = 0.5 * (1 - Math.abs(g * 2 - 1));
+      return { principal: principal, voisin: voisin, poids: poids };
+    }
+
     /* Hauteur du terrain. La base reprend le relief d'origine (continents,
        collines, détail) ; chaque biome la module par son poids. */
     function hauteurBrute(wx, wz, c) {
-      var continent = N.fbm(wx / 320, wz / 320, 3, 2, 0.5);
+      // continents, chaînes et bassins (SPEC-BIOME-006) : une échelle kilométrique,
+      // bien plus large que les collines (70) et le détail (18) qui suivent
+      var continent = N.fbm(wx / 900, wz / 900, 3, 2, 0.5);
       var hills = N.signed(N.fbm(wx / 70, wz / 70, 4, 2, 0.5));
       var detail = N.signed(N.fbm(wx / 18, wz / 18, 2, 2, 0.5));
       var relief = Math.pow(Math.max(0, continent - 0.52) * 2.1, 1.7);
@@ -380,16 +474,22 @@
       var v = volcanProche(wx, wz);
       if (v) {
         var d = Math.hypot(wx - v.x, wz - v.z);
-        var cone = SEA + 2 + (v.sommet - SEA - 2) * Math.pow(1 - d / v.R, 1.5);
-        if (d < v.cratere) {
-          // le cratère : une cuvette sous le rebord, pleine de lave
-          cone = v.sommet - 7 + Math.pow(d / v.cratere, 2) * 5;
-          lave = v.lave;
+        var td = TYPES_VOLCAN[v.type];
+        var cone = SEA + 2 + (v.sommet - SEA - 2) * Math.pow(Math.max(0, 1 - d / v.R), td.exp);
+        var enCratere = d < v.cratere;
+        if (enCratere) {
+          // le cratère : une cuvette sous le rebord, pleine de lave s'il est actif
+          cone = v.sommet - td.dd + Math.pow(d / v.cratere, 2) * td.dr;
+          if (v.actif) lave = v.lave;
         }
         if (cone > h) h = Math.floor(cone);
-        c.volcan = d < v.R * 0.8;
-        // coulées : des rigoles de magma qui dévalent les flancs
-        c.coulee = c.volcan && d > v.cratere + 1 &&
+        // éteint : le cratère redevient le biome ambiant — un lac ou de l'herbe (SPEC-RELIEF-009)
+        c.volcan = d < v.R * 0.8 && (v.actif || !enCratere);
+        if (!v.actif && enCratere && v.lac) {
+          eau = Math.max(eau, v.sommet - td.dd + td.dr - 2);
+        }
+        // coulées : des rigoles de magma qui dévalent les flancs, tant qu'il est actif
+        c.coulee = v.actif && c.volcan && d > v.cratere + 1 &&
           Math.abs(N.fbm((wx - v.x) / 11 + 50, (wz - v.z) / 11 - 50, 2, 2, 0.5) - 0.5) < 0.025;
       }
       var l = !v && lacProche(wx, wz);
@@ -467,7 +567,7 @@
 
     return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur,
              echantillon: echantillon, colonne: colonne, volcanProche: volcanProche,
-             lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe,
+             lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe, melange: melange,
              riviere: riviere, niveauRiviere: niveauRiviere, courantRiviere: courantRiviere, LIT: LIT, RIVE: RIVE };
   }
 
