@@ -604,13 +604,13 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-PORTE-001 | Des portes (deux blocs) se fabriquent, s'ouvrent et se ferment d'un clic droit ; fermées elles arrêtent, ouvertes elles laissent passer ; les créatures hostiles ne les ouvrent pas, les habitants si ; les bâtiments générés ont leurs portes | recette, collisions porte ouverte / fermée, créatures, portes des bâtiments | ⏳ |
 | SPEC-PORTE-002 | Des trappes se fabriquent, s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe à travers, et une échelle dessous se grimpe jusqu'à elles | recette, collisions trappe ouverte / fermée, échelle | ⏳ |
-| SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ⏳ |
-| SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ⏳ |
+| SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ✅ |
+| SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ✅ |
 | SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP (réglage du serveur, désactivé par défaut), avec les mêmes armes, reculs et délais qu'en PvE ; le serveur fait foi et annonce qui a vaincu qui | attaque d'un joueur par un autre, réglage du serveur, annonce | ⏳ |
-| SPEC-PHYS-001 | Gravité, dégâts de chute (amortis par l'eau), collisions et marche d'un bloc suivent des règles fixes | chutes, collisions | ⏳ |
-| SPEC-VEHIC-012 | Chaque véhicule se fabrique, se pose, se monte, se conduit et se quitte | parcours de chaque véhicule | ⏳ |
-| SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ⏳ |
-| SPEC-DROP-001 | Chaque bloc cassable rend son butin, chaque créature le sien ; aucun butin n'est un identifiant inconnu | butins | ⏳ |
+| SPEC-PHYS-001 | Gravité, dégâts de chute (amortis par l'eau), collisions et marche d'un bloc suivent des règles fixes | chutes, collisions | ✅ |
+| SPEC-VEHIC-012 | Chaque véhicule se fabrique, se pose, se monte, se conduit et se quitte | parcours de chaque véhicule | ✅ |
+| SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ✅ |
+| SPEC-DROP-001 | Chaque bloc cassable rend son butin, chaque créature le sien ; aucun butin n'est un identifiant inconnu | butins | ✅ |
 | SPEC-SUCCES-001 | Des succès récompensent des étapes (premier bloc, premier outil, premier gardien, première ville…) : annoncés une fois, sauvegardés, listés dans un panneau | déclenchement, unicité, sauvegarde | ⏳ |
 | SPEC-OPTION-001 | Un menu d'options règle sensibilité de la souris, volume du son, champ de vision, distance de vue maximale, rendu réaliste lointain et ombres ; chaque réglage s'applique aussitôt et est conservé | options appliquées et conservées | ⏳ |
 | SPEC-OPTION-002 | Chaque bouton et chaque option des menus (principal, parties, création, multijoueur, pause, options, affichage, aide) fait ce qu'il annonce | parcours de tous les menus | ⏳ |
