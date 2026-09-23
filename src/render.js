@@ -113,8 +113,21 @@
     function avecLumiereDesBlocs(mat, eau) {
       mat.onBeforeCompile = function (sh) {
         sh.uniforms.tempsEau = UN.temps; sh.uniforms.ventEau = ventEau;
-        sh.vertexShader = 'attribute float immerge;\nvarying float vImmerge;\n' +
-          sh.vertexShader.replace('#include <begin_vertex>', '#include <begin_vertex>\n  vImmerge = immerge;');
+        /* Le vent au sol fait ployer herbes, fleurs, cultures et feuillages
+           (attribut souple : pied fixe, sommet mobile) ; la phase dépend de la
+           position, donc deux blocs voisins bougent ensemble, sans fissure. */
+        sh.vertexShader = 'attribute float immerge;\nattribute float souple;\nvarying float vImmerge;\n' +
+          'uniform float tempsEau; uniform vec2 ventEau;\n' +
+          sh.vertexShader.replace('#include <begin_vertex>', ['#include <begin_vertex>',
+            '  vImmerge = immerge;',
+            '  if (souple > 0.0) {',
+            '    vec4 wpS = modelMatrix * vec4(transformed, 1.0);',
+            '    float fS = length(ventEau);',
+            '    vec2 dS = fS > 0.001 ? ventEau / fS : vec2(1.0, 0.0);',
+            '    float phS = dot(wpS.xz, vec2(0.63, 0.41)) * 1.3 + tempsEau * (1.6 + fS * 3.0);',
+            '    float ampS = (0.05 + 0.16 * fS) * souple;',
+            '    transformed.xz += dS * ampS * (0.65 + 0.35 * sin(phS)) + vec2(-dS.y, dS.x) * ampS * 0.3 * sin(phS * 1.7 + 0.8);',
+            '  }'].join('\n'));
         sh.fragmentShader = 'uniform float tempsEau;\nvarying float vImmerge;\n' + GLSL_CAUSTIQUES + sh.fragmentShader;
         if (eau) {
           sh.uniforms.refractionTex = refractionTex; sh.uniforms.refractionActive = refractionActive;
@@ -122,7 +135,7 @@
           /* Ondes : la nature (onde.x) choisit amplitude, longueur, vitesse et
              écume ; le sens mêle courant (onde.yz) et vent (MC.Eau.directionOnde).
              Près du rivage (onde.w : profondeur), la vague se dresse et déferle. */
-          sh.vertexShader = 'attribute vec4 onde;\nattribute vec4 onde2;\nuniform float tempsEau; uniform vec2 ventEau;\n' +
+          sh.vertexShader = 'attribute vec4 onde;\nattribute vec4 onde2;\n' +
             'varying float vType; varying float vPhase; varying float vEcume; varying float vVit;\n' +
             sh.vertexShader.replace('#include <begin_vertex>', [
               '#include <begin_vertex>',
@@ -223,6 +236,8 @@
                                                                  : new Float32Array(nv * 4), 4));
       g.setAttribute('immerge', new THREE.Float32BufferAttribute(raw.immerges && raw.immerges.length === nv ? raw.immerges
                                                                    : new Float32Array(nv), 1));
+      g.setAttribute('souple', new THREE.Float32BufferAttribute(raw.souples && raw.souples.length === nv ? raw.souples
+                                                                  : new Float32Array(nv), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return g;

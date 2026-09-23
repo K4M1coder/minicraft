@@ -534,7 +534,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | ID | Spec | Vérification | État |
 |---|---|---|---|
 | SPEC-VENT-001 | Le vent varie avec l'altitude : sa direction tourne et sa force croît en montant, avec des rafales ; chaque couche de nuages, la brume, la pluie et la neige suivent le vent de leur altitude ; le vent est le même pour tous les postes | vent à plusieurs altitudes, rafales, dérive par couche, déterminisme | ⏳ |
-| SPEC-VENT-002 | Herbes, fleurs, cultures, buissons et feuillages ondulent au vent : sommet mobile, pied fixe, selon le vent au sol ; les blocs pleins ne bougent pas | souplesse par sommet | ⏳ |
+| SPEC-VENT-002 | Herbes, fleurs, cultures, buissons et feuillages ondulent au vent : sommet mobile, pied fixe, selon le vent au sol ; les blocs pleins ne bougent pas | souplesse par sommet | ✅ |
 | SPEC-VENT-003 | Des bancs de brume se forment dans les vallées et au-dessus de l'eau le matin et par temps humide, et dérivent avec le vent de surface | densité de brume selon l'heure, l'humidité, le relief ; dérive | ⏳ |
 | SPEC-VENT-004 | Buissons et prairies fleuries couvrent plaines, savanes et forêts claires | buissons et fleurs générés | ⏳ |
 | SPEC-NUAGE-003 | Des cyclones naissent sur les mers chaudes et humides quand le vent s'y prête : une vaste spirale de nuages autour d'un œil calme, qui tourne, se déplace avec le vent dominant, apporte vents violents et pluies, et s'affaiblit en touchant terre ou des eaux froides ; comme la météo, ils sont les mêmes pour tous les postes (fonction de la graine et de l'heure) | naissance selon température, humidité et vent ; spirale, œil, trajectoire, affaiblissement ; déterminisme | ⏳ |
