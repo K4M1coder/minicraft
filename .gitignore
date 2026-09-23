@@ -2,3 +2,4 @@ node_modules/
 .playwright-mcp/
 *.log
 .DS_Store
+.claude/
