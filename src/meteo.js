@@ -217,7 +217,43 @@
       return { x: Math.floor(mx + Math.cos(a) * r), z: Math.floor(mz + Math.sin(a) * r) };
     }
 
+    /* Température ressentie à une position du monde : celle de l'air (climat,
+       altitude, heure, temps), réchauffée près d'un feu — torche, lanterne,
+       lave, magma — et rafraîchie dans l'eau. */
+    var RAYON_CHALEUR = 3;
+    function temperatureEn(world, pos, temps, et) {
+      et = et || etat(temps);
+      var x = Math.floor(pos.x), y = Math.floor(pos.y), z = Math.floor(pos.z);
+      var cl = world.bio ? world.bio.climat(x, z) : { t: 0.5 };
+      var bio = world.biomeAt ? world.biomeAt(x, z) : null;
+      var t = temperature(cl.t, y, temps, et, bio && bio.id);
+      var feu = 0, eau = false;
+      for (var dy = -1; dy <= 2; dy++) for (var dz = -RAYON_CHALEUR; dz <= RAYON_CHALEUR; dz++)
+      for (var dx = -RAYON_CHALEUR; dx <= RAYON_CHALEUR; dx++) {
+        var id = world.getBlock(x + dx, y + dy, z + dz);
+        if (!id) continue;
+        var d = MC.Core.BLOCKS[id];
+        if (!d) continue;
+        if (d.light) feu = Math.max(feu, (MC.Core.isLava(id) || id === MC.Core.B.MAGMA) ? 22 : 9);
+        if (dx === 0 && dz === 0 && dy >= 0 && dy <= 1 && MC.Core.isWater(id)) eau = true;
+      }
+      t += feu;
+      if (eau) t = t * 0.6 + 4;
+      return { temperature: Math.round(t * 10) / 10, feu: feu > 0, eau: eau, ressenti: ressenti(t) };
+    }
+
+    /* Un éclair tombé en `lieu` touche-t-il ce qui se tient en `pos` ? Il faut
+       être à moins de trois blocs et à ciel ouvert. `abri(x, z)` rend le
+       sommet solide de la colonne. */
+    var PORTEE_FOUDRE = 3;
+    function foudroie(lieu, pos, abri) {
+      if (Math.hypot(lieu.x + 0.5 - pos.x, lieu.z + 0.5 - pos.z) > PORTEE_FOUDRE) return false;
+      if (abri && abri(Math.floor(pos.x), Math.floor(pos.z)) > pos.y + 1.8) return false;
+      return true;
+    }
+
     return { etat: etat, typeDu: typeDu, derive: derive, rassemblement: rassemblement,
+             temperatureEn: temperatureEn, foudroie: foudroie, DEGATS_FOUDRE: 6,
              densiteNuage: densiteNuage, temperature: temperature, precipitation: precipitation,
              eclairs: eclairs, lieuEclair: lieuEclair };
   }

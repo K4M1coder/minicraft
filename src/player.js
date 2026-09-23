@@ -180,6 +180,23 @@
       if (pl.attackCd > 0) pl.attackCd -= dt;
     }
 
+    /* Le climat sur le corps. Un froid mordant (≤ -10 °C) blesse peu à peu,
+       d'autant plus vite qu'il gèle fort — sauf en paisible, où il ne tue pas ;
+       une chaleur écrasante (≥ 38 °C) assoiffe : la faim se creuse plus vite. */
+    var FROID_MORDANT = -10, CHALEUR_ECRASANTE = 38;
+    function subirClimat(dt, tempC) {
+      if (pl.dead || typeof tempC !== 'number') return null;
+      pl.temperature = tempC;
+      var effet = tempC <= FROID_MORDANT ? 'froid' : (tempC >= CHALEUR_ECRASANTE ? 'chaleur' : null);
+      pl.climat = effet;
+      if (effet === 'froid') {
+        pl.froidT = (pl.froidT || 0) + dt * (1 + (FROID_MORDANT - tempC) / 10);
+        if (pl.froidT >= 6) { pl.froidT = 0; if (R.degatsFamine) hurt(1); }
+      } else pl.froidT = 0;
+      if (effet === 'chaleur' && R.faim) pl.exhaustion += dt * 0.3 * (1 + (tempC - CHALEUR_ECRASANTE) / 10);
+      return effet;
+    }
+
     function respawn(spawnPos) {
       pl.hp = MAX_HP; pl.hunger = MAX_HUNGER; pl.air = MAX_AIR;
       pl.dead = false; pl.vel.x = pl.vel.y = pl.vel.z = 0;
@@ -425,7 +442,7 @@
 
     return {
       state: pl, held: held, heldId: heldId, lookDir: lookDir, eyePos: eyePos,
-      updateMovement: updateMovement, updateSurvival: updateSurvival,
+      updateMovement: updateMovement, updateSurvival: updateSurvival, subirClimat: subirClimat,
       hurt: hurt, heal: heal, respawn: respawn, aim: aim,
       mineTick: mineTick, cancelMining: cancelMining, useOn: useOn,
       attack: attack, tirer: tirer, pickUp: pickUp, dropSelected: dropSelected,

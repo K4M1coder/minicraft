@@ -1401,6 +1401,64 @@
     A.gt(fps, 20, 'au moins 20 images/s (mesuré ' + fps.toFixed(0) + ')');
   });
 
+  /* Heure du monde tombant en plein dans un temps donné (la météo est une
+     fonction de la graine et de l'heure : on ne la force pas, on s'y rend). */
+  function heureDe(g, type) {
+    var me = g.world.meteo;
+    // 40 s après le début du segment : avant le fondu vers le temps suivant
+    for (var k = 1; k < 20000; k++) if (me.typeDu(k) === type) return k * MC.Meteo.SEGMENT + 40;
+    return null;
+  }
+
+  e2e('SPEC-METEO-007 : la pluie tombe dehors et s arrete aux toits ; la meteo s affiche', async function (g) {
+    var s = await reset(g);
+    var t = heureDe(g, 'pluie');
+    A.ok(t !== null, 'une averse existe dans ce monde');
+    g.time = t;
+    // un toit de pierre juste au-dessus du joueur
+    var bx = Math.floor(s.pos.x), by = Math.floor(s.pos.y) + 4, bz = Math.floor(s.pos.z);
+    for (var dx = -3; dx <= 3; dx++) for (var dz = -3; dz <= 3; dz++) g.world.setBlock(bx + dx, by, bz + dz, B.STONE);
+    await frames(40);
+    var biome = g.world.biomeAt(bx, bz).id;
+    if (g.precipitation && g.precipitation.forme) {
+      var sys = g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;
+      A.gt(sys.actifs, 50, 'des particules tombent (' + sys.actifs + ', ' + g.precipitation.forme + ')');
+      var sousToit = 0, traversent = 0;
+      for (var i = 0; i < sys.actifs; i++) {
+        if (Math.abs(sys.x[i] - (bx + 0.5)) < 3 && Math.abs(sys.z[i] - (bz + 0.5)) < 3) {
+          sousToit++;
+          if (sys.vivant[i] && sys.y[i] < by) traversent++;
+        }
+      }
+      A.equal(traversent, 0, 'aucune goutte sous le toit (' + sousToit + ' au-dessus de lui)');
+    } else {
+      A.ok(['desert', 'badlands', 'volcan'].indexOf(biome) >= 0 || g.meteo.precipitation > 0,
+           'pas de précipitation ici : biome sec ou averse locale absente (' + biome + ')');
+    }
+    A.ok(/Météo/.test(document.querySelector('.debug') ? document.querySelector('.debug').innerHTML : document.body.innerHTML),
+         'la météo s affiche');
+    A.ok(typeof g.audio.tonnerre === 'function' && typeof g.audio.ambiance === 'function', 'tonnerre et nappes sonores');
+    for (var ex = -3; ex <= 3; ex++) for (var ez = -3; ez <= 3; ez++) g.world.setBlock(bx + ex, by, bz + ez, 0);
+    g.time = 60;
+    await frames(3);
+  });
+
+  e2e('SPEC-METEO-008 : un orage fait tomber des eclairs visibles', async function (g) {
+    await reset(g);
+    var t = heureDe(g, 'tempete') || heureDe(g, 'orage');
+    A.ok(t !== null, 'un orage existe dans ce monde');
+    var avant = g.eclairs || 0, vus = 0;
+    // on avance l'heure à la main pour parcourir une minute d'orage sans attendre
+    for (var i = 0; i < 120; i++) {
+      g.time = t + i * 0.5;
+      await frames(1);
+      vus = Math.max(vus, g.render.eclairsVisibles);
+    }
+    A.gt((g.eclairs || 0) - avant, 0, 'des éclairs sont tombés : ' + ((g.eclairs || 0) - avant));
+    g.time = 60;
+    await frames(3);
+  });
+
   e2e('explorer ne fait pas exploser le nombre de chunks', async function (g) {
     var s = await reset(g);
     s.flying = true;

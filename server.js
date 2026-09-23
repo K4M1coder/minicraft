@@ -55,6 +55,18 @@ const monde = MC.createWorld(CONF.graine);
 const entites = MC.createEntities(monde);
 const chat = MC.Chat.creer({ max: 120 });
 let heure = 60;
+let meteoT = null;
+// sommet de colonne : qui s'abrite échappe à la foudre
+function abriServeur(x, z) {
+  for (let y = C.WORLD_H - 1; y > 0; y--) {
+    const id = monde.getBlock(x, y, z);
+    if (!id) continue;
+    const d = C.BLOCKS[id];
+    if (d && d.plant && !d.aquatique && !C.isLeaves(id)) continue;
+    return y;
+  }
+  return -1;
+}
 
 /* Le serveur a besoin d'un « joueur de référence » pour l'IA des mobs
    (poursuite, apparition). On prend le premier client connecté ; sans client,
@@ -404,7 +416,37 @@ setInterval(() => {
     }
     // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
     while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
+    /* Le climat agit sur le corps : c'est au serveur, qui fait foi sur la
+       vie et la faim, d'appliquer froid et chaleur. Température réévaluée
+       deux fois par seconde, comme chez le client. */
+    if (monde.meteo && !st.dead) {
+      js.tempT = (js.tempT || 0) - dt;
+      if (js.tempT <= 0 || !js.temperature) {
+        js.tempT = 0.5;
+        js.temperature = monde.meteo.temperatureEn(monde, st.pos, heure);
+      }
+      js.joueur.subirClimat(dt, js.temperature.temperature);
+    }
   });
+
+  /* La foudre : mêmes éclairs, aux mêmes instants et aux mêmes lieux que
+     chez les clients (la météo est une fonction de la graine et de l'heure) ;
+     le serveur seul en tire les dégâts. */
+  if (monde.meteo && joueurs.length) {
+    if (meteoT === null || heure < meteoT || heure - meteoT > 5) meteoT = heure;
+    const l = monde.meteo.eclairs(meteoT, heure);
+    meteoT = heure;
+    l.forEach(e => {
+      joueurs.forEach(({ js }) => {
+        const st = js.joueur.state;
+        const lieu = monde.meteo.lieuEclair(e, st.pos.x, st.pos.z);
+        if (!st.dead && monde.meteo.foudroie(lieu, st.pos, abriServeur)) js.joueur.hurt(monde.meteo.DEGATS_FOUDRE);
+        entites.list.forEach(en => {
+          if (en.kind !== 'item' && en.pos && monde.meteo.foudroie(lieu, en.pos, abriServeur)) entites.damage(en, 8, null, null);
+        });
+      });
+    });
+  }
 
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();

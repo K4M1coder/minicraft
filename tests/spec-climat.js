@@ -194,6 +194,58 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — le climat sur le corps', function () {
+    var ME = MC.Meteo;
+    it('SPEC-METEO-005 : un feu réchauffe, l eau rafraîchit ; le froid mordant blesse, la fournaise assoiffe', function () {
+      var w = monde(), m = w.meteo;
+      A.ok(m && typeof m.temperatureEn === 'function', 'le monde porte sa météo');
+      var cx = 90, cz = 90;
+      w.getChunk(Math.floor(cx / 16), Math.floor(cz / 16), true);
+      var y = w.groundAt(cx, cz, true) + 1, pos = { x: cx + 0.5, y: y, z: cz + 0.5 };
+      for (var dy = 0; dy < 3; dy++) for (var dx = -3; dx <= 3; dx++) for (var dz = -3; dz <= 3; dz++) w.setBlock(cx + dx, y + dy, cz + dz, 0);
+      var base = m.temperatureEn(w, pos, 100);
+      w.setBlock(cx + 2, y, cz, B.TORCH);
+      var torche = m.temperatureEn(w, pos, 100);
+      A.ok(torche.feu && torche.temperature > base.temperature + 5, 'près d une torche : ' + base.temperature + ' → ' + torche.temperature);
+      w.setBlock(cx + 2, y, cz, B.LAVA);
+      var lave = m.temperatureEn(w, pos, 100);
+      A.ok(lave.temperature > torche.temperature, 'la lave chauffe plus fort : ' + lave.temperature);
+      w.setBlock(cx + 2, y, cz, 0);
+      w.setBlock(cx, y, cz, B.WATER);
+      var eau = m.temperatureEn(w, pos, 100);
+      A.ok(eau.eau, 'dans l eau');
+      w.setBlock(cx, y, cz, 0);
+      // sur le corps
+      function joueur(mode, diff) { return MC.createPlayer(G.flatWorld(10, B.STONE), null, MC.Modes.regles(mode, diff)); }
+      var pl = joueur('survie', 'facile'), hp = pl.state.hp;
+      A.equal(pl.subirClimat(0.5, 15), null, 'doux : aucun effet');
+      for (var i = 0; i < 40; i++) pl.subirClimat(0.5, -25);
+      A.equal(pl.state.climat, 'froid');
+      A.ok(pl.state.hp < hp, 'vingt secondes à -25 °C blessent : ' + hp + ' → ' + pl.state.hp);
+      var doux = joueur('survie', 'paisible');
+      for (var k = 0; k < 40; k++) doux.subirClimat(0.5, -25);
+      A.equal(doux.state.hp, 20, 'en paisible, le froid ne tue pas');
+      var crea = joueur('creatif', 'facile');
+      for (var c2 = 0; c2 < 40; c2++) crea.subirClimat(0.5, -25);
+      A.equal(crea.state.hp, 20, 'en créatif, rien ne blesse');
+      var chaud = joueur('survie', 'facile'), ex = chaud.state.exhaustion;
+      for (var h = 0; h < 20; h++) chaud.subirClimat(0.5, 45);
+      A.equal(chaud.state.climat, 'chaleur');
+      A.ok(chaud.state.exhaustion > ex + 2, 'la fournaise creuse la faim : ' + chaud.state.exhaustion.toFixed(1));
+    });
+
+    it('SPEC-METEO-006 : la foudre frappe qui se tient à découvert tout près, pas qui s abrite', function () {
+      var m = ME.creer(3), lieu = { x: 10, z: 10 };
+      function ciel() { return 20; }
+      function toit() { return 40; }
+      A.ok(m.foudroie(lieu, { x: 11, y: 21, z: 10.5 }, ciel), 'à découvert, à un bloc');
+      A.notOk(m.foudroie(lieu, { x: 16, y: 21, z: 10 }, ciel), 'à six blocs : épargné');
+      A.notOk(m.foudroie(lieu, { x: 10.5, y: 21, z: 10.5 }, toit), 'sous un toit : épargné');
+      A.ok(m.DEGATS_FOUDRE >= 4, 'des dégâts sérieux : ' + m.DEGATS_FOUDRE);
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — lumière des blocs', function () {
     var L = MC.Lumiere, CX = C.CHUNK_X, CZ = C.CHUNK_Z;
     // 3 × 3 chunks factices : un sol de pierre en y ≤ 10, de l'air au-dessus

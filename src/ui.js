@@ -324,7 +324,10 @@
     hud.appendChild(toastBox);
 
     var damageFlash = el('div', 'damage-flash');
+    // givre sur les bords de l'écran quand on gèle, halo brûlant quand on cuit
+    var voileClimat = el('div', 'voile-climat');
     root.appendChild(damageFlash);
+    root.appendChild(voileClimat);
 
     // ─── chat ───────────────────────────────────────────────────────────────
     var chatBox = el('div', 'chat');
@@ -469,6 +472,8 @@
     function updateHUD(g) {
       var p = g.player.state;
       damageFlash.style.opacity = Math.max(0, p.hurtFlash) * 0.9;
+      var tp = typeof p.temperature === 'number' ? p.temperature : null;
+      voileClimat.className = 'voile-climat' + (tp !== null && tp <= -10 ? ' gel' : tp !== null && tp >= 38 ? ' fournaise' : '');
       updateChat(g.chat);
 
       debug.innerHTML =
@@ -482,7 +487,19 @@
         // à bord : l'engin, sa vitesse, et comment en descendre
         (p.monture && MC.Vehicules ? '<br>' + MC.Vehicules.DEFS[p.monture.vehicule].nom + ' <b>' +
           MC.Vehicules.vitesseKmh(p.monture) + ' km/h</b> · F pour descendre' : '') +
-        (g.world.biomeAt ? '<br>Biome <b>' + g.world.biomeAt(Math.floor(p.pos.x), Math.floor(p.pos.z)).nom + '</b>' : '');
+        (g.world.biomeAt ? '<br>Biome <b>' + g.world.biomeAt(Math.floor(p.pos.x), Math.floor(p.pos.z)).nom + '</b>' : '') +
+        (g.meteo ? '<br>' + texteMeteo(g, p) : '');
+    }
+    /* « Orage · 12 °C (froid) · vent 43 km/h · pluie » */
+    var RESSENTIS = { glacial: 'glacial', froid: 'froid', doux: 'doux', chaud: 'chaud', brulant: 'brûlant' };
+    function texteMeteo(g, p) {
+      var m = g.meteo, t = typeof p.temperature === 'number' ? p.temperature : null;
+      var r = t !== null && MC.Meteo ? RESSENTIS[MC.Meteo.ressenti(t)] : '';
+      var prec = g.precipitation && g.precipitation.forme;
+      return 'Météo <b>' + m.nom + '</b>' +
+        (t !== null ? ' · <b>' + Math.round(t) + ' °C</b> (' + r + ')' : '') +
+        ' · vent ' + Math.round(m.vent.force * 60) + ' km/h' +
+        (prec ? ' · ' + (prec === 'neige' ? 'neige' : 'pluie') : '');
     }
 
     // ══════════════════════════════════════════════════════════════════════

@@ -979,6 +979,79 @@
       placerTrou(cam);
     }
 
+    // ─── pluie et neige ───────────────────────────────────────────────────────
+    /* Des particules dans une boîte qui suit la caméra. Chacune connaît le
+       sommet de sa colonne (`abri`) : elle s'y arrête — un toit, un feuillage
+       ou une voûte de grotte protègent de l'averse — puis renaît en haut. */
+    var PLUIE_MAX = 3200, NEIGE_MAX = 2600, BOITE = 26, HAUT_P = 22;
+    function systeme(n, estPluie) {
+      var geo = new THREE.BufferGeometry();
+      var pos = new Float32Array(n * (estPluie ? 6 : 3));
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.attributes.position.setUsage && geo.attributes.position.setUsage(THREE.DynamicDrawUsage);
+      var obj = estPluie
+        ? new THREE.LineSegments(geo, new THREE.LineBasicMaterial({ color: 0xb4c8ea, transparent: true, opacity: 0.5, depthWrite: false }))
+        : new THREE.Points(geo, new THREE.PointsMaterial({ color: 0xffffff, size: 0.16, transparent: true, opacity: 0.92,
+                                                           depthWrite: false }));
+      obj.frustumCulled = false;
+      obj.renderOrder = 4;
+      obj.visible = false;
+      scene.add(obj);
+      return { obj: obj, pos: pos, x: new Float32Array(n), y: new Float32Array(n), z: new Float32Array(n),
+               sol: new Float32Array(n), vivant: new Uint8Array(n), n: n, pluie: estPluie, actifs: 0 };
+    }
+    var pluie = systeme(PLUIE_MAX, true), neige = systeme(NEIGE_MAX, false);
+    var tempsP = 0;
+    function renaitre(sys, i, cam, abri, enHaut) {
+      var x = cam.x + (Math.random() * 2 - 1) * BOITE, z = cam.z + (Math.random() * 2 - 1) * BOITE;
+      var sol = abri ? abri(Math.floor(x), Math.floor(z)) + 1 : -1e9;
+      sys.x[i] = x; sys.z[i] = z; sys.sol[i] = sol;
+      sys.y[i] = enHaut ? cam.y + HAUT_P * (0.8 + Math.random() * 0.2) : cam.y - 8 + Math.random() * (HAUT_P + 8);
+      // sous un toit qui couvre toute la hauteur visible : particule en sommeil
+      sys.vivant[i] = sol < cam.y + HAUT_P ? 1 : 0;
+      if (sys.y[i] < sol) sys.y[i] = sol + Math.random() * Math.max(0, cam.y + HAUT_P - sol);
+    }
+    function animer_(sys, voulus, dt, cam, abri, vent) {
+      if (voulus <= 0) { sys.obj.visible = false; sys.actifs = 0; return 0; }
+      var vx = vent ? vent.x : 0, vz = vent ? vent.z : 0;
+      var chute = sys.pluie ? 24 : 2.4, derive = sys.pluie ? 6 : 3.2;
+      for (var i = 0; i < voulus; i++) {
+        if (i >= sys.actifs) renaitre(sys, i, cam, abri, false);
+        var x = sys.x[i], z = sys.z[i];
+        // la boîte suit la caméra : ce qui en sort réapparaît de l'autre côté
+        if (Math.abs(x - cam.x) > BOITE || Math.abs(z - cam.z) > BOITE) { renaitre(sys, i, cam, abri, false); x = sys.x[i]; z = sys.z[i]; }
+        var y = sys.y[i] - chute * dt;
+        x += vx * derive * dt; z += vz * derive * dt;
+        if (!sys.pluie) { x += Math.sin(tempsP * 1.7 + i) * 0.4 * dt; z += Math.cos(tempsP * 1.3 + i * 0.7) * 0.4 * dt; }
+        if (y < sys.sol[i] || y < cam.y - 12) { renaitre(sys, i, cam, abri, true); x = sys.x[i]; y = sys.y[i]; z = sys.z[i]; }
+        sys.x[i] = x; sys.y[i] = y; sys.z[i] = z;
+        var cache = !sys.vivant[i];
+        if (sys.pluie) {
+          var k = i * 6, yy = cache ? -1e5 : y;
+          sys.pos[k] = x; sys.pos[k + 1] = yy; sys.pos[k + 2] = z;
+          sys.pos[k + 3] = x - vx * 0.22; sys.pos[k + 4] = yy + 0.75; sys.pos[k + 5] = z - vz * 0.22;
+        } else {
+          var k2 = i * 3;
+          sys.pos[k2] = x; sys.pos[k2 + 1] = cache ? -1e5 : y; sys.pos[k2 + 2] = z;
+        }
+      }
+      sys.actifs = voulus;
+      sys.obj.geometry.setDrawRange(0, voulus * (sys.pluie ? 2 : 1));
+      sys.obj.geometry.attributes.position.needsUpdate = true;
+      sys.obj.visible = true;
+      return voulus;
+    }
+    /* prec : { forme: 'pluie' | 'neige' | null, intensite } ; abri(x, z) : sommet
+       de la colonne ; renvoie le nombre de particules animées. */
+    function majPrecipitations(dt, prec, vent, abri, cam) {
+      cam = cam || camera.position;
+      tempsP += dt;
+      var i = prec && prec.forme ? Math.max(0, Math.min(1, prec.intensite)) : 0;
+      var np = animer_(pluie, prec && prec.forme === 'pluie' ? Math.floor(PLUIE_MAX * i) : 0, dt, cam, abri, vent);
+      var nn = animer_(neige, prec && prec.forme === 'neige' ? Math.floor(NEIGE_MAX * i) : 0, dt, cam, abri, vent);
+      return np + nn;
+    }
+
     // ─── repères : une colonne de lumière, visible de loin ─────────────────────
     var colonnes = new Map();
     var sigReperes = '';
@@ -1181,6 +1254,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      majPrecipitations: majPrecipitations, precipitations: { pluie: pluie, neige: neige },
       get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },
       get lointain() { return lointain; },
       get brouillard() { return { near: FOG_NEAR, far: FOG_FAR }; },

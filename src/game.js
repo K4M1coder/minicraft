@@ -291,14 +291,51 @@
     }
     var grille = creerGrilleLointaine();
 
+    /* Sommet de chaque colonne, pour la pluie qui s'arrête aux toits et la
+       foudre qui épargne qui s'abrite. Mis en cache, vidé chaque seconde : un
+       bloc posé ou cassé est pris en compte sans balayer chaque image. */
+    var abris = new Map(), abrisT = 0;
+    function abri(x, z) {
+      var k = x * 73856093 ^ z * 19349663, v = abris.get(k);
+      if (v !== undefined) return v;
+      v = -1;
+      if (world.estCharge(x, z)) {
+        for (var y = C.WORLD_H - 1; y > 0; y--) {
+          var id = world.getBlock(x, y, z);
+          if (!id) continue;
+          var d = C.BLOCKS[id];
+          if (d && d.plant && !d.aquatique && !C.isLeaves(id)) continue;      // l'herbe ne protège de rien
+          v = y; break;
+        }
+      } else v = world.heightAt(x, z);
+      abris.set(k, v);
+      return v;
+    }
+    g.abri = abri;
+
     /* Météo : même graine, même ciel que le serveur et les autres postes. */
     var meteoT = null;
-    function majMeteo() {
+    function majMeteo(dt) {
       var me = world.meteo;
       if (!me) return;
+      dt = dt || 0;
+      abrisT += dt;
+      if (abrisT > 1) { abrisT = 0; abris.clear(); }
       var et = me.etat(g.time);
       g.meteo = et;
       render.majMeteo(et, me.derive(g.time));
+      // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
+      var p1 = player.state.pos, bio = world.biomeAt(Math.floor(p1.x), Math.floor(p1.z));
+      var tj = equipe[0] && equipe[0].temperature;
+      var tC = tj ? tj.temperature : me.temperature(world.bio.climat(p1.x, p1.z).t, p1.y, g.time, et, bio.id);
+      var prec = me.precipitation(p1.x, p1.z, g.time, tC, bio.id, et);
+      g.precipitation = prec;
+      render.majPrecipitations(dt, prec, et.vent, abri);
+      var dehors = abri(Math.floor(p1.x), Math.floor(p1.z)) <= p1.y + 1.8;
+      var sousLeau = P.headInWater(world, p1, player.EYE);
+      audio.ambiance(prec.forme === 'pluie' ? prec.intensite * (dehors ? 1 : 0.35) * (sousLeau ? 0.2 : 1) : 0,
+                     et.vent.force * (dehors ? 1 : 0.4) * (sousLeau ? 0.1 : 1),
+                     prec.forme === 'neige' ? prec.intensite : 0);
       // éclairs tombés depuis la dernière image (après un saut d'heure, on ne rattrape pas)
       if (meteoT === null || g.time < meteoT || g.time - meteoT > 5) meteoT = g.time;
       var l = me.eclairs(meteoT, g.time);
@@ -309,6 +346,22 @@
         var ySol = world.estCharge(lieu.x, lieu.z) ? world.groundAt(lieu.x, lieu.z) : world.heightAt(lieu.x, lieu.z);
         render.eclair(lieu.x, ySol + 1, lieu.z, e.force);
         g.eclairs = (g.eclairs || 0) + 1;
+        audio.tonnerre(Math.hypot(lieu.x - pc.x, lieu.z - pc.z), e.force);
+        /* La foudre blesse qui se tient à découvert tout près — en ligne,
+           c'est au serveur d'en décider, comme de tous les dégâts. */
+        if (!net.enLigne()) {
+          equipe.forEach(function (j) {
+            var st = j.player.state;
+            if (!st.dead && me.foudroie(lieu, st.pos, abri)) {
+              j.player.hurt(me.DEGATS_FOUDRE);
+              if (j.index === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); }
+            }
+          });
+          entities.list.forEach(function (en) {
+            if (en.kind === 'item' || !en.pos) return;
+            if (me.foudroie(lieu, en.pos, abri)) entities.damage(en, 8, null, null);
+          });
+        }
         if (g.surEclair) g.surEclair(e, lieu, ySol);
       });
     }
@@ -1002,6 +1055,24 @@
       }
       if (!net.enLigne()) pl.updateSurvival(dt);
 
+      /* Climat : la température autour du joueur, réévaluée deux fois par
+         seconde (feux voisins compris). Hors ligne elle agit sur le corps ;
+         en ligne, c'est le serveur qui l'applique — on ne fait que l'afficher. */
+      if (world.meteo) {
+        j.tempT = (j.tempT || 0) - dt;
+        if (j.tempT <= 0 || !j.temperature) {
+          j.tempT = 0.5;
+          j.temperature = world.meteo.temperatureEn(world, st.pos, g.time, g.meteo);
+        }
+        var avantClimat = st.climat;
+        if (!net.enLigne()) pl.subirClimat(dt, j.temperature.temperature);
+        else { st.temperature = j.temperature.temperature; st.climat = null; }
+        if (j.index === 0 && st.climat !== avantClimat && st.climat) {
+          ui.toast(st.climat === 'froid' ? 'Vous gelez : approchez-vous d\'un feu' : 'Chaleur écrasante : vous avez soif');
+          if (st.climat === 'froid') audio.play('froid');
+        }
+      }
+
       // visee et actions
       var cible = pl.aim();
       var mob = entities.aimedAt(pl.eyePos(), pl.lookDir(), pl.REACH);
@@ -1193,7 +1264,7 @@
       grille.recentrer(s2.pos.x, s2.pos.z);
       grille.avancer(LOINTAIN_BUDGET);
       render.majLointain(grille);
-      majMeteo();
+      majMeteo(dt);
       if (st === 'playing' || st === 'ui') ajusterVue(dt);
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);

@@ -52,11 +52,11 @@
     }
 
     /* Bruit filtré : sert aux impacts mats (casser, poser, pas). */
-    function noise(dur, freq, q, gain) {
+    function noise(dur, freq, q, gain, delay, filtre) {
       if (!enabled) return;
       init();
       if (!ctx) return;
-      var t = ctx.currentTime;
+      var t = ctx.currentTime + (delay || 0);
       var n = Math.max(1, Math.floor(ctx.sampleRate * dur));
       var buf = ctx.createBuffer(1, n, ctx.sampleRate);
       var data = buf.getChannelData(0);
@@ -64,7 +64,7 @@
       var src = ctx.createBufferSource();
       src.buffer = buf;
       var bp = ctx.createBiquadFilter();
-      bp.type = 'bandpass'; bp.frequency.value = freq; bp.Q.value = q || 1;
+      bp.type = filtre || 'bandpass'; bp.frequency.value = freq; bp.Q.value = q || 1;
       var g = ctx.createGain();
       g.gain.value = gain === undefined ? 0.5 : gain;
       src.connect(bp); bp.connect(g); g.connect(master);
@@ -88,7 +88,52 @@
                               blip('sawtooth', 240, 90, 0.25, 0.3); },
       sauver:   function () { blip('sine', 740, 740, 0.07, 0.25);
                               blip('sine', 988, 988, 0.12, 0.25, 0.07); },
+      tonnerre: function () { tonnerre(0, 1); },
+      froid:    function () { blip('sine', 1400, 900, 0.18, 0.12); },
     };
+
+    /* Tonnerre : un craquement, puis un long grondement grave. Le son voyage à
+       340 blocs par seconde : un éclair lointain gronde après son flash. */
+    function tonnerre(distance, force) {
+      var retard = Math.min(6, (distance || 0) / 340);
+      var f = force === undefined ? 1 : force;
+      var att = Math.max(0.15, 1 - (distance || 0) / 260);
+      noise(0.25, 1800, 0.6, 0.5 * f * att, retard);
+      noise(2.8, 90, 0.7, 0.9 * f * att, retard + 0.05, 'lowpass');
+      noise(1.6, 160, 0.9, 0.5 * f * att, retard + 0.4, 'lowpass');
+      return retard;
+    }
+
+    /* Nappes continues de pluie et de vent : deux bruits en boucle, filtrés,
+       dont on règle le volume en douceur selon le temps qu'il fait. */
+    var nappes = null;
+    function creerNappes() {
+      if (nappes || !ctx) return nappes;
+      var n = ctx.sampleRate * 2, buf = ctx.createBuffer(1, n, ctx.sampleRate), d = buf.getChannelData(0);
+      for (var i = 0; i < n; i++) d[i] = Math.random() * 2 - 1;
+      function nappe(type, freq, q) {
+        var src = ctx.createBufferSource(); src.buffer = buf; src.loop = true;
+        var fl = ctx.createBiquadFilter(); fl.type = type; fl.frequency.value = freq; fl.Q.value = q;
+        var g = ctx.createGain(); g.gain.value = 0;
+        src.connect(fl); fl.connect(g); g.connect(master);
+        src.start();
+        return { gain: g, filtre: fl };
+      }
+      nappes = { pluie: nappe('bandpass', 2600, 0.4), vent: nappe('lowpass', 380, 0.8) };
+      return nappes;
+    }
+    function ambiance(pluie, vent, neige) {
+      if (!enabled) return false;
+      init();
+      if (!ctx || ctx.state !== 'running') return false;
+      creerNappes();
+      var t = ctx.currentTime;
+      // la neige tombe sans bruit : elle ne compte que pour un souffle
+      nappes.pluie.gain.gain.setTargetAtTime(Math.max(0, pluie) * 0.55, t, 0.6);
+      nappes.vent.gain.gain.setTargetAtTime(Math.max(0, vent) * 0.5 + (neige || 0) * 0.08, t, 0.8);
+      nappes.vent.filtre.frequency.setTargetAtTime(260 + vent * 520, t, 0.8);
+      return true;
+    }
 
     /* Renvoie true seulement si un son a VRAIMENT été émis. Une valeur de
        retour optimiste masquerait l'absence de WebAudio et rendrait les tests
@@ -111,7 +156,7 @@
     }
 
     return {
-      play: play, resume: resume, setEnabled: setEnabled,
+      play: play, resume: resume, setEnabled: setEnabled, tonnerre: tonnerre, ambiance: ambiance,
       get enabled() { return enabled; },
       get ready() { return !!ctx && ctx.state === 'running'; },
       SONS: SONS,

@@ -456,6 +456,10 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-METEO-002 | La température dépend du climat, de l'altitude, de l'heure et du temps : sommets et pôles glacés, désert brûlant le jour et froid la nuit ; un ressenti en découle | températures comparées, ressentis | ✅ |
 | SPEC-METEO-003 | Il pleut, ou il neige quand il gèle, là où les nuages se sont rassemblés ; jamais au désert ni par beau temps | formes et intensités de précipitation | ✅ |
 | SPEC-METEO-004 | Les éclairs ne tombent que par orage ou tempête, aux mêmes instants et aux mêmes lieux pour tous les postes | éclairs pendant les orages, déterministes, lieu partagé | ✅ |
+| SPEC-METEO-005 | La température ressentie tient compte des feux voisins (torche, lave) et de l'eau ; un froid mordant blesse peu à peu (jamais en paisible ni en créatif), une chaleur écrasante creuse la faim — le serveur l'applique en ligne | températures comparées, effets sur le corps | ✅ |
+| SPEC-METEO-006 | La foudre blesse ce qui se tient à découvert à moins de trois blocs, pas ce qui s'abrite ; en ligne, le serveur en tire les dégâts | portée, abri, dégâts | ✅ |
+| SPEC-METEO-007 | La pluie et la neige tombent en particules autour du joueur, poussées par le vent, et s'arrêtent aux toits ; la météo, la température et le vent s'affichent ; pluie, vent et tonnerre s'entendent | aucune goutte sous un toit, affichage, sons | ✅ |
+| SPEC-METEO-008 | Un orage fait tomber des éclairs visibles, avec leur flash et leur tonnerre retardé par la distance | éclairs comptés pendant un orage | ✅ |
 
 ## VUE — distance de vue
 
