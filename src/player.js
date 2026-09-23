@@ -236,8 +236,21 @@
       if (pl.mining.t < bt.seconds) return null;
 
       var id = target.block;
-      var drops = C.dropsOf(id, bt.harvests, rand);
-      world.setBlock(target.x, target.y, target.z, 0);
+      var drops;
+      /* Casser une moitié de porte casse l'autre (même id, cherché juste
+         au-dessus ou en dessous) et rend une seule porte, jamais deux. */
+      if (C.estPorte(id)) {
+        drops = bt.harvests ? [{ id: I.PORTE, n: 1 }] : [];
+        world.setBlock(target.x, target.y, target.z, 0);
+        if (world.getBlock(target.x, target.y + 1, target.z) === id) world.setBlock(target.x, target.y + 1, target.z, 0);
+        else if (world.getBlock(target.x, target.y - 1, target.z) === id) world.setBlock(target.x, target.y - 1, target.z, 0);
+      } else if (C.estTrappe(id)) {
+        drops = bt.harvests ? [{ id: I.TRAPPE, n: 1 }] : [];
+        world.setBlock(target.x, target.y, target.z, 0);
+      } else {
+        drops = C.dropsOf(id, bt.harvests, rand);
+        world.setBlock(target.x, target.y, target.z, 0);
+      }
       // une plante posée sur un bloc cassé tombe aussi
       var above = world.getBlock(target.x, target.y + 1, target.z);
       if (above && C.BLOCKS[above] && C.BLOCKS[above].plant) {
@@ -305,6 +318,20 @@
       // interagir avec un bloc-interface a priorité (sauf si on est accroupi)
       if (tdef && tdef.interactive) return 'open:' + tdef.interactive;
 
+      /* Porte ou trappe : un clic droit bascule, quel que soit ce qu'on tient
+         en main. Les deux moitiés d'une porte partagent le même id : on
+         retrouve l'autre moitié en cherchant ce même id juste au-dessus ou
+         en dessous, et on la bascule avec. */
+      if (tdef && (tdef.porte || tdef.trappe)) {
+        var nouvId = C.bascule(tb);
+        world.setBlock(target.x, target.y, target.z, nouvId);
+        if (tdef.porte) {
+          if (world.getBlock(target.x, target.y + 1, target.z) === tb) world.setBlock(target.x, target.y + 1, target.z, nouvId);
+          else if (world.getBlock(target.x, target.y - 1, target.z) === tb) world.setBlock(target.x, target.y - 1, target.z, nouvId);
+        }
+        return 'bascule';
+      }
+
       if (!id) return null;
       var idef = C.def(id);
       // mode histoire : cet objet ou ce bloc n'a pas sa place dans l'aventure
@@ -315,6 +342,37 @@
       if (idef && idef.seau) return utiliserSeau(idef.seau);
       // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
       if (idef && idef.vehicule) return 'vehicule:' + idef.vehicule;
+
+      /* Porte : occupe deux blocs verticaux, orientée selon le regard du
+         joueur (même convention que les façades des bâtiments générés).
+         Trappe : un seul bloc, toujours posée fermée. */
+      if (idef && idef.porte) {
+        var bxp = target.x + target.nx, byp = target.y + target.ny, bzp = target.z + target.nz;
+        if (byp < 0 || byp + 1 >= C.WORLD_H) return null;
+        if (!C.isReplaceable(world.getBlock(bxp, byp, bzp)) ||
+            !C.isReplaceable(world.getBlock(bxp, byp + 1, bzp))) return null;
+        if (P.boxOverlap(bxp + 0.5, byp, bzp + 0.5, 1, 2, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
+        for (var ep = 0; ep < entities.list.length; ep++) {
+          var enp = entities.list[ep];
+          if (enp.type === 'item') continue;
+          if (P.boxOverlap(bxp + 0.5, byp, bzp + 0.5, 1, 2, enp.pos.x, enp.pos.y, enp.pos.z, enp.w, enp.h)) return null;
+        }
+        var mur = C.orientDeRegard(lookDir());
+        var idPorte = C.PORTE_FERMEE_LIST[mur];
+        world.setBlock(bxp, byp, bzp, idPorte);
+        world.setBlock(bxp, byp + 1, bzp, idPorte);
+        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        return 'place';
+      }
+      if (idef && idef.trappe) {
+        var bxt = target.x + target.nx, byt = target.y + target.ny, bzt = target.z + target.nz;
+        if (byt < 0 || byt >= C.WORLD_H) return null;
+        if (!C.isReplaceable(world.getBlock(bxt, byt, bzt))) return null;
+        if (P.boxOverlap(bxt + 0.5, byt, bzt + 0.5, 1, 1, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
+        world.setBlock(bxt, byt, bzt, B.TRAPPE_FERMEE);
+        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        return 'place';
+      }
 
       /* Engrais : une culture mûrit d'un coup ; sur l'herbe, il fait pousser
          herbes hautes et fleurs alentour. */

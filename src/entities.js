@@ -196,6 +196,11 @@
   function createEntities(world) {
     var list = [];
     var nextId = 1;
+    /* Portes ouvertes par un habitant (voir stepAI) : elles se referment
+       seules après quelques secondes. `y2` : l'autre moitié de la porte,
+       ou null pour une trappe (un seul bloc). */
+    var portesTemp = [];
+    var DELAI_FERMETURE_PORTE = 4;
 
     function spawn(type, x, y, z, extra) {
       var s = SPECS[type];
@@ -721,6 +726,23 @@
             var bz = Math.floor(e.pos.z + Math.sin(e.wanderDir) * 0.7);
             if (C.isSolid(world.getBlock(bx, Math.floor(e.pos.y), bz))
                 && !C.isSolid(world.getBlock(bx, Math.floor(e.pos.y) + 1, bz))) e.vel.y = 8.2;
+            /* Un habitant qui bute contre une porte fermée l'ouvre, au lieu de
+               rester bloqué comme un zombie (voir SPEC-PORTE-001). Elle se
+               referme seule un peu après (portesTemp, traité dans update). */
+            if (s.npc) {
+              var fy2 = Math.floor(e.pos.y);
+              for (var dyP = 0; dyP < 2; dyP++) {
+                var idP = world.getBlock(bx, fy2 + dyP, bz);
+                if (!C.estPorte(idP) || C.BLOCKS[idP].porte.ouverte) continue;
+                var ouvId = C.bascule(idP);
+                world.setBlock(bx, fy2 + dyP, bz, ouvId);
+                var y2 = null;
+                if (world.getBlock(bx, fy2 + dyP + 1, bz) === idP) { y2 = fy2 + dyP + 1; world.setBlock(bx, y2, bz, ouvId); }
+                else if (world.getBlock(bx, fy2 + dyP - 1, bz) === idP) { y2 = fy2 + dyP - 1; world.setBlock(bx, y2, bz, ouvId); }
+                portesTemp.push({ x: bx, y: fy2 + dyP, z: bz, y2: y2, t: DELAI_FERMETURE_PORTE });
+                break;
+              }
+            }
           }
         }
       }
@@ -733,8 +755,26 @@
       return !world.estCharge || world.estCharge(e.pos.x, e.pos.z);
     }
 
+    /* Referme les portes qu'un habitant a ouvertes, une fois leur délai
+       écoulé — sauf si quelqu'un d'autre les a entre-temps déjà refermées,
+       ou si elles sont encore ouvertes pour une autre raison. */
+    function refermerPortes(dt) {
+      for (var i = portesTemp.length - 1; i >= 0; i--) {
+        var pt = portesTemp[i];
+        pt.t -= dt;
+        if (pt.t > 0) continue;
+        portesTemp.splice(i, 1);
+        var cur = world.getBlock(pt.x, pt.y, pt.z);
+        if (!C.estPorte(cur) || !C.BLOCKS[cur].porte.ouverte) continue;
+        var fer = C.bascule(cur);
+        world.setBlock(pt.x, pt.y, pt.z, fer);
+        if (pt.y2 !== null && world.getBlock(pt.x, pt.y2, pt.z) === cur) world.setBlock(pt.x, pt.y2, pt.z, fer);
+      }
+    }
+
     function update(dt, player, opts) {
       opts = opts || {};
+      refermerPortes(dt);
       var rand = opts.rand || Math.random;
       var events = { damage: 0, picked: [], degatsPar: [] };
       /* Plusieurs joueurs (le serveur les simule tous) : chaque entité

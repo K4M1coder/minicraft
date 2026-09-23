@@ -253,7 +253,7 @@
 
     /* Une maison générique : sol, murs avec poteaux d'angle, fenêtres, porte,
        étages (échelle), toit selon la forme du style. Renvoie le bâtiment. */
-    function corps(l, st, o, p, w, d, y0, etages, type, nom) {
+    function corps(l, st, o, p, w, d, y0, etages, type, nom, rot) {
       var H = 4, haut = y0 + etages * H;
       var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       var pil = st.pilotis || 0;
@@ -283,9 +283,10 @@
           o.pose(x, y, z, id);
         }
       }
-      // porte : deux blocs d'air au milieu de la façade
+      // porte : fermée, orientée vers l'extérieur (la rue) — SPEC-PORTE-001
       var pu = Math.floor(w / 2);
-      o.pose(fx(pu, 0), y0, fz(pu, 0), 0); o.pose(fx(pu, 0), y0 + 1, fz(pu, 0), 0);
+      var idPorteBat = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
+      o.pose(fx(pu, 0), y0, fz(pu, 0), idPorteBat); o.pose(fx(pu, 0), y0 + 1, fz(pu, 0), idPorteBat);
       // échelle entre étages, contre le mur du fond
       if (etages > 1) for (var ye3 = y0; ye3 < haut - 1; ye3++) o.pose(fx(1, d - 2), ye3, fz(1, d - 2), B.LADDER);
       // lumière à chaque étage
@@ -364,7 +365,7 @@
         var w = 7 + Math.floor(o.hash(ox, 1, oz) * 3), d = 6 + Math.floor(o.hash(ox, 2, oz) * 2);
         var etages = urbain ? 1 + Math.floor(o.hash(ox, 3, oz) * 3) : 1;
         var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, etages, 'maison');
+        var b = corps(l, st, o, p, w, d, y0, etages, 'maison', rot);
         // un lit (laine), une table, un coffre
         var q = function (u, v) { return p(u, v); };
         var c = q(w - 2, 1); o.pose(c[0], b.y0, c[1], B.WOOL_RED);
@@ -374,7 +375,7 @@
       },
       point_info: function (l, st, o, ox, oz, L, rot, y0) {
         var w = 7, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'point_info');
+        var b = corps(l, st, o, p, w, d, y0, 1, 'point_info', rot);
         var a = p(1, 1), c = p(w - 2, 1);
         o.pose(a[0], b.y0, a[1], B.PANNEAU_INFO); o.pose(c[0], b.y0, c[1], B.PANNEAU_INFO);
         var f = p(Math.floor(w / 2) - 2, -1), g2 = p(Math.floor(w / 2) + 2, -1);
@@ -386,7 +387,7 @@
         for (k in st) sb[k] = st[k];
         sb.mur = B.STONE_BRICK; sb.coin = B.STONE_BRICK; sb.sol = B.STONE_BRICK; sb.forme = 'plat'; sb.toit = B.STONE_BRICK;
         var p = o.repere(ox + Math.floor((L - w) / 2), oz, w, d, rot);
-        var b = corps(l, sb, o, p, w, d, y0, 2, 'banque');
+        var b = corps(l, sb, o, p, w, d, y0, 2, 'banque', rot);
         for (var u = 2; u < w - 2; u++) { var cp = p(u, 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         o.pose(p(Math.floor(w / 2), 3)[0], b.y0, p(Math.floor(w / 2), 3)[1], 0);
         [[2, d - 2], [4, d - 2], [6, d - 2], [8, d - 2]].forEach(function (c) {
@@ -400,7 +401,7 @@
       },
       salon: function (l, st, o, ox, oz, L, rot, y0) {
         var w = Math.min(11, L), d = Math.min(9, L - 1), p = o.repere(ox + Math.floor((L - w) / 2), oz, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'salon');
+        var b = corps(l, st, o, p, w, d, y0, 1, 'salon', rot);
         for (var u = 1; u < w - 1; u++) { var cp = p(u, d - 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         [[1, d - 2], [2, d - 2], [3, d - 2]].forEach(function (c) { var q = p(c[0], c[1]); o.pose(q[0], b.y0, q[1], B.TONNEAU); o.pose(q[0], b.y0 + 1, q[1], B.TONNEAU); });
         // tables et leurs lanternes
@@ -412,7 +413,7 @@
       },
       magasin: function (l, st, o, ox, oz, L, rot, y0) {
         var w = 9, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'magasin');
+        var b = corps(l, st, o, p, w, d, y0, 1, 'magasin', rot);
         for (var u = 1; u < w - 1; u++) { var cp = p(u, 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         o.pose(p(Math.floor(w / 2), 3)[0], b.y0, p(Math.floor(w / 2), 3)[1], 0);
         [[1, d - 2], [3, d - 2], [5, d - 2], [7, d - 2]].forEach(function (c) { var q = p(c[0], c[1]); o.pose(q[0], b.y0, q[1], B.CHEST); });
@@ -423,7 +424,7 @@
       artisan: function (l, st, o, ox, oz, L, rot, y0, urbain, sous) {
         var w = 9, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
         var noms = { forgeron: 'Forge', menuisier: 'Menuiserie', tisserand: 'Atelier du tisserand' };
-        var b = corps(l, st, o, p, w, d, y0, 1, 'artisan', noms[sous]);
+        var b = corps(l, st, o, p, w, d, y0, 1, 'artisan', noms[sous], rot);
         b.metier = sous;
         var outilsAtelier = sous === 'forgeron' ? [B.ENCLUME, B.FURNACE, B.FURNACE, B.COBBLE]
                           : sous === 'menuisier' ? [B.CRAFTING_TABLE, B.PLANKS, B.TONNEAU, B.BOOKSHELF]
@@ -467,7 +468,8 @@
           var bord = gu === 0 || gu === 4 || gv === 0 || gv === 2 || y === y0 + 2;
           o.pose(r[0], y, r[1], bord ? (y === y0 + 2 ? B.HAY : st.mur) : (y === y0 ? B.HAY : 0));
         }
-        var porte = p(2, 0); o.pose(porte[0], y0, porte[1], 0); o.pose(porte[0], y0 + 1, porte[1], 0);
+        var porte = p(2, 0), idPorteFerme = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
+        o.pose(porte[0], y0, porte[1], idPorteFerme); o.pose(porte[0], y0 + 1, porte[1], idPorteFerme);
         var lan = p(6, 1); o.pose(lan[0], y0, lan[1], B.LANTERN);
         var c0 = p(0, 0), c1 = p(L - 1, L - 1);
         var bat = { type: 'ferme', nom: 'Ferme', lieu: l.id, x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
