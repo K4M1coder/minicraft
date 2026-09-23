@@ -9,7 +9,8 @@
   function buildAtlas() {
     var cv = document.createElement('canvas');
     cv.width = TILE * COLS; cv.height = TILE * ROWS;
-    var g = cv.getContext('2d');
+    // lecture fréquente : taches tuilables et variantes relisent les pixels de l'atlas
+    var g = cv.getContext('2d', { willReadFrequently: true });
 
     // bruit déterministe : mêmes textures à chaque lancement
     var seed = 1337;
