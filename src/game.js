@@ -1511,7 +1511,7 @@
         // temps, apparitions, cultures
         g.time += dt;
         g.duree = (g.duree || 0) + dt;
-        world.tick(dt, 14);
+        world.tick(dt, 14, null, { eau: !net.enLigne() });
         spawnT += dt;
         if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
           spawnT = 0;

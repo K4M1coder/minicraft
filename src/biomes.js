@@ -319,6 +319,8 @@
       // le désert aplanit les collines en dunes molles
       var collines = hills * 9 * (1 - 0.65 * c.desert);
       var h = SEA + 2 + collines - basin * 14 - fosse + relief * 30 + detail * 2.5;
+      // relief de fond, sans le détail ni les crêtes : il donne leur pente aux rivières
+      c.hLisse = SEA + 2 + collines - basin * 14 - fosse + relief * 30;
 
       // montagnes : des crêtes (bruit « ridged ») plutôt que des bosses rondes
       if (c.montagne > 0) {
@@ -405,11 +407,55 @@
           h = Math.floor(l.niveau + 1 + (h - l.niveau - 1) * k);
         }
       }
+      /* ── Rivières ──────────────────────────────────────────────────────────
+         Un réseau de tracés sinueux (la ligne médiane d'un bruit). Leur niveau
+         suit le relief de fond par paliers de trois blocs : l'eau descend vers
+         la mer, et là où le palier change, elle décroche en cascade. Le lit est
+         creusé sous ce niveau ; les berges descendent en pente douce vers lui,
+         ou se relèvent en levée là où le terrain serait plus bas que l'eau. */
+      c.riviere = false;
+      if (!v && !c.lac && h > SEA - 1 && c.montagne < 0.6 && c.hLisse < SEA + 44) {
+        var rv = riviere(wx, wz);
+        if (rv > RIVE) {
+          var niv = niveauRiviere(c.hLisse);
+          if (rv > LIT) {
+            var creux = 1 + Math.floor((rv - LIT) / (1 - LIT) * 3);
+            h = Math.min(h, niv - creux);
+            eau = niv;
+            c.riviere = true;
+          } else {
+            var pente = Math.floor((LIT - rv) / (LIT - RIVE) * 6);
+            h = Math.max(niv + 1, Math.min(h, niv + 1 + pente));
+          }
+        }
+      }
       // glacier : les hauteurs froides se couvrent de glace bleue
       c.glacier = !c.volcan && c.t < 0.22 && h >= 44;
       return { h: Math.max(3, h), eau: eau, lave: lave, climat: c };
     }
     function hauteur(wx, wz) { return colonne(wx, wz).h; }
+
+    // 1 sur la ligne médiane d'une rivière, décroissant vers ses berges
+    var LIT = 0.992, RIVE = 0.975;
+    function riviere(wx, wz) {
+      var n = N.fbm((wx + 3313) / 720, (wz - 1771) / 720, 3, 2, 0.5);
+      return 1 - Math.abs(n - 0.5) * 2;
+    }
+    function niveauRiviere(hLisse) {
+      return SEA + Math.floor(Math.max(0, hLisse - SEA - 1) / 3) * 3;
+    }
+    /* Sens du courant d'une rivière en (wx, wz) : le long du tracé (perpendiculaire
+       au gradient du bruit), dans le sens où le relief de fond descend. */
+    function courantRiviere(wx, wz) {
+      var e = 2;
+      var gx = riviere(wx + e, wz) - riviere(wx - e, wz), gz = riviere(wx, wz + e) - riviere(wx, wz - e);
+      var tx = -gz, tz = gx, n = Math.hypot(tx, tz);
+      if (n < 1e-9) return { x: 0, z: 0 };
+      tx /= n; tz /= n;
+      var hA = climat(wx + tx * 12, wz + tz * 12), hB = climat(wx - tx * 12, wz - tz * 12);
+      var a = hauteurBrute(wx + tx * 12, wz + tz * 12, hA) && hA.hLisse, b = hauteurBrute(wx - tx * 12, wz - tz * 12, hB) && hB.hLisse;
+      return a <= b ? { x: tx, z: tz } : { x: -tx, z: -tz };
+    }
 
     /* Hauteur, eau, lave ET biome d'une colonne, en un seul calcul du climat. */
     function echantillon(wx, wz) {
@@ -421,7 +467,8 @@
 
     return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur,
              echantillon: echantillon, colonne: colonne, volcanProche: volcanProche,
-             lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe };
+             lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe,
+             riviere: riviere, niveauRiviere: niveauRiviere, courantRiviere: courantRiviere, LIT: LIT, RIVE: RIVE };
   }
 
   /* Tirage pondéré d'un type de mob dans une table { type: poids }. */

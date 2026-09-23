@@ -94,11 +94,20 @@
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
     var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [], ciels = [];
+    /* ondes : [nature, sens x, sens z, profondeur] par sommet d'eau (MC.Eau) ;
+       immerge : hauteur d'eau au-dessus d'une face noyée (caustiques, pénombre bleue) */
+    var ondes = [], immerges = [];
     var niv = lumiere ? lumiere.niveau : null;
     // le ciel : sans calcul de lumière, tout est à ciel ouvert
     var nivC = lumiere && lumiere.ciel ? lumiere.ciel : null;
     function cielEn(x, y, z) { return nivC ? nivC(x, y, z) / 15 : 1; }
     // lumière d'une case, ramenée à [0, 1]
+    function profondeurEau(x, y, z) {
+      if (!C.isWater(blockAt(x, y, z))) return 0;
+      var n = 0;
+      while (n < 16 && C.isWater(blockAt(x, y + n, z))) n++;
+      return n;
+    }
     function lumEn(x, y, z) { return niv ? niv(x, y, z) / 15 : 0; }
     /* Lumière lissée d'un coin de face : moyenne des cases non opaques parmi
        les quatre qui touchent ce coin côté air (même voisinage que l'AO). */
@@ -153,6 +162,7 @@
           normals.push(0, 1, 0);
           pushUV(uvs, d.tiles[0], p[2], p[3]);
           colors.push(1, 1, 1);
+          ondes.push(0, 0, 0, 0); immerges.push(0);
           lums.push(lumEn(x, y, z));
           ciels.push(cielEn(x, y + 1, z));
         });
@@ -169,6 +179,7 @@
             normals.push(0, 1, 0);
             pushUV(uvs, d.tiles[0], p[3], p[4]);
             colors.push(1, 1, 1);
+            ondes.push(0, 0, 0, 0); immerges.push(profondeurEau(x, y + 1, z));
             lums.push(Math.max(lumEn(x, y, z), d.light ? d.light / 15 : 0));
             ciels.push(cielEn(x, y, z));
           }
@@ -177,6 +188,20 @@
         continue;
       }
 
+      // l'eau de ce bloc : hauteur de surface, nature, sens, profondeur
+      var estEau = !!d.liquid && C.isWater(b), ondeT = 0, ondeFx = 0, ondeFz = 0, ondeP = 0, dropEau = 0.12;
+      if (estEau) {
+        var niv8 = MC.Eau ? MC.Eau.niveauDe(b) : 8;
+        dropEau = C.isWater(blockAt(x, y + 1, z)) ? 0 : (niv8 >= 8 ? 0.12 : 1 - niv8 / 8 * 0.88);
+        var colE = z * CX + x, ce = chunk.eau;
+        if (MC.Eau && MC.Eau.estCourante(b)) {
+          ondeT = MC.Eau.TYPES.ecoulement; ondeP = 1;
+          var fc = MC.Eau.fluxCourant(blockAt, x, y, z); ondeFx = fc.x; ondeFz = fc.z;
+        } else if (ce && ce.nature[colE]) {
+          ondeT = ce.nature[colE]; ondeP = ce.prof[colE];
+          ondeFx = ce.flux[colE * 2] / 127; ondeFz = ce.flux[colE * 2 + 1] / 127;
+        } else { ondeT = MC.Eau ? MC.Eau.TYPES.lac : 1; ondeP = 3; }
+      }
       for (var fi = 0; fi < 6; fi++) {
         var f = FACES[fi];
         var nx = x + f.dir[0], ny = y + f.dir[1], nz = z + f.dir[2];
@@ -191,7 +216,12 @@
         var vt = C.tuileVariante(d.tiles[f.t], hachePos(baseX + x, y, baseZ + z, fi), dessus);
         var tile = vt.tile;
         var s = f.shade, start = positions.length / 3;
-        var drop = d.liquid ? 0.12 : 0;
+        var drop = d.liquid ? (estEau ? dropEau : 0.12) : 0;
+        // une paroi d'eau qui donne sur le vide : c'est une chute (cascade, filet qui tombe)
+        var ondeFace = ondeT;
+        if (estEau && f.dir[1] === 0 && !C.isWater(nb) && MC.Eau &&
+            (ondeT === MC.Eau.TYPES.ecoulement || ondeT === MC.Eau.TYPES.riviere)) ondeFace = MC.Eau.TYPES.chute;
+        var immFace = d.liquid ? 0 : profondeurEau(nx, ny, nz);
         var tg = tangents(f.dir), U = tg[0], V = tg[1];
         // l'occlusion ne s'applique pas aux surfaces liquides : elle y produit
         // des taches sombres alors que l'eau n'a pas d'angles rentrants nets
@@ -211,6 +241,9 @@
           pushUV(uvs, tile, q2[3], q2[4], vt.rot);
           var c = s * ao[k];
           colors.push(c, c, c);
+          if (estEau) ondes.push(ondeFace, ondeFace === 6 ? f.dir[0] : ondeFx, ondeFace === 6 ? f.dir[2] : ondeFz, ondeP);
+          else ondes.push(0, 0, 0, 0);
+          immerges.push(immFace);
           if (niv) {
             var suL = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
             var svL = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
@@ -236,7 +269,7 @@
 
     if (!indices.length) return null;
     return { positions: positions, normals: normals, uvs: uvs,
-             colors: colors, indices: indices, lums: lums, ciels: ciels };
+             colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, immerges: immerges };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,

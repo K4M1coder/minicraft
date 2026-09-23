@@ -56,6 +56,7 @@ const entites = MC.createEntities(monde);
 const chat = MC.Chat.creer({ max: 120 });
 let heure = 60;
 let meteoT = null;
+let accEau = 0;
 /* Les habitants des villes et villages proches des joueurs : le serveur les
    fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
 const pnjsSuivis = new Map();                 // les morts : monde.pnjsMorts (identifiant → heure)
@@ -421,6 +422,12 @@ setInterval(() => {
     monde.chunksVoulus(centres, 3).forEach(v => monde.getChunk(v[1], v[2], true));
     monde.unloadLoin(centres, 5);
     peuplerLieux();
+  }
+  // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
+  accEau += dt;
+  if (accEau >= 0.25) {
+    accEau = 0;
+    monde.coulerEau(96).forEach(ch => diffuser({ t: NP.MSG.BLOC, x: ch[0], y: ch[1], z: ch[2], id: ch[3] }));
   }
 
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :

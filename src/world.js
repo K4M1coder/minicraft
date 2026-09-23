@@ -138,6 +138,10 @@
     function generateChunk(cx, cz) {
       var blocks = new Uint8Array(CX * WH * CZ);
       var trees = [];
+      /* L'eau de chaque colonne : sa nature (MC.Eau.TYPES), son sens (courant
+         de la rivière, ou direction du rivage pour les vagues, ×127) et sa
+         profondeur. Le mailleur en tire les ondulations. */
+      var eauNature = new Uint8Array(CX * CZ), eauFlux = new Int8Array(CX * CZ * 2), eauProf = new Uint8Array(CX * CZ);
 
       for (var x = 0; x < CX; x++) for (var z = 0; z < CZ; z++) {
         var wx = cx * CX + x, wz = cz * CZ + z;
@@ -169,6 +173,15 @@
         }
         // eau : la mer, ou un lac perché ; dans le froid, la surface est prise en glace
         var niveau = ech.eau;
+        if (niveau > h && MC.Eau) {
+          var col = z * CX + x, nat = MC.Eau.natureColonne(ech);
+          eauNature[col] = nat;
+          eauProf[col] = Math.min(255, niveau - h);
+          if (nat === MC.Eau.TYPES.riviere) {
+            var cr = Bio.courantRiviere(wx, wz);
+            eauFlux[col * 2] = Math.round(cr.x * 127); eauFlux[col * 2 + 1] = Math.round(cr.z * 127);
+          }
+        }
         for (var yw = h + 1; yw <= niveau; yw++) {
           blocks[idx(x, yw, z)] = (bio.gel && yw === niveau) ? B.ICE : B.WATER;
         }
@@ -211,6 +224,22 @@
         poserArbre(put, trees[t][0], trees[t][1], trees[t][2], trees[t][3]);
       }
 
+      /* Vagues de rivage : là où la mer est peu profonde, le sens des vagues est
+         celui où le fond remonte (vers la plage), d'après les colonnes voisines. */
+      if (MC.Eau) {
+        for (var ex = 0; ex < CX; ex++) for (var ez = 0; ez < CZ; ez++) {
+          var ec = ez * CX + ex, en = eauNature[ec];
+          if ((en !== MC.Eau.TYPES.mer && en !== MC.Eau.TYPES.ocean && en !== MC.Eau.TYPES.lac) || eauProf[ec] > 8) continue;
+          function pr(a, b) {
+            a = Math.max(0, Math.min(CX - 1, a)); b = Math.max(0, Math.min(CZ - 1, b));
+            var k = b * CX + a;
+            return eauNature[k] ? eauProf[k] : 0;                // la terre : profondeur nulle
+          }
+          var gx = pr(ex + 1, ez) - pr(ex - 1, ez), gz = pr(ex, ez + 1) - pr(ex, ez - 1), gn = Math.hypot(gx, gz);
+          if (gn > 0) { eauFlux[ec * 2] = Math.round(-gx / gn * 127); eauFlux[ec * 2 + 1] = Math.round(-gz / gn * 127); }
+        }
+      }
+
       // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
       donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
         if (by <= 0 || by >= WH) return;                  // le socle reste intact
@@ -222,7 +251,8 @@
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
 
-      var c = { cx: cx, cz: cz, blocks: blocks, mesh: null, meshT: null, dirty: true };
+      var c = { cx: cx, cz: cz, blocks: blocks, mesh: null, meshT: null, dirty: true,
+                eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
 
       // réapplique les modifications du joueur sur ce chunk
       overrides.forEach(function (id, k) {
@@ -465,6 +495,9 @@
       if (C.lampeDe(id) > 0) lights.set(k3, { x: wx, y: wy, z: wz, level: C.lampeDe(id) });
       else lights.delete(k3);
 
+      // l'eau alentour devra peut-être couler
+      if (MC.Eau && (C.isWater(avant) || C.isWater(id) || eauVoisine(wx, wy, wz))) signalerEau(wx, wy, wz);
+
       // un bloc de bordure change la silhouette du chunk voisin
       if (lx === 0) touch(cx - 1, cz);
       if (lx === CX - 1) touch(cx + 1, cz);
@@ -479,6 +512,38 @@
       return true;
     }
     function touch(cx, cz) { var n = chunks.get(key(cx, cz)); if (n) n.dirty = true; }
+
+    /* ─── écoulement de l'eau ───────────────────────────────────────────────
+       Une file des cases à réexaminer : chaque changement près d'une eau y
+       ajoute la case et ses six voisines. `coulerEau` en traite un lot et
+       renvoie les changements appliqués (le serveur les diffuse). */
+    var eauFile = new Map();
+    var VOISINS6 = [[0, 0, 0], [1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+    function eauVoisine(x, y, z) {
+      for (var i = 1; i < 7; i++) if (C.isWater(getBlock(x + VOISINS6[i][0], y + VOISINS6[i][1], z + VOISINS6[i][2]))) return true;
+      return false;
+    }
+    function signalerEau(x, y, z) {
+      for (var i = 0; i < 7; i++) {
+        var a = x + VOISINS6[i][0], b = y + VOISINS6[i][1], c2 = z + VOISINS6[i][2];
+        if (b <= 0 || b >= WH) continue;
+        eauFile.set(key3(a, b, c2), [a, b, c2]);
+      }
+    }
+    function coulerEau(max) {
+      var faits = [], n = 0;
+      var lot = [];
+      eauFile.forEach(function (p, k) { if (n++ < (max || 64)) { lot.push(p); eauFile.delete(k); } });
+      lot.forEach(function (p) {
+        if (!estCharge(p[0], p[2])) return;
+        MC.Eau.ecouler(getBlock, p[0], p[1], p[2]).forEach(function (ch) {
+          if (getBlock(ch[0], ch[1], ch[2]) === ch[3] || !estCharge(ch[0], ch[2])) return;
+          setBlock(ch[0], ch[1], ch[2], ch[3]);
+          faits.push(ch);
+        });
+      });
+      return faits;
+    }
 
     // sommet solide d'une colonne ; `natural` ignore troncs et feuillages
     function groundAt(bx, bz, natural) {
@@ -505,10 +570,16 @@
     }
 
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
-    function tick(dt, stageTime, rand) {
+    var eauT = 0;
+    function tick(dt, stageTime, rand, opts) {
       var st = stageTime || 14;
       var r = rand || Math.random;
       var grown = [];
+      // l'eau coule quatre fois par seconde (hors ligne : en ligne, c'est le serveur)
+      if (MC.Eau && !(opts && opts.eau === false)) {
+        eauT += dt;
+        if (eauT >= 0.25) { eauT = 0; coulerEau(96); }
+      }
       crops.forEach(function (c2) {
         c2.t += dt;
         if (c2.t < st) return;
@@ -671,6 +742,7 @@
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, butinCoffre: butinCoffre,
       meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, pnjsMorts: pnjsMorts,
+      coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
     };
