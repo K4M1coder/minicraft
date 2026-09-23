@@ -23,14 +23,18 @@
        registre il faudrait balayer tous les chunks à chaque image. */
     var lights = new Map();
 
-    function heightAt(wx, wz) {
-      var continent = N.fbm(wx / 320, wz / 320, 3, 2, 0.5);
-      var hills = N.signed(N.fbm(wx / 70, wz / 70, 4, 2, 0.5));
-      var detail = N.signed(N.fbm(wx / 18, wz / 18, 2, 2, 0.5));
-      var relief = Math.pow(Math.max(0, continent - 0.52) * 2.1, 1.7);
-      var basin = Math.pow(Math.max(0, 0.46 - continent) * 2.6, 1.4);
-      return Math.floor(SEA + 2 + hills * 9 - basin * 14 + relief * 30 + detail * 2.5);
-    }
+    /* Climat, relief et donjons : deux modules purs branchés sur le même bruit,
+       donc sur la même graine. heightAt reste la seule source du relief. */
+    var Bio = MC.Biomes.creer(N);
+    function heightAt(wx, wz) { return Bio.hauteur(wx, wz); }
+    function biomeAt(wx, wz) { return Bio.biomeAt(wx, wz); }
+    var donjons = MC.Donjons.creer(N, function (x, z) {
+      return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
+    }, function (x, z) { return biomeAt(x, z); });
+    // donjons dont le gardien est tombé : persistés par la sauvegarde
+    var donjonsVaincus = new Set();
+    // coffres de donjon dont le butin a déjà été tiré (ouverts ou cassés)
+    var coffresPilles = new Set();
 
     /* Grottes : deux champs de bruit 3D dont on garde l'intersection, ce qui
        produit des galeries connectées plutôt que des bulles isolées.
@@ -47,55 +51,116 @@
       return a > 0.60 && b > 0.56;
     }
 
+    /* Surface d'une colonne selon son biome et son altitude. Les plages
+       restent du sable partout : c'est ce qui dessine les côtes. */
+    function surfaceDe(bio, h, beach) {
+      if (bio.marin) return bio.fond;                        // fond de la mer
+      if (beach && bio.berges) return [B.DIRT, B.DIRT];     // fond vaseux
+      if (beach) return [B.SAND, B.SAND];
+      if (bio.neigeDes && h >= bio.neigeDes) return [B.SNOW, B.STONE];
+      if (bio.rocheDes && h >= bio.rocheDes) return [B.STONE, B.STONE];
+      return [bio.surface, bio.sousSol];
+    }
+
+    /* Strates des badlands : la couleur dépend de l'altitude seule, si bien que
+       les falaises des mesas montrent les mêmes bandes d'un bout à l'autre. */
+    var STRATES = [B.TERRACOTTA, B.TERRACOTTA_RED, B.TERRACOTTA, B.TERRACOTTA_YELLOW,
+                   B.TERRACOTTA_RED, B.TERRACOTTA];
+    function strate(y) { return STRATES[((y / 2) | 0) % STRATES.length]; }
+
+    /* Choix d'un élément dans une liste [{p}] à partir d'un tirage r ∈ [0,1[ :
+       les probabilités s'empilent, la somme reste la densité totale. */
+    function tirer(liste, r) {
+      var acc = 0;
+      for (var i = 0; i < liste.length; i++) {
+        acc += liste[i].p;
+        if (r < acc) return liste[i];
+      }
+      return null;
+    }
+
+    /* Filons : le charbon partout sous la surface, le fer en profondeur, l'or
+       plus bas encore, le diamant tout au fond — c'est ce qui donne une raison
+       de descendre. Les badlands, riches en or, en ont trois fois plus. */
+    function filon(wx, y, wz, h, bio) {
+      var nc = N.hash3(wx, y, wz);
+      if (y < h - 6 && nc > 0.982) return B.COAL_ORE;
+      if (y < Math.min(h - 12, 26) && nc < 0.010) return B.IRON_ORE;
+      var or = bio.strates ? 0.0075 : 0.0025;
+      if (y < 20 && nc >= 0.010 && nc < 0.010 + or) return B.GOLD_ORE;
+      if (y < 11 && nc >= 0.02 && nc < 0.0215) return B.DIAMOND_ORE;
+      return B.STONE;
+    }
+
     function generateChunk(cx, cz) {
       var blocks = new Uint8Array(CX * WH * CZ);
       var trees = [];
 
       for (var x = 0; x < CX; x++) for (var z = 0; z < CZ; z++) {
         var wx = cx * CX + x, wz = cz * CZ + z;
-        var h = Math.max(1, Math.min(WH - 14, heightAt(wx, wz)));
-        var beach = h <= SEA + 1;
+        var ech = Bio.echantillon(wx, wz);
+        var h = Math.max(1, Math.min(WH - 14, ech.h));
+        var bio = ech.biome;
+        // le marais garde de l'herbe au ras de l'eau : ses berges ne sont pas des plages
+        var beach = bio.berges ? h <= SEA : h <= SEA + 1;
+        var sf = surfaceDe(bio, h, beach);
 
         for (var y = 0; y <= h; y++) {
           var b;
           if (y === 0) b = B.BEDROCK;
           else if (isCave(wx, y, wz, h)) b = 0;          // galerie creusée
-          else if (y === h) b = beach ? B.SAND : B.GRASS;
-          else if (y > h - 4) b = beach ? B.SAND : B.DIRT;
-          else {
-            b = B.STONE;
-            // filons : le charbon partout sous la surface, le fer seulement en
-            // profondeur — c'est ce qui donne une raison de descendre
-            var nc = N.hash3(wx, y, wz);
-            if (y < h - 6 && nc > 0.982) b = B.COAL_ORE;
-            else if (y < Math.min(h - 12, 26) && nc < 0.010) b = B.IRON_ORE;
-          }
+          else if (y === h) b = sf[0];
+          else if (y > h - 4) b = bio.strates && !beach ? strate(y) : sf[1];
+          // le désert repose sur une couche de grès, les badlands sur leurs strates
+          else if (bio.roche && y > h - 8) b = bio.roche;
+          else if (bio.strates && y > h - 14) b = strate(y);
+          else b = filon(wx, y, wz, h, bio);
           blocks[idx(x, y, z)] = b;
         }
-        for (var yw = h + 1; yw <= SEA; yw++) blocks[idx(x, yw, z)] = B.WATER;
+        for (var yw = h + 1; yw <= SEA; yw++) {
+          // dans le froid, la surface de l'eau est prise en glace
+          blocks[idx(x, yw, z)] = (bio.gel && yw === SEA) ? B.ICE : B.WATER;
+        }
 
-        if (!beach && h > SEA + 1 && x > 2 && x < 13 && z > 2 && z < 13
-            && N.hash2(wx * 7, wz * 13) > 0.988) trees.push([x, h + 1, z]);
+        if (bio.marin || h < SEA) {
+          fondMarin(blocks, x, z, wx, wz, h, bio);
+          continue;
+        }
+        if (beach) continue;
+        // arbres : le tronc reste à 3 blocs du bord, la couronne tient dans le chunk
+        var arbre = tirer(bio.arbres, N.hash2(wx * 7, wz * 13));
+        var etroit = arbre && arbre.type === 'cactus';
+        var auCentre = x > 2 && x < 13 && z > 2 && z < 13;
+        if (arbre && (auCentre || etroit)) {
+          if (arbre.type !== 'cactus' || sf[0] === B.SAND || sf[0] === B.RED_SAND) {
+            trees.push([x, h + 1, z, arbre.type]);
+          }
+          continue;
+        }
+        // végétation basse : un tirage indépendant de celui des arbres
+        var plante = tirer(bio.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
+        if (plante && blocks[idx(x, h + 1, z)] === 0 && plantePousseSur(plante.id, sf[0])) {
+          blocks[idx(x, h + 1, z)] = plante.id;
+        }
       }
 
       function put(x, y, z, b, overwrite) {
         if (x < 0 || x >= CX || z < 0 || z >= CZ || y < 0 || y >= WH) return;
         var i = idx(x, y, z);
-        if (overwrite || blocks[i] === 0) blocks[i] = b;
-      }
-      for (var t = 0; t < trees.length; t++) {
-        var tx = trees[t][0], ty = trees[t][1], tz = trees[t][2];
-        var th = 4 + ((N.hash2(tx * 31, tz * 17) * 3) | 0);
-        for (var i2 = 0; i2 < th; i2++) put(tx, ty + i2, tz, B.LOG, true);
-        for (var dy = -2; dy <= 1; dy++) {
-          var r = dy >= 0 ? 1 : 2;
-          for (var dx = -r; dx <= r; dx++) for (var dz = -r; dz <= r; dz++) {
-            if (dy === 1 && Math.abs(dx) + Math.abs(dz) > 1) continue;
-            if (dy < 0 && Math.abs(dx) === r && Math.abs(dz) === r) continue;
-            put(tx + dx, ty + th - 1 + dy, tz + dz, B.LEAVES, false);
-          }
+        // un feuillage ne remplace que l'air ou une plante basse
+        if (overwrite || blocks[i] === 0 || (C.BLOCKS[blocks[i]] && C.BLOCKS[blocks[i]].plant)) {
+          blocks[i] = b;
         }
       }
+      for (var t = 0; t < trees.length; t++) {
+        poserArbre(put, trees[t][0], trees[t][1], trees[t][2], trees[t][3]);
+      }
+
+      // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
+      donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
+        if (by <= 0 || by >= WH) return;                  // le socle reste intact
+        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+      });
 
       var c = { cx: cx, cz: cz, blocks: blocks, mesh: null, meshT: null, dirty: true };
 
@@ -107,7 +172,183 @@
           blocks[idx(ox - cx * CX, oy, oz - cz * CZ)] = id;
         }
       });
+      enregistrerLumieres(c);
       return c;
+    }
+
+    /* Une plante ne pousse que sur un sol qui lui convient : pas de
+       coquelicot sur le sable, pas de buisson mort sur l'herbe. */
+    function plantePousseSur(id, sol) {
+      if (id === B.DEAD_BUSH) return sol === B.SAND || sol === B.RED_SAND;
+      if (id === B.TALL_GRASS) return sol === B.GRASS || sol === B.SNOW;
+      if (id === B.MUSHROOM) return sol === B.GRASS || sol === B.MYCELIUM;
+      return sol === B.GRASS;
+    }
+
+    /* Fond de la mer : flore posée sur le sol immergé, icebergs dans le froid.
+       Tout se décide colonne par colonne : aucune structure ne déborde d'un
+       chunk, donc rien ne dépend de l'ordre de génération. */
+    function fondMarin(blocks, x, z, wx, wz, h, bio) {
+      var prof = SEA - h;
+      // icebergs : des colonnes de glace compacte qui crèvent la surface
+      if (bio.icebergs) {
+        var ib = N.fbm((wx + 77) / 14, (wz - 31) / 14, 2, 2, 0.5);
+        if (ib > 0.66) {
+          var haut = SEA + Math.min(8, Math.floor((ib - 0.66) * 60));
+          for (var yi = h + 1; yi <= haut && yi < WH; yi++) blocks[idx(x, yi, z)] = B.PACKED_ICE;
+          return;
+        }
+      }
+      if (prof < 2 || !bio.plantes) return;
+      var y0 = h + 1;
+      // récif : des massifs de corail, coiffés de gorgones et de cornichons
+      if (bio.recif && prof <= 10) {
+        var rf = N.fbm((wx - 211) / 7, (wz + 97) / 7, 2, 2, 0.5);
+        if (rf > 0.5) {
+          var couleurs = [B.CORAL_RED, B.CORAL_YELLOW, B.CORAL_BLUE];
+          var eventails = [B.CORAL_FAN_RED, B.CORAL_FAN_YELLOW, B.CORAL_FAN_BLUE];
+          var k = Math.floor(N.hash2(wx * 3 + 1, wz * 5 - 2) * 3) % 3;
+          var massif = 1 + (rf > 0.58 ? 1 : 0) + (rf > 0.66 ? 1 : 0);
+          for (var m = 0; m < massif && y0 + m < SEA - 1; m++) blocks[idx(x, y0 + m, z)] = couleurs[k];
+          var sommet = y0 + massif;
+          if (sommet < SEA - 1) {
+            var tc = N.hash2(wx * 11, wz * 17);
+            if (tc < 0.45) blocks[idx(x, sommet, z)] = eventails[(k + 1) % 3];
+            else if (tc < 0.5) blocks[idx(x, sommet, z)] = B.SEA_PICKLE;
+          }
+          return;
+        }
+      }
+      var plante = tirer(bio.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
+      if (!plante) return;
+      if (plante.id === B.KELP) {
+        // le varech monte en colonne, sans jamais crever la surface
+        var hk = 2 + Math.floor(N.hash2(wx * 13 + 7, wz * 19) * Math.max(1, prof - 2));
+        for (var yk = y0; yk < y0 + hk && yk < SEA; yk++) blocks[idx(x, yk, z)] = B.KELP;
+        return;
+      }
+      blocks[idx(x, y0, z)] = plante.id;
+    }
+
+    /* Arbres par essence. `put(x, y, z, id, overwrite)` travaille en
+       coordonnées locales au chunk ; le tronc écrase, le feuillage non. */
+    function poserArbre(put, tx, ty, tz, type) {
+      var hr = N.hash2(tx * 31 + ty, tz * 17);
+      var i, dx, dz, dy;
+      if (type === 'cactus') {
+        var hc = 1 + ((hr * 3) | 0);
+        for (i = 0; i < hc; i++) put(tx, ty + i, tz, B.CACTUS, true);
+        return;
+      }
+      if (type === 'sapin') {
+        // cône : des étages alternés, de plus en plus larges vers le bas
+        var hs = 6 + ((hr * 3) | 0);
+        for (i = 0; i < hs; i++) put(tx, ty + i, tz, B.SPRUCE_LOG, true);
+        var top = ty + hs;
+        put(tx, top, tz, B.SPRUCE_LEAVES, false);
+        for (dy = 0; dy < hs - 2; dy++) {
+          var r = dy === 0 ? 1 : (dy % 2 === 1 ? Math.min(2, 1 + (dy >> 2)) : 1);
+          for (dx = -r; dx <= r; dx++) for (dz = -r; dz <= r; dz++) {
+            if (r === 2 && Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+            if (r === 1 && dy === 0 && Math.abs(dx) + Math.abs(dz) > 1) continue;
+            put(tx + dx, top - 1 - dy, tz + dz, B.SPRUCE_LEAVES, false);
+          }
+        }
+        return;
+      }
+      if (type === 'tropical') {
+        // grand tronc, large couronne, lianes pendantes sur le pourtour
+        var ht = 7 + ((hr * 5) | 0);
+        for (i = 0; i < ht; i++) put(tx, ty + i, tz, B.JUNGLE_LOG, true);
+        var tc = ty + ht - 1;
+        for (dy = -2; dy <= 1; dy++) {
+          var rj = dy === 1 ? 1 : (dy === 0 ? 2 : 3);
+          for (dx = -rj; dx <= rj; dx++) for (dz = -rj; dz <= rj; dz++) {
+            if (Math.abs(dx) === rj && Math.abs(dz) === rj) continue;
+            put(tx + dx, tc + dy, tz + dz, B.JUNGLE_LEAVES, false);
+            // liane : au bord de l'étage le plus bas, une sur trois
+            if (dy === -2 && (Math.abs(dx) === rj || Math.abs(dz) === rj) &&
+                N.hash2(tx * 7 + dx, tz * 5 + dz) < 0.35) {
+              var lg = 1 + ((N.hash2(tx + dx * 3, tz - dz) * 3) | 0);
+              for (var v = 1; v <= lg; v++) put(tx + dx, tc - 2 - v, tz + dz, B.VINES, false);
+            }
+          }
+        }
+        return;
+      }
+      if (type === 'acacia') {
+        // tronc coudé : trois blocs droits, puis deux en diagonale
+        var dirx = hr < 0.5 ? 1 : -1;
+        for (i = 0; i < 3; i++) put(tx, ty + i, tz, B.ACACIA_LOG, true);
+        put(tx + dirx, ty + 3, tz, B.ACACIA_LOG, true);
+        put(tx + dirx * 2, ty + 4, tz, B.ACACIA_LOG, true);
+        var ax = tx + dirx * 2, ay = ty + 5;
+        for (dx = -2; dx <= 2; dx++) for (dz = -2; dz <= 2; dz++) {
+          if (Math.abs(dx) === 2 && Math.abs(dz) === 2) continue;
+          put(ax + dx, ay, tz + dz, B.ACACIA_LEAVES, false);
+          if (Math.abs(dx) <= 1 && Math.abs(dz) <= 1) put(ax + dx, ay + 1, tz + dz, B.ACACIA_LEAVES, false);
+        }
+        return;
+      }
+      if (type === 'champignon_geant') {
+        var hm = 4 + ((hr * 3) | 0);
+        for (i = 0; i < hm; i++) put(tx, ty + i, tz, B.MUSHROOM_STEM, true);
+        var cy = ty + hm;
+        for (dx = -2; dx <= 2; dx++) for (dz = -2; dz <= 2; dz++) {
+          var coin = Math.abs(dx) === 2 && Math.abs(dz) === 2;
+          if (!coin) put(tx + dx, cy, tz + dz, B.MUSHROOM_CAP, false);
+          // le rebord du chapeau retombe d'un cran
+          if (!coin && (Math.abs(dx) === 2 || Math.abs(dz) === 2)) put(tx + dx, cy - 1, tz + dz, B.MUSHROOM_CAP, false);
+        }
+        return;
+      }
+      if (type === 'pic_glace') {
+        // aiguille de glace compacte, épaulée de colonnes plus basses
+        var hp = 5 + ((hr * 9) | 0);
+        for (i = 0; i < hp; i++) put(tx, ty + i, tz, B.PACKED_ICE, true);
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d, j) {
+          var hv = Math.floor(hp * (0.3 + 0.1 * j));
+          for (var q = 0; q < hv; q++) put(tx + d[0], ty + q, tz + d[1], B.PACKED_ICE, true);
+        });
+        return;
+      }
+      var log = type === 'bouleau' ? B.BIRCH_LOG : B.LOG;
+      var leaves = type === 'bouleau' ? B.BIRCH_LEAVES : B.LEAVES;
+      var th = type === 'bouleau' ? 5 + ((hr * 3) | 0) : 4 + ((hr * 3) | 0);
+      for (i = 0; i < th; i++) put(tx, ty + i, tz, log, true);
+      // le chêne des marais étale une couronne large et basse
+      var large = type === 'chene_marais';
+      for (dy = -2; dy <= 1; dy++) {
+        var rr = dy >= 0 ? 1 : 2;
+        if (large && dy <= 0) rr = 3;
+        for (dx = -rr; dx <= rr; dx++) for (dz = -rr; dz <= rr; dz++) {
+          if (dy === 1 && Math.abs(dx) + Math.abs(dz) > 1) continue;
+          if (dy < 0 && Math.abs(dx) === rr && Math.abs(dz) === rr) continue;
+          if (large && Math.abs(dx) + Math.abs(dz) > 4) continue;
+          put(tx + dx, ty + th - 1 + dy, tz + dz, leaves, false);
+        }
+      }
+    }
+
+    /* Registre des lumières : les torches générées (donjons) ET celles du
+       joueur réappliquées depuis les overrides. On balaie le chunk entier
+       plutôt que les seuls overrides : c'est ce qui fait éclairer les
+       torches d'un donjon qu'aucun joueur n'a encore touché. */
+    function enregistrerLumieres(c) {
+      var bx = c.cx * CX, bz = c.cz * CZ, bl = c.blocks;
+      for (var y = 0; y < WH; y++) for (var z = 0; z < CZ; z++) for (var x = 0; x < CX; x++) {
+        var id = bl[idx(x, y, z)];
+        if (!id) continue;
+        var lv = C.lightOf(id);
+        if (lv > 0) lights.set(key3(bx + x, y, bz + z), { x: bx + x, y: y, z: bz + z, level: lv });
+      }
+    }
+    // à la décharge, ses lumières partent avec lui : le rendu n'éclaire que le chargé
+    function oublierLumieres(c) {
+      var x0 = c.cx * CX, z0 = c.cz * CZ;
+      lights.forEach(function (l, k) {
+        if (l.x >= x0 && l.x < x0 + CX && l.z >= z0 && l.z < z0 + CZ) lights.delete(k);
+      });
     }
 
     function getChunk(cx, cz, create) {
@@ -156,6 +397,12 @@
       if (lx === CX - 1) touch(cx + 1, cz);
       if (lz === 0) touch(cx, cz - 1);
       if (lz === CZ - 1) touch(cx, cz + 1);
+      /* Un bloc de COIN change aussi l'occlusion ambiante du chunk en
+         diagonale : l'AO lit un voisinage 3×3. Oublier ce cas laissait des
+         ombres de contact périmées aux quatre coins des chunks. */
+      var bx2 = lx === 0 ? -1 : (lx === CX - 1 ? 1 : 0);
+      var bz2 = lz === 0 ? -1 : (lz === CZ - 1 ? 1 : 0);
+      if (bx2 && bz2) touch(cx + bx2, cz + bz2);
       return true;
     }
     function touch(cx, cz) { var n = chunks.get(key(cx, cz)); if (n) n.dirty = true; }
@@ -165,7 +412,7 @@
       for (var y = WH - 1; y > 0; y--) {
         var b = getBlock(bx, y, bz);
         if (!C.isSolid(b)) continue;
-        if (natural && (b === B.LOG || b === B.LEAVES)) continue;
+        if (natural && (C.isLog(b) || C.isLeaves(b))) continue;
         return y;
       }
       return 0;
@@ -216,6 +463,8 @@
           lights.set(k, { x: +p[0], y: +p[1], z: +p[2], level: C.lightOf(id) });
         }
       });
+      // les torches générées des chunks déjà en mémoire (donjons)
+      chunks.forEach(enregistrerLumieres);
       return lights.size;
     }
 
@@ -230,13 +479,16 @@
         var b = getBlock(bx, by, bz);
         var d = C.BLOCKS[b];
         if (!d || !d.needsSupport) continue;
-        if (!hasSupport(bx, by, bz)) { setBlock(bx, by, bz, 0); tombees.push([bx, by, bz, b]); }
+        if (!hasSupport(bx, by, bz, d.needsSupport)) { setBlock(bx, by, bz, 0); tombees.push([bx, by, bz, b]); }
       }
       return tombees;
     }
 
-    function hasSupport(wx, wy, wz) {
+    /* `mode` 'sol' : une plante ne tient que posée sur un bloc, jamais
+       accrochée à un mur comme la torche. */
+    function hasSupport(wx, wy, wz, mode) {
       if (C.isSolid(getBlock(wx, wy - 1, wz))) return true;
+      if (mode === 'sol') return false;
       var lat = [[1, 0], [-1, 0], [0, 1], [0, -1]];
       for (var i = 0; i < lat.length; i++)
         if (C.isSolid(getBlock(wx + lat[i][0], wy, wz + lat[i][1]))) return true;
@@ -253,21 +505,79 @@
       overrides.clear();
       crops.clear();
       lights.clear();
+      donjonsVaincus.clear();
+      coffresPilles.clear();
       return true;
     }
 
     function unloadFar(pcx, pcz, radius, onUnload) {
+      return unloadLoin([[pcx, pcz]], radius, onUnload);
+    }
+
+    /* Décharge les chunks loin de TOUS les centres (un par joueur local).
+       Avec un seul centre, le joueur 2 d'un écran partagé qui s'éloignait
+       voyait son sol déchargé sous ses pieds : il tombait dans le vide. */
+    function unloadLoin(centres, radius, onUnload) {
       var lim = radius * radius;
       var removed = [];
       chunks.forEach(function (c, k) {
-        var dx = c.cx - pcx, dz = c.cz - pcz;
-        if (dx * dx + dz * dz > lim) { removed.push([k, c]); }
+        for (var i = 0; i < centres.length; i++) {
+          var dx = c.cx - centres[i][0], dz = c.cz - centres[i][1];
+          if (dx * dx + dz * dz <= lim) return;
+        }
+        removed.push([k, c]);
       });
       removed.forEach(function (p) {
         if (onUnload) onUnload(p[1]);
+        oublierLumieres(p[1]);
         chunks.delete(p[0]);
       });
       return removed.length;
+    }
+
+    /* Chunks à charger autour de plusieurs centres, du plus proche au plus
+       lointain (distance au centre le plus proche). Sans doublons. */
+    function chunksVoulus(centres, R) {
+      var best = new Map();
+      centres.forEach(function (ce) {
+        for (var dx = -R; dx <= R; dx++) for (var dz = -R; dz <= R; dz++) {
+          var d2 = dx * dx + dz * dz;
+          if (d2 > R * R) continue;
+          var k = key(ce[0] + dx, ce[1] + dz);
+          var cur = best.get(k);
+          if (!cur || cur[0] > d2) best.set(k, [d2, ce[0] + dx, ce[1] + dz]);
+        }
+      });
+      var out = [];
+      best.forEach(function (v) { out.push(v); });
+      out.sort(function (a, b) { return a[0] - b[0]; });
+      return out;
+    }
+
+    /* Les 8 voisins d'un chunk. Le mailleur lit le voisinage 3×3 (faces de
+       bordure ET occlusion ambiante des coins) : c'est ce voisinage entier
+       qui conditionne le maillage et que la génération doit invalider. */
+    var VOISINS8 = [[1, 0], [-1, 0], [0, 1], [0, -1], [1, 1], [1, -1], [-1, 1], [-1, -1]];
+    function voisinsCharges(cx, cz) {
+      for (var i = 0; i < 8; i++) {
+        if (!chunks.has(key(cx + VOISINS8[i][0], cz + VOISINS8[i][1]))) return false;
+      }
+      return true;
+    }
+    function marquerVoisins(cx, cz) {
+      for (var i = 0; i < 8; i++) touch(cx + VOISINS8[i][0], cz + VOISINS8[i][1]);
+    }
+    // le bloc (x, z) appartient-il à un chunk en mémoire ?
+    function estCharge(wx, wz) {
+      return chunks.has(key(Math.floor(wx / CX), Math.floor(wz / CZ)));
+    }
+
+    // ─── donjons ─────────────────────────────────────────────────────────────
+    function salleDonjon(x, y, z) { return donjons.salleA(x, y, z); }
+    /* Butin d'un coffre de donjon jamais ouvert, ou null pour un coffre ordinaire. */
+    function butinCoffre(x, y, z) {
+      var d = donjons.coffreA(x, y, z);
+      return d ? donjons.butin(d) : null;
     }
 
     return {
@@ -276,7 +586,12 @@
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
-      unloadFar: unloadFar, key: key, key3: key3,
+      unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,
+      voisinsCharges: voisinsCharges, marquerVoisins: marquerVoisins, estCharge: estCharge,
+      biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
+      coffresPilles: coffresPilles,
+      salleDonjon: salleDonjon, butinCoffre: butinCoffre,
+      key: key, key3: key3,
     };
   }
 

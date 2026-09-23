@@ -7,7 +7,7 @@
   var C = MC.Core;
   var CX = C.CHUNK_X, CZ = C.CHUNK_Z, WH = C.WORLD_H, idx = C.idx;
 
-  var ATLAS_COLS = 8, ATLAS_ROWS = 8;
+  var ATLAS_COLS = 8, ATLAS_ROWS = 24;
 
   // -x, +x, -y, +y, -z, +z.  t = index dans tiles[] (0 dessus, 1 côté, 2 dessous).
   // shade = éclairage directionnel bon marché, encodé en couleur par sommet.
@@ -97,6 +97,18 @@
       if (!d) continue;
       if (C.passOf(b) !== wantPass) continue;
 
+      if (d.plat) {
+        // posé à plat (rails) : un seul quad, un cheveu au-dessus du sol
+        var s0 = positions.length / 3;
+        [[0, 0, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 1, 1]].forEach(function (p) {
+          positions.push(x + p[0], y + 0.02, z + p[1]);
+          normals.push(0, 1, 0);
+          pushUV(uvs, d.tiles[0], p[2], p[3]);
+          colors.push(1, 1, 1);
+        });
+        indices.push(s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3);
+        continue;
+      }
       if (d.plant) {
         // plante : deux quads croisés, visibles des deux côtés
         for (var q = 0; q < 2; q++) {

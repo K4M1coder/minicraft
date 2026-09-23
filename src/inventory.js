@@ -121,6 +121,64 @@
   }
 
   shapeless(B.PLANKS, 4, [B.LOG]);
+  // toutes les essences donnent les mêmes planches : une seule famille de bois
+  shapeless(B.PLANKS, 4, [B.BIRCH_LOG]);
+  shapeless(B.PLANKS, 4, [B.SPRUCE_LOG]);
+  // le 2×2 de sable donne déjà du verre : le grès prend trois sables, en vrac
+  shapeless(B.SANDSTONE, 2, [B.SAND, B.SAND, B.SAND]);
+  shaped(B.STONE_BRICK, 4, ['SS', 'SS'], { S: B.STONE });
+  shapeless(B.PLANKS, 4, [B.JUNGLE_LOG]);
+  shapeless(B.PLANKS, 4, [B.ACACIA_LOG]);
+
+  // ─── construction ─────────────────────────────────────────────────────────
+  shaped(B.LADDER, 3, ['S S', 'SSS', 'S S'], { S: I.STICK });
+  shaped(B.SANDSTONE_BRICK, 4, ['GG', 'GG'], { G: B.SANDSTONE });
+  shaped(B.PACKED_ICE, 1, ['III', 'III', 'III'], { I: B.ICE });
+  shaped(B.ICE_BRICK, 4, ['II', 'II'], { I: B.PACKED_ICE });
+  shaped(B.BOOKSHELF, 1, ['PPP', 'WWW', 'PPP'], { P: B.PLANKS, W: B.WOOL });
+  shaped(B.HAY, 1, ['WWW', 'WWW', 'WWW'], { W: I.WHEAT });
+  shapeless(I.WHEAT, 9, [B.HAY]);
+  shaped(B.GOLD_BLOCK, 1, ['GGG', 'GGG', 'GGG'], { G: I.GOLD_INGOT });
+  shapeless(I.GOLD_INGOT, 9, [B.GOLD_BLOCK]);
+  shaped(B.RAIL, 8, ['I I', 'ISI', 'I I'], { I: I.IRON_INGOT, S: I.STICK });
+  shaped(B.LANTERN, 1, [' I ', 'ITI', ' I '], { I: I.IRON_INGOT, T: B.TORCH });
+  shaped(B.PRISMARINE, 1, ['SS', 'SS'], { S: I.PRISMARINE_SHARD });
+  shaped(B.PRISMARINE_BRICK, 1, ['SSS', 'SSS', 'SSS'], { S: I.PRISMARINE_SHARD });
+  shaped(B.SEA_LANTERN, 1, ['S S', ' T ', 'S S'], { S: I.PRISMARINE_SHARD, T: B.TORCH });
+  shaped(B.COBWEB, 1, ['F F', ' F ', 'F F'], { F: I.FICELLE });
+  shapeless(B.MOSSY_COBBLE, 1, [B.COBBLE, B.VINES]);
+  // teintures : fleurs, coraux et laine
+  shapeless(I.DYE_RED, 2, [B.FLOWER_RED]);
+  shapeless(I.DYE_YELLOW, 2, [B.FLOWER_YELLOW]);
+  shapeless(I.DYE_BLUE, 2, [B.CORAL_BLUE]);
+  shapeless(B.WOOL_RED, 1, [B.WOOL, I.DYE_RED]);
+  shapeless(B.WOOL_BLUE, 1, [B.WOOL, I.DYE_BLUE]);
+  shapeless(B.WOOL_YELLOW, 1, [B.WOOL, I.DYE_YELLOW]);
+  shapeless(B.WOOL_GREEN, 1, [B.WOOL, I.DYE_GREEN]);
+  shapeless(B.TERRACOTTA_RED, 1, [B.TERRACOTTA, I.DYE_RED]);
+  shapeless(B.TERRACOTTA_YELLOW, 1, [B.TERRACOTTA, I.DYE_YELLOW]);
+
+  // ─── cuisine et agriculture ───────────────────────────────────────────────
+  shaped(I.BOWL, 4, ['P P', ' P '], { P: B.PLANKS });
+  shapeless(I.MUSHROOM_STEW, 1, [B.MUSHROOM, B.MUSHROOM, I.BOWL]);
+  shaped(I.GOLDEN_APPLE, 1, ['GGG', 'GAG', 'GGG'], { G: I.GOLD_INGOT, A: I.APPLE });
+  shapeless(I.BONE_MEAL, 3, [I.BONE]);
+  shapeless(I.MELON_SLICE, 9, [B.MELON]);
+
+  // ─── armes ────────────────────────────────────────────────────────────────
+  shaped(I.ARBALETE, 1, ['SIS', 'F F', ' S '], { S: I.STICK, I: I.IRON_INGOT, F: I.FICELLE });
+  shaped(I.FLECHE, 8, ['I', 'S', 'P'], { I: I.IRON_INGOT, S: I.STICK, P: I.FEATHER });
+
+  // ─── véhicules ────────────────────────────────────────────────────────────
+  shaped(I.ROUE, 2, [' P ', 'PIP', ' P '], { P: B.PLANKS, I: I.IRON_INGOT });
+  shaped(I.MOTEUR, 1, ['III', 'ICI', 'III'], { I: I.IRON_INGOT, C: I.COAL });
+  shaped(I.HELICE, 1, ['P P', ' I ', 'P P'], { P: B.PLANKS, I: I.IRON_INGOT });
+  shaped(I.BATEAU, 1, ['P P', 'PPP'], { P: B.PLANKS });
+  shaped(I.MOTO, 1, [' I ', 'RMR'], { I: I.IRON_INGOT, R: I.ROUE, M: I.MOTEUR });
+  shaped(I.VOITURE, 1, ['III', 'RMR'], { I: I.IRON_INGOT, R: I.ROUE, M: I.MOTEUR });
+  shaped(I.CAMION, 1, ['IIK', 'IIM', 'RRR'], { I: I.IRON_INGOT, K: B.CHEST, M: I.MOTEUR, R: I.ROUE });
+  shaped(I.AVION, 1, [' H ', 'IMI', 'I I'], { H: I.HELICE, I: I.IRON_INGOT, M: I.MOTEUR });
+  shaped(I.SOUS_MARIN, 1, ['GIG', 'IMI', 'III'], { G: B.GLASS, I: I.IRON_INGOT, M: I.MOTEUR });
   shaped(I.STICK, 4, ['P', 'P'], { P: B.PLANKS });
   shaped(B.CRAFTING_TABLE, 1, ['PP', 'PP'], { P: B.PLANKS });
   shaped(B.FURNACE, 1, ['CCC', 'C C', 'CCC'], { C: B.COBBLE });
@@ -134,12 +192,12 @@
   shaped(I.FLECHE, 4, ['S', 'F'], { S: I.STICK, F: I.FICELLE });
 
   // outils : 3 matériaux × 5 familles
-  var MATS = [[B.PLANKS, 1], [B.COBBLE, 2], [I.IRON_INGOT, 3]];
+  var MATS = [[B.PLANKS, 1], [B.COBBLE, 2], [I.IRON_INGOT, 3], [I.DIAMOND, 4]];
   var TOOLSETS = {
-    pickaxe: [I.WOOD_PICKAXE, I.STONE_PICKAXE, I.IRON_PICKAXE],
-    axe:     [I.WOOD_AXE, I.STONE_AXE, I.IRON_AXE],
-    shovel:  [I.WOOD_SHOVEL, I.STONE_SHOVEL, I.IRON_SHOVEL],
-    sword:   [I.WOOD_SWORD, I.STONE_SWORD, I.IRON_SWORD],
+    pickaxe: [I.WOOD_PICKAXE, I.STONE_PICKAXE, I.IRON_PICKAXE, I.DIAMOND_PICKAXE],
+    axe:     [I.WOOD_AXE, I.STONE_AXE, I.IRON_AXE, I.DIAMOND_AXE],
+    shovel:  [I.WOOD_SHOVEL, I.STONE_SHOVEL, I.IRON_SHOVEL, I.DIAMOND_SHOVEL],
+    sword:   [I.WOOD_SWORD, I.STONE_SWORD, I.IRON_SWORD, I.DIAMOND_SWORD],
     hoe:     [I.WOOD_HOE, I.STONE_HOE],
   };
   MATS.forEach(function (m, i) {
@@ -208,14 +266,22 @@
   var SMELT = {};
   SMELT[B.IRON_ORE] = I.IRON_INGOT;
   SMELT[I.RAW_MUTTON] = I.COOKED_MUTTON;
+  SMELT[I.RAW_PORK] = I.COOKED_PORK;
   SMELT[B.SAND] = B.GLASS;
   SMELT[B.COBBLE] = B.STONE;
+  SMELT[B.GOLD_ORE] = I.GOLD_INGOT;
+  SMELT[I.RAW_FISH] = I.COOKED_FISH;
+  SMELT[I.RAW_CHICKEN] = I.COOKED_CHICKEN;
+  SMELT[B.CACTUS] = I.DYE_GREEN;
+  SMELT[B.CLAY] = B.TERRACOTTA;
+  SMELT[B.RED_SAND] = B.GLASS;
 
   function smeltResult(id) { return SMELT[id] || 0; }
   function fuelValue(id) {
     var d = C.def(id);
     if (d && d.fuel) return d.fuel;
-    if (id === B.PLANKS || id === B.LOG) return 1.5;
+    if (id === B.PLANKS || C.isLog(id)) return 1.5;
+    if (id === B.HAY) return 2;
     if (id === I.STICK) return 0.5;
     if (id === B.CRAFTING_TABLE) return 1.5;
     return 0;

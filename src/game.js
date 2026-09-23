@@ -40,6 +40,11 @@
       onBienvenue: function (m) {
         // le serveur fait autorite sur la graine : on rebatit le monde
         if (m.graine !== world.seed) {
+          /* Le message promettait une reconstruction qui n'avait pas lieu :
+             le client gardait SON terrain, le serveur le sien, et les blocs
+             échangés tombaient sur un relief qui n'était pas le bon. */
+          remplacerMonde(m.graine);
+          composerEquipe(equipe.length || 1, regles);
           ui.toast('Graine du serveur : ' + m.graine + ' — monde reconstruit');
         }
         g.time = m.heure || 0;
@@ -54,8 +59,12 @@
       onBloc: function (x, y, z, id) {
         // autorite serveur : on applique sans discuter, meme si l on avait
         // predit autre chose localement
+        /* Chunk absent : on le génère pour y appliquer le bloc. L'ignorer
+           perdait la modification — on retrouvait plus tard un terrain qui
+           ne correspondait plus à celui du serveur (blocs fantômes). */
         var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
-        if (world.chunks.has(world.key(cx, cz))) world.setBlock(x, y, z, id);
+        world.getChunk(cx, cz, true);
+        world.setBlock(x, y, z, id);
       },
       onChat: function (m) { chat.recevoir(m); },
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
@@ -180,11 +189,7 @@
       });
       appliquerPartie(meta);
       // le monde doit repartir de la bonne graine
-      world = MC.createWorld(meta.graine);
-      reconstruireDependances();
-      world.reset(render.disposeChunk);
-      entities.list.length = 0;
-      render.libererToutesEntites();
+      remplacerMonde(meta.graine);
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
       g.time = 60;
@@ -201,8 +206,7 @@
       var meta = MC.Saves.trouver(st, id);
       if (!meta) { ui.toast('Partie introuvable', 'warn'); return; }
       appliquerPartie(meta);
-      world = MC.createWorld(meta.graine);
-      reconstruireDependances();
+      remplacerMonde(meta.graine);
       var r = MC.Saves.charger(st, id, g);
       if (!r) { ui.toast('Sauvegarde illisible', 'warn'); return; }
       composerEquipe(1, regles);
@@ -234,6 +238,21 @@
       input.setState('playing');
       net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1);
     }
+
+    /* Change de monde. L'ANCIEN est libéré d'abord : ses maillages vivent
+       dans la scène, pas dans le monde. On appelait jadis reset() sur le
+       NOUVEAU monde, encore vide — les chunks de la partie précédente
+       restaient affichés, superposés au nouveau terrain : blocs flottants
+       qu'on traverse, murs invisibles contre lesquels on bute. */
+    function remplacerMonde(graine) {
+      world.reset(render.disposeChunk);
+      entities.list.length = 0;
+      render.libererToutesEntites();
+      world = MC.createWorld(graine);
+      reconstruireDependances();
+      return world;
+    }
+    g.remplacerMonde = remplacerMonde;
 
     /* Le monde est recree a chaque partie (graine differente) : entites,
        joueur et registres doivent le suivre, sinon ils pointent sur l ancien. */
@@ -352,58 +371,179 @@
     }
 
     // ─── streaming des chunks ────────────────────────────────────────────────
-    function streamChunks(unlimited) {
-      var s = player.state;
-      var pcx = Math.floor(s.pos.x / C.CHUNK_X), pcz = Math.floor(s.pos.z / C.CHUNK_Z);
-      var R = render.RENDER_DIST;
-      var wanted = [];
-      for (var dx = -R; dx <= R; dx++) for (var dz = -R; dz <= R; dz++) {
-        var d2 = dx * dx + dz * dz;
-        if (d2 > R * R) continue;
-        wanted.push([d2, pcx + dx, pcz + dz]);
+    /* Un centre de streaming par joueur local. N'en suivre qu'un seul
+       laissait le joueur 2 d'un écran partagé marcher sur des chunks jamais
+       générés — ou déchargés sous ses pieds : ni sol, ni collision, ni image. */
+    function centresStreaming() {
+      var out = [];
+      for (var i = 0; i < equipe.length; i++) {
+        var p = equipe[i].player.state.pos;
+        out.push([Math.floor(p.x / C.CHUNK_X), Math.floor(p.z / C.CHUNK_Z)]);
       }
-      wanted.sort(function (a, b) { return a[0] - b[0]; });
+      if (!out.length) {
+        var s0 = player.state.pos;
+        out.push([Math.floor(s0.x / C.CHUNK_X), Math.floor(s0.z / C.CHUNK_Z)]);
+      }
+      return out;
+    }
+
+    // ─── streaming des chunks ────────────────────────────────────────────────
+    function streamChunks(unlimited) {
+      var centres = centresStreaming();
+      var R = render.RENDER_DIST;
+      /* On GÉNÈRE un anneau de plus que l'on n'affiche : un chunk n'est
+         maillé que lorsque ses 8 voisins existent, sans quoi l'anneau
+         extérieur ne serait jamais visible et le bord du monde apparaîtrait
+         en deçà du brouillard. */
+      var aGenerer = world.chunksVoulus(centres, R + 1);
+      var aMailler = world.chunksVoulus(centres, R);
 
       var genMax = unlimited ? 1e9 : GEN_BUDGET, meshMax = unlimited ? 1e9 : MESH_BUDGET;
       var gen = 0;
-      for (var i = 0; i < wanted.length && gen < genMax; i++) {
-        var cx = wanted[i][1], cz = wanted[i][2];
+      for (var i = 0; i < aGenerer.length && gen < genMax; i++) {
+        var cx = aGenerer[i][1], cz = aGenerer[i][2];
         if (world.chunks.has(world.key(cx, cz))) continue;
         world.getChunk(cx, cz, true);
-        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (o) {
-          var n = world.chunks.get(world.key(cx + o[0], cz + o[1]));
-          if (n) n.dirty = true;
-        });
+        // les 8 voisins : leurs faces de bordure ET leur occlusion ambiante changent
+        world.marquerVoisins(cx, cz);
         gen++;
       }
 
       var meshed = 0;
-      for (var j = 0; j < wanted.length && meshed < meshMax; j++) {
-        var mx = wanted[j][1], mz = wanted[j][2];
+      for (var j = 0; j < aMailler.length && meshed < meshMax; j++) {
+        var mx = aMailler[j][1], mz = aMailler[j][2];
         var c = world.chunks.get(world.key(mx, mz));
         if (!c || !c.dirty) continue;
-        // on n'affiche un chunk que si ses 4 voisins existent : sinon des
-        // faces de bordure seraient maillées à tort et l'on verrait des coutures
-        if (!world.chunks.has(world.key(mx + 1, mz)) || !world.chunks.has(world.key(mx - 1, mz)) ||
-            !world.chunks.has(world.key(mx, mz + 1)) || !world.chunks.has(world.key(mx, mz - 1))) continue;
+        // voisinage 3×3 complet, sinon coutures et ombres de contact fausses
+        if (!world.voisinsCharges(mx, mz)) continue;
         render.syncChunk(world, c);
         meshed++;
       }
 
-      world.unloadFar(pcx, pcz, R + 2, render.disposeChunk);
+      world.unloadLoin(centres, R + 3, render.disposeChunk);
     }
+    g.streamChunks = streamChunks;
 
     function remeshDirtyNear() {
-      var s = player.state;
-      var pcx = Math.floor(s.pos.x / C.CHUNK_X), pcz = Math.floor(s.pos.z / C.CHUNK_Z);
+      var centres = centresStreaming();
       var done = 0;
       world.chunks.forEach(function (c) {
         if (done >= 3 || !c.dirty) return;
-        if (Math.abs(c.cx - pcx) > 2 || Math.abs(c.cz - pcz) > 2) return;
+        var proche = centres.some(function (ce) {
+          return Math.abs(c.cx - ce[0]) <= 2 && Math.abs(c.cz - ce[1]) <= 2;
+        });
+        if (!proche || !world.voisinsCharges(c.cx, c.cz)) return;
         render.syncChunk(world, c);
         done++;
       });
     }
+
+    // ─── donjons ─────────────────────────────────────────────────────────────
+    /* Un gardien s'éveille quand un joueur entre dans sa salle, à condition
+       qu'il n'ait pas déjà été vaincu. En ligne, les mobs appartiennent au
+       serveur : on ne crée pas de gardien local qu'il ignorerait. */
+    function surveillerDonjons() {
+      /* Les défaites D'ABORD : traiter l'éveil avant laissait, l'image qui suit
+         la mort du gardien, un donjon pas encore marqué vaincu — un second
+         gardien se relevait aussitôt. */
+      var evts = entities.evenements();
+      for (var k = 0; k < evts.length; k++) {
+        if (evts[k].type !== 'boss_vaincu') continue;
+        if (evts[k].donjon) world.donjonsVaincus.add(evts[k].donjon);
+        chat.systeme(evts[k].nom + ' est vaincu !');
+        ui.toast(evts[k].nom + ' est vaincu !');
+      }
+      if (net.enLigne() || !regles.monstres) return;
+      for (var i = 0; i < equipe.length; i++) {
+        var p = equipe[i].player.state;
+        if (p.dead) continue;
+        var d = world.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+        if (!d || world.donjonsVaincus.has(d.id)) continue;
+        var b = entities.invoquerGardien(d);
+        if (b) {
+          var nom = entities.SPECS[b.type].nom;
+          chat.systeme(nom + " s'éveille !");
+          ui.toast(nom + " s'éveille !", 'warn');
+          audio.play('blesse');
+        }
+      }
+    }
+
+    /* Le gardien le plus proche du joueur 1, pour la barre de vie. */
+    function gardienProche() {
+      var p = player.state.pos, best = null, bd = 32 * 32;
+      for (var i = 0; i < entities.list.length; i++) {
+        var e = entities.list[i];
+        var s = entities.SPECS[e.type];
+        if (!s || !s.boss || e.dead) continue;
+        var dx = e.pos.x - p.x, dy = e.pos.y - p.y, dz = e.pos.z - p.z;
+        var d2 = dx * dx + dy * dy + dz * dz;
+        if (d2 < bd) { bd = d2; best = { nom: s.nom, hp: e.hp, max: s.hp }; }
+      }
+      return best;
+    }
+
+    /* Un coffre de donjon se remplit de son butin la première fois qu'on
+       l'ouvre — ou qu'on le casse. Ensuite il vit comme n'importe quel coffre. */
+    function coffreDe(x, y, z) {
+      var k = x + ',' + y + ',' + z;
+      if (chests[k]) return chests[k];
+      if (world.coffresPilles.has(k)) return null;
+      var butin = world.butinCoffre(x, y, z);
+      if (!butin) return null;
+      world.coffresPilles.add(k);
+      var inv = Inv.create(27);
+      butin.forEach(function (st) { inv.add(st.id, st.n); });
+      chests[k] = inv;
+      return inv;
+    }
+    g.coffreDe = coffreDe;
+
+    // ─── véhicules ──────────────────────────────────────────────────────────
+    var V = MC.Vehicules;
+
+    /* Pose un véhicule devant le joueur, sur le bloc visé, tourné comme lui. */
+    function poserVehicule(pl, nom, cible) {
+      var st = pl.state;
+      var x = cible.x + cible.nx + 0.5, y = cible.y + cible.ny, z = cible.z + cible.nz + 0.5;
+      var d = V.DEFS[nom];
+      // un peu de place : on remonte d'un cran si l'engin serait dans le décor
+      for (var k = 0; k < 3 && P.collides(world, x, y, z, d.w, d.h); k++) y++;
+      if (P.collides(world, x, y, z, d.w, d.h)) { ui.toast('Pas assez de place pour ' + d.nom, 'warn'); return false; }
+      V.poser(entities, nom, x, y, z, st.yaw);
+      if (!regles.blocsIllimites) st.inv.consumeAt(st.selected, 1);
+      audio.play('poser');
+      ui.toast(d.nom + ' posé — clic droit pour monter');
+      return true;
+    }
+
+    /* Clic droit sur un véhicule : monter, ou ouvrir la soute du camion en
+       tenant Maj. Renvoie true si l'action a été prise. */
+    function interagirVehicule(j, e, sprint) {
+      var st = j.player.state;
+      if (!e || !e.vehicule || e === st.monture) return false;
+      if (sprint && e.soute && j.index === 0) {
+        ui.openContainer('chest', st.inv, e.soute, 'soute');
+        input.setState('ui');
+        return true;
+      }
+      if (e.conducteur) { if (j.index === 0) ui.toast('Déjà occupé', 'warn'); return true; }
+      if (V.monter(st, e)) {
+        if (j.index === 0) ui.toast(V.DEFS[e.vehicule].nom + ' — ZQSD pour conduire, F pour descendre');
+        audio.play('poser');
+      }
+      return true;
+    }
+
+    function descendreDe(j) {
+      var st = j.player.state;
+      if (!st.monture) return false;
+      V.descendre(st, world, j.player.PW, j.player.PH);
+      if (j.index === 0) ui.toast('Pied à terre');
+      return true;
+    }
+    g.descendreDe = descendreDe;
+    g.monterDans = function (e) { return interagirVehicule(equipe[0], e, false); };
 
     // ─── actions ─────────────────────────────────────────────────────────────
     /* Casser un fourneau ou un coffre doit rendre son contenu : sinon les
@@ -418,7 +558,7 @@
         });
         delete furnaces[k];
       }
-      var ch = chests[k];
+      var ch = coffreDe(x, y, z);
       if (ch) {
         ch.slots.forEach(function (st) {
           if (st) { entities.dropItem(x + 0.5, y + 0.5, z + 0.5, st.id, st.n); lache += st.n; }
@@ -439,6 +579,7 @@
     function onAttack() {
       if (input.state !== 'playing') return;
       var e = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
+      if (e && e === player.state.monture) e = null;
       if (e) {
         var r = player.attack(e);
         if (r) audio.play(r.toolBroke ? 'brise' : 'frapper');
@@ -463,6 +604,7 @@
 
       // interagir avec un PNJ a priorité sur le bloc derrière lui
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
+      if (ent && ent.vehicule && interagirVehicule(equipe[0], ent, input.actions().sprint)) return;
       if (ent && entities.SPECS[ent.type].npc) {
         ui.openContainer('trade', player.state.inv, null, ent.eid);
         input.setState('ui');
@@ -473,6 +615,7 @@
       if (!target) return;
       var res = player.useOn(target);
       if (!res) return;
+      if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target); return; }
       if (res.indexOf('open:') === 0) {
         var kind = res.slice(5);
         var k = target.x + ',' + target.y + ',' + target.z;
@@ -480,7 +623,7 @@
           if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
           ui.openContainer('furnace', player.state.inv, furnaces[k], k);
         } else if (kind === 'chest') {
-          if (!chests[k]) chests[k] = Inv.create(27);
+          if (!coffreDe(target.x, target.y, target.z)) chests[k] = Inv.create(27);
           ui.openContainer('chest', player.state.inv, chests[k], k);
         } else {
           ui.openContainer('craft', player.state.inv);
@@ -497,6 +640,7 @@
       else if (res === 'eat') audio.play('manger');
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
+      else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
     }
 
     function onKey(code) {
@@ -517,6 +661,8 @@
         input.setSaisie(true);
       } else if (code === 'KeyM') {
         ui.toast(audio.setEnabled(!audio.enabled) ? 'Son activé' : 'Son coupé');
+      } else if (code === 'KeyF') {
+        descendreDe(equipe[0]);
       } else if (code === 'KeyG') {
         // G et non Q : sur AZERTY, Q est déjà la touche « aller à gauche »
         var d = player.dropSelected(1);
@@ -667,11 +813,25 @@
         touches = { forward: 0, back: 0, left: 0, right: 0, jump: 0, sprint: 0 };
       }
 
-      if (st.dead) return;
-      pl.updateMovement(dt, touches);
-      // on ne traverse pas les creatures : la separation vient APRES le
-      // deplacement, sinon le joueur entre puis ressort en tremblant
-      entities.separer(st, dt);
+      if (st.dead) {
+        if (st.monture) V.descendre(st, world, pl.PW, pl.PH);
+        return;
+      }
+      if (st.monture) {
+        // à bord : les touches de déplacement deviennent les commandes de l'engin
+        var mt = st.monture;
+        V.conduire(mt, dt, world, {
+          avant: touches.forward, arriere: touches.back, gauche: touches.left,
+          droite: touches.right, monter: touches.jump, descendre: touches.sprint,
+        });
+        if (!V.caler(st)) { /* engin détruit : on est à pied */ }
+        else if (V.DEFS[mt.vehicule].respire) st.air = pl.MAX_AIR;     // cabine étanche
+      } else {
+        pl.updateMovement(dt, touches);
+        // on ne traverse pas les creatures : la separation vient APRES le
+        // deplacement, sinon le joueur entre puis ressort en tremblant
+        entities.separer(st, dt);
+      }
       pl.updateSurvival(dt);
 
       // visee et actions
@@ -710,7 +870,9 @@
 
       // boutons a front montant, pour les manettes
       if (man && man.connectee()) {
-        if (man.vientDAppuyer(man.BTN.VOL)) { st.flying = !st.flying; st.vel.y = 0; }
+        if (man.vientDAppuyer(man.BTN.VOL)) {
+          if (!descendreDe(j)) { st.flying = !st.flying; st.vel.y = 0; }
+        }
         if (man.vientDAppuyer(man.BTN.SUIVANT))
           st.selected = (st.selected + 1) % Inv.HOTBAR_SIZE;
         if (man.vientDAppuyer(man.BTN.PRECEDENT))
@@ -727,10 +889,13 @@
         if (tir) audio.play('frapper');
         return;
       }
+      var vis = entities.aimedAt(pl.eyePos(), pl.lookDir(), pl.REACH);
+      if (vis && vis.vehicule && interagirVehicule(j, vis, false)) return;
       var target = pl.aim();
       if (!target) return;
       var res = pl.useOn(target);
       if (!res) return;
+      if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target); return; }
       if (res.indexOf('open:') === 0) {
         // seules les interfaces du joueur 1 s'ouvrent : un seul clavier
         if (j.index !== 0) return;
@@ -786,6 +951,7 @@
           else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
         }
         entities.mergeItems();
+        surveillerDonjons();
 
         // temps, apparitions, cultures
         g.time += dt;
@@ -853,6 +1019,7 @@
         frames = 0; acc = 0;
       }
       for (var hi = 0; hi < equipe.length; hi++) ui.updateHUDJoueur(g, equipe[hi].player, hi);
+      ui.barreBoss(st === 'playing' || st === 'ui' ? gardienProche() : null);
       ui.updateHUD(g);
     }
 

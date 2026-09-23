@@ -35,6 +35,33 @@
     return false;
   }
 
+  /* Premier bloc au CONTACT d'un pavé — le pavé élargi de `marge` — qui
+     satisfait `pred(id)`. Sert aux blocs qui blessent au toucher (cactus) :
+     la collision nous arrête juste avant le bloc, un test de chevauchement
+     strict ne le verrait donc jamais. */
+  function contact(world, x, y, z, w, h, marge, pred) {
+    var r = w / 2 + marge;
+    var x0 = Math.floor(x - r), x1 = Math.floor(x + r);
+    var y0 = Math.floor(y - marge), y1 = Math.floor(y + h - 1e-6);
+    var z0 = Math.floor(z - r), z1 = Math.floor(z + r);
+    for (var yy = y0; yy <= y1; yy++)
+    for (var zz = z0; zz <= z1; zz++)
+    for (var xx = x0; xx <= x1; xx++) {
+      var id = world.getBlock(xx, yy, zz);
+      if (id && pred(id)) return id;
+    }
+    return 0;
+  }
+
+  /* Le corps occupe-t-il un bloc portant la propriété `prop` (grimpable,
+     ralentit) ? Renvoie la définition du premier trouvé, ou null. */
+  function occupeAvec(world, x, y, z, w, h, prop) {
+    var id = contact(world, x, y, z, w, h, 0, function (b) {
+      var d = C.BLOCKS[b]; return !!d && !!d[prop];
+    });
+    return id ? C.BLOCKS[id] : null;
+  }
+
   /* Déplace un corps axe par axe. Si un axe collisionne, on annule cet axe
      SEUL — c'est ce qui permet de glisser le long d'un mur au lieu de s'y coller. */
   function moveAxis(world, body, axis, amount, w, h) {
@@ -64,12 +91,12 @@
      simple flaque d'un bloc et l'on se mettrait à nager en la traversant. */
   var SWIM_SAMPLE = 0.7;
   function inWater(world, pos, h) {
-    return world.getBlock(Math.floor(pos.x), Math.floor(pos.y + h * SWIM_SAMPLE),
-                          Math.floor(pos.z)) === C.B.WATER;
+    var b = world.getBlock(Math.floor(pos.x), Math.floor(pos.y + h * SWIM_SAMPLE),
+                          Math.floor(pos.z));
+    return C.isWater(b);
   }
   function headInWater(world, pos, eye) {
-    return world.getBlock(Math.floor(pos.x), Math.floor(pos.y + eye), Math.floor(pos.z))
-      === C.B.WATER;
+    return C.isWater(world.getBlock(Math.floor(pos.x), Math.floor(pos.y + eye), Math.floor(pos.z)));
   }
 
   /* Lissage exponentiel : indépendant du framerate, contrairement à un lerp naïf
@@ -112,7 +139,7 @@
   }
 
   MC.Physics = {
-    wishDirection: wishDirection, collides: collides, moveAxis: moveAxis, move: move,
+    wishDirection: wishDirection, collides: collides, contact: contact, occupeAvec: occupeAvec, moveAxis: moveAxis, move: move,
     inWater: inWater, headInWater: headInWater, approach: approach, SWIM_SAMPLE: SWIM_SAMPLE,
     raycast: raycast, boxOverlap: boxOverlap,
   };

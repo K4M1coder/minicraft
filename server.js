@@ -19,7 +19,7 @@ const RACINE = __dirname;
 const PORT = parseInt(process.argv[2], 10) || 8080;
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory',
+const MODULES = ['core', 'noise', 'biomes', 'donjons', 'world', 'mesher', 'physics', 'faune', 'inventory', 'vehicules',
                  'entities', 'player', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol'];
 
@@ -246,6 +246,7 @@ function traiter(c, m) {
 let dernier = Date.now();
 let accEtat = 0;
 let accSpawn = 0;
+let accChunks = 1;         // premier passage immédiat
 
 function joueurReference() {
   for (const c of clients.values()) if (c.rejoint) return { pos: c.pos };
@@ -259,6 +260,21 @@ setInterval(() => {
 
   heure += dt;
   monde.tick(dt, 14);
+
+  /* Le serveur simule les créatures autour des joueurs : il lui faut donc le
+     terrain autour d'eux. Sans cela, une créature hors des chunks du point
+     d'apparition n'avait pas de sol — gelée désormais, elle tombait jadis
+     dans le vide — et aucune apparition n'y trouvait de terrain valide. */
+  accChunks += dt;
+  if (accChunks >= 1) {
+    accChunks = 0;
+    const centres = [[Math.floor(SPAWN.x / 16), Math.floor(SPAWN.z / 16)]];
+    clients.forEach(c => {
+      if (c.rejoint) centres.push([Math.floor(c.pos.x / 16), Math.floor(c.pos.z / 16)]);
+    });
+    monde.chunksVoulus(centres, 3).forEach(v => monde.getChunk(v[1], v[2], true));
+    monde.unloadLoin(centres, 5);
+  }
 
   const ref = joueurReference();
   entites.update(dt, ref, {});

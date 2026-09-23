@@ -78,10 +78,15 @@
   /* Plafonds d'apparition par type, dérivés de la difficulté.
      En paisible, aucun hostile mais les animaux et villageois restent. */
   function plafondsEntites(r) {
+    var m = r.monstres ? r.plafondMonstres : 0;
     return {
-      zombie: r.monstres ? r.plafondMonstres : 0,
+      zombie: m,
+      // tous les hostiles réunis (zombies, squelettes, araignées, momies, slimes)
+      monstres: m,
       sheep: 8,
       villager: 4,
+      // les autres animaux (cochons, loups) partagent un plafond commun
+      animaux: 12,
     };
   }
 

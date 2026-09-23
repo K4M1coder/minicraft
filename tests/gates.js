@@ -18,7 +18,7 @@ const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[
 
 /* Modules de logique pure : ils doivent tourner sous Node, donc ne jamais
    toucher au navigateur. C'est la porte qui protège toute la stratégie de test. */
-const PURS = ['core', 'noise', 'world', 'mesher', 'physics', 'inventory',
+const PURS = ['core', 'noise', 'biomes', 'donjons', 'world', 'mesher', 'physics', 'faune', 'inventory', 'vehicules',
               'entities', 'player', 'daycycle', 'save', 'saves', 'modes',
               'chat', 'split', 'gamepad', 'net-protocol', 'livre'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net'];

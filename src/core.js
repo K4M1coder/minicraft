@@ -12,7 +12,8 @@
   function idx(x, y, z) { return (y * CHUNK_Z + z) * CHUNK_X + x; }
 
   // ─── espace d'ids unifié ───────────────────────────────────────────────────
-  // 0 = air, 1..63 = blocs (posables), 64+ = objets (non posables).
+  // 0 = air, 1..127 = blocs (posables), 128+ = objets (non posables).
+  // Les blocs tiennent sur un octet (Uint8Array des chunks) : 255 au plus.
   // Un seul espace d'ids permet à l'inventaire, au craft et aux drops de
   // manipuler indifféremment un bloc ou un objet.
   var B = {
@@ -21,19 +22,59 @@
     CRAFTING_TABLE: 12, FURNACE: 13, FARMLAND: 14,
     WHEAT0: 15, WHEAT1: 16, WHEAT2: 17, WHEAT3: 18,
     COAL_ORE: 19, IRON_ORE: 20, WOOL: 21, BEDROCK: 22, TORCH: 23, CHEST: 24,
+    // biomes et végétation
+    SNOW: 25, ICE: 26, SANDSTONE: 27, CACTUS: 28,
+    BIRCH_LOG: 29, BIRCH_LEAVES: 30, SPRUCE_LOG: 31, SPRUCE_LEAVES: 32,
+    TALL_GRASS: 33, FLOWER_RED: 34, FLOWER_YELLOW: 35, DEAD_BUSH: 36, MUSHROOM: 37,
+    // donjons
+    MOSSY_COBBLE: 38, STONE_BRICK: 39,
+    // biomes exotiques
+    JUNGLE_LOG: 40, JUNGLE_LEAVES: 41, ACACIA_LOG: 42, ACACIA_LEAVES: 43, VINES: 44,
+    RED_SAND: 45, TERRACOTTA: 46, TERRACOTTA_RED: 47, TERRACOTTA_YELLOW: 48,
+    PACKED_ICE: 49, MYCELIUM: 50, MUSHROOM_CAP: 51, MUSHROOM_STEM: 52, MELON: 53,
+    GRAVEL: 54, CLAY: 55,
+    // mer
+    KELP: 56, SEAGRASS: 57, CORAL_RED: 58, CORAL_YELLOW: 59, CORAL_BLUE: 60,
+    CORAL_FAN_RED: 61, CORAL_FAN_YELLOW: 62, CORAL_FAN_BLUE: 63, SPONGE: 64,
+    PRISMARINE: 65, PRISMARINE_BRICK: 66, SEA_LANTERN: 67, SEA_PICKLE: 68,
+    // minerais et structures
+    GOLD_ORE: 69, DIAMOND_ORE: 70, GOLD_BLOCK: 71, LANTERN: 72, BOOKSHELF: 73,
+    SANDSTONE_BRICK: 74, ICE_BRICK: 75, OBSIDIAN: 76, COBWEB: 77, RAIL: 78, HAY: 79,
+    WOOL_RED: 80, WOOL_BLUE: 81, WOOL_YELLOW: 82, WOOL_GREEN: 83, LADDER: 84,
   };
   var I = {
-    STICK: 64, COAL: 65, IRON_INGOT: 66, WHEAT: 67, SEEDS: 68, BREAD: 69,
-    RAW_MUTTON: 70, COOKED_MUTTON: 71, ROTTEN_FLESH: 72, EMERALD: 73,
-    WOOD_PICKAXE: 74, STONE_PICKAXE: 75, IRON_PICKAXE: 76,
-    WOOD_AXE: 77, STONE_AXE: 78, IRON_AXE: 79,
-    WOOD_SHOVEL: 80, STONE_SHOVEL: 81, IRON_SHOVEL: 82,
-    WOOD_SWORD: 83, STONE_SWORD: 84, IRON_SWORD: 85,
-    WOOD_HOE: 86, STONE_HOE: 87,
-    FICELLE: 88, ARC: 89, FLECHE: 90,
+    STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
+    RAW_MUTTON: 134, COOKED_MUTTON: 135, ROTTEN_FLESH: 136, EMERALD: 137,
+    WOOD_PICKAXE: 138, STONE_PICKAXE: 139, IRON_PICKAXE: 140,
+    WOOD_AXE: 141, STONE_AXE: 142, IRON_AXE: 143,
+    WOOD_SHOVEL: 144, STONE_SHOVEL: 145, IRON_SHOVEL: 146,
+    WOOD_SWORD: 147, STONE_SWORD: 148, IRON_SWORD: 149,
+    WOOD_HOE: 150, STONE_HOE: 151,
+    FICELLE: 152, ARC: 153, FLECHE: 154,
+    RAW_PORK: 155, COOKED_PORK: 156, EPEE_RUNIQUE: 157,
+    // matières
+    GOLD_INGOT: 158, DIAMOND: 159, FEATHER: 160, BONE: 161, BONE_MEAL: 162,
+    PRISMARINE_SHARD: 163, INK_SAC: 164,
+    DYE_RED: 165, DYE_YELLOW: 166, DYE_BLUE: 167, DYE_GREEN: 168,
+    // nourriture
+    APPLE: 169, GOLDEN_APPLE: 170, RAW_FISH: 171, COOKED_FISH: 172, BOWL: 173,
+    MUSHROOM_STEW: 174, MELON_SLICE: 175, RAW_CHICKEN: 176, COOKED_CHICKEN: 177,
+    // outils en diamant
+    DIAMOND_PICKAXE: 178, DIAMOND_AXE: 179, DIAMOND_SHOVEL: 180, DIAMOND_SWORD: 181,
+    // armes
+    ARBALETE: 182,
+    // trésors de gardiens
+    KHEPESH: 183, HACHE_GIVRE: 184, ARC_JUNGLE: 185, BATON_SORCIERE: 186,
+    LANCE_CIMES: 187, TRIDENT: 188, SABRE_CAPITAINE: 189,
+    // véhicules et pièces
+    ROUE: 190, MOTEUR: 191, HELICE: 192,
+    BATEAU: 193, MOTO: 194, VOITURE: 195, CAMION: 196, AVION: 197, SOUS_MARIN: 198,
   };
 
-  var FIRST_ITEM = 64;
+  var FIRST_ITEM = 128;
+  /* Les objets démarraient à 64 avant l'arrivée des biomes : une sauvegarde
+     de cette époque est convertie au chargement par ce décalage. */
+  var DECALAGE_OBJETS_V1 = 64;
   function isBlock(id) { return id > 0 && id < FIRST_ITEM; }
   function isItem(id) { return id >= FIRST_ITEM; }
 
@@ -83,6 +124,133 @@
   defBlock(B.CHEST, { name: 'Coffre', tiles: [52, 51, 51], hardness: 2.5, tool: 'axe',
                       interactive: 'chest' });
 
+  // ─── biomes ───────────────────────────────────────────────────────────────
+  defBlock(B.SNOW,   { name: 'Neige', tiles: [56, 57, 2], hardness: 0.5, tool: 'shovel' });
+  // la glace est un fondu, comme le verre : on voit l'eau prise dessous
+  defBlock(B.ICE,    { name: 'Glace', tiles: [58, 58, 58], hardness: 0.5, tool: 'pickaxe',
+                       transparent: true, pass: 'blend', drops: [] });
+  defBlock(B.SANDSTONE, { name: 'Grès', tiles: [59, 60, 59], hardness: 0.8, tool: 'pickaxe',
+                          needsTool: true });
+  // cactus : plein, mais il pique (voir player.updateSurvival)
+  defBlock(B.CACTUS, { name: 'Cactus', tiles: [61, 62, 61], hardness: 0.4, hurts: 1 });
+  defBlock(B.BIRCH_LOG, { name: 'Tronc de bouleau', tiles: [6, 63, 6], hardness: 2.0, tool: 'axe',
+                          log: true });
+  defBlock(B.BIRCH_LEAVES, { name: 'Feuilles de bouleau', tiles: [64, 64, 64], hardness: 0.2,
+                             transparent: true, pass: 'cutout', leaves: true,
+                             drops: [{ id: I.STICK, n: 1, chance: 0.35 }] });
+  defBlock(B.SPRUCE_LOG, { name: 'Tronc de sapin', tiles: [6, 65, 6], hardness: 2.0, tool: 'axe',
+                           log: true });
+  defBlock(B.SPRUCE_LEAVES, { name: 'Aiguilles de sapin', tiles: [66, 66, 66], hardness: 0.2,
+                              transparent: true, pass: 'cutout', leaves: true,
+                              drops: [{ id: I.STICK, n: 1, chance: 0.35 }] });
+  // végétation basse : des plantes, donc traversables et cassées d'un coup
+  defBlock(B.TALL_GRASS, { name: 'Hautes herbes', tiles: [67, 67, 67], hardness: 0,
+                           transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol',
+                           drops: [{ id: I.SEEDS, n: 1, chance: 0.15 }] });
+  defBlock(B.FLOWER_RED, { name: 'Coquelicot', tiles: [68, 68, 68], hardness: 0,
+                           transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol' });
+  defBlock(B.FLOWER_YELLOW, { name: 'Pissenlit', tiles: [69, 69, 69], hardness: 0,
+                              transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol' });
+  defBlock(B.DEAD_BUSH, { name: 'Buisson mort', tiles: [70, 70, 70], hardness: 0,
+                          transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol',
+                          drops: [{ id: I.STICK, n: 1, chance: 0.5 }] });
+  defBlock(B.MUSHROOM, { name: 'Champignon', tiles: [71, 71, 71], hardness: 0,
+                         transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol' });
+  defBlock(B.MOSSY_COBBLE, { name: 'Pierre moussue', tiles: [72, 72, 72], hardness: 2.0,
+                             tool: 'pickaxe', needsTool: true });
+  defBlock(B.STONE_BRICK, { name: 'Brique de pierre', tiles: [73, 73, 73], hardness: 2.0,
+                            tool: 'pickaxe', needsTool: true });
+  // le chêne d'origine rejoint les familles « tronc » et « feuillage »
+  BLOCKS[B.LOG].log = true;
+  BLOCKS[B.LEAVES].leaves = true;
+  // les chênes lâchent parfois une pomme
+  BLOCKS[B.LEAVES].drops = [{ id: I.STICK, n: 1, chance: 0.35 }, { id: I.APPLE, n: 1, chance: 0.06 }];
+
+  // ─── biomes exotiques ──────────────────────────────────────────────────────
+  defBlock(B.JUNGLE_LOG, { name: 'Tronc tropical', tiles: [6, 77, 6], hardness: 2.0, tool: 'axe', log: true });
+  defBlock(B.JUNGLE_LEAVES, { name: 'Feuilles tropicales', tiles: [78, 78, 78], hardness: 0.2,
+                              transparent: true, pass: 'cutout', leaves: true,
+                              drops: [{ id: I.STICK, n: 1, chance: 0.3 }] });
+  defBlock(B.ACACIA_LOG, { name: "Tronc d'acacia", tiles: [6, 79, 6], hardness: 2.0, tool: 'axe', log: true });
+  defBlock(B.ACACIA_LEAVES, { name: "Feuilles d'acacia", tiles: [80, 80, 80], hardness: 0.2,
+                              transparent: true, pass: 'cutout', leaves: true,
+                              drops: [{ id: I.STICK, n: 1, chance: 0.3 }] });
+  // lianes et échelles : on s'y accroche (voir player.updateMovement)
+  defBlock(B.VINES, { name: 'Lianes', tiles: [81, 81, 81], hardness: 0, transparent: true,
+                      plant: true, pass: 'cutout', grimpable: true });
+  defBlock(B.RED_SAND, { name: 'Sable rouge', tiles: [82, 82, 82], hardness: 0.5, tool: 'shovel' });
+  defBlock(B.TERRACOTTA, { name: 'Terre cuite', tiles: [83, 83, 83], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_RED, { name: 'Terre cuite rouge', tiles: [84, 84, 84], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_YELLOW, { name: 'Terre cuite ocre', tiles: [85, 85, 85], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.PACKED_ICE, { name: 'Glace compacte', tiles: [86, 86, 86], hardness: 0.6, tool: 'pickaxe' });
+  defBlock(B.MYCELIUM, { name: 'Mycélium', tiles: [87, 88, 2], hardness: 0.6, tool: 'shovel',
+                         drops: [{ id: B.DIRT, n: 1 }] });
+  defBlock(B.MUSHROOM_CAP, { name: 'Chapeau de champignon', tiles: [89, 89, 89], hardness: 0.3, tool: 'axe',
+                             drops: [{ id: B.MUSHROOM, n: 1, chance: 0.4 }] });
+  defBlock(B.MUSHROOM_STEM, { name: 'Pied de champignon', tiles: [90, 90, 90], hardness: 0.3, tool: 'axe',
+                              drops: [{ id: B.MUSHROOM, n: 1, chance: 0.2 }] });
+  defBlock(B.MELON, { name: 'Pastèque', tiles: [91, 92, 91], hardness: 1.0, tool: 'axe',
+                      drops: [{ id: I.MELON_SLICE, n: 3 }, { id: I.MELON_SLICE, n: 2, chance: 0.5 }] });
+  defBlock(B.GRAVEL, { name: 'Gravier', tiles: [93, 93, 93], hardness: 0.6, tool: 'shovel' });
+  defBlock(B.CLAY, { name: 'Argile', tiles: [94, 94, 94], hardness: 0.6, tool: 'shovel' });
+
+  // ─── mer ───────────────────────────────────────────────────────────────────
+  /* `aquatique` : une plante qui pousse DANS l'eau. Pour la nage, la noyade et
+     le maillage de l'eau, sa case compte comme de l'eau ; sinon chaque brin de
+     varech découperait une bulle d'air dans l'océan. */
+  function planteMarine(id, nom, tile, extra) {
+    var o = { name: nom, tiles: [tile, tile, tile], hardness: 0, transparent: true, plant: true,
+              pass: 'cutout', aquatique: true, needsSupport: 'sol', drops: [] };
+    if (extra) for (var k in extra) o[k] = extra[k];
+    return defBlock(id, o);
+  }
+  planteMarine(B.KELP, 'Varech', 95, { needsSupport: false, drops: [{ id: B.KELP, n: 1 }] });
+  planteMarine(B.SEAGRASS, 'Herbier marin', 96);
+  defBlock(B.CORAL_RED, { name: 'Corail rouge', tiles: [97, 97, 97], hardness: 0.8, tool: 'pickaxe' });
+  defBlock(B.CORAL_YELLOW, { name: 'Corail jaune', tiles: [98, 98, 98], hardness: 0.8, tool: 'pickaxe' });
+  defBlock(B.CORAL_BLUE, { name: 'Corail bleu', tiles: [99, 99, 99], hardness: 0.8, tool: 'pickaxe' });
+  planteMarine(B.CORAL_FAN_RED, 'Gorgone rouge', 100, { drops: [{ id: I.DYE_RED, n: 1, chance: 0.5 }] });
+  planteMarine(B.CORAL_FAN_YELLOW, 'Gorgone jaune', 101, { drops: [{ id: I.DYE_YELLOW, n: 1, chance: 0.5 }] });
+  planteMarine(B.CORAL_FAN_BLUE, 'Gorgone bleue', 102, { drops: [{ id: I.DYE_BLUE, n: 1, chance: 0.5 }] });
+  defBlock(B.SPONGE, { name: 'Éponge', tiles: [103, 103, 103], hardness: 0.6 });
+  defBlock(B.PRISMARINE, { name: 'Prismarine', tiles: [104, 104, 104], hardness: 1.5, tool: 'pickaxe',
+                           needsTool: true });
+  defBlock(B.PRISMARINE_BRICK, { name: 'Briques de prismarine', tiles: [105, 105, 105], hardness: 1.5,
+                                 tool: 'pickaxe', needsTool: true });
+  defBlock(B.SEA_LANTERN, { name: 'Lanterne marine', tiles: [106, 106, 106], hardness: 0.3, light: 15,
+                            drops: [{ id: I.PRISMARINE_SHARD, n: 2 }] });
+  planteMarine(B.SEA_PICKLE, 'Cornichon de mer', 107, { light: 6, drops: [{ id: B.SEA_PICKLE, n: 1 }] });
+
+  // ─── minerais et structures ────────────────────────────────────────────────
+  defBlock(B.GOLD_ORE, { name: "Minerai d'or", tiles: [108, 108, 108], hardness: 3.0, tool: 'pickaxe',
+                         needsTool: true, minTier: 3 });
+  defBlock(B.DIAMOND_ORE, { name: 'Minerai de diamant', tiles: [109, 109, 109], hardness: 3.5,
+                            tool: 'pickaxe', needsTool: true, minTier: 3, drops: [{ id: I.DIAMOND, n: 1 }] });
+  defBlock(B.GOLD_BLOCK, { name: "Bloc d'or", tiles: [110, 110, 110], hardness: 3.0, tool: 'pickaxe',
+                           needsTool: true });
+  defBlock(B.LANTERN, { name: 'Lanterne', tiles: [111, 111, 111], hardness: 0.5, transparent: true,
+                        plant: true, pass: 'cutout', light: 13, needsSupport: true });
+  defBlock(B.BOOKSHELF, { name: 'Bibliothèque', tiles: [8, 112, 8], hardness: 1.5, tool: 'axe' });
+  defBlock(B.SANDSTONE_BRICK, { name: 'Grès taillé', tiles: [113, 113, 113], hardness: 1.2,
+                                tool: 'pickaxe', needsTool: true });
+  defBlock(B.ICE_BRICK, { name: 'Briques de glace', tiles: [114, 114, 114], hardness: 1.2,
+                          tool: 'pickaxe', needsTool: true });
+  defBlock(B.OBSIDIAN, { name: 'Obsidienne', tiles: [115, 115, 115], hardness: 12, tool: 'pickaxe',
+                         needsTool: true, minTier: 4 });
+  // la toile se traverse, mais on s'y englue (voir player.updateMovement)
+  defBlock(B.COBWEB, { name: "Toile d'araignée", tiles: [116, 116, 116], hardness: 1.0, tool: 'sword',
+                       transparent: true, plant: true, pass: 'cutout', ralentit: 0.25,
+                       drops: [{ id: I.FICELLE, n: 1 }] });
+  defBlock(B.RAIL, { name: 'Rail', tiles: [117, 117, 117], hardness: 0.7, transparent: true, plant: true,
+                     pass: 'cutout', plat: true, needsSupport: 'sol' });
+  defBlock(B.HAY, { name: 'Botte de foin', tiles: [118, 119, 118], hardness: 0.5 });
+  defBlock(B.WOOL_RED, { name: 'Laine rouge', tiles: [120, 120, 120], hardness: 0.8 });
+  defBlock(B.WOOL_BLUE, { name: 'Laine bleue', tiles: [121, 121, 121], hardness: 0.8 });
+  defBlock(B.WOOL_YELLOW, { name: 'Laine jaune', tiles: [122, 122, 122], hardness: 0.8 });
+  defBlock(B.WOOL_GREEN, { name: 'Laine verte', tiles: [123, 123, 123], hardness: 0.8 });
+  defBlock(B.LADDER, { name: 'Échelle', tiles: [124, 124, 124], hardness: 0.4, tool: 'axe',
+                       transparent: true, plant: true, pass: 'cutout', grimpable: true });
+
   // blé : 4 stades, non solides, cassables instantanément
   var WHEAT_STAGES = [B.WHEAT0, B.WHEAT1, B.WHEAT2, B.WHEAT3];
   WHEAT_STAGES.forEach(function (id, s) {
@@ -116,6 +284,11 @@
   defItem(I.ARC, { name: 'Arc', tile: 54, ranged: 'fleche', maxStack: 1,
                    durability: 180, damage: 1 });
   defItem(I.FLECHE, { name: 'Flèche', tile: 55, ammo: true, damage: 5 });
+  defItem(I.RAW_PORK, { name: 'Porc cru', tile: 74, food: 3 });
+  defItem(I.COOKED_PORK, { name: 'Porc cuit', tile: 75, food: 8 });
+  // butin des miniboss : ni recette ni four, il faut vaincre un gardien
+  defItem(I.EPEE_RUNIQUE, { name: 'Épée runique', tile: 76, tool: 'sword', tier: 3,
+                            damage: 11, durability: 600, maxStack: 1 });
 
   var TOOL_DEFS = [
     ['pickaxe', [I.WOOD_PICKAXE, I.STONE_PICKAXE, I.IRON_PICKAXE], 'Pioche', 36],
@@ -124,8 +297,8 @@
     ['sword',   [I.WOOD_SWORD, I.STONE_SWORD, I.IRON_SWORD], 'Épée', 45],
     ['hoe',     [I.WOOD_HOE, I.STONE_HOE], 'Houe', 48],
   ];
-  var TIER_NAME = ['', 'en bois', 'en pierre', 'en fer'];
-  var TIER_DURABILITY = [0, 60, 132, 251];      // bois, pierre, fer
+  var TIER_NAME = ['', 'en bois', 'en pierre', 'en fer', 'en diamant'];
+  var TIER_DURABILITY = [0, 60, 132, 251, 1561];      // bois, pierre, fer, diamant
   TOOL_DEFS.forEach(function (d) {
     d[1].forEach(function (id, i) {
       defItem(id, {
@@ -139,6 +312,67 @@
   });
 
   // ─── accès générique ───────────────────────────────────────────────────────
+  // outils en diamant : même gabarit que les autres, un rang au-dessus
+  [['pickaxe', I.DIAMOND_PICKAXE, 'Pioche', 145], ['axe', I.DIAMOND_AXE, 'Hache', 146],
+   ['shovel', I.DIAMOND_SHOVEL, 'Pelle', 147], ['sword', I.DIAMOND_SWORD, 'Épée', 148]].forEach(function (d) {
+    defItem(d[1], { name: d[2] + ' ' + TIER_NAME[4], tile: d[3], tool: d[0], tier: 4,
+                    damage: d[0] === 'sword' ? 9 : 5, durability: TIER_DURABILITY[4], maxStack: 1 });
+  });
+
+  // ─── matières, nourriture ──────────────────────────────────────────────────
+  defItem(I.GOLD_INGOT, { name: "Lingot d'or", tile: 125 });
+  defItem(I.DIAMOND, { name: 'Diamant', tile: 126 });
+  defItem(I.FEATHER, { name: 'Plume', tile: 127 });
+  defItem(I.BONE, { name: 'Os', tile: 128 });
+  // l'engrais fait mûrir une culture d'un coup (voir player.useOn)
+  defItem(I.BONE_MEAL, { name: "Poudre d'os", tile: 129, engrais: true });
+  defItem(I.PRISMARINE_SHARD, { name: 'Éclat de prismarine', tile: 130 });
+  defItem(I.INK_SAC, { name: "Poche d'encre", tile: 131 });
+  defItem(I.DYE_RED, { name: 'Teinture rouge', tile: 132 });
+  defItem(I.DYE_YELLOW, { name: 'Teinture jaune', tile: 133 });
+  defItem(I.DYE_BLUE, { name: 'Teinture bleue', tile: 134 });
+  defItem(I.DYE_GREEN, { name: 'Teinture verte', tile: 135 });
+  defItem(I.APPLE, { name: 'Pomme', tile: 136, food: 4 });
+  // la pomme dorée soigne en plus de nourrir
+  defItem(I.GOLDEN_APPLE, { name: 'Pomme dorée', tile: 137, food: 6, soin: 10 });
+  defItem(I.RAW_FISH, { name: 'Poisson cru', tile: 138, food: 2 });
+  defItem(I.COOKED_FISH, { name: 'Poisson cuit', tile: 139, food: 6 });
+  defItem(I.BOWL, { name: 'Bol', tile: 140 });
+  defItem(I.MUSHROOM_STEW, { name: 'Soupe de champignons', tile: 141, food: 7, rend: I.BOWL, maxStack: 1 });
+  defItem(I.MELON_SLICE, { name: 'Tranche de pastèque', tile: 142, food: 2 });
+  defItem(I.RAW_CHICKEN, { name: 'Volaille crue', tile: 143, food: 2 });
+  defItem(I.COOKED_CHICKEN, { name: 'Volaille rôtie', tile: 144, food: 6 });
+
+  // ─── armes ─────────────────────────────────────────────────────────────────
+  // l'arbalète tire plus fort et plus droit que l'arc
+  defItem(I.ARBALETE, { name: 'Arbalète', tile: 149, ranged: 'fleche', maxStack: 1, durability: 320,
+                        damage: 1, vitesseTir: 46, bonusTir: 3 });
+  // trésors de gardiens : aucune recette, aucun four
+  defItem(I.KHEPESH, { name: 'Khépesh du pharaon', tile: 150, tool: 'sword', tier: 4, damage: 10,
+                       durability: 700, maxStack: 1 });
+  defItem(I.HACHE_GIVRE, { name: 'Hache de givre', tile: 151, tool: 'axe', tier: 4, damage: 10,
+                           durability: 700, maxStack: 1 });
+  defItem(I.ARC_JUNGLE, { name: 'Arc de la jungle', tile: 152, ranged: 'fleche', maxStack: 1,
+                          durability: 500, damage: 1, vitesseTir: 44, bonusTir: 4 });
+  // le bâton ne consomme rien : il lance des sortilèges
+  defItem(I.BATON_SORCIERE, { name: 'Bâton de la sorcière', tile: 153, ranged: 'sortilege', sansMunition: true,
+                              maxStack: 1, durability: 400, damage: 1, vitesseTir: 30, degatsTir: 7 });
+  defItem(I.LANCE_CIMES, { name: 'Lance des cimes', tile: 154, tool: 'sword', tier: 4, damage: 12,
+                           durability: 800, maxStack: 1 });
+  defItem(I.TRIDENT, { name: 'Trident', tile: 155, tool: 'sword', tier: 4, damage: 11, durability: 800,
+                       maxStack: 1, nageRapide: true });
+  defItem(I.SABRE_CAPITAINE, { name: 'Sabre du capitaine', tile: 156, tool: 'sword', tier: 4, damage: 10,
+                               durability: 650, maxStack: 1 });
+
+  // ─── véhicules ─────────────────────────────────────────────────────────────
+  defItem(I.ROUE, { name: 'Roue', tile: 157 });
+  defItem(I.MOTEUR, { name: 'Moteur', tile: 158 });
+  defItem(I.HELICE, { name: 'Hélice', tile: 159 });
+  // `vehicule` : poser l'objet fait apparaître le véhicule (voir vehicules.js)
+  [[I.BATEAU, 'Bateau', 'bateau'], [I.MOTO, 'Moto', 'moto'], [I.VOITURE, 'Voiture', 'voiture'],
+   [I.CAMION, 'Camion', 'camion'], [I.AVION, 'Avion', 'avion'], [I.SOUS_MARIN, 'Sous-marin', 'sous_marin']]
+    .forEach(function (v, i) { defItem(v[0], { name: v[1], tile: 160 + i, vehicule: v[2], maxStack: 1 }); });
+
   function def(id) { return isItem(id) ? ITEMS[id] : BLOCKS[id]; }
 
   /* Trois régimes de rendu, à ne pas confondre :
@@ -153,6 +387,17 @@
   function maxStack(id) { var d = def(id); return (d && d.maxStack) || 64; }
 
   // un bloc arrête-t-il le joueur ?
+  // bois et feuillage, toutes essences confondues (groundAt, apparitions)
+  function isLog(id) { var d = BLOCKS[id]; return !!d && !!d.log; }
+  function isLeaves(id) { var d = BLOCKS[id]; return !!d && !!d.leaves; }
+
+  // eau ou plante noyée : ce qui compte comme « dans l'eau »
+  function isWater(id) {
+    if (id === B.WATER) return true;
+    var d = BLOCKS[id];
+    return !!d && !!d.aquatique;
+  }
+
   function isSolid(id) {
     var d = BLOCKS[id];
     return !!d && !d.liquid && !d.plant;
@@ -168,12 +413,14 @@
     if (nb === 0) return false;
     var d = BLOCKS[nb];
     if (!d) return false;
+    // une plante marine baigne dans l'eau : pas de surface entre les deux
+    if (self === B.WATER && d.aquatique) return true;
     if (d.plant) return false;
     return d.transparent ? nb === self : true;
   }
 
   // ─── temps de minage ───────────────────────────────────────────────────────
-  var TIER_SPEED = [1, 2.5, 5, 8];   // main nue, bois, pierre, fer
+  var TIER_SPEED = [1, 2.5, 5, 8, 11];   // main nue, bois, pierre, fer, diamant
 
   // Renvoie {seconds, harvests}. harvests=false => le bloc casse mais ne donne rien
   // (pierre à main nue, fer avec une pioche en bois).
@@ -212,9 +459,10 @@
   MC.Core = {
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
-    FIRST_ITEM: FIRST_ITEM, isBlock: isBlock, isItem: isItem,
+    FIRST_ITEM: FIRST_ITEM, DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
+    isLog: isLog, isLeaves: isLeaves, isWater: isWater, TIER_NAME: TIER_NAME,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,
     breakTime: breakTime, dropsOf: dropsOf, TIER_SPEED: TIER_SPEED,
   };

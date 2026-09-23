@@ -260,3 +260,13 @@
                    color: var(--good); }
   .panel code { color: var(--accent); background: rgba(127,212,255,.1); padding: 1px 5px;
                 border-radius: 3px; }
+
+  /* barre de vie du gardien de donjon */
+  .barre-boss { position: absolute; top: 14px; left: 50%; transform: translateX(-50%);
+                width: min(460px, 70vw); z-index: 3; pointer-events: none; text-align: center; }
+  .barre-boss-nom { font: 600 13px/1.4 ui-monospace, Menlo, Consolas, monospace; color: #f4e6c0;
+                    text-shadow: 0 1px 2px #000; margin-bottom: 4px; letter-spacing: .04em; }
+  .barre-boss-jauge { height: 10px; background: rgba(10,10,14,.7); border: 1px solid #6a4a2a;
+                      border-radius: 2px; overflow: hidden; }
+  .barre-boss-jauge > div { height: 100%; background: linear-gradient(#e0483a, #9a2018);
+                            transition: width .15s linear; }

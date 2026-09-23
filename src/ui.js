@@ -37,6 +37,23 @@
     var hud = el('div', 'hud');
     root.appendChild(hud);
 
+    /* Barre de vie du gardien de donjon, en haut de l'écran. Elle n'existe
+       que pendant le combat : la cacher ailleurs évite un HUD encombré. */
+    var barreBossEl = el('div', 'barre-boss',
+      '<div class="barre-boss-nom"></div><div class="barre-boss-jauge"><div></div></div>');
+    barreBossEl.style.display = 'none';
+    root.appendChild(barreBossEl);
+    var barreBossNom = barreBossEl.querySelector('.barre-boss-nom');
+    var barreBossRemplie = barreBossEl.querySelector('.barre-boss-jauge > div');
+    function barreBoss(info) {
+      if (!info) { barreBossEl.style.display = 'none'; return false; }
+      barreBossEl.style.display = '';
+      barreBossNom.textContent = info.nom;
+      var f = Math.max(0, Math.min(1, info.hp / info.max));
+      barreBossRemplie.style.width = (f * 100).toFixed(1) + '%';
+      return true;
+    }
+
     /* Calques supplementaires pour les joueurs 2 a 4. Le joueur 1 garde le
        HUD principal : le solo emprunte donc exactement le meme chemin de code
        que l'ecran partage, ce qui evite un mode « special multi » non teste. */
@@ -278,7 +295,11 @@
         'XYZ <b>' + p.pos.x.toFixed(1) + ' / ' + p.pos.y.toFixed(1) + ' / ' + p.pos.z.toFixed(1) + '</b><br>' +
         DC.clockString(g.time) + ' <b>' + (DC.isNight(g.time) ? 'nuit' : 'jour') + '</b>' +
         ' · ' + (p.flying ? 'vol' : p.swimming ? 'nage' : p.onGround ? "au sol" : "en l" + String.fromCharCode(39) + "air") +
-        (g.regles && g.regles.mode ? ' · ' + g.regles.mode.nom : '');
+        (g.regles && g.regles.mode ? ' · ' + g.regles.mode.nom : '') +
+        // à bord : l'engin, sa vitesse, et comment en descendre
+        (p.monture && MC.Vehicules ? '<br>' + MC.Vehicules.DEFS[p.monture.vehicule].nom + ' <b>' +
+          MC.Vehicules.vitesseKmh(p.monture) + ' km/h</b> · F pour descendre' : '') +
+        (g.world.biomeAt ? '<br>Biome <b>' + g.world.biomeAt(Math.floor(p.pos.x), Math.floor(p.pos.z)).nom + '</b>' : '');
     }
 
     // ══════════════════════════════════════════════════════════════════════
@@ -304,6 +325,8 @@
       '<tr><td>maj</td><td>courir · descendre</td></tr>' +
       '<tr><td>E</td><td>inventaire et craft 2×2</td></tr>' +
       '<tr><td>G</td><td>jeter un objet</td></tr>' +
+      '<tr><td>clic droit sur un véhicule</td><td>monter · Maj + clic : soute du camion</td></tr>' +
+      '<tr><td>F</td><td>descendre du véhicule</td></tr>' +
       '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
       '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
       '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
@@ -988,6 +1011,7 @@
     return {
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
+      barreBoss: barreBoss,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
       hideScreen: hideScreen, setLockHint: setLockHint,

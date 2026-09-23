@@ -193,7 +193,8 @@
     it('SPEC-LIVRE-006 : le catalogue d objets se filtre', function () {
       var c = L.catalogueObjets('pioche');
       A.equal(c.blocs.length, 0, 'aucun bloc ne s appelle pioche');
-      A.equal(c.objets.length, 3, 'les trois pioches');
+      var pioches = C.ITEMS.filter(function (d) { return d && d.tool === 'pickaxe'; }).length;
+      A.equal(c.objets.length, pioches, 'toutes les pioches, et elles seules (' + pioches + ')');
     });
 
     it('SPEC-LIVRE-010 : en creatif, le livre donne l objet demande', function () {

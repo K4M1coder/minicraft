@@ -234,3 +234,140 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-AUDIT-002 | Retirer une entité libère sa géométrie **et** ses matériaux | compteur de matériaux non libérés à zéro | ✅ |
 | SPEC-AUDIT-003 | Démarrer une nouvelle partie libère les ressources des entités vivantes | aucune ressource abandonnée | ✅ |
 | SPEC-AUDIT-004 | Les blocs modifiés survivent au déchargement puis au rechargement d'un chunk | la construction est intacte après un aller-retour | ✅ |
+
+## TERRAIN — streaming, maillage et collisions en déplacement
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-TERRAIN-001 | Générer un chunk invalide ses 8 voisins, diagonales comprises : l'occlusion ambiante des coins ne périme plus | le chunk central redevient sale quand sa diagonale arrive ; son maillage ne change plus ensuite | ✅ |
+| SPEC-TERRAIN-002 | Un chunk n'est maillé qu'une fois ses 8 voisins chargés | `voisinsCharges` faux avec 4 voisins, vrai avec 8 | ✅ |
+| SPEC-TERRAIN-003 | Modifier un bloc de coin invalide aussi le chunk en diagonale | la diagonale concernée est sale, l'opposée non | ✅ |
+| SPEC-TERRAIN-004 | Le streaming suit chaque joueur local : aucun sol n'est déchargé sous un joueur | chunks voulus autour des deux centres ; `unloadLoin` épargne le chunk du joueur 2 | ✅ |
+| SPEC-TERRAIN-005 | Une entité hors des chunks chargés est gelée au lieu de tomber dans le vide | position inchangée et entité conservée après 4 s de simulation | ✅ |
+| SPEC-TERRAIN-006 | Les lumières d'un chunk déchargé quittent le registre et reviennent avec lui | torche absente après décharge, présente après recharge | ✅ |
+| SPEC-TERRAIN-008 | Le joueur ne pousse jamais une créature dans un bloc | un mouton serré contre un mur ne le traverse pas | ✅ |
+| SPEC-TERRAIN-007 | Créer ou charger une partie ne laisse aucun maillage de l'ancien monde dans la scène (blocs fantômes sans collision) | aucun maillage de terrain hors des chunks du monde courant | ✅ |
+
+## BIOME — climat et relief
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-BIOME-001 | Seize biomes existent — onze terrestres (plaines, forêt, désert, taïga, marais, montagnes, jungle, savane, badlands, pics glacés, île aux champignons) et cinq marins — et apparaissent tous | un échantillon de 6 km couvre les seize | ✅ |
+| SPEC-BIOME-002 | Biome et relief ne dépendent que de la graine | même graine, mêmes valeurs ; autre graine, autre carte | ✅ |
+| SPEC-BIOME-003 | Le relief reste continu aux frontières de biomes | pente entre colonnes voisines ≤ 5 blocs | ✅ |
+| SPEC-BIOME-004 | Chaque biome a sa surface : grès sous le désert, neige en taïga, eau gelée dans le froid | comptage de blocs dans un chunk de chaque biome | ✅ |
+
+## VEGE — végétation
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-VEGE-001 | Chaque biome porte ses essences : bouleau en forêt, sapin en taïga, cactus au désert | l'essence est présente dans des chunks du biome | ✅ |
+| SPEC-VEGE-002 | La végétation basse se traverse, casse d'un coup et tombe quand on retire son sol | ni solide ni résistante ; une fleur tombe même adossée à un mur | ✅ |
+| SPEC-VEGE-003 | Une plante ne pousse que sur un sol adapté | aucun buisson mort hors du sable | ✅ |
+| SPEC-VEGE-004 | Toutes les essences donnent des planches ; trois sables donnent du grès | recettes vérifiées par le moteur de craft | ✅ |
+| SPEC-VEGE-005 | Le cactus pique au contact, par petites touches | PV en baisse, bornée, sans chevaucher le bloc | ✅ |
+
+## MOB — nouvelles créatures
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MOB-001 | Squelette, araignée, momie, slime, loup, cochon et les quatre gardiens ont un gabarit cohérent | dimensions, vie et vitesse positives | ✅ |
+| SPEC-MOB-002 | Le squelette tire des flèches balistiques quand il voit sa cible, jamais à travers un mur | tirs observés à découvert, aucun derrière un mur ; visée relevée | ✅ |
+| SPEC-MOB-003 | L'araignée bondit sur sa proie à courte distance | impulsion verticale et horizontale vers la cible | ✅ |
+| SPEC-MOB-004 | Le slime n'avance qu'en sautant | immobile entre deux sauts, puis bond vers la cible | ✅ |
+| SPEC-MOB-005 | Le loup est neutre jusqu'à ce qu'on le frappe | aucune morsure avant, morsure après | ✅ |
+| SPEC-MOB-006 | Le cochon donne du porc cru, que le four cuit | butin et recette de cuisson | ✅ |
+| SPEC-MOB-007 | Les apparitions dépendent du biome | momies au désert la nuit, pas de zombie ; forêt pacifique le jour | ✅ |
+| SPEC-MOB-008 | Un plafond global borne les monstres, tous types confondus | ≤ plafond après 3000 tentatives d'apparition | ✅ |
+| SPEC-MOB-009 | Au jour, les morts-vivants brûlent, sauf à l'abri d'un donjon | squelette et momie disparaissent, le zombie du donjon et le loup restent | ✅ |
+
+## DONJON — donjons et miniboss
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-DONJON-001 | Les donjons sont nombreux et ne dépendent que de la graine | ≥ 20 sur 2 km², identiques d'un monde à l'autre | ✅ |
+| SPEC-DONJON-002 | Un donjon terrestre est sur la terre ferme, un donjon marin sous au moins quatre blocs d'eau ; aucun dans le socle | surfaces vérifiées pour chaque famille | ✅ |
+| SPEC-DONJON-003 | La salle est close, éclairée de quatre torches, contient un coffre ; un escalier mène à la surface | inspection des blocs ; la salle est reconnue, le couloir non | ✅ |
+| SPEC-DONJON-004 | Le gardien s'éveille une seule fois | un second appel ne crée rien tant qu'il vit | ✅ |
+| SPEC-DONJON-005 | Onze gardiens, chacun sa capacité (renforts, bond, rafale, division, boules de neige, sortilèges, vol et feu, laser sous l'eau, noyés) et un trésor qui lui est propre ; renforts plafonnés | capacités déclarées ; invocations bornées et rattachées au donjon | ✅ |
+| SPEC-DONJON-006 | Vaincre un gardien lâche l'épée runique et publie un événement unique ; il encaisse sans être projeté | butin, événement consommé une fois, recul réduit | ✅ |
+| SPEC-DONJON-007 | Le slime colossal se divise en mourant | quatre petits slimes | ✅ |
+| SPEC-DONJON-008 | Le coffre d'un donjon a un butin fixé par la graine, enrichi selon son type | même contenu d'un monde à l'autre ; or dans la pyramide, prismarine dans le monument ; rien pour un coffre ordinaire | ✅ |
+| SPEC-DONJON-009 | Gardiens vaincus et coffres pillés survivent à la sauvegarde, et repartent de zéro en nouvelle partie | aller-retour de sauvegarde ; `reset` vide les deux | ✅ |
+| SPEC-DONJON-011 | Le type de donjon dépend du biome, de l'altitude et de la profondeur : crypte, mine, pyramide, forteresse de glace, temple, hutte, citadelle, monument, épave | table de décision ; les neuf types existent dans le monde | ✅ |
+| SPEC-DONJON-012 | Chaque type de donjon est jouable : un coffre, une salle, une entrée, et un gardien qui n'apparaît pas dans un mur | vérification sur le plan de chaque type | ✅ |
+| SPEC-DONJON-010 | Chaque chunk pose sa part du donjon, quel que soit l'ordre de génération | blocs identiques pour deux ordres opposés | ✅ |
+
+## MER — océans et flore marine
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MER-001 | Le varech pousse en colonne dans les forêts de varech, sans crever la surface | présence et hauteur des colonnes | ✅ |
+| SPEC-MER-002 | Le récif corallien se couvre de coraux, de gorgones et de cornichons lumineux | coraux dans un chunk de récif | ✅ |
+| SPEC-MER-003 | Une plante marine compte comme de l'eau : on y nage, on s'y noie, aucune surface d'eau n'est dessinée contre elle | nage, noyade et occlusion | ✅ |
+| SPEC-MER-004 | L'océan gelé a ses icebergs qui émergent | glace compacte au-dessus du niveau de la mer | ✅ |
+| SPEC-MER-005 | Un poisson reste dans l'eau et s'asphyxie dehors | 20 s sans sortir ; perte de vie hors de l'eau | ✅ |
+| SPEC-MER-006 | Le requin chasse un nageur, jamais qui reste au sec | rapprochement dans l'eau, immobile face au ponton | ✅ |
+| SPEC-MER-007 | La méduse pique qui la frôle | dégâts au contact | ✅ |
+| SPEC-MER-008 | Le noyé coule, marche au fond et remonte vers sa proie | descente puis vitesse ascendante | ✅ |
+| SPEC-MER-009 | Cinq biomes marins, chacun avec son fond et sa faune ; une colonne immergée est marine | classement selon l'altitude | ✅ |
+
+## FAUNE — oiseaux et apparitions par milieu
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-FAUNE-001 | Un oiseau vole au-dessus du relief sans jamais le toucher | 30 s de vol, aucune collision | ✅ |
+| SPEC-FAUNE-002 | Devant un mur, un oiseau prend de la hauteur | vitesse verticale positive | ✅ |
+| SPEC-FAUNE-003 | Chaque créature naît dans son milieu : faune marine dans l'eau, oiseaux en l'air | apparitions sur une côte | ✅ |
+| SPEC-FAUNE-004 | Faune marine et oiseaux ont leurs propres plafonds | la mer pleine ne bloque ni le ciel ni la terre | ✅ |
+| SPEC-FAUNE-005 | La wyverne tourne au-dessus de sa proie puis pique sur elle | vitesse verticale négative en piqué | ✅ |
+
+## EQUIP — créatures armées
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-EQUIP-001 | Certaines créatures naissent armées ; pillards et vindicateurs toujours | tirage d'arme selon le type | ✅ |
+| SPEC-EQUIP-002 | Une arme augmente les dégâts de son porteur | coup plus fort avec épée | ✅ |
+| SPEC-EQUIP-003 | Un squelette armé d'une épée se bat au corps à corps | plus de tir ; l'arbalète reste une arme de tir | ✅ |
+| SPEC-EQUIP-004 | Le pillard tire à l'arbalète | carreaux observés | ✅ |
+| SPEC-EQUIP-005 | Une créature armée lâche parfois son arme | environ une fois sur dix | ✅ |
+
+## VEHIC — véhicules
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-VEHIC-001 | Six véhicules — bateau, moto, voiture, camion, avion, sous-marin —, chacun fabricable et posé depuis son objet | recettes, gabarits, pose | ✅ |
+| SPEC-VEHIC-002 | La voiture accélère, braque et franchit une marche d'un bloc sans entrer dans le décor | distance, altitude, cap | ✅ |
+| SPEC-VEHIC-003 | Le bateau flotte et file sur l'eau, se traîne à terre | ligne de flottaison, vitesses | ✅ |
+| SPEC-VEHIC-004 | L'avion ne décolle qu'au-delà de sa vitesse de décollage, et redescend moteur coupé | altitude selon la vitesse | ✅ |
+| SPEC-VEHIC-005 | Le sous-marin plonge et remonte sans crever la surface ; on y respire | profondeur ; cabine étanche | ✅ |
+| SPEC-VEHIC-006 | On monte, on reste sur le siège, on descend à côté de l'engin | position du conducteur | ✅ |
+| SPEC-VEHIC-007 | Le camion a une soute de 27 cases | inventaire embarqué | ✅ |
+| SPEC-VEHIC-008 | Les véhicules et leur chargement survivent à la sauvegarde | aller-retour | ✅ |
+| SPEC-VEHIC-009 | Un véhicule abandonné ralentit et retombe ; piloté, la boucle des créatures n'y touche pas | vitesse, altitude | ✅ |
+| SPEC-VEHIC-010 | Détruit, un véhicule rend son objet ; il ne recule pas sous les coups | butin, recul nul | ✅ |
+
+## RECETTE — recettes
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-RECETTE-001 | Au moins 75 recettes, chacune reconnue sans conflit de motif | chaque motif redonne sa sortie | ✅ |
+| SPEC-RECETTE-002 | Une gamme d'outils en diamant, plus rapide que le fer ; seule elle récolte l'obsidienne | rang, vitesse, récolte | ✅ |
+| SPEC-RECETTE-003 | La soupe rend son bol, la pomme dorée soigne même rassasié | inventaire et PV | ✅ |
+| SPEC-RECETTE-004 | La poudre d'os fait mûrir une culture d'un coup | stade final atteint | ✅ |
+| SPEC-RECETTE-005 | Le four cuit poisson et volaille, fond l'or, cuit l'argile ; tous les bois brûlent | résultats de cuisson | ✅ |
+| SPEC-RECETTE-006 | On teint la laine et la terre cuite | laine bleue, terre cuite ocre | ✅ |
+
+## BLOC — blocs à comportement propre
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-BLOC-001 | On grimpe aux échelles et aux lianes | altitude en avançant contre la paroi | ✅ |
+| SPEC-BLOC-002 | Une toile d'araignée englue | distance parcourue réduite | ✅ |
+| SPEC-BLOC-003 | Les rails se posent à plat | un quad au ras du sol | ✅ |
+
+## MIGR — compatibilité des sauvegardes
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MIGR-001 | Une sauvegarde d'avant les biomes se charge : ses objets sont convertis, ses blocs intacts | inventaire, coffre, fourneau convertis | ✅ |

@@ -6,16 +6,160 @@
   var C = MC.Core, P = MC.Physics;
   var B = C.B, I = C.I;
 
-  // gabarits : largeur, hauteur, vie, vitesse, dégâts
+  /* Gabarits : largeur, hauteur, vie, vitesse, dégâts.
+     Comportements optionnels, combinables :
+       hostile  poursuit et frappe le joueur       neutral  seulement une fois frappé
+       brule    disparaît au lever du jour         tir      attaque à distance
+       sauteur  n'avance qu'en bondissant          bond     se jette sur sa proie
+       invoque  appelle des renforts               division se scinde en mourant
+       boss     gardien de donjon (nom, barre de vie, recul réduit) */
   var SPECS = {
     item:     { w: 0.28, h: 0.28, hp: 1,  speed: 0,   damage: 0 },
-    zombie:   { w: 0.6,  h: 1.8,  hp: 14, speed: 2.6, damage: 3, hostile: true },
+    zombie:   { w: 0.6,  h: 1.8,  hp: 14, speed: 2.6, damage: 3, hostile: true, brule: true,
+                drops: [{ id: I.ROTTEN_FLESH, n: 1 }] },
     sheep:    { w: 0.7,  h: 1.2,  hp: 8,  speed: 1.5, damage: 0,
                 drops: [{ id: I.RAW_MUTTON, n: 1 }, { id: B.WOOL, n: 1 }] },
     villager: { w: 0.6,  h: 1.8,  hp: 20, speed: 1.1, damage: 0, npc: true },
     // projectile : petit, sans IA, il traverse tout jusqu'a percuter
     arrow:    { w: 0.16, h: 0.16, hp: 1,  speed: 0,   damage: 5, projectile: true },
+
+    // ── nouvelles créatures ──
+    skeleton: { w: 0.6,  h: 1.8,  hp: 12, speed: 2.2, damage: 2, hostile: true, brule: true,
+                tir: { portee: 14, recul: 5, cadence: 2.2, degats: 3, n: 1 },
+                drops: [{ id: I.FLECHE, n: 2 }] },
+    spider:   { w: 0.95, h: 0.8,  hp: 12, speed: 3.3, damage: 2, hostile: true, brule: true,
+                bond: true, drops: [{ id: I.FICELLE, n: 2 }] },
+    mummy:    { w: 0.6,  h: 1.8,  hp: 18, speed: 2.2, damage: 3, hostile: true, brule: true,
+                drops: [{ id: I.ROTTEN_FLESH, n: 1 }, { id: I.FICELLE, n: 1 }] },
+    slime:    { w: 0.9,  h: 0.9,  hp: 10, speed: 2.6, damage: 2, hostile: true, sauteur: true },
+    wolf:     { w: 0.6,  h: 0.85, hp: 12, speed: 3.4, damage: 3, neutral: true },
+    pig:      { w: 0.8,  h: 0.9,  hp: 10, speed: 1.4, damage: 0,
+                drops: [{ id: I.RAW_PORK, n: 2 }] },
+    chicken:  { w: 0.45, h: 0.7,  hp: 4,  speed: 1.4, damage: 0,
+                drops: [{ id: I.RAW_CHICKEN, n: 1 }, { id: I.FEATHER, n: 1 }] },
+    goat:     { w: 0.7,  h: 1.1,  hp: 10, speed: 2.0, damage: 3, neutral: true },
+    polar_bear: { w: 1.3, h: 1.4, hp: 30, speed: 2.6, damage: 6, neutral: true,
+                  drops: [{ id: I.RAW_FISH, n: 2 }] },
+
+    // ── faune marine : `nageur` = vit dans l'eau, s'asphyxie dehors ──
+    fish:     { w: 0.4,  h: 0.35, hp: 3,  speed: 2.2, damage: 0, nageur: true,
+                drops: [{ id: I.RAW_FISH, n: 1 }] },
+    tropical_fish: { w: 0.35, h: 0.35, hp: 3, speed: 2.4, damage: 0, nageur: true, variantes: 4,
+                     drops: [{ id: I.RAW_FISH, n: 1 }] },
+    squid:    { w: 0.8,  h: 0.8,  hp: 10, speed: 1.6, damage: 0, nageur: true,
+                drops: [{ id: I.INK_SAC, n: 1 }] },
+    dolphin:  { w: 1.0,  h: 0.7,  hp: 20, speed: 5.0, damage: 3, nageur: true, neutral: true,
+                drops: [{ id: I.RAW_FISH, n: 1 }] },
+    turtle:   { w: 1.0,  h: 0.5,  hp: 16, speed: 1.2, damage: 0, nageur: true },
+    // le requin ne chasse que dans l'eau : sur la plage, on est à l'abri
+    shark:    { w: 1.4,  h: 0.9,  hp: 26, speed: 4.2, damage: 5, nageur: true, hostile: true, vue: 18,
+                drops: [{ id: I.RAW_FISH, n: 2 }] },
+    // la méduse dérive et pique quiconque la touche
+    jellyfish: { w: 0.7, h: 0.8,  hp: 6,  speed: 0.6, damage: 0, nageur: true, pique: 2 },
+    // `lest` : ne flotte pas, marche au fond de l'eau
+    crab:     { w: 0.6,  h: 0.4,  hp: 6,  speed: 1.6, damage: 0, lest: true },
+    drowned:  { w: 0.6,  h: 1.8,  hp: 18, speed: 2.0, damage: 3, hostile: true, lest: true,
+                drops: [{ id: I.ROTTEN_FLESH, n: 1 }] },
+
+    // ── oiseaux : `volant` = ni gravité ni sol ; `altitude` au-dessus du relief ──
+    bird:     { w: 0.35, h: 0.35, hp: 3,  speed: 3.5, damage: 0, volant: true, altitude: [4, 10],
+                drops: [{ id: I.FEATHER, n: 1 }] },
+    seagull:  { w: 0.5,  h: 0.4,  hp: 4,  speed: 4.0, damage: 0, volant: true, altitude: [6, 14],
+                drops: [{ id: I.FEATHER, n: 1 }] },
+    parrot:   { w: 0.4,  h: 0.5,  hp: 5,  speed: 3.0, damage: 0, volant: true, altitude: [6, 16],
+                variantes: 3, drops: [{ id: I.FEATHER, n: 1 }] },
+    eagle:    { w: 0.8,  h: 0.6,  hp: 10, speed: 5.5, damage: 0, volant: true, altitude: [12, 22],
+                drops: [{ id: I.FEATHER, n: 2 }] },
+
+    // ── humanoïdes armés : `arme` = objet tenu en main, lâché parfois ──
+    pillager: { w: 0.6,  h: 1.8,  hp: 20, speed: 2.4, damage: 2, hostile: true, arme: I.ARBALETE,
+                tir: { portee: 16, recul: 5, cadence: 2.6, degats: 4, n: 1 },
+                drops: [{ id: I.EMERALD, n: 1, chance: 0.3 }, { id: I.FLECHE, n: 2 }] },
+    vindicator: { w: 0.6, h: 1.8, hp: 24, speed: 3.0, damage: 4, hostile: true, arme: I.IRON_AXE,
+                  drops: [{ id: I.EMERALD, n: 1, chance: 0.4 }] },
+
+    // ── gardiens de donjon ──
+    boss_zombie:    { w: 1.1, h: 2.8, hp: 90, speed: 2.3, damage: 6, hostile: true, boss: true,
+                      nom: 'Gardien putride', vue: 26,
+                      invoque: { type: 'zombie', n: 2, max: 4, cadence: 9 } },
+    boss_araignee:  { w: 1.6, h: 1.1, hp: 70, speed: 3.6, damage: 5, hostile: true, boss: true,
+                      nom: 'Reine des araignées', vue: 26, bond: true,
+                      invoque: { type: 'spider', n: 2, max: 3, cadence: 11 } },
+    boss_squelette: { w: 0.8, h: 2.4, hp: 70, speed: 2.0, damage: 4, hostile: true, boss: true,
+                      nom: 'Roi squelette', vue: 26,
+                      tir: { portee: 20, recul: 6, cadence: 1.6, degats: 4, n: 3 } },
+    boss_slime:     { w: 2.0, h: 2.0, hp: 80, speed: 2.4, damage: 5, hostile: true, boss: true,
+                      nom: 'Slime colossal', vue: 26, sauteur: true,
+                      division: { type: 'slime', n: 4 } },
+    boss_pharaon:   { w: 1.0, h: 2.6, hp: 110, speed: 2.4, damage: 7, hostile: true, boss: true,
+                      nom: 'Pharaon maudit', vue: 26, bond: true, tresor: I.KHEPESH,
+                      invoque: { type: 'mummy', n: 2, max: 4, cadence: 10 } },
+    boss_yeti:      { w: 1.6, h: 3.0, hp: 130, speed: 2.6, damage: 8, hostile: true, boss: true,
+                      nom: 'Yéti', vue: 26, tresor: I.HACHE_GIVRE,
+                      tir: { portee: 18, recul: 0, cadence: 2.4, degats: 5, n: 1, genre: 'neige' } },
+    boss_serpent:   { w: 1.2, h: 1.0, hp: 100, speed: 4.2, damage: 7, hostile: true, boss: true,
+                      nom: 'Grand serpent', vue: 26, bond: true, tresor: I.ARC_JUNGLE },
+    boss_sorciere:  { w: 0.7, h: 2.0, hp: 90, speed: 2.2, damage: 3, hostile: true, boss: true,
+                      nom: 'Sorcière des marais', vue: 26, tresor: I.BATON_SORCIERE,
+                      tir: { portee: 18, recul: 6, cadence: 1.4, degats: 5, n: 2, genre: 'sortilege' },
+                      invoque: { type: 'slime', n: 2, max: 3, cadence: 12 } },
+    boss_wyverne:   { w: 2.2, h: 1.4, hp: 140, speed: 5.0, damage: 8, hostile: true, boss: true,
+                      nom: 'Wyverne des cimes', vue: 32, volant: true, altitude: [8, 14],
+                      tresor: I.LANCE_CIMES,
+                      tir: { portee: 24, recul: 0, cadence: 2.0, degats: 6, n: 1, genre: 'feu' } },
+    boss_gardien_ancien: { w: 2.0, h: 2.0, hp: 150, speed: 3.0, damage: 7, hostile: true, boss: true,
+                      nom: 'Gardien ancien', vue: 24, nageur: true, tresor: I.TRIDENT,
+                      tir: { portee: 18, recul: 4, cadence: 2.2, degats: 6, n: 1, genre: 'laser' },
+                      invoque: { type: 'shark', n: 1, max: 2, cadence: 14 } },
+    boss_capitaine: { w: 0.8, h: 2.2, hp: 100, speed: 2.4, damage: 7, hostile: true, boss: true,
+                      nom: 'Capitaine noyé', vue: 24, lest: true, arme: I.SABRE_CAPITAINE,
+                      tresor: I.SABRE_CAPITAINE,
+                      invoque: { type: 'drowned', n: 2, max: 3, cadence: 10 } },
   };
+  /* Butin de gardien : un trésor propre à chacun — que rien d'autre ne donne —
+     et une part commune. L'épée runique reste le trésor des gardiens de crypte. */
+  Object.keys(SPECS).forEach(function (k) {
+    var sp = SPECS[k];
+    if (!sp.boss) return;
+    sp.drops = [{ id: sp.tresor || I.EPEE_RUNIQUE, n: 1 }, { id: I.EMERALD, n: 4 },
+                { id: I.GOLD_INGOT, n: 3 }, { id: I.DIAMOND, n: 1, chance: 0.5 }];
+    if (k === 'boss_gardien_ancien') sp.drops.push({ id: I.PRISMARINE_SHARD, n: 8 });
+  });
+
+  /* Armes tenues par certaines créatures, avec leur probabilité. Une arme
+     ajoute la moitié de ses dégâts à ceux de la créature, et tombe une fois
+     sur dix à sa mort. Un squelette armé d'une épée renonce à son arc. */
+  var ARMES = {
+    zombie:   [[I.STONE_SWORD, 0.12], [I.IRON_SWORD, 0.06], [I.IRON_AXE, 0.04]],
+    skeleton: [[I.IRON_SWORD, 0.12]],
+    drowned:  [[I.TRIDENT, 0.08]],
+  };
+  var CHANCE_ARME_LACHEE = 0.1;
+  function tirerArme(type, r) {
+    var sp = SPECS[type];
+    if (sp && sp.arme) return sp.arme;
+    var t = ARMES[type];
+    if (!t) return 0;
+    var x = r();
+    for (var i = 0; i < t.length; i++) { if (x < t[i][1]) return t[i][0]; x -= t[i][1]; }
+    return 0;
+  }
+  function degatsAvecArme(s, arme) {
+    var d = arme && C.ITEMS[arme];
+    return s.damage + (d && d.damage && !d.ranged ? Math.floor(d.damage / 2) : 0);
+  }
+  // un porteur d'épée se bat au corps à corps, même s'il avait un arc
+  function tirDe(e, s) {
+    var d = e.arme && C.ITEMS[e.arme];
+    if (d && d.tool && !d.ranged) return null;
+    return s.tir || null;
+  }
+
+  // les véhicules sont des entités : leurs gabarits viennent de vehicules.js
+  if (MC.Vehicules) Object.assign(SPECS, MC.Vehicules.gabarits());
+
+  var ARROW_SPEED = 26;         // tirs des créatures : plus lents que ceux du joueur
+  var RECUL_BOSS = 0.25;        // un gardien encaisse sans être projeté
 
   /* Cap d'une créature. Le maillage a ses yeux vers -Z : après rotation de
      `yaw` autour de Y, son avant vaut (-sin, 0, -cos). Pour regarder vers
@@ -57,6 +201,9 @@
         hp: s.hp, w: s.w, h: s.h, onGround: false, age: 0, yaw: 0,
         attackCd: 0, wanderCd: 0, hurtCd: 0, dead: false,
       };
+      if (s.arme) e.arme = s.arme;
+      // variante de couleur (poissons tropicaux, perroquets), stable pour l'entité
+      if (s.variantes) e.variante = e.eid % s.variantes;
       if (extra) for (var k in extra) e[k] = extra[k];
       list.push(e);
       return e;
@@ -74,11 +221,15 @@
 
     /* Lance un projectile. `tireur` sert a ne pas se blesser soi-meme :
        la fleche part de la tete du joueur et le traverse pendant un instant. */
-    function tirer(origine, direction, vitesse, degats, tireur) {
+    /* `genre` : 'fleche' (par défaut), 'neige', 'sortilege', 'feu', 'laser'.
+       Seules la flèche et la boule de neige retombent. */
+    var GRAVITE_PROJECTILE = { fleche: 1, neige: 0.7, sortilege: 0, feu: 0, laser: 0 };
+    function tirer(origine, direction, vitesse, degats, tireur, genre) {
       var e = spawn('arrow', origine.x, origine.y, origine.z, {
         degats: degats === undefined ? SPECS.arrow.damage : degats,
         tireur: tireur || null,
         vie: ARROW_VIE,
+        genre: genre || 'fleche',
       });
       var v = vitesse === undefined ? 34 : vitesse;
       e.vel.x = direction.x * v;
@@ -93,7 +244,8 @@
     function stepArrow(e, dt, player, events) {
       e.vie -= dt;
       if (e.vie <= 0) { remove(e); return; }
-      e.vel.y -= ARROW_GRAVITY * dt;
+      var gp = GRAVITE_PROJECTILE[e.genre || 'fleche'];
+      e.vel.y -= ARROW_GRAVITY * (gp === undefined ? 1 : gp) * dt;
 
       var dist = Math.hypot(e.vel.x, e.vel.y, e.vel.z) * dt;
       var pas = Math.max(1, Math.ceil(dist / 0.2));
@@ -179,7 +331,7 @@
       var avantX = corps.pos.x, avantZ = corps.pos.z;
       for (var i = 0; i < list.length; i++) {
         var o = list[i];
-        if (!corpsSolide(o)) continue;
+        if (!corpsSolide(o) || o === corps.monture) continue;
         total += ecarter(corps, o, dt, 1, 0);
       }
       /* On borne le deplacement TOTAL, pas chaque contribution : trois corps
@@ -230,22 +382,47 @@
       if (i >= 0) list.splice(i, 1);
     }
 
+    /* Journal des événements notables (mort d'un gardien) : les dégâts
+       arrivent par plusieurs chemins (mêlée, flèche), le jeu les relève ici
+       une fois par image plutôt que d'être rappelé depuis chacun. */
+    var journal = [];
+    function evenements() { var l = journal.slice(); journal.length = 0; return l; }
+
     function damage(e, amount, knockFrom) {
       if (e.hurtCd > 0 || e.dead) return false;
+      var s = SPECS[e.type];
       e.hp -= amount;
       e.hurtCd = 0.35;
+      // une créature neutre frappée devient hostile, et le reste
+      if (s.neutral) e.enrage = true;
       if (knockFrom) {
         var dx = e.pos.x - knockFrom.x, dz = e.pos.z - knockFrom.z;
         var d = Math.hypot(dx, dz) || 1;
-        e.vel.x += (dx / d) * 5; e.vel.z += (dz / d) * 5; e.vel.y = 4.5;
+        var k = s.boss ? RECUL_BOSS : (s.vehicule ? 0 : 1);
+        e.vel.x += (dx / d) * 5 * k; e.vel.z += (dz / d) * 5 * k; e.vel.y = 4.5 * k;
       }
       if (e.hp <= 0) {
-        var s = SPECS[e.type];
         if (s.drops) {
-          for (var i = 0; i < s.drops.length; i++)
+          for (var i = 0; i < s.drops.length; i++) {
+            if (s.drops[i].chance !== undefined && Math.random() > s.drops[i].chance) continue;
             dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.drops[i].id, s.drops[i].n);
+          }
         }
-        if (e.type === 'zombie') dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, I.ROTTEN_FLESH, 1);
+        // une créature armée lâche parfois son arme (jamais un gardien : son trésor suffit)
+        if (e.arme && !s.boss && Math.random() < CHANCE_ARME_LACHEE) {
+          dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, e.arme, 1);
+        }
+        // le slime colossal éclate en petits slimes qui continuent le combat
+        if (s.division) {
+          for (var j = 0; j < s.division.n; j++) {
+            var ang = (j / s.division.n) * Math.PI * 2;
+            var p = spawn(s.division.type, e.pos.x + Math.cos(ang) * 0.8, e.pos.y + 0.2,
+                          e.pos.z + Math.sin(ang) * 0.8, { donjon: e.donjon || null });
+            p.vel.x = Math.cos(ang) * 3; p.vel.z = Math.sin(ang) * 3; p.vel.y = 5;
+          }
+        }
+        if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom,
+                                   donjon: e.donjon || null, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         remove(e);
         return true;
       }
@@ -254,7 +431,10 @@
 
     /* Physique commune : gravité, collisions, flottaison dans l'eau. */
     function stepBody(e, dt) {
-      if (P.inWater(world, e.pos, e.h)) {
+      var sb = SPECS[e.type];
+      if (sb && sb.lest && P.inWater(world, e.pos, e.h)) {
+        // lesté : la verticale a déjà été réglée par Faune.lester
+      } else if (P.inWater(world, e.pos, e.h)) {
         e.vel.y -= GRAVITY * 0.28 * dt;
         if (e.vel.y < -2.2) e.vel.y = -2.2;
         if (e.type !== 'item') {
@@ -284,6 +464,88 @@
       return hit;
     }
 
+    /* Ligne de vue : un tireur ne tire pas à travers un mur. On lance le
+       rayon des yeux de la créature vers la poitrine du joueur. */
+    function voitCible(e, cible) {
+      var o = { x: e.pos.x, y: e.pos.y + e.h * 0.85, z: e.pos.z };
+      var tx = cible.pos.x - o.x, ty = cible.pos.y + 1.2 - o.y, tz = cible.pos.z - o.z;
+      var d = Math.hypot(tx, ty, tz);
+      if (d < 1e-6) return true;
+      var hit = P.raycast(world, o, { x: tx / d, y: ty / d, z: tz / d }, d,
+                          function (id) { return C.isSolid(id); });
+      return !hit || hit.t >= d - 0.3;
+    }
+
+    /* Visée balistique : la flèche retombe, on vise donc un peu au-dessus
+       de la cible, d'autant plus qu'elle est loin. Une rafale (n > 1)
+       s'ouvre en éventail horizontal. */
+    function viser(e, cible, tir) {
+      var o = { x: e.pos.x, y: e.pos.y + e.h * 0.85, z: e.pos.z };
+      var tx = cible.pos.x - o.x, tz = cible.pos.z - o.z;
+      var ty = cible.pos.y + 1.2 - o.y;
+      var dh = Math.hypot(tx, tz) || 1;
+      var t = dh / ARROW_SPEED;
+      ty += 0.5 * ARROW_GRAVITY * t * t;
+      var base = Math.atan2(tz, tx);
+      var dirs = [];
+      for (var i = 0; i < tir.n; i++) {
+        var a = base + (i - (tir.n - 1) / 2) * 0.12;
+        var hx = Math.cos(a) * dh, hz = Math.sin(a) * dh;
+        var n = Math.hypot(hx, ty, hz);
+        dirs.push({ x: hx / n, y: ty / n, z: hz / n });
+      }
+      // la flèche part devant la créature, pas de l'intérieur de sa propre boîte
+      o.x += (tx / dh) * (e.w / 2 + 0.2); o.z += (tz / dh) * (e.w / 2 + 0.2);
+      return { origine: o, directions: dirs, degats: tir.degats, genre: tir.genre || 'fleche' };
+    }
+
+    function sbires(maitre) {
+      var n = 0;
+      for (var i = 0; i < list.length; i++) if (list[i].maitre === maitre.eid && !list[i].dead) n++;
+      return n;
+    }
+
+    /* Nageurs et volants. Le déplacement vient de Faune ; les attaques
+       (morsure, tir, renforts) suivent les mêmes règles que sur la terre ferme. */
+    function stepFaune(e, s, dt, player, rand) {
+      var agressif = !!(s.hostile || (s.neutral && e.enrage));
+      var ctx = { world: world, cible: player, rand: rand, agressif: agressif };
+      var act = null;
+      if (s.nageur) {
+        var res = MC.Faune.nager(e, s, dt, ctx);
+        if (res.degats) damage(e, res.degats);
+      } else {
+        MC.Faune.volerVers(e, s, dt, ctx);
+      }
+      var hit = P.move(world, e, dt, e.w, e.h);
+      e.onGround = !!hit.landed;
+      if (!agressif || !player || player.dead) return null;
+      var dx = player.pos.x - e.pos.x, dz = player.pos.z - e.pos.z;
+      var dy = player.pos.y + 0.9 - (e.pos.y + e.h / 2);
+      var dist = Math.hypot(dx, dz), dist3 = Math.hypot(dx, dy, dz);
+      e.attackCd -= dt;
+      if (dist3 < 0.9 + s.w / 2 && e.attackCd <= 0) {
+        e.attackCd = 1.1;
+        act = { attack: degatsAvecArme(s, e.arme) };
+      }
+      var tir = tirDe(e, s);
+      if (tir) {
+        e.tirCd = (e.tirCd === undefined ? tir.cadence * 0.5 : e.tirCd) - dt;
+        if (!act && e.tirCd <= 0 && dist < tir.portee && dist3 > 1.5 && voitCible(e, player)) {
+          e.tirCd = tir.cadence;
+          act = { tir: viser(e, player, tir) };
+        }
+      }
+      if (s.invoque) {
+        e.invocCd = (e.invocCd === undefined ? 3 : e.invocCd) - dt;
+        if (!act && e.invocCd <= 0) {
+          e.invocCd = s.invoque.cadence;
+          if (sbires(e) < s.invoque.max) act = { invoque: s.invoque };
+        }
+      }
+      return act;
+    }
+
     /* IA : poursuite pour les hostiles, errance pour les autres. */
     function stepAI(e, dt, player, rand) {
       var r = rand || Math.random;
@@ -292,28 +554,78 @@
 
       var dx = player.pos.x - e.pos.x, dz = player.pos.z - e.pos.z;
       var dist = Math.hypot(dx, dz);
+      var agressif = s.hostile || (s.neutral && e.enrage);
+      var vue = s.vue || 18;
 
-      if (s.hostile && dist < 18) {
-        // poursuite
+      if (agressif && dist < vue && !player.dead) {
+        var tir = tirDe(e, s);
         var d = dist || 1;
-        e.vel.x = (dx / d) * s.speed;
-        e.vel.z = (dz / d) * s.speed;
+        var ux = dx / d, uz = dz / d;
         var cp = capVers(dx, dz);
         if (cp !== null) e.yaw = cp;
+        var act = null;
+
+        // ── déplacement ──
+        var vx = ux * s.speed, vz = uz * s.speed;
+        if (tir) {
+          // un tireur garde ses distances : il recule si on le serre, tourne autour sinon
+          if (dist < tir.recul) { vx = -ux * s.speed; vz = -uz * s.speed; }
+          else if (dist < tir.portee * 0.7) {
+            var sens = (e.eid % 2) ? 1 : -1;
+            vx = -uz * s.speed * 0.5 * sens; vz = ux * s.speed * 0.5 * sens;
+          }
+        }
+        if (s.sauteur) {
+          // un slime ne glisse pas : il reste posé puis bondit vers sa proie
+          e.sautCd = (e.sautCd || 0) - dt;
+          if (e.onGround) {
+            if (e.sautCd <= 0) {
+              e.sautCd = 0.9 + r() * 0.6;
+              e.vel.y = 7.5;
+              e.vel.x = vx * 1.6; e.vel.z = vz * 1.6;
+            } else { e.vel.x = P.approach(e.vel.x, 0, 10, dt); e.vel.z = P.approach(e.vel.z, 0, 10, dt); }
+          }
+        } else {
+          e.vel.x = vx; e.vel.z = vz;
+        }
+        // bond : l'araignée se jette sur sa proie à courte distance
+        e.bondCd = (e.bondCd || 0) - dt;
+        if (s.bond && e.onGround && e.bondCd <= 0 && dist > 2.2 && dist < 6) {
+          e.bondCd = 3 + r() * 1.5;
+          e.vel.y = 6.2; e.vel.x = ux * 8; e.vel.z = uz * 8;
+        }
         // sauter par-dessus un obstacle d'un bloc
-        if (e.onGround) {
-          var ax = Math.floor(e.pos.x + (dx / d) * 0.7);
-          var az = Math.floor(e.pos.z + (dz / d) * 0.7);
+        if (e.onGround && !s.sauteur) {
+          var ax = Math.floor(e.pos.x + ux * (0.4 + s.w / 2));
+          var az = Math.floor(e.pos.z + uz * (0.4 + s.w / 2));
           var front = world.getBlock(ax, Math.floor(e.pos.y), az);
           var above = world.getBlock(ax, Math.floor(e.pos.y) + 1, az);
           if (C.isSolid(front) && !C.isSolid(above)) e.vel.y = 8.2;
         }
+
+        // ── attaques ──
         e.attackCd -= dt;
         var dy = Math.abs(player.pos.y - e.pos.y);
-        if (dist < 1.3 && dy < 2 && e.attackCd <= 0) {
+        var allonge = 0.8 + s.w / 2;
+        if (dist < allonge && dy < Math.max(2, s.h) && e.attackCd <= 0) {
           e.attackCd = 1.1;
-          return { attack: s.damage };
+          act = { attack: degatsAvecArme(s, e.arme) };
         }
+        if (tir) {
+          e.tirCd = (e.tirCd === undefined ? tir.cadence * 0.5 : e.tirCd) - dt;
+          if (!act && e.tirCd <= 0 && dist < tir.portee && dist > 1.5 && voitCible(e, player)) {
+            e.tirCd = tir.cadence;
+            act = { tir: viser(e, player, tir) };
+          }
+        }
+        if (s.invoque) {
+          e.invocCd = (e.invocCd === undefined ? 3 : e.invocCd) - dt;
+          if (!act && e.invocCd <= 0) {
+            e.invocCd = s.invoque.cadence;
+            if (sbires(e) < s.invoque.max) act = { invoque: s.invoque };
+          }
+        }
+        return act;
       } else {
         // errance : on change de cap de loin en loin
         e.wanderCd -= dt;
@@ -344,6 +656,10 @@
 
     /* Un tour de simulation. Renvoie les événements que le jeu doit traiter :
        dégâts au joueur et objets ramassés. */
+    function zoneChargee(e) {
+      return !world.estCharge || world.estCharge(e.pos.x, e.pos.z);
+    }
+
     function update(dt, player, opts) {
       opts = opts || {};
       var rand = opts.rand || Math.random;
@@ -351,6 +667,14 @@
 
       for (var i = list.length - 1; i >= 0; i--) {
         var e = list[i];
+        if (!e || e.dead) continue;
+        /* Chunk absent : on gèle le corps. Sans sol chargé, la gravité le
+           faisait tomber dans le vide jusqu'à y < -20 — les créatures
+           disparaissaient et le butin au sol était perdu. */
+        if (!zoneChargee(e)) {
+          if (e.type === 'arrow') remove(e);
+          continue;
+        }
         e.age += dt;
         if (e.hurtCd > 0) e.hurtCd -= dt;
 
@@ -381,12 +705,59 @@
           continue;
         }
 
-        var act = stepAI(e, dt, player, rand);
-        stepBody(e, dt);
+        var se = SPECS[e.type];
+        var act;
+        if (se.vehicule) {
+          // un véhicule abandonné roule sur son élan, flotte ou retombe ; piloté,
+          // c'est le jeu qui le conduit, avec les commandes du joueur
+          if (!e.conducteur && MC.Vehicules) MC.Vehicules.conduire(e, dt, world, null);
+          continue;
+        }
+        if (se.nageur || se.volant) {
+          act = stepFaune(e, se, dt, player, rand);
+        } else {
+          act = stepAI(e, dt, player, rand);
+          if (se.lest) MC.Faune.lester(e, se, dt, { world: world, cible: player,
+                                                   agressif: !!(se.hostile || e.enrage) });
+          stepBody(e, dt);
+        }
+        if (e.dead) continue;
         if (act && act.attack) events.damage += act.attack;
+        // méduse : elle pique quiconque la frôle
+        if (se.pique && player && !player.dead) {
+          e.piqueCd = (e.piqueCd || 0) - dt;
+          if (e.piqueCd <= 0 && P.boxOverlap(e.pos.x, e.pos.y, e.pos.z, e.w + 0.2, e.h,
+                                             player.pos.x, player.pos.y, player.pos.z, 0.6, 1.8)) {
+            e.piqueCd = 1;
+            events.damage += se.pique;
+          }
+        }
+        if (act && act.tir) {
+          for (var t = 0; t < act.tir.directions.length; t++) {
+            tirer(act.tir.origine, act.tir.directions[t], ARROW_SPEED, act.tir.degats, e, act.tir.genre);
+          }
+          events.tirs = (events.tirs || 0) + 1;
+        }
+        if (act && act.invoque) {
+          for (var k = 0; k < act.invoque.n; k++) {
+            var ang = rand() * Math.PI * 2;
+            var sx = e.pos.x + Math.cos(ang) * 1.6, sz = e.pos.z + Math.sin(ang) * 1.6;
+            var sp = SPECS[act.invoque.type];
+            // on n'invoque pas dans un mur
+            if (P.collides(world, sx, e.pos.y, sz, sp.w, sp.h)) { sx = e.pos.x; sz = e.pos.z; }
+            spawn(act.invoque.type, sx, e.pos.y, sz, { maitre: e.eid, donjon: e.donjon || null });
+          }
+          events.invocations = (events.invocations || 0) + 1;
+        }
 
-        // une créature ne traverse pas le joueur
-        if (player && !player.dead) ecarter(e, player, dt, 1, 0);
+        // une créature ne traverse pas le joueur — sans pour autant entrer dans un mur,
+        // comme les deux autres séparations : sinon le joueur l'enfonçait dans la roche
+        if (player && !player.dead) {
+          var avX = e.pos.x, avZ = e.pos.z;
+          if (ecarter(e, player, dt, 1, 0) > 0 && P.collides(world, e.pos.x, e.pos.y, e.pos.z, e.w, e.h)) {
+            e.pos.x = avX; e.pos.z = avZ;
+          }
+        }
 
         // noyade et chute dans le vide
         if (e.pos.y < -20) remove(e);
@@ -466,26 +837,111 @@
 
     /* Apparition : zombies la nuit, animaux et villageois le jour.
        Toujours hors de vue immédiate du joueur, sur un sol valide. */
+    /* Éveille le gardien d'un donjon au centre de sa salle. Un seul à la
+       fois : le rappeler tant qu'il vit ne fait rien. */
+    function invoquerGardien(d) {
+      for (var i = 0; i < list.length; i++) {
+        if (list[i].donjon === d.id && SPECS[list[i].type].boss && !list[i].dead) return null;
+      }
+      return spawn(d.boss, d.spawn.x, d.spawn.y, d.spawn.z, { donjon: d.id });
+    }
+
+    /* Apparition. Le point d'abord : son biome ET son milieu décident de qui
+       peut y naître — dans l'eau la faune marine, en l'air les oiseaux, au sol
+       le reste. Toujours hors de vue immédiate du joueur. */
     function trySpawn(player, isNight, rand, limits) {
       var r = rand || Math.random;
       var lim = limits || { zombie: 12, sheep: 8, villager: 4 };
-      var type = isNight
-        ? (r() < 0.8 ? 'zombie' : 'sheep')
-        : (r() < 0.65 ? 'sheep' : 'villager');
-      if (countOf(type) >= lim[type]) return null;
 
       var ang = r() * Math.PI * 2;
       var dd = 18 + r() * 22;                       // ni sur le joueur, ni trop loin
       var bx = Math.round(player.pos.x + Math.cos(ang) * dd);
       var bz = Math.round(player.pos.z + Math.sin(ang) * dd);
+
+      var nuitHostile = isNight && r() < 0.8;
+      var bio = world.biomeAt ? world.biomeAt(bx, bz) : null;
+      if (!bio || !MC.Biomes) {
+        // monde sans biomes (tests) : la répartition d'origine, au sol
+        var t0 = nuitHostile ? 'zombie' : (r() < 0.65 ? 'sheep' : 'villager');
+        return naitreAuSol(t0, bx, bz, lim, r);
+      }
       var gy = world.groundAt(bx, bz, true);
       if (gy <= 0) return null;
-      var ground = world.getBlock(bx, gy, bz);
-      if (ground !== B.GRASS && ground !== B.SAND && ground !== B.DIRT) return null;
-      if (gy < C.SEA_LEVEL) return null;             // pas sous l'eau
+      var eau = C.isWater(world.getBlock(bx, gy + 1, bz));
+      var type;
+      if (eau) {
+        type = MC.Biomes.tirerMob(bio.mobsEau, r());
+        if (!type) return null;
+        // les noyés ne sortent qu'à la nuit
+        if (type === 'drowned' && !isNight) return null;
+        return naitreDansLEau(type, bx, gy, bz, lim, r);
+      }
+      if (r() < 0.22) {
+        type = MC.Biomes.tirerMob(bio.mobsCiel, r());
+        if (type) return naitreEnLAir(type, bx, gy, bz, lim, r);
+      }
+      type = MC.Biomes.tirerMob(nuitHostile ? bio.mobsNuit : bio.mobsJour, r());
+      if (!type) return null;
+      return naitreAuSol(type, bx, bz, lim, r);
+    }
+
+    var SOLS_VALIDES = [B.GRASS, B.SAND, B.DIRT, B.SNOW, B.RED_SAND, B.MYCELIUM, B.GRAVEL, B.STONE];
+    function naitreAuSol(type, bx, bz, lim, r) {
       var s = SPECS[type];
+      if (!s || !sousPlafond(type, s, lim)) return null;
+      var gy = world.groundAt(bx, bz, true);
+      if (gy <= 0) return null;
+      if (SOLS_VALIDES.indexOf(world.getBlock(bx, gy, bz)) < 0) return null;
+      if (gy < C.SEA_LEVEL) return null;             // pas sous l'eau
       if (P.collides(world, bx + 0.5, gy + 1, bz + 0.5, s.w, s.h)) return null;
-      return spawn(type, bx + 0.5, gy + 1, bz + 0.5);
+      return spawn(type, bx + 0.5, gy + 1, bz + 0.5, { arme: tirerArme(type, r) || undefined });
+    }
+    function naitreDansLEau(type, bx, gy, bz, lim, r) {
+      var s = SPECS[type];
+      if (!s || !sousPlafond(type, s, lim)) return null;
+      // une profondeur au hasard dans la colonne d'eau
+      var haut = gy + 1;
+      while (haut < C.WORLD_H - 1 && C.isWater(world.getBlock(bx, haut + 1, bz))) haut++;
+      var y = s.lest ? gy + 1 : gy + 1 + Math.floor(r() * Math.max(1, haut - gy - Math.ceil(s.h)));
+      if (P.collides(world, bx + 0.5, y, bz + 0.5, s.w, s.h)) return null;
+      return spawn(type, bx + 0.5, y, bz + 0.5, { arme: tirerArme(type, r) || undefined });
+    }
+    function naitreEnLAir(type, bx, gy, bz, lim, r) {
+      var s = SPECS[type];
+      if (!s || !sousPlafond(type, s, lim)) return null;
+      var y = Math.max(gy, C.SEA_LEVEL) + 3 + Math.floor(r() * 6);
+      if (y >= C.WORLD_H - 2) return null;
+      if (P.collides(world, bx + 0.5, y, bz + 0.5, s.w, s.h)) return null;
+      return spawn(type, bx + 0.5, y, bz + 0.5);
+    }
+
+    /* Plafonds : par type quand il est donné, sinon global — `monstres` pour
+       tous les hostiles réunis (repli : le plafond zombie), `animaux` pour le
+       reste. Les occupants des donjons ne comptent pas : ils ne sont pas nés
+       du cycle d'apparition et ne doivent pas l'étouffer. */
+    function sousPlafond(type, s, lim) {
+      if (lim[type] !== undefined && countOf(type) >= lim[type]) return false;
+      var n = 0, i, e, se;
+      if (s.hostile) {
+        var capM = lim.monstres !== undefined ? lim.monstres : lim.zombie;
+        if (capM === undefined) return true;
+        for (i = 0; i < list.length; i++) {
+          e = list[i]; se = SPECS[e.type];
+          if (se && se.hostile && !e.donjon) n++;
+        }
+        return n < capM;
+      }
+      if (lim[type] !== undefined) return true;
+      var famille = s.nageur ? 'marins' : (s.volant ? 'oiseaux' : 'animaux');
+      var defaut = { marins: 12, oiseaux: 8, animaux: 8 };
+      var cap = lim[famille] !== undefined ? lim[famille] : defaut[famille];
+      for (i = 0; i < list.length; i++) {
+        e = list[i]; se = SPECS[e.type];
+        if (!se || se.hostile || !se.speed || se.npc || se.boss || e.donjon) continue;
+        var fe = se.nageur ? 'marins' : (se.volant ? 'oiseaux' : 'animaux');
+        if (fe === famille) n++;
+      }
+      return n < cap;
     }
 
     /* Au lever du jour les zombies disparaissent, comme ils brûleraient au soleil. */
@@ -493,7 +949,9 @@
       if (isNight) return 0;
       var n = 0;
       for (var i = list.length - 1; i >= 0; i--) {
-        if (list[i].type === 'zombie') { remove(list[i]); n++; }
+        var s = SPECS[list[i].type];
+        // sous terre, un donjon protège ses occupants du soleil
+        if (s && s.brule && !list[i].donjon) { remove(list[i]); n++; }
       }
       return n;
     }
@@ -504,7 +962,10 @@
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, ecarter: ecarter,
       countOf: countOf, trySpawn: trySpawn, burnUndead: burnUndead, stepBody: stepBody,
-      stepAI: stepAI,
+      stepAI: stepAI, evenements: evenements, voitCible: voitCible, viser: viser,
+      sbires: sbires, sousPlafond: sousPlafond, zoneChargee: zoneChargee, stepFaune: stepFaune,
+      tirerArme: tirerArme, degatsAvecArme: degatsAvecArme, tirDe: tirDe,
+      invoquerGardien: invoquerGardien,
     };
   }
 

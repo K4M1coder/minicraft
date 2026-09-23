@@ -119,7 +119,7 @@
       if (cultures[id]) continue;
       blocs.push({ id: id, nom: d.name, categorie: 'bloc' });
     }
-    for (var j = C.FIRST_ITEM; j < 200; j++) {
+    for (var j = C.FIRST_ITEM; j < C.ITEMS.length; j++) {
       var o = C.ITEMS[j];
       if (!o) continue;
       objets.push({ id: j, nom: o.name, categorie: 'objet' });

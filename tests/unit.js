@@ -28,7 +28,7 @@
         for (var y = C.WORLD_H - 1; y > 0; y--) {
           var b = this.getBlock(x, y, z);
           if (!C.isSolid(b)) continue;
-          if (natural && (b === B.LOG || b === B.LEAVES)) continue;
+          if (natural && (C.isLog(b) || C.isLeaves(b))) continue;
           return y;
         }
         return 0;
@@ -36,8 +36,9 @@
       /* Le monde factice doit exposer la MEME interface que le vrai : sans
          hasSupport, le garde-fou des torches est silencieusement contourne et
          le test passe pour une mauvaise raison. */
-      hasSupport: function (x, y, z) {
+      hasSupport: function (x, y, z, mode) {
         if (C.isSolid(this.getBlock(x, y - 1, z))) return true;
+        if (mode === 'sol') return false;
         var lat = [[1, 0], [-1, 0], [0, 1], [0, -1]];
         for (var i = 0; i < lat.length; i++)
           if (C.isSolid(this.getBlock(x + lat[i][0], y, z + lat[i][1]))) return true;
@@ -50,7 +51,7 @@
           var b = self.getBlock(bx, by, bz);
           var d = C.BLOCKS[b];
           if (!d || !d.needsSupport) return;
-          if (!self.hasSupport(bx, by, bz)) { self.setBlock(bx, by, bz, 0); tombees.push([bx, by, bz, b]); }
+          if (!self.hasSupport(bx, by, bz, d.needsSupport)) { self.setBlock(bx, by, bz, 0); tombees.push([bx, by, bz, b]); }
         });
         return tombees;
       },
@@ -265,7 +266,9 @@
       w.getChunk(0, 0, true);
       var h = w.groundAt(8, 8, true);
       var surf = w.getBlock(8, h, 8);
-      A.ok(surf === B.GRASS || surf === B.SAND, 'surface herbe ou sable, obtenu ' + C.nameOf(surf));
+      // selon le biome : herbe, sable, neige, gravier du fond marin, mycélium…
+      A.ok(C.isSolid(surf) && surf !== B.BEDROCK && !C.isLog(surf) && !C.isLeaves(surf),
+           'surface naturelle pleine, obtenu ' + C.nameOf(surf));
       A.equal(w.getBlock(8, 0, 8), B.BEDROCK, 'socle');
       // juste sous la surface c'est forcement plein : les grottes gardent une
       // marge sous le sol pour ne pas ouvrir de trou beant au milieu du paysage

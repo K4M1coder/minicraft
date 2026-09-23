@@ -62,8 +62,8 @@
     document.dispatchEvent(new MouseEvent('mousemove', { movementX: dx, movementY: dy }));
   }
 
-  var C, I, B, Inv;
-  function initRefs() { C = MC.Core; I = C.I; B = C.B; Inv = MC.Inventory; }
+  var C, I, B, Inv, P;
+  function initRefs() { C = MC.Core; I = C.I; B = C.B; Inv = MC.Inventory; P = MC.Physics; }
 
   /* Remet la partie dans un état connu : au sol, en vie, inventaire vide. */
   async function reset(g) {
@@ -627,13 +627,18 @@
                              nx: 0, ny: 1, nz: 0 });
     A.equal(r, 'place', 'torche posee');
     A.equal(g.world.getBlock(bx, by + 1, bz), B.TORCH);
-    A.equal(g.world.lights.size, 1, 'inscrite au registre');
+    // le registre peut deja contenir les torches d'un donjon voisin : on suit CELLE-CI
+    A.ok(g.world.lights.has(g.world.key3(bx, by + 1, bz)), 'inscrite au registre');
+    function surLaTorche(L) {
+      return L.visible && Math.abs(L.position.x - (bx + 0.5)) < 0.01 &&
+             Math.abs(L.position.z - (bz + 0.5)) < 0.01 && Math.abs(L.position.y - (by + 1.55)) < 0.01;
+    }
     await frames(4);
-    var allumees = g.render.torchPool.filter(function (L) { return L.visible; }).length;
-    A.gt(allumees, 0, 'une lumiere ponctuelle est active');
+    A.equal(g.render.torchPool.filter(surLaTorche).length, 1, 'une lumiere ponctuelle est placee sur elle');
     g.world.setBlock(bx, by + 1, bz, 0);
     await frames(4);
-    A.equal(g.render.torchPool.filter(function (L) { return L.visible; }).length, 0,
+    A.notOk(g.world.lights.has(g.world.key3(bx, by + 1, bz)), 'retiree du registre');
+    A.equal(g.render.torchPool.filter(surLaTorche).length, 0,
       'lumiere eteinte quand la torche disparait');
   });
 
@@ -909,6 +914,8 @@
     await frames(3);
     var st = g.equipe[1].player.state;
     st.flying = true;
+    // en l'air, loin du relief : une pente devant lui l'arrêterait, pas la manette
+    st.pos.y = C.WORLD_H - 4; st.vel.y = 0;
     var x0 = st.pos.x, z0 = st.pos.z;
     await frames(40);
     var d = Math.hypot(st.pos.x - x0, st.pos.z - z0);
@@ -972,6 +979,7 @@
     g.equipe[0].player.state.dead = true;
     var st2 = g.equipe[1].player.state;
     st2.flying = true;
+    st2.pos.y = C.WORLD_H - 4; st2.vel.y = 0;       // hors du relief, comme SPLIT-011
     var x0 = st2.pos.x, z0 = st2.pos.z;
     await frames(40);
     A.gt(Math.hypot(st2.pos.x - x0, st2.pos.z - z0), 0.5, 'le joueur 2 bouge encore');
@@ -1435,7 +1443,11 @@
     champ.dispatchEvent(new Event('input', { bubbles: true }));
     await frames(2);
     var apres = pan.querySelectorAll('.livre-liste .rec').length;
-    A.equal(apres, 3, 'les trois pioches');
+    // autant d'entrées que de recettes de pioche (bois, pierre, fer, diamant)
+    var recettesPioche = MC.Inventory.RECIPES.filter(function (r) {
+      var d = C.ITEMS[r.out]; return d && d.tool === 'pickaxe';
+    }).length;
+    A.equal(apres, recettesPioche, 'toutes les pioches');
     A.lt(apres, total, 'la liste est bien restreinte');
     /* Taper « e » dans la recherche ne doit pas refermer l'inventaire : le
        champ absorbe les touches du jeu. */
@@ -1486,6 +1498,131 @@
     A.equal(s.inv.count(I.IRON_PICKAXE), 1, 'la pioche en fer est arrivee sans craft');
     await fermerInv(g);
     g.ui.setRegles(reglesAvant);
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Monde : streaming, donjons
+  // ══════════════════════════════════════════════════════════════════════════
+  e2e('SPEC-TERRAIN-004 : en ecran partage, le sol suit le joueur 2 qui s eloigne',
+      async function (g) {
+    await reset(g);
+    fausseManette([{ axes: [0, 0, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
+    await frames(3);
+    var st = g.equipe[1].player.state;
+    st.flying = true;
+    st.pos.x += 400; st.pos.y = C.WORLD_H - 4; st.vel.x = st.vel.y = st.vel.z = 0;
+    // la génération est budgétée : on laisse le streaming rattraper
+    for (var i = 0; i < 40 && !g.world.estCharge(st.pos.x, st.pos.z); i++) await frames(5);
+    A.ok(g.world.estCharge(st.pos.x, st.pos.z), 'le chunk sous le joueur 2 est chargé');
+    A.ok(g.world.estCharge(g.player.state.pos.x, g.player.state.pos.z), 'celui du joueur 1 aussi');
+    soloRetabli(g); await frames(3);
+  });
+
+  /* Maillages de terrain présents dans la scène sans appartenir à un chunk du
+     monde courant : ce sont les « blocs fantômes » d'une partie précédente. */
+  function maillagesOrphelins(g) {
+    var siens = new Set();
+    g.world.chunks.forEach(function (c) {
+      ['mesh', 'meshC', 'meshT'].forEach(function (k) { if (c[k]) siens.add(c[k]); });
+    });
+    var mats = [g.render.materials.opaque, g.render.materials.cutout, g.render.materials.blend];
+    return g.render.scene.children.filter(function (o) {
+      return o.isMesh && mats.indexOf(o.material) >= 0 && !siens.has(o);
+    }).length;
+  }
+
+  e2e('SPEC-TERRAIN-007 : changer de partie ne laisse aucun bloc fantome de l ancien monde',
+      async function (g) {
+    await reset(g);
+    A.equal(maillagesOrphelins(g), 0, 'départ propre');
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-nouvelle').click(); await frames(2);
+    document.querySelector('#f-nom').value = 'Fantomes';
+    document.querySelector('#btn-creer').click();
+    await frames(8);
+    A.equal(maillagesOrphelins(g), 0, 'après création : aucun maillage de l ancienne graine');
+    var m = MC.Saves.creer(localStorage, { nom: 'Autre carte', graine: 777 });
+    g.afficherMenu(); await frames(2);
+    document.querySelector('.charger[data-id="' + m.id + '"]').click();
+    await frames(8);
+    A.equal(g.world.seed, 777, 'la partie chargée a sa graine');
+    A.equal(maillagesOrphelins(g), 0, 'après chargement non plus');
+    videParties();
+    await reset(g);
+  });
+
+  e2e('SPEC-DONJON-004 / SPEC-DONJON-006 : entrer dans un donjon eveille son gardien',
+      async function (g) {
+    var s = await reset(g);
+    var l = g.world.donjons.dansZone(s.pos.x - 900, s.pos.z - 900, s.pos.x + 900, s.pos.z + 900)
+      .filter(function (x) { return x.type === 'crypte'; });
+    var d = l[0];
+    A.ok(d, 'un donjon à proximité');
+    g.world.donjonsVaincus.delete(d.id);
+    s.pos.x = d.x + 2.5; s.pos.y = d.y + 1; s.pos.z = d.z + 0.5;
+    s.vel.x = s.vel.y = s.vel.z = 0;
+    // une téléportation n'est pas une chute : sans cela, le joueur encore en
+    // l'air au point d'apparition « tombe » de 40 blocs et meurt en arrivant
+    s.fallFrom = null; s.onGround = true;
+    g.streamChunks(true);
+    await frames(4);
+    var boss = g.entities.list.filter(function (e) { return e.donjon === d.id && MC.EntitySpecs[e.type].boss; });
+    A.equal(boss.length, 1, 'le gardien s est éveillé (état : ' + g.input.state + ')');
+    var barre = document.querySelector('.barre-boss');
+    A.ok(barre && barre.style.display !== 'none', 'sa barre de vie s affiche');
+    A.ok(barre.textContent.indexOf(MC.EntitySpecs[boss[0].type].nom) >= 0, 'avec son nom');
+    s.hp = 20;
+    g.entities.damage(boss[0], 9999);
+    await frames(3);
+    A.ok(g.world.donjonsVaincus.has(d.id), 'la victoire est mémorisée');
+    A.equal(barre.style.display, 'none', 'la barre disparaît');
+    // parti puis revenu : il ne se relève pas
+    g.entities.list.length = 0;
+    await frames(3);
+    A.equal(g.entities.list.filter(function (e) { return e.donjon === d.id && MC.EntitySpecs[e.type] &&
+      MC.EntitySpecs[e.type].boss; }).length, 0, 'pas de second gardien');
+    // le coffre donne son butin, une seule fois
+    var inv = g.coffreDe(d.coffre.x, d.coffre.y, d.coffre.z);
+    A.ok(inv && inv.slots.some(function (x) { return x; }), 'le coffre est garni');
+    A.equal(g.coffreDe(d.coffre.x, d.coffre.y, d.coffre.z), inv, 'et reste le même coffre');
+    g.entities.list.length = 0;
+    delete g.chests[d.coffre.x + ',' + d.coffre.y + ',' + d.coffre.z];
+    g.world.coffresPilles.clear();
+    g.world.donjonsVaincus.clear();
+    await reset(g);
+  });
+
+  e2e('SPEC-VEHIC-006 / SPEC-VEHIC-002 : monter en voiture, rouler au clavier, descendre avec F',
+      async function (g) {
+    var s = await reset(g);
+    s.fallFrom = null;
+    var V = MC.Vehicules;
+    // une piste plate, dégagée, au-dessus du relief
+    var y0 = Math.floor(s.pos.y) + 12;
+    for (var x = -3; x <= 3; x++) for (var z = -40; z <= 3; z++) {
+      g.world.setBlock(Math.floor(s.pos.x) + x, y0, Math.floor(s.pos.z) + z, B.STONE);
+      for (var h = 1; h <= 3; h++) g.world.setBlock(Math.floor(s.pos.x) + x, y0 + h, Math.floor(s.pos.z) + z, 0);
+    }
+    var auto = V.poser(g.entities, 'voiture', Math.floor(s.pos.x) + 0.5, y0 + 1, Math.floor(s.pos.z) + 0.5, 0);
+    await frames(3);
+    A.ok(g.monterDans(auto), 'on monte');
+    A.equal(s.monture, auto, 'le joueur est au volant');
+    var z0 = auto.pos.z;
+    key('KeyW');
+    // 7 m/s² d'accélération : deux secondes donnent une bonne dizaine de blocs
+    await frames(120);
+    key('KeyW', 'keyup');
+    A.ok(auto.pos.z < z0 - 5, 'la voiture a avancé (' + (z0 - auto.pos.z).toFixed(1) + ' blocs)');
+    A.ok(Math.abs(s.pos.z - auto.pos.z) < 0.01, 'le conducteur a suivi');
+    var hud = document.querySelector('.debug') || document.body;
+    A.ok(/km\/h/.test(hud.textContent || document.body.textContent), 'le HUD affiche la vitesse');
+    key('KeyF');
+    await frames(3);
+    A.equal(s.monture, null, 'F : pied à terre');
+    A.notOk(P.collides(g.world, s.pos.x, s.pos.y, s.pos.z, 0.6, 1.8), 'à côté de la voiture, pas dedans');
+    g.entities.remove(auto);
+    await reset(g);
   });
 
   // ─── exécution ─────────────────────────────────────────────────────────────

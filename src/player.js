@@ -51,7 +51,15 @@
       pl.swimming = swimming;
       var running = keys.sprint && !swimming;
       var speed = pl.flying ? FLY : (running ? RUN : WALK);
-      if (swimming) speed *= SWIM_DRAG;
+      if (swimming) {
+        speed *= SWIM_DRAG;
+        // le trident fend l'eau : on nage presque aussi vite qu'on marche
+        var enMain = held() && C.def(held().id);
+        if (enMain && enMain.nageRapide) speed *= 1.9;
+      }
+      // une toile d'araignée englue
+      var englue = P.occupeAvec(world, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH, 'ralentit');
+      if (englue) speed *= englue.ralentit;
       if (pl.hunger <= 0) speed *= 0.6;              // affamé, on traîne
 
       pl.vel.x = P.approach(pl.vel.x, wish.x * speed, ACCEL, dt);
@@ -74,8 +82,20 @@
         }
       }
 
+      /* Échelles et lianes : on monte en avançant (ou en sautant), on
+         redescend lentement sinon — et l'on n'y prend jamais de dégâts de chute. */
+      var prise = !pl.flying && P.occupeAvec(world, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH, 'grimpable');
+      pl.grimpe = !!prise;
+      if (prise) {
+        if (keys.forward || keys.jump) pl.vel.y = 3.4;
+        else if (keys.sprint) pl.vel.y = -3;
+        else pl.vel.y = Math.max(pl.vel.y, -1.2);
+        pl.fallFrom = null;
+      }
+      if (englue) pl.vel.y = Math.max(pl.vel.y * 0.5, -1.2);
+
       // suivi de chute, pour les dégâts à l'atterrissage
-      if (!pl.flying && !swimming) {
+      if (!pl.flying && !swimming && !prise) {
         if (pl.vel.y > 0 || pl.onGround) pl.fallFrom = pl.pos.y;
         else if (pl.fallFrom === null) pl.fallFrom = pl.pos.y;
       } else pl.fallFrom = null;
@@ -132,6 +152,13 @@
         pl.regenT += dt * (R.regenMultiplicateur || 1);
         if (pl.regenT >= 3.5) { pl.regenT = 0; heal(1); pl.exhaustion += 1.5; }
       } else pl.regenT = 0;
+
+      // les cactus piquent, par petites touches régulières
+      pl.piqueT = Math.max(0, (pl.piqueT || 0) - dt);
+      var pique = P.contact(world, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH, 0.06, function (id) {
+        return C.BLOCKS[id] && C.BLOCKS[id].hurts;
+      });
+      if (pique && pl.piqueT <= 0) { pl.piqueT = 0.6; hurt(C.BLOCKS[pique].hurts); }
 
       if (pl.hurtFlash > 0) pl.hurtFlash -= dt;
       if (pl.attackCd > 0) pl.attackCd -= dt;
@@ -221,6 +248,34 @@
       if (!id) return null;
       var idef = C.def(id);
 
+      // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
+      if (idef && idef.vehicule) return 'vehicule:' + idef.vehicule;
+
+      /* Engrais : une culture mûrit d'un coup ; sur l'herbe, il fait pousser
+         herbes hautes et fleurs alentour. */
+      if (idef && idef.engrais) {
+        var tst = C.BLOCKS[tb] && C.BLOCKS[tb].stage;
+        if (tst !== undefined && tst < 3) {
+          world.setBlock(target.x, target.y, target.z, C.WHEAT_STAGES[3]);
+          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          return 'grow';
+        }
+        if (tb === B.GRASS) {
+          var n = 0;
+          for (var gx = -2; gx <= 2; gx++) for (var gz = -2; gz <= 2; gz++) {
+            if (world.getBlock(target.x + gx, target.y, target.z + gz) !== B.GRASS) continue;
+            if (world.getBlock(target.x + gx, target.y + 1, target.z + gz) !== 0) continue;
+            if (((gx * 7 + gz * 13 + target.x + target.z) & 3) === 0) continue;   // un peu d'irrégularité
+            var fl = ((gx + gz) & 3) === 0 ? B.FLOWER_RED : ((gx - gz) & 3) === 0 ? B.FLOWER_YELLOW : B.TALL_GRASS;
+            world.setBlock(target.x + gx, target.y + 1, target.z + gz, fl);
+            n++;
+          }
+          if (n && !R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          return n ? 'grow' : null;
+        }
+        return null;
+      }
+
       // houe : herbe/terre -> terre labourée
       if (idef && idef.tool === 'hoe') {
         if ((tb === B.GRASS || tb === B.DIRT)
@@ -246,9 +301,16 @@
 
       // aliment : on mange si la faim n'est pas pleine
       if (idef && idef.food) {
-        if (pl.hunger >= MAX_HUNGER) return null;
+        // un aliment qui soigne se mange même rassasié
+        if (pl.hunger >= MAX_HUNGER && !(idef.soin && pl.hp < MAX_HP)) return null;
         pl.hunger = Math.min(MAX_HUNGER, pl.hunger + idef.food);
+        if (idef.soin) heal(idef.soin);
         pl.inv.consumeAt(pl.selected, 1);
+        // la soupe rend son bol
+        if (idef.rend) {
+          var reste = pl.inv.add(idef.rend, 1);
+          if (reste && entities.dropItem) entities.dropItem(pl.pos.x, pl.pos.y + 1, pl.pos.z, idef.rend, reste);
+        }
         return 'eat';
       }
 
@@ -297,25 +359,31 @@
       var d = C.def(st.id);
       if (!d || !d.ranged) return null;
 
-      // munition : on cherche la premiere pile marquee `ammo`
-      var iMun = -1;
-      for (var i = 0; i < pl.inv.slots.length; i++) {
-        var s2 = pl.inv.slots[i];
-        if (s2 && C.def(s2.id) && C.def(s2.id).ammo) { iMun = i; break; }
-      }
-      if (iMun < 0 && !R.blocsIllimites) return null;
-      var munId = iMun >= 0 ? pl.inv.slots[iMun].id : I.FLECHE;
-      if (iMun >= 0 && !R.blocsIllimites) pl.inv.consumeAt(iMun, 1);
-
       var dir = lookDir();
       var o = eyePos();
-      var e = entities.tirer(
-        { x: o.x + dir.x * 0.4, y: o.y + dir.y * 0.4, z: o.z + dir.z * 0.4 },
-        dir, 34, (C.def(munId) && C.def(munId).damage) || 5, pl);
+      var depart = { x: o.x + dir.x * 0.4, y: o.y + dir.y * 0.4, z: o.z + dir.z * 0.4 };
+      var e;
+      if (d.sansMunition) {
+        // bâton : un sortilège, sans rien consommer
+        e = entities.tirer(depart, dir, d.vitesseTir || 30, d.degatsTir || 6, pl, d.ranged);
+      } else {
+        // munition : on cherche la premiere pile marquee `ammo`
+        var iMun = -1;
+        for (var i = 0; i < pl.inv.slots.length; i++) {
+          var s2 = pl.inv.slots[i];
+          if (s2 && C.def(s2.id) && C.def(s2.id).ammo) { iMun = i; break; }
+        }
+        if (iMun < 0 && !R.blocsIllimites) return null;
+        var munId = iMun >= 0 ? pl.inv.slots[iMun].id : I.FLECHE;
+        if (iMun >= 0 && !R.blocsIllimites) pl.inv.consumeAt(iMun, 1);
+        // arbalète et arc de la jungle : plus rapides, plus forts
+        e = entities.tirer(depart, dir, d.vitesseTir || 34,
+                           ((C.def(munId) && C.def(munId).damage) || 5) + (d.bonusTir || 0), pl);
+      }
 
       var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
       pl.exhaustion += 0.05;
-      return { entity: e, munition: munId, toolBroke: casse };
+      return { entity: e, munition: d.sansMunition ? 0 : munId, toolBroke: casse };
     }
 
     function pickUp(id, n) { return pl.inv.add(id, n); }

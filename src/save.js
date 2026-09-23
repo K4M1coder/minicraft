@@ -5,7 +5,7 @@
   var MC = G.MC = G.MC || {};
 
   var KEY = 'minicraft.save.v1';
-  var VERSION = 1;
+  var VERSION = 2;
 
   /* On ne sauvegarde QUE les blocs modifiés par le joueur, pas les chunks :
      le terrain est reproductible depuis la graine, donc le delta suffit et
@@ -26,6 +26,11 @@
       time: +state.time.toFixed(1),
       overrides: over,
       crops: crops,
+      // donjons : gardiens vaincus et coffres déjà pillés ne reviennent pas
+      donjons: state.world.donjonsVaincus ? Array.from(state.world.donjonsVaincus) : [],
+      pilles: state.world.coffresPilles ? Array.from(state.world.coffresPilles) : [],
+      // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
+      vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
       player: {
         x: +p.pos.x.toFixed(2), y: +p.pos.y.toFixed(2), z: +p.pos.z.toFixed(2),
         yaw: +p.yaw.toFixed(3), pitch: +p.pitch.toFixed(3),
@@ -48,7 +53,22 @@
 
   /* Réinjecte un état sauvegardé. Les overrides sont posés AVANT toute
      génération de chunk : generateChunk les applique ensuite tout seul. */
+  /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés pour
+     laisser la place à de nouveaux blocs ; on convertit donc toute pile
+     d'objet des anciennes sauvegardes plutôt que de les déclarer illisibles. */
+  function migrerV1(data) {
+    var dec = MC.Core.DECALAGE_OBJETS_V1;
+    function id(v) { return v >= 64 ? v + dec : v; }
+    function pile(p) { if (p && p[0]) p[0] = id(p[0]); return p; }
+    if (data.player && data.player.inv) data.player.inv.forEach(pile);
+    (data.chests || []).forEach(function (c) { (c[1] || []).forEach(pile); });
+    (data.furnaces || []).forEach(function (f) { [1, 2, 3].forEach(function (i) { pile(f[i]); }); });
+    data.v = VERSION;
+    return data;
+  }
+
   function apply(data, state) {
+    if (data && data.v === 1) data = migrerV1(JSON.parse(JSON.stringify(data)));
     if (!data || data.v !== VERSION) return false;
     var w = state.world;
     w.overrides.clear();
@@ -59,6 +79,20 @@
     (data.crops || []).forEach(function (c) {
       w.crops.set(c[0] + ',' + c[1] + ',' + c[2], { x: c[0], y: c[1], z: c[2], t: c[3] });
     });
+    if (w.donjonsVaincus) {
+      w.donjonsVaincus.clear();
+      (data.donjons || []).forEach(function (id) { w.donjonsVaincus.add(id); });
+    }
+    if (state.entities && MC.Vehicules) {
+      // les véhicules de la partie en cours cèdent la place à ceux de la sauvegarde
+      state.entities.list.filter(function (e) { return e.vehicule; })
+        .forEach(function (e) { state.entities.remove(e); });
+      MC.Vehicules.restaurer(state.entities, data.vehicules || []);
+    }
+    if (w.coffresPilles) {
+      w.coffresPilles.clear();
+      (data.pilles || []).forEach(function (k) { w.coffresPilles.add(k); });
+    }
     // les chunks déjà en mémoire sont invalides : on les jette pour qu'ils
     // soient régénérés avec les overrides
     w.chunks.forEach(function (c) { if (state.disposeChunk) state.disposeChunk(c); });
@@ -127,6 +161,6 @@
     try { storage.removeItem(KEY); return true; } catch (e) { return false; }
   }
 
-  MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply,
+  MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply, migrerV1: migrerV1,
               save: save, load: load, hasSave: hasSave, clear: clear };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
