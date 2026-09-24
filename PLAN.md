@@ -84,6 +84,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L35** | Profondeurs : flore et récifs sous-marins, biomes souterrains (créatures, donjons, ruines, mines), bioluminescence, tous les minerais | `MER` `SOUTERRAIN` `LUMIERE` `MINERAI` | à faire |
 | **L36** | Ambiance sonore complète et spatialisée : environnement, créatures, actions, interactions, événements (absorbe la proposition L30) | `AUDIO` | à faire |
 | **L23** | Saisons (validé) : journée de 20 minutes, année de 3 heures en quatre saisons, durée du jour, températures, neige, feuillages, gel des lacs, cultures en saison | `SAISON` | à faire |
+| **L38** | Carte de densité (vierge, rurale, urbaine, hyperurbaine) combinée aux biomes et à l'environnement, mégapoles, hiérarchie des routes et rivières navigables, zones de jeu PvP/PvE/PvP seul/PvE seul/sûres ; prolonge L18 (en cours) et complète COMBAT-002, HABITAT-010/011, ROUTE-006 | `DENSITE` `HABITAT` `ROUTE` `ZONE` | à faire |
 | **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la

@@ -564,14 +564,14 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ⏳ |
 | SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ⏳ |
 | SPEC-ROUTE-005 | Aux carrefours, des panneaux indiquent le nom et la distance des lieux ; aux abords des villes, les routes sont éclairées | panneaux, lampadaires | ⏳ |
-| SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme | déplacements le long des tracés | ⏳ |
+| SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme, et des bateaux sur les rivières navigables et le long des côtes, entre les ports | déplacements le long des tracés et des voies d'eau | ⏳ |
 
 ## L19 — identités procédurales
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-HABITAT-010 | Chaque type de bâtiment a plusieurs plans reconnaissables (trois pour la maison, deux au moins pour les autres), agencés procéduralement : deux bâtiments du même type diffèrent | variantes et signatures | ⏳ |
-| SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde | vérification de toutes les variantes | ⏳ |
+| SPEC-HABITAT-010 | Chaque type de bâtiment a plusieurs plans reconnaissables (trois pour la maison, deux au moins pour les autres), agencés procéduralement, et son gabarit suit la densité : fermes et granges en campagne, maisons de ville mitoyennes en ville, immeubles et tours dans les centres des mégapoles ; deux bâtiments du même type diffèrent | variantes, signatures, gabarit selon la densité | ⏳ |
+| SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible, à chaque densité et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde ; les tours ont escaliers ou échelles jusqu'au sommet | vérification de toutes les variantes | ⏳ |
 | SPEC-HABITAT-012 | Les villes ont des quartiers cohérents (centre commerçant, quartiers résidentiels, faubourgs agricoles) et leur taille varie de la petite ville à la grande cité | quartiers et tailles | ⏳ |
 | SPEC-DONJON-013 | Les donjons moyens et grands comptent plusieurs salles reliées par des couloirs, les grands plusieurs niveaux reliés par des escaliers ; toute salle est atteignable depuis l'entrée, le gardien se tient au plus profond, et des gardes peuplent les autres salles | graphe de salles, niveaux, connexité depuis l'entrée, gardien au plus profond | ✅ |
 | SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ✅ |
@@ -606,7 +606,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-PORTE-002 | Des trappes se fabriquent, s'ouvrent et se ferment ; fermées on marche dessus, ouvertes on passe à travers, et une échelle dessous se grimpe jusqu'à elles | recette, collisions trappe ouverte / fermée, échelle | ✅ |
 | SPEC-PORTE-003 | On grimpe aux échelles et aux lianes, on s'y tient, on redescend | montée, maintien, descente | ✅ |
 | SPEC-COMBAT-001 | Contre les créatures : dégâts selon l'arme, recul, brève invulnérabilité, butin à la mort | combat simulé | ✅ |
-| SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP (réglage du serveur, désactivé par défaut), avec les mêmes armes, reculs et délais qu'en PvE ; le serveur fait foi et annonce qui a vaincu qui | attaque d'un joueur par un autre, réglage du serveur, annonce | ⏳ |
+| SPEC-COMBAT-002 | Entre joueurs, en ligne : un joueur en blesse un autre si le serveur autorise le PvP (réglage du serveur, désactivé par défaut) ET si la zone où se tiennent les deux joueurs le permet (SPEC-ZONE-001), avec les mêmes armes, reculs et délais qu'en PvE ; le serveur fait foi et annonce qui a vaincu qui | attaque d'un joueur par un autre, réglage du serveur, zones, annonce | ⏳ |
 | SPEC-PHYS-001 | Gravité, dégâts de chute (amortis par l'eau), collisions et marche d'un bloc suivent des règles fixes | chutes, collisions | ✅ |
 | SPEC-VEHIC-012 | Chaque véhicule se fabrique, se pose, se monte, se conduit et se quitte | parcours de chaque véhicule | ✅ |
 | SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ✅ |
@@ -657,6 +657,23 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-AUDIO-004 | Les interactions s'entendent : portes et trappes, coffres, fourneau, établi, échanges, interface | sons d'interaction | ✅ |
 | SPEC-AUDIO-005 | Les événements s'entendent : tonnerre, éruption, cyclone et tornade, succès, chapitres et fins d'histoire, réveil d'un gardien | sons d'événement | ✅ |
 | SPEC-AUDIO-006 | Les sons sont spatialisés : leur volume et leur panoramique suivent leur position par rapport à l'auditeur, étouffés sous l'eau et derrière la roche ; chaque catégorie a son volume dans les options | spatialisation, étouffement, volumes par catégorie | ✅ |
+
+## L38 — densité, mégapoles et zones de jeu
+
+Les specs HABITAT-008, 009, 012 et ROUTE-001 à 005 (en cours) posent la
+répartition des lieux et leurs routes ; celles-ci les prolongent.
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-DENSITE-001 | Une carte de densité humaine, déterministe (graine), combine un bruit à grande échelle avec l'habitabilité tirée des biomes et des données environnementales (eau douce et côtes, relief, climat, fertilité, volcans) ; elle classe chaque région en vierge, rurale, urbaine ou hyperurbaine | classement stable, cohérent avec biomes et relief | ⏳ |
+| SPEC-DENSITE-002 | Les lieux naissent de cette carte : rien ou presque en zone vierge (grandes étendues sauvages, forêts, montagnes, déserts), fermes, hameaux et villages en zone rurale, villes en zone urbaine, mégapoles en zone hyperurbaine ; les transitions entre classes sont progressives (faubourgs, banlieues, campagne) | lieux par classe, transitions | ⏳ |
+| SPEC-HABITAT-013 | Des mégapoles s'étendent sur plus d'un kilomètre, au bord de l'eau ou dans une grande plaine : centre de tours, quartiers d'immeubles, avenues en grille, parcs, port quand la côte ou un fleuve s'y prête ; elles sont rares, très éloignées les unes des autres, et se voient de loin en silhouettes | taille, quartiers, avenues, port, espacement, silhouette lointaine | ⏳ |
+| SPEC-ROUTE-007 | Le réseau suit la hiérarchie des lieux : grands axes entre mégapoles et villes, routes de commerce vers villes et villages, chemins ruraux vers fermes et hameaux, routes de tourisme vers les sites remarquables ; les zones vierges ne sont traversées que par quelques routes | hiérarchie des tracés, rareté en zone vierge | ⏳ |
+| SPEC-ROUTE-008 | Les rivières font partie du réseau : les grands fleuves sont navigables, avec ports, quais et embarcadères dans les lieux qu'ils traversent, et les routes les franchissent par des ponts ou les longent | voies navigables, ports, franchissements | ⏳ |
+| SPEC-ZONE-001 | Le monde est découpé en zones de jeu : PvP et PvE, PvP seul (pas de monstres hostiles), PvE seul (les joueurs ne peuvent pas se blesser), sûre (aucun dégât de joueur ni de monstre, aucune apparition hostile) ; leur carte est déterministe (graine) et suit la densité — les lieux habités et les points d'apparition sûrs, les zones vierges plus dangereuses | classement, règles par zone, cohérence avec la densité | ⏳ |
+| SPEC-ZONE-002 | Les règles d'une zone s'appliquent partout où l'on se trouve, hors ligne comme en ligne (le serveur fait foi) : dégâts entre joueurs, dégâts des monstres, apparitions hostiles | combats et apparitions selon la zone | ⏳ |
+| SPEC-ZONE-003 | La zone courante s'affiche (HUD, carte avec ses frontières), l'entrée dans une autre zone est annoncée, et des bornes marquent les frontières sur les routes | indicateur, carte, annonce, bornes | ⏳ |
+| SPEC-ZONE-004 | Le serveur choisit ses règles de zones (carte générée, tout PvE, tout sûr, tout PvP…) et un administrateur peut redéfinir la zone d'une région (SPEC-ADMIN-006) | réglages du serveur, redéfinition par un admin | ⏳ |
 
 ## L23 — saisons
 
