@@ -83,10 +83,14 @@
       return -1;
     }
     // le 3e champ (usure) n'est ecrit que s'il existe : les anciennes
-    // sauvegardes a deux champs restent lisibles
+    // sauvegardes a deux champs restent lisibles. Le 4e champ (`data`,
+    // SPEC-INTERIEUR-003) porte des données arbitraires par pile — le
+    // contenu d'un livre écrit, par exemple — et suit le même principe
+    // additif : absent, il ne change rien à la lecture d'une pile ancienne.
     function serialize() {
       return slots.map(function (s) {
         if (!s) return 0;
+        if (s.data) return [s.id, s.n, s.dmg || 0, s.data];
         return s.dmg ? [s.id, s.n, s.dmg] : [s.id, s.n];
       });
     }
@@ -96,6 +100,7 @@
         if (d && d[0]) {
           slots[i] = { id: d[0], n: d[1] };
           if (d[2]) slots[i].dmg = d[2];
+          if (d[3]) slots[i].data = d[3];
         } else slots[i] = null;
       }
     }
@@ -410,6 +415,25 @@
   // un joueur peut aussi piéger ou enjoliver son propre coffre
   shapeless(B.COFFRE_PIEGE, 1, [B.CHEST, I.FICELLE, I.FLECHE]);
   shapeless(B.COFFRE_SURPRISE, 1, [B.CHEST, I.GOLD_INGOT]);
+
+  // ─── mobilier et livres (SPEC-INTERIEUR-002/003) ─────────────────────────
+  shaped(B.LIT, 1, ['WWW', 'PPP'], { W: B.WOOL, P: B.PLANKS });
+  shapeless(B.TABLE, 1, [B.PLANKS, B.PLANKS, B.PLANKS, B.PLANKS]);
+  shapeless(B.CHAISE, 1, [B.PLANKS, B.PLANKS, I.STICK]);
+  // pas 6 planches identiques : un test global (SPEC-RECETTE-001) remplit une
+  // grille 3×3 de gauche à droite pour CHAQUE recette et vérifie qu'elle seule
+  // s'y reconnaît — 6 planches pures y dessinent exactement le même rectangle
+  // 3×2 que la trappe (elle aussi 6 planches), qui l'emporterait alors.
+  shapeless(B.ARMOIRE, 1, [B.PLANKS, B.PLANKS, B.PLANKS, B.PLANKS, I.STICK, I.STICK]);
+  shapeless(B.ETAGERE, 1, [B.PLANKS, B.PLANKS, B.PLANKS, I.STICK]);
+  shapeless(I.LIVRE, 1, [I.CUIR, I.TISSU, I.TISSU]);
+  shapeless(I.NOTE, 1, [I.TISSU]);
+  shapeless(B.BIBLIOTHEQUE, 1, [B.PLANKS, B.PLANKS, B.PLANKS, I.LIVRE, I.LIVRE, I.LIVRE]);
+  shapeless(B.TAPIS, 1, [B.WOOL, B.WOOL, I.TISSU]);
+  shapeless(B.LAMPE, 1, [I.STICK, B.GLASS, I.COAL]);
+  shapeless(B.VASE, 1, [B.CLAY, B.CLAY]);
+  shapeless(B.PRESENTOIR, 1, [I.STICK, I.STICK, I.STICK, B.PLANKS]);
+  shapeless(B.SOCLE, 1, [B.STONE, B.STONE, I.STICK]);
 
   /* Réduit une grille w×h à sa boîte englobante non vide.
      Sans ça, une recette posée en bas à droite d'une grille 3×3 ne serait pas

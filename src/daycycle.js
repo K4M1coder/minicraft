@@ -174,11 +174,19 @@
     };
   }
 
+  /* SPEC-INTERIEUR-002 : dormir dans un lit fait passer la nuit — on avance
+     l'horloge jusqu'au tout début de la journée suivante (phase 0), sans
+     toucher au décompte des jours/saisons (juste +1 jour, comme un réveil
+     normal). Fonction pure : c'est game.js qui décide QUAND l'appeler
+     (joueur endormi, nuit tombée, tout le monde dort…). */
+  function avancerJourApresDormir(t) { return (Math.floor(t / DAY_LENGTH) + 1) * DAY_LENGTH; }
+
   MC.DayCycle = {
     DAY_LENGTH: DAY_LENGTH, DAYS_PER_YEAR: DAYS_PER_YEAR, YEAR_LENGTH: YEAR_LENGTH,
     phase: phase, isNight: isNight, isDusk: isDusk, isDawn: isDawn,
     sunIntensity: sunIntensity, skyColor: skyColor, sunDir: sunDir, clockString: clockString,
     astres: astres, LEVER: LEVER, COUCHER: COUCHER,
     saison: saison, facteurSaison: facteurSaison, teinteSaison: teinteSaison,
+    avancerJourApresDormir: avancerJourApresDormir,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

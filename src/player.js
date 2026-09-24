@@ -393,6 +393,16 @@
       // interagir avec un bloc-interface a priorité (sauf si on est accroupi)
       if (tdef && tdef.interactive) return 'open:' + tdef.interactive;
 
+      /* Lit (SPEC-INTERIEUR-002) : un clic droit sur un lit fait dormir,
+         quel que soit ce qu'on tient en main — game.js décide de la suite
+         (avancer le temps, fixer la réapparition). */
+      if (tdef && tdef.dodo) return 'dormir';
+
+      /* Présentoir/socle (SPEC-INTERIEUR-002) : main vide sur un présentoir
+         qui expose déjà un objet le récupère ; sinon, avec un objet en main,
+         on l'y pose (game.js gère le transfert avec `expositions`). */
+      if (tdef && tdef.expose) return id ? 'exposer' : 'retirer';
+
       /* Porte ou trappe : un clic droit bascule, quel que soit ce qu'on tient
          en main. Les deux moitiés d'une porte partagent le même id : on
          retrouve l'autre moitié en cherchant ce même id juste au-dessus ou
@@ -414,6 +424,9 @@
 
       // la carte s'ouvre d'un clic droit
       if (idef && idef.carte) return 'carte';
+      // livre ou note (SPEC-INTERIEUR-003) : un clic droit l'ouvre — en
+      // écriture s'il n'est pas encore signé, en lecture sinon
+      if (idef && idef.livre) return 'livre';
       if (idef && idef.seau) return utiliserSeau(idef.seau);
       if (idef && idef.briquet) return utiliserBriquet();
       // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
@@ -446,6 +459,34 @@
         if (!C.isReplaceable(world.getBlock(bxt, byt, bzt))) return null;
         if (P.boxOverlap(bxt + 0.5, byt, bzt + 0.5, 1, 1, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
         world.setBlock(bxt, byt, bzt, B.TRAPPE_FERMEE);
+        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        return 'place';
+      }
+
+      /* Mobilier orienté (SPEC-INTERIEUR-002) : posé comme un bloc plein,
+         mais son état porte l'orientation du regard (même convention que la
+         porte, Core.orientDeRegard). Le lit occupe en plus la case dans le
+         prolongement (tête, variante=true) — les deux blocs partagent le
+         même id, seule leur variante d'état diffère (l'oreiller). */
+      if (idef && idef.meuble) {
+        var mx = target.x + target.nx, my = target.y + target.ny, mz = target.z + target.nz;
+        if (my < 0 || my >= C.WORLD_H) return null;
+        if (!C.isReplaceable(world.getBlock(mx, my, mz))) return null;
+        if (P.boxOverlap(mx + 0.5, my, mz + 0.5, 1, 1, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
+        var orientM = C.orientDeRegard(lookDir());
+        if (idef.meuble === 'lit') {
+          var dM = MC.Formes.DIRS[orientM];
+          var hx = mx + dM[0], hy = my, hz = mz + dM[1];
+          if (!C.isReplaceable(world.getBlock(hx, hy, hz))) return null;
+          if (P.boxOverlap(hx + 0.5, hy, hz + 0.5, 1, 1, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
+          world.setBlock(mx, my, mz, id);
+          world.setEtat(mx, my, mz, MC.Formes.packMeuble(orientM, false));
+          world.setBlock(hx, hy, hz, id);
+          world.setEtat(hx, hy, hz, MC.Formes.packMeuble(orientM, true));
+        } else {
+          world.setBlock(mx, my, mz, id);
+          world.setEtat(mx, my, mz, MC.Formes.packMeuble(orientM, false));
+        }
         if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
         return 'place';
       }

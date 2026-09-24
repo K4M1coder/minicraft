@@ -201,6 +201,97 @@
     function carteOuverte() { return !!carte; }
 
     // ══════════════════════════════════════════════════════════════════════
+    // Livre/note écrits (SPEC-INTERIEUR-003) : écriture tant que non signé,
+    // simple lecture ensuite (MC.Livres.estModifiable en décide). Un seul
+    // panneau, pas de grille : ce n'est pas un conteneur.
+    // ══════════════════════════════════════════════════════════════════════
+    var Livres = MC.Livres;
+    var livreEcranEl = el('div', 'carte-panneau livre-ecran');
+    livreEcranEl.style.display = 'none';
+    root.appendChild(livreEcranEl);
+    var livreEnCours = null;   // { data, page, surChange, auteur }
+    function rendreLivreEcran() {
+      if (!livreEnCours || !Livres) return;
+      var d = livreEnCours.data;
+      var modifiable = Livres.estModifiable(d);
+      var page = livreEnCours.page || 0;
+      var html = '<div class="carte-tete"><b>' + (modifiable ? 'Écrire' : 'Lire') + '</b>' +
+        '<span class="carte-aide">Échap : fermer' + (modifiable ? ' · Signer rend le texte définitif' : '') + '</span></div>' +
+        '<div class="livre-corps">';
+      html += modifiable
+        ? '<input class="livre-titre" maxlength="' + Livres.MAX_TITRE + '" placeholder="Titre" value="' +
+          (d.titre || '').replace(/"/g, '&quot;') + '">'
+        : '<h3>' + (d.titre ? d.titre.replace(/</g, '&lt;') : 'Sans titre') + '</h3>';
+      html += modifiable
+        ? '<textarea class="livre-page" maxlength="' + Livres.MAX_LONGUEUR_PAGE + '">' +
+          (d.pages[page] || '').replace(/</g, '&lt;') + '</textarea>'
+        : '<p class="livre-page-lue">' + (d.pages[page] || '').replace(/</g, '&lt;') + '</p>';
+      html += '<div class="livre-bas"><button class="livre-prec">‹</button>' +
+        '<span>page ' + (page + 1) + '/' + d.pages.length + '</span>' +
+        '<button class="livre-suiv">›</button>';
+      if (modifiable) {
+        html += '<button class="livre-ajouter">+ page</button><button class="livre-signer">Signer</button>';
+      }
+      html += '</div>';
+      if (d.signe) html += '<p class="livre-auteur">— ' + (d.auteur ? d.auteur.replace(/</g, '&lt;') : 'Anonyme') + '</p>';
+      html += '</div>';
+      livreEcranEl.innerHTML = html;
+      /* Le clavier du jeu écoute `keydown` sur `window` même hors partie
+         (SPEC-HUD, carte, etc.) : sans ce garde-fou, taper la lettre d'un
+         raccourci (« e » pour l'inventaire...) fermerait ce panneau en
+         pleine écriture. On laisse Échap continuer son chemin (il ferme le
+         panneau proprement, via onEscape) et on coupe tout le reste. */
+      function protegerSaisie(elt) {
+        elt.addEventListener('keydown', function (e) { if (e.code !== 'Escape') e.stopPropagation(); });
+      }
+      if (modifiable) {
+        var champTitre = livreEcranEl.querySelector('.livre-titre');
+        var champPage = livreEcranEl.querySelector('.livre-page');
+        protegerSaisie(champTitre); protegerSaisie(champPage);
+        champTitre.addEventListener('input', function (e) {
+          livreEnCours.data = Livres.definirTitre(livreEnCours.data, e.target.value);
+          livreEnCours.surChange(livreEnCours.data);
+        });
+        champPage.addEventListener('input', function (e) {
+          livreEnCours.data = Livres.definirPage(livreEnCours.data, page, e.target.value);
+          livreEnCours.surChange(livreEnCours.data);
+        });
+        livreEcranEl.querySelector('.livre-ajouter').addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          livreEnCours.data = Livres.ajouterPage(livreEnCours.data);
+          livreEnCours.surChange(livreEnCours.data);
+          livreEnCours.page = livreEnCours.data.pages.length - 1;
+          rendreLivreEcran();
+        });
+        livreEcranEl.querySelector('.livre-signer').addEventListener('mousedown', function (ev) {
+          ev.preventDefault();
+          livreEnCours.data = Livres.signer(livreEnCours.data, livreEnCours.auteur);
+          livreEnCours.surChange(livreEnCours.data);
+          rendreLivreEcran();
+        });
+      }
+      livreEcranEl.querySelector('.livre-prec').addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); livreEnCours.page = Math.max(0, page - 1); rendreLivreEcran();
+      });
+      livreEcranEl.querySelector('.livre-suiv').addEventListener('mousedown', function (ev) {
+        ev.preventDefault(); livreEnCours.page = Math.min(livreEnCours.data.pages.length - 1, page + 1); rendreLivreEcran();
+      });
+    }
+    /* `data` : le contenu actuel de la pile (vierge, ou déjà écrit/signé —
+       voir MC.Livres). `opts.surChange(nouveauLivre)` réécrit la pile côté
+       jeu (game.js) à chaque modification ; `opts.auteur` sert au bouton
+       Signer. */
+    function ouvrirLivre(data, opts) {
+      livreEnCours = { data: data, page: 0,
+                        surChange: (opts && opts.surChange) || function () {},
+                        auteur: (opts && opts.auteur) || 'Joueur' };
+      livreEcranEl.style.display = '';
+      rendreLivreEcran();
+    }
+    function fermerLivreEcran() { livreEcranEl.style.display = 'none'; var o = !!livreEnCours; livreEnCours = null; return o; }
+    function livreEcranOuvert() { return !!livreEnCours; }
+
+    // ══════════════════════════════════════════════════════════════════════
     // Factions : ce que chaque camp pense du joueur
     // ══════════════════════════════════════════════════════════════════════
     var factionsEl = el('div', 'factions-panneau');
@@ -1680,6 +1771,7 @@
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
       barreBoss: barreBoss, ouvrirCarte: ouvrirCarte, fermerCarte: fermerCarte, carteOuverte: carteOuverte,
+      ouvrirLivre: ouvrirLivre, fermerLivreEcran: fermerLivreEcran, livreEcranOuvert: livreEcranOuvert,
       dessinerCarte: dessinerCarte, boussole: boussole, zoneIndicateur: zoneIndicateur,
       panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
       panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,

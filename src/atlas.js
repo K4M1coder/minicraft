@@ -1390,6 +1390,36 @@
       g.fillStyle = 'rgba(40,38,40,.35)'; g.fillRect(o[0], o[1] + TILE - 3, TILE, 3);
     })();
 
+    // ─── INTERIEUR (SPEC-INTERIEUR-002/003) : mobilier et livres, 906-918 ─────
+    // Plage réservée à cet agent (voir core.js) : une couleur de grain par
+    // meuble suffit, comme pour la plupart des tuiles ci-dessus — ce sont
+    // les boîtes de MC.Formes (formes.js) qui donnent leur forme au bloc,
+    // pas la texture.
+    (function () {
+      var PALETTE_INT = {
+        906: [176, 132, 84],   // lit (couette)
+        907: [150, 108, 62],   // table
+        908: [140, 100, 58],   // chaise
+        909: [120, 84, 48],    // armoire
+        910: [128, 92, 54],    // étagère
+        911: [104, 74, 44],    // bibliothèque
+        912: [150, 60, 60],    // tapis
+        913: [230, 210, 140],  // lampe
+        914: [150, 170, 190],  // vase
+        915: [110, 80, 50],    // présentoir
+        916: [150, 150, 150],  // socle
+        917: [200, 180, 130],  // livre (icône)
+        918: [210, 195, 160],  // note (icône)
+      };
+      Object.keys(PALETTE_INT).forEach(function (t) { grain(+t, PALETTE_INT[t], 14); });
+      // lampe : cœur lumineux, comme la lampe des circuits (784)
+      (function () {
+        var o = origin(913);
+        g.fillStyle = 'rgba(255,250,210,.9)';
+        g.beginPath(); g.arc(o[0] + 8, o[1] + 6, 3, 0, Math.PI * 2); g.fill();
+      })();
+    })();
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec

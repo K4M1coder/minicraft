@@ -1162,6 +1162,64 @@
   // le buisson mort laisse parfois des baies
   BLOCKS[B.DEAD_BUSH].drops.push({ id: I.BAIES, n: 1, chance: 0.3 });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ─── INTERIEUR (SPEC-INTERIEUR-002/003) ──────────────────────────────────
+  // Plage réservée à cet agent : blocs 950-1099, objets 700-799 (avant
+  // décalage FIRST_ITEM), tuiles d'atlas 906-1000. Ne pas toucher à
+  // src/habitats.js (un autre agent y pose les plans/toitures des bâtiments ;
+  // leurs intérieurs viendront plus tard en s'appuyant sur ce mobilier).
+  // ═══════════════════════════════════════════════════════════════════════
+  Object.assign(B, {
+    LIT: 950, TABLE: 951, CHAISE: 952, ARMOIRE: 953, ETAGERE: 954,
+    BIBLIOTHEQUE: 955, TAPIS: 956, LAMPE: 957, VASE: 958, PRESENTOIR: 959, SOCLE: 960,
+  });
+  I.LIVRE = 700 + DEC; I.NOTE = 701 + DEC;
+
+  /* Mobilier orienté (SPEC-INTERIEUR-002) : `forme: 'meuble'` délègue les
+     boîtes de maillage/collision à MC.Formes.boitesBloc (même mécanisme que
+     les escaliers, voir formes.js) ; `meuble` nomme la géométrie de base à
+     tourner selon l'orientation stockée dans l'état (world.getEtat/setEtat),
+     posée comme une porte (Core.orientDeRegard) — voir player.js. Un meuble
+     tient dans un seul id, sans variante par matière : c'est la géométrie
+     qui compte pour cette spec, pas un jeu de skins.
+     `interactive` réutilise le mécanisme des coffres (game.js `chests`) pour
+     l'armoire, l'étagère et la bibliothèque : ce sont des conteneurs comme un
+     coffre, juste posés/rendus différemment. `expose` marque présentoir et
+     socle : ce ne sont PAS des conteneurs à grille, mais un unique
+     emplacement affichant l'objet qui y est posé (game.js `expositions`,
+     voir plus bas). `dodo` marque le lit : l'interaction n'ouvre rien, elle
+     fait dormir (game.js). */
+  defBlock(B.LIT, { name: 'Lit', tiles: [906, 906, 906], hardness: 0.2, tool: 'axe',
+                    forme: 'meuble', meuble: 'lit', dodo: true, maxStack: 1 });
+  defBlock(B.TABLE, { name: 'Table', tiles: [907, 907, 907], hardness: 2.0, tool: 'axe',
+                      forme: 'meuble', meuble: 'table', maxStack: 1 });
+  defBlock(B.CHAISE, { name: 'Chaise', tiles: [908, 908, 908], hardness: 2.0, tool: 'axe',
+                       forme: 'meuble', meuble: 'chaise', maxStack: 1 });
+  defBlock(B.ARMOIRE, { name: 'Armoire', tiles: [909, 909, 909], hardness: 2.5, tool: 'axe',
+                        forme: 'meuble', meuble: 'armoire', interactive: 'armoire', maxStack: 1 });
+  defBlock(B.ETAGERE, { name: 'Étagère', tiles: [910, 910, 910], hardness: 2.0, tool: 'axe',
+                        forme: 'meuble', meuble: 'etagere', interactive: 'etagere', maxStack: 1 });
+  defBlock(B.BIBLIOTHEQUE, { name: 'Bibliothèque', tiles: [911, 911, 911], hardness: 2.0, tool: 'axe',
+                             forme: 'meuble', meuble: 'bibliotheque', interactive: 'bibliotheque', maxStack: 1 });
+  defBlock(B.TAPIS, { name: 'Tapis', tiles: [912, 912, 912], hardness: 0.1, transparent: true,
+                      pass: 'cutout', forme: 'meuble', meuble: 'tapis', maxStack: 1 });
+  defBlock(B.LAMPE, { name: 'Lampe', tiles: [913, 913, 913], hardness: 0.5, transparent: true,
+                      pass: 'cutout', light: 12, forme: 'meuble', meuble: 'lampe', maxStack: 1 });
+  defBlock(B.VASE, { name: 'Vase', tiles: [914, 914, 914], hardness: 0.5, transparent: true,
+                     pass: 'cutout', forme: 'meuble', meuble: 'vase', maxStack: 1 });
+  defBlock(B.PRESENTOIR, { name: 'Présentoir', tiles: [915, 915, 915], hardness: 1.5, tool: 'axe',
+                           transparent: true, pass: 'cutout', forme: 'meuble', meuble: 'presentoir',
+                           expose: true, maxStack: 1 });
+  defBlock(B.SOCLE, { name: 'Socle', tiles: [916, 916, 916], hardness: 2.0, tool: 'pickaxe', needsTool: true,
+                      forme: 'meuble', meuble: 'socle', expose: true, maxStack: 1 });
+
+  /* Livre et note (SPEC-INTERIEUR-003) : vierges tant que `data` (porté par
+     la pile d'inventaire, voir inventory.js) ne contient rien — écrits puis
+     signés depuis l'écran de lecture (ui.js), qui refuse ensuite toute
+     modification (MC.Livres.estModifiable). */
+  defItem(I.LIVRE, { name: 'Livre', tile: 917, livre: true, maxStack: 1 });
+  defItem(I.NOTE, { name: 'Note', tile: 918, livre: true, maxStack: 1 });
+
   MC.Core = {
     VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
