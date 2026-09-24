@@ -124,7 +124,7 @@
       nouveaux.forEach(function (n) {
         ui.toast('Succès : ' + n.nom);
         chat.systeme('Succès débloqué : ' + n.nom + ' — ' + n.description);
-        audio.play('craft');
+        audio.jouer(MC.Ambiance.sonEvenement('succes'), { categorie: 'evenement' });
       });
       return nouveaux;
     }
@@ -436,9 +436,26 @@
       render.majPrecipitations(dt, prec, me.ventEn ? me.ventEn(g.time, p1.y + 20) : et.vent, abri);
       var dehors = abri(Math.floor(p1.x), Math.floor(p1.z)) <= p1.y + 1.8;
       var sousLeau = P.headInWater(world, p1, player.EYE);
-      audio.ambiance(prec.forme === 'pluie' ? prec.intensite * (dehors ? 1 : 0.35) * (sousLeau ? 0.2 : 1) : 0,
-                     et.vent.force * (dehors ? 1 : 0.4) * (sousLeau ? 0.1 : 1),
-                     prec.forme === 'neige' ? prec.intensite : 0);
+      /* SPEC-AUDIO-001/006 : ce que le joueur 1 entend autour de lui — lieu,
+         moment, météo et proximités — décidé par MC.Ambiance, synthétisé par
+         audio.majNappes ; positionAuditeur suit son oreille pour le reste
+         des sons spatialisés (blessures, portes, coffres…). */
+      audio.positionAuditeur(p1.x, p1.y, p1.z, player.state.yaw);
+      var villeProche = 0;
+      if (world.habitats) {
+        var lieuxAudio = world.habitats.lieuxProches(p1.x, p1.z, 120);
+        if (lieuxAudio.length) villeProche = Math.max(0, 1 - Math.hypot(lieuxAudio[0].x - p1.x, lieuxAudio[0].z - p1.z) / 120);
+      }
+      var volcanAudio = world.bio.volcanProche ? world.bio.volcanProche(p1.x, p1.z) : null;
+      var volcanProche = volcanAudio ? Math.max(0, 1 - Math.hypot(p1.x - volcanAudio.x, p1.z - volcanAudio.z) / volcanAudio.R) : 0;
+      var surfaceY = world.heightAt(Math.floor(p1.x), Math.floor(p1.z));
+      audio.majNappes({
+        biome: bio, nuit: DC.isNight(g.time), sousTerre: p1.y < surfaceY - 4,
+        pluie: prec.forme === 'pluie' ? prec.intensite * (dehors ? 1 : 0.35) * (sousLeau ? 0.2 : 1) : 0,
+        vent: et.vent.force * (dehors ? 1 : 0.4) * (sousLeau ? 0.1 : 1),
+        neige: prec.forme === 'neige' ? prec.intensite : 0,
+        villeProche: villeProche, volcanProche: volcanProche,
+      });
       // éclairs tombés depuis la dernière image (après un saut d'heure, on ne rattrape pas)
       if (meteoT === null || g.time < meteoT || g.time - meteoT > 5) meteoT = g.time;
       var l = me.eclairs(meteoT, g.time);
@@ -618,7 +635,8 @@
     function presenter(notifs) {
       (notifs || []).forEach(function (n) {
         switch (n.type) {
-          case 'chapitre': fileRecit.push({ titre: n.titre, texte: n.texte }); chat.systeme('— ' + n.titre + ' —'); break;
+          case 'chapitre': fileRecit.push({ titre: n.titre, texte: n.texte }); chat.systeme('— ' + n.titre + ' —');
+                           audio.jouer(MC.Ambiance.sonEvenement('chapitre'), { categorie: 'evenement' }); break;
           case 'dialogue': fileRecit.push({ titre: n.titre, texte: n.texte }); break;
           case 'evenement': fileRecit.push({ titre: n.titre, texte: n.texte }); faireApparaitre(n); break;
           case 'etape': ui.toast(n.texte); audio.play('craft'); break;
@@ -727,6 +745,7 @@
                                           : 'Chapitres : ' + Math.min(i.chap + 1, i.chapitres.length) + '/' + i.chapitres.length;
       }
       g.finHistoire = n;
+      audio.jouer(MC.Ambiance.sonEvenement('fin'), { categorie: 'evenement' });
       signalerSucces({ type: 'histoire', fin: n.id });
       chat.systeme('Fin : ' + n.titre);
       ui.objectifHistoire(null);
@@ -1010,6 +1029,12 @@
          gardien se relevait aussitôt. */
       var evts = entities.evenements();
       for (var k = 0; k < evts.length; k++) {
+        // SPEC-AUDIO-002 : chaque créature a son cri de blessure et de mort,
+        // joué là où elle se trouve
+        if (evts[k].type === 'blesse' || evts[k].type === 'mort') {
+          var sonC = MC.Ambiance.sonCreature(evts[k].victime, evts[k].type === 'mort' ? 'mort' : 'blesse');
+          if (sonC && evts[k].pos) audio.jouer(sonC, { categorie: 'creature', x: evts[k].pos.x, y: evts[k].pos.y, z: evts[k].pos.z });
+        }
         if (g.histoire && evts[k].type === 'mort' && evts[k].parJoueur) signalerHistoire({ type: 'tuer', mob: evts[k].victime });
         if (g.histoire && evts[k].type === 'boss_vaincu') signalerHistoire({ type: 'boss', donjon: evts[k].donjon });
         if (evts[k].type === 'mort' && evts[k].parJoueur) signalerSucces({ type: 'tuer', mob: evts[k].victime });
@@ -1044,7 +1069,7 @@
           var nom = entities.SPECS[b.type].nom;
           chat.systeme(nom + " s'éveille !");
           ui.toast(nom + " s'éveille !", 'warn');
-          audio.play('blesse');
+          audio.jouer(MC.Ambiance.sonEvenement('gardien'), { categorie: 'evenement', x: b.pos.x, y: b.pos.y, z: b.pos.z });
         }
       }
     }
@@ -1288,20 +1313,25 @@
         if (kind === 'furnace') {
           if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
           ui.openContainer('furnace', player.state.inv, furnaces[k], k);
+          audio.jouer(MC.Ambiance.sonInteraction('fourneau'), interactionOpts(target));
         } else if (kind === 'chest') {
           if (!coffreDe(target.x, target.y, target.z)) chests[k] = Inv.create(27);
           ui.openContainer('chest', player.state.inv, chests[k], k);
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
         } else if (kind === 'banque') {
           // un coffre-fort ouvre le compte, le même dans toutes les banques
           ouvrirBanque();
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
           return;
         } else if (kind === 'info') {
           var ri = rendreService('info', null);
           ui.toast(ri.message);
           if (chat) chat.systeme(ri.message);
+          audio.jouer(MC.Ambiance.sonInteraction('interface'), { categorie: 'interaction' });
           return;
         } else {
           ui.openContainer('craft', player.state.inv);
+          audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
         }
         input.setState('ui');
         return;
@@ -1317,6 +1347,15 @@
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
       else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
+      // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
+      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+    }
+
+    /* Position d'une interaction (coffre, fourneau, établi, porte…) pour la
+       spatialiser (SPEC-AUDIO-006) ; `target` est le bloc visé, toujours
+       présent dans ces branches. */
+    function interactionOpts(target) {
+      return { categorie: 'interaction', x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 };
     }
 
     function onKey(code) {
@@ -1644,6 +1683,8 @@
       }
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: enMain && enMain.id }); }
       else if (res === 'till' || res === 'plant') audio.play('poser');
+      // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
+      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
     }
 
     function ouvrirConteneur(kind, target) {
@@ -1651,11 +1692,14 @@
       if (kind === 'furnace') {
         if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
         ui.openContainer('furnace', player.state.inv, furnaces[k], k);
+        audio.jouer(MC.Ambiance.sonInteraction('fourneau'), interactionOpts(target));
       } else if (kind === 'chest') {
         if (!chests[k]) chests[k] = Inv.create(27);
         ui.openContainer('chest', player.state.inv, chests[k], k);
+        audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
       } else {
         ui.openContainer('craft', player.state.inv);
+        audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
       }
       input.setState('ui');
     }

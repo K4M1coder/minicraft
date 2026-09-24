@@ -410,6 +410,9 @@
       var s = SPECS[e.type];
       e.hp -= amount;
       e.hurtCd = 0.35;
+      // un cri de blessure, là où ça se passe (SPEC-AUDIO-002) ; le jeu décide
+      // du son exact, ici on ne fait que relever l'événement et sa position
+      journal.push({ type: 'blesse', victime: e.type, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
       // une créature neutre frappée par le joueur lui en veut, et le reste
       if (s.neutral && (!auteur || estJoueur(auteur))) e.enrage = true;
       // frappée par une autre créature, elle riposte contre elle
@@ -440,7 +443,8 @@
             p.vel.x = Math.cos(ang) * 3; p.vel.z = Math.sin(ang) * 3; p.vel.y = 5;
           }
         }
-        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur) });
+        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur),
+                       pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom,
                                    donjon: e.donjon || null, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         remove(e);

@@ -651,12 +651,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-AUDIO-001 | L'environnement s'entend selon le lieu : vent, pluie, mer et ressac, rivière, cascade, feuillage en forêt, grillons la nuit, résonance des grottes, rumeur des villes, grondement des volcans | nappes selon le lieu et le moment | ⏳ |
-| SPEC-AUDIO-002 | Chaque créature a ses sons : cris, pas, blessure, mort, attaque | sons par créature | ⏳ |
-| SPEC-AUDIO-003 | Les actions s'entendent selon la matière : pas (herbe, pierre, sable, bois, neige, eau), minage et casse, pose, nage, chute, combat, tir | sons par action et par matière | ⏳ |
-| SPEC-AUDIO-004 | Les interactions s'entendent : portes et trappes, coffres, fourneau, établi, échanges, interface | sons d'interaction | ⏳ |
-| SPEC-AUDIO-005 | Les événements s'entendent : tonnerre, éruption, cyclone et tornade, succès, chapitres et fins d'histoire, réveil d'un gardien | sons d'événement | ⏳ |
-| SPEC-AUDIO-006 | Les sons sont spatialisés : leur volume et leur panoramique suivent leur position par rapport à l'auditeur, étouffés sous l'eau et derrière la roche ; chaque catégorie a son volume dans les options | spatialisation, étouffement, volumes par catégorie | ⏳ |
+| SPEC-AUDIO-001 | L'environnement s'entend selon le lieu : vent, pluie, mer et ressac, rivière, cascade, feuillage en forêt, grillons la nuit, résonance des grottes, rumeur des villes, grondement des volcans | nappes selon le lieu et le moment | ✅ |
+| SPEC-AUDIO-002 | Chaque créature a ses sons : cris, pas, blessure, mort, attaque | sons par créature | ✅ |
+| SPEC-AUDIO-003 | Les actions s'entendent selon la matière : pas (herbe, pierre, sable, bois, neige, eau), minage et casse, pose, nage, chute, combat, tir | sons par action et par matière | ✅ |
+| SPEC-AUDIO-004 | Les interactions s'entendent : portes et trappes, coffres, fourneau, établi, échanges, interface | sons d'interaction | ✅ |
+| SPEC-AUDIO-005 | Les événements s'entendent : tonnerre, éruption, cyclone et tornade, succès, chapitres et fins d'histoire, réveil d'un gardien | sons d'événement | ✅ |
+| SPEC-AUDIO-006 | Les sons sont spatialisés : leur volume et leur panoramique suivent leur position par rapport à l'auditeur, étouffés sous l'eau et derrière la roche ; chaque catégorie a son volume dans les options | spatialisation, étouffement, volumes par catégorie | ✅ |
 
 ## L37 — version empaquetée, serveur dédié et administration
 
