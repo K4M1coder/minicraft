@@ -111,6 +111,34 @@
       A.equal(r.actions.length, 0, 'aucune action pour une commande inconnue');
     });
 
+    it('SPEC-ADMIN-006 : /admin exige d\'être en ligne, puis traduit en action réseau', function () {
+      var hors = Cmd.executer(cmd('/admin joueurs'), {});
+      A.equal(hors.actions.length, 0, 'hors ligne : pas d\'action');
+      A.ok(hors.messages[0].indexOf('ligne') >= 0);
+
+      var r = Cmd.executer(cmd('/admin auth secret123'), { enLigne: true });
+      A.equal(r.actions[0].type, 'admin');
+      A.equal(r.actions[0].action, 'auth');
+      A.equal(r.actions[0].args.secret, 'secret123');
+
+      var joueurs = Cmd.executer(cmd('/admin joueurs'), { enLigne: true });
+      A.equal(joueurs.actions[0].action, 'joueurs');
+
+      var sanction = Cmd.executer(cmd('/admin sanction Vilain bannir 30'), { enLigne: true });
+      A.equal(sanction.actions[0].action, 'sanction');
+      A.equal(sanction.actions[0].args.nom, 'Vilain');
+      A.equal(sanction.actions[0].args.type, 'bannir');
+      A.equal(sanction.actions[0].args.dureeMs, 30 * 60000);
+
+      var inv = Cmd.executer(cmd('/admin invitation 3 60'), { enLigne: true });
+      A.equal(inv.actions[0].action, 'invitation_creer');
+      A.equal(inv.actions[0].args.usagesMax, 3);
+      A.equal(inv.actions[0].args.expireDansMs, 60 * 60000);
+
+      var sansSousCommande = Cmd.executer(cmd('/admin'), { enLigne: true });
+      A.ok(sansSousCommande.messages[0].indexOf('auth') >= 0, 'liste l\'usage sans sous-commande');
+    });
+
     it('SPEC-CMD-001 : toutes les commandes de LISTE se reconnaissent', function () {
       Cmd.LISTE.forEach(function (nom) {
         var r = Cmd.executer({ nom: nom, args: [] }, { succes: S.creer() });

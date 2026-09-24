@@ -26,6 +26,10 @@
       // serveur autoritaire : l'état qui fait foi pour nos joueurs, et le butin reçu
       onToi: opts.onToi || function () {},
       onDonne: opts.onDonne || function () {},
+      // connexion refusée (liste noire/blanche, bannissement, e-mail exigé…)
+      onRefus: opts.onRefus || function () {},
+      // réponse du panneau admin en jeu (SPEC-ADMIN-006)
+      onAdminRep: opts.onAdminRep || function () {},
     };
 
     function statut(e, info) {
@@ -40,7 +44,8 @@
       return proto + '//' + location.host;
     }
 
-    function connecter(hote, nom, locaux) {
+    function connecter(hote, nom, locaux, opts2) {
+      opts2 = opts2 || {};
       if (ws) deconnecter();
       statut('connexion');
       var socket;
@@ -58,7 +63,8 @@
 
       socket.onopen = function () {
         if (!courante()) return;
-        envoyer({ t: NP.MSG.REJOINDRE, nom: nom || 'Joueur', locaux: locaux || 1 });
+        envoyer({ t: NP.MSG.REJOINDRE, nom: nom || 'Joueur', locaux: locaux || 1,
+                  email: opts2.email || null, invitation: opts2.invitation || null });
       };
 
       socket.onmessage = function (ev) {
@@ -114,6 +120,15 @@
 
         case NP.MSG.DONNE:
           hooks.onDonne(m);
+          break;
+
+        case NP.MSG.REFUS:
+          statut('erreur', m.motif);
+          hooks.onRefus(m.motif);
+          break;
+
+        case NP.MSG.ADMIN_REP:
+          hooks.onAdminRep(m);
           break;
 
         case NP.MSG.BLOC:
@@ -214,10 +229,16 @@
     function envoyerChat(texte) {
       return envoyer({ t: NP.MSG.CHAT, texte: texte });
     }
+    /* Panneau admin en jeu (SPEC-ADMIN-006) : une seule voie d'accès, l'action
+       porte le détail. Le serveur revérifie toujours le rôle qu'il a
+       lui-même attribué à la connexion — jamais un rôle affiché ici. */
+    function admin(action, args) {
+      return envoyer({ t: NP.MSG.ADMIN, action: action, args: args || {} });
+    }
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat,
+      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,

@@ -24,32 +24,130 @@ python -m http.server 8777
 **Avec le multijoueur**, lancez le serveur de jeu — il sert aussi les fichiers :
 
 ```bash
-node server.js 8080
+node server.js
 # http://localhost:8080  ·  les autres joueurs : http://<votre-ip>:8080
 ```
 
-Options du serveur : `MC_GRAINE`, `MC_MODE`, `MC_DIFFICULTE`.
+Lancé **sans aucun paramètre**, le serveur ouvre automatiquement le jeu dans le
+navigateur (SPEC-PACK-001) ; dès qu'un paramètre est donné (même juste
+`--port`), l'ouverture automatique n'a plus lieu — pratique pour les scripts.
+
+Options de la ligne de commande (SPEC-PACK-002) — `--aide` les liste aussi :
+
+| Paramètre | Rôle | Défaut |
+| --- | --- | --- |
+| `--serveur` | serveur seul, sans partie locale | désactivé |
+| `--port <n>` | port d'écoute | `8080` |
+| `--graine <n>` | graine de génération du monde | aléatoire |
+| `--monde <fichier>` | fichier de sauvegarde du monde (persistance, SPEC-SERVEUR-001) | aucune |
+| `--max-joueurs <n>` | nombre maximal de joueurs simultanés | `8` |
+| `--pvp <on\|off>` | joueur contre joueur | `off` |
+| `--liste-blanche` | seuls les joueurs inscrits entrent | désactivée |
+| `--admin <secret>` | mot de passe/jeton d'administration | généré et affiché une fois si absent |
+| `--aide` | affiche la liste et s'arrête | — |
 
 ```bash
-MC_GRAINE=4242 MC_DIFFICULTE=difficile node server.js 8080
+node server.js --port 8080 --graine 4242 --monde parties/survie.json --max-joueurs 12 --liste-blanche --admin "un-secret-long"
 ```
+
+Un paramètre inconnu ou une valeur invalide arrête le programme avec un
+message clair (code de sortie non nul) ; `--aide` affiche la liste et
+s'arrête proprement (code 0).
+
+L'ancien usage positionnel `node server.js 8080` reste accepté, par
+compatibilité.
+
+Options historiques par variable d'environnement (graine/mode/difficulté de
+la partie, indépendantes des paramètres ci-dessus) : `MC_GRAINE`, `MC_MODE`,
+`MC_DIFFICULTE`.
 
 > L'ouverture directe par double-clic (`file://`) devrait fonctionner en solo — ni
 > module ES, ni `fetch` — mais cela **n'a pas pu être vérifié** ici, l'outil de test
 > bloquant le protocole `file:`.
 
+### Serveur seul persistant (SPEC-SERVEUR-001)
+
+```bash
+node server.js --serveur --monde parties/mon-monde.json --admin "un-secret-long"
+```
+
+Le monde vit sans joueur local : il se sauvegarde automatiquement toutes les
+deux minutes et à l'arrêt (Ctrl+C ou signal d'arrêt d'un gestionnaire de
+services), et reprend exactement où il en était au lancement suivant, tant
+que `--monde` pointe vers le même fichier.
+
+### Administration (SPEC-ADMIN-001 à 008)
+
+Une console web dédiée, `http://<serveur>/admin.html`, protégée par le secret
+`--admin` : joueurs connectés (nom, position, IP, heure de connexion),
+inventaires, journal des actions horodatées (blocs, combats, messages…),
+historique des sessions (y compris les joueurs partis), listes blanche et
+noire (noms et e-mails), et liens d'invitation (jeton, expiration, usages,
+révocation) — un lien valide fait entrer même en liste blanche activée. Le
+secret ne circule **jamais** dans l'URL : uniquement dans l'en-tête HTTP
+`Authorization: Bearer <secret>`, saisi une fois dans la console et gardé
+dans `sessionStorage` (effacé à la fermeture de l'onglet).
+
+Un joueur authentifié comme administrateur retrouve les mêmes fonctions **en
+jeu**, via le chat : `/admin auth <secret>` puis `/admin joueurs`,
+`/admin sessions [nom]`, `/admin listes`, `/admin journal`,
+`/admin liste ajouter|retirer <blanche|noire> <nom|email> <valeur>`,
+`/admin invitation <usagesMax> <expireMin> [email]`,
+`/admin invitation revoquer <jeton>`, `/admin role <nom> [retirer]`,
+`/admin sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin]`.
+Le serveur ne fait jamais confiance à un rôle affiché côté client : seule
+l'authentification qu'il a lui-même vérifiée décide.
+
+Un **modérateur** (nommé par un administrateur, `/admin role <nom>`) a des
+droits restreints : il voit les joueurs et journaux mais jamais les IP ni les
+e-mails, ne crée pas d'invitations, ne change pas les listes ni les réglages,
+et ne peut sanctionner ni un administrateur ni un autre modérateur.
+
+## Empaquetage (SPEC-PACK-001)
+
+```bash
+node tools/paquet.js dist          # archive portable (+ tentative d'exécutable SEA)
+node tools/paquet.js dist --sans-sea
+```
+
+Produit toujours une **archive portable** : `dist/` contenant `index.html`,
+`admin.html`, `server.js`, `src/*`, et un lanceur par système —
+`start.cmd` (Windows) et `start.sh` (macOS/Linux), tous deux équivalents à
+`node server.js` sans paramètre (sert le jeu, ouvre le navigateur).
+
+Tente en plus de préparer un **exécutable autonome** pour l'OS courant via
+Node SEA (`node --experimental-sea-config`, disponible nativement depuis
+Node 20 — aucune dépendance ajoutée). La dernière étape officielle de SEA
+(injecter le blob dans le binaire `node`) demande l'outil `postject`, un
+paquet npm **jamais installé ici** (aucun téléchargement externe) : le script
+prépare tout ce qu'il peut sans lui (config, blob, copie du binaire `node`
+sous `dist/minicraft(.exe)`) et affiche la commande exacte à lancer pour
+finir, propre à chaque système :
+
+```bash
+# Windows
+npx postject dist\minicraft.exe NODE_SEA_BLOB dist\sea\prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+# macOS
+npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2 --macho-segment-name NODE_SEA
+# Linux
+npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
+```
+
 ## Tests
 
 ```bash
-node tests/run.js              # 547 tests unitaires et fonctionnels
-node tests/gates.js            # les 6 portes de qualité automatiques
-node tests/integration-net.js  # 37 tests d'intégration réseau (vraies sockets)
+node tests/run.js                # 768 tests unitaires et fonctionnels
+node tests/gates.js               # les 6 portes de qualité automatiques
+node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
+node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
+node tests/integration-paquet.js  # tests d'intégration de l'empaquetage
 ```
 
 `tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 101 tests
 end-to-end qui pilotent une vraie partie.
 
-**685 tests au total** (547 + 101 end-to-end + 37 d'intégration), 293 specs couvertes.
+Plus de 900 tests au total (unitaires/fonctionnels + end-to-end + intégration),
+toutes les specs non-⏳ de SPECS.md couvertes (`node tests/gates.js`, porte G1).
 
 ---
 

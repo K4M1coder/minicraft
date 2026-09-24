@@ -12,14 +12,62 @@
   var MC = G.MC = G.MC || {};
 
   var LISTE = ['aide', 'heure', 'jour', 'nuit', 'ou', 'graine', 'vider',
-               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu'];
+               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin'];
 
   function msg(texte) { return { messages: texte ? [texte] : [], actions: [] }; }
   function action(texte, act) { return { messages: texte ? [texte] : [], actions: [act] }; }
 
   function aide() {
     return 'Commandes : /heure /jour /nuit /ou /graine /vider /aide /meteo /succes ' +
-           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui';
+           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin …';
+  }
+
+  /* Panneau admin en jeu (SPEC-ADMIN-006), exposé via le chat plutôt qu'un
+     écran dédié : /admin traduit une commande texte en une action réseau,
+     jamais en décision — c'est TOUJOURS le serveur qui vérifie le rôle. */
+  function admin(args) {
+    var sous = (args[0] || '').toLowerCase();
+    var reste = args.slice(1);
+    switch (sous) {
+      case 'auth':
+        return action('Authentification…', { type: 'admin', action: 'auth', args: { secret: reste[0] || '' } });
+      case 'joueurs':
+        return action('Joueurs connectés…', { type: 'admin', action: 'joueurs', args: {} });
+      case 'sessions':
+        return action('Sessions…', { type: 'admin', action: 'sessions', args: { nom: reste[0] || null } });
+      case 'inventaire':
+        return action('Inventaire…', { type: 'admin', action: 'inventaire', args: { nom: reste[0] || null } });
+      case 'listes':
+        return action('Listes…', { type: 'admin', action: 'listes', args: {} });
+      case 'journal':
+        return action('Journal…', { type: 'admin', action: 'journal', args: { limite: parseInt(reste[0], 10) || 50 } });
+      case 'liste': {
+        // /admin liste ajouter|retirer blanche|noire nom|email valeur
+        var verbe = (reste[0] || '') === 'retirer' ? 'liste_retirer' : 'liste_ajouter';
+        return action('Liste…', { type: 'admin', action: verbe,
+          args: { liste: reste[1], categorie: reste[2], valeur: reste[3] } });
+      }
+      case 'invitation': {
+        if ((reste[0] || '') === 'revoquer') {
+          return action('Révocation…', { type: 'admin', action: 'invitation_revoquer', args: { token: reste[1] } });
+        }
+        var usagesMax = parseInt(reste[0], 10) || 1;
+        var expireMin = parseInt(reste[1], 10) || (24 * 60);
+        return action('Invitation…', { type: 'admin', action: 'invitation_creer',
+          args: { usagesMax: usagesMax, expireDansMs: expireMin * 60000, email: reste[2] || null } });
+      }
+      case 'role':
+        return action('Rôle…', { type: 'admin', action: 'role_nommer',
+          args: { nom: reste[0], role: (reste[1] || '') === 'retirer' ? null : 'moderateur' } });
+      case 'sanction':
+        return action('Sanction…', { type: 'admin', action: 'sanction',
+          args: { nom: reste[0], type: reste[1], dureeMs: (parseInt(reste[2], 10) || 0) * 60000 } });
+      default:
+        return msg('/admin auth <secret> | joueurs | sessions [nom] | inventaire <nom> | listes | journal | ' +
+                   'liste ajouter|retirer <blanche|noire> <nom|email> <valeur> | ' +
+                   'invitation <usagesMax> <expireMin> [email] | invitation revoquer <jeton> | ' +
+                   'role <nom> [retirer] | sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin]');
+    }
   }
 
   function executer(cmd, ctx) {
@@ -89,6 +137,9 @@
         }
         return action('Rendu lointain ' + (v === 'realiste' ? 'réaliste' : 'simple') + '.', { type: 'rendu', realiste: v === 'realiste' });
       }
+      case 'admin':
+        if (!ctx.enLigne) return msg('Le panneau admin exige d\'être en ligne.');
+        return admin(cmd.args || []);
       default:
         return msg('Commande inconnue : /' + cmd.nom);
     }

@@ -16,12 +16,20 @@ const crypto = require('crypto');
 const vm = require('vm');
 
 const RACINE = __dirname;
-const PORT = parseInt(process.argv[2], 10) || 8080;
+
+// ── paramètres de lancement (SPEC-PACK-002) ─────────────────────────────────
+/* Compatibilité : l'ancien usage `node server.js 8080` (port positionnel,
+   utilisé par les tests d'intégration existants) reste accepté — on le
+   traduit en `--port 8080` avant l'analyse déclarative. */
+const SANS_PARAMETRE = process.argv.slice(2).length === 0;   // SPEC-PACK-001 : ouvre le navigateur
+let argvBrut = process.argv.slice(2);
+if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0], ...argvBrut.slice(1)];
+
 
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'noise', 'biomes', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'split', 'net-protocol'];
+                 'chat', 'split', 'net-protocol', 'parametres', 'admin'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -37,9 +45,19 @@ const NP = MC.NetProtocol;
 const SY = MC.Synchro;
 const C = MC.Core;
 
+/* L'analyse elle-même est pure et testée sous Node (tests/spec-parametres.js) ;
+   c'est ICI, et seulement ici, qu'une erreur ou --aide arrête le programme. */
+const analyse = MC.Parametres.analyser(argvBrut);
+if (!analyse.ok) {
+  console.log(analyse.message);
+  process.exit(analyse.code === 'aide' ? 0 : 1);
+}
+const PARAMS = analyse.config;
+const PORT = PARAMS.port;
+
 // ── état du monde, autoritatif ───────────────────────────────────────────────
 const CONF = {
-  graine: parseInt(process.env.MC_GRAINE, 10) || 20260921,
+  graine: PARAMS.graine !== null ? PARAMS.graine : (parseInt(process.env.MC_GRAINE, 10) || 20260921),
   mode: process.env.MC_MODE || 'survie',
   difficulte: process.env.MC_DIFFICULTE || 'facile',
   /* Le serveur fait autorité : il simule les joueurs à partir de leurs
@@ -48,7 +66,26 @@ const CONF = {
      invisible. Réglables par MC_TICK_HZ et MC_ETAT_HZ. */
   tickHz: parseInt(process.env.MC_TICK_HZ, 10) || 60,
   etatHz: parseInt(process.env.MC_ETAT_HZ, 10) || 60,
+  serveurSeul: PARAMS.serveurSeul,
+  maxJoueurs: PARAMS.maxJoueurs,
+  pvp: PARAMS.pvp,
+  mondeFichier: PARAMS.monde ? path.resolve(RACINE, PARAMS.monde) : null,
 };
+
+// ── administration (SPEC-ADMIN-001 à 008) ───────────────────────────────────
+/* Sans --admin, le serveur tire un jeton et l'affiche UNE fois au démarrage :
+   jamais de console laissée sans protection, jamais de secret par défaut
+   devinable. */
+const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-');
+const admin = MC.Admin.creerEtat({
+  motDePasseAdmin: ADMIN_SECRET,
+  listeBlancheActive: PARAMS.listeBlanche,
+  emailObligatoire: false,
+});
+if (!PARAMS.admin) {
+  journal(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);
+  journal('conservez-le : il ne sera plus jamais affiché (relancez avec --admin=... pour le fixer)');
+}
 
 const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
 const monde = MC.createWorld(CONF.graine);
@@ -57,6 +94,71 @@ const chat = MC.Chat.creer({ max: 120 });
 let heure = 60;
 let meteoT = null;
 let accEau = 0;
+
+// ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
+/* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
+   régulière ET à l'arrêt (SIGINT/SIGTERM), reprise au lancement suivant. Le
+   format est délibérément indépendant de MC.Save (pensé pour UN joueur local) :
+   ici il n'y a ni joueur ni inventaire à sauver, seulement le monde partagé
+   et l'état d'administration (rôles, listes, invitations, journal). */
+function etatMonde() {
+  const overrides = [];
+  monde.overrides.forEach((id, k) => { const p = k.split(','); overrides.push([+p[0], +p[1], +p[2], id]); });
+  const crops = [];
+  monde.crops.forEach(c => crops.push([c.x, c.y, c.z, +c.t.toFixed(2)]));
+  return {
+    v: 1, graine: CONF.graine, heure,
+    overrides, crops,
+    donjons: monde.donjonsVaincus ? Array.from(monde.donjonsVaincus) : [],
+    pilles: monde.coffresPilles ? Array.from(monde.coffresPilles) : [],
+    pnjsMorts: monde.pnjsMorts ? Array.from(monde.pnjsMorts.entries()) : [],
+    admin: MC.Admin.serialiser(admin),
+  };
+}
+function appliquerEtatMonde(data) {
+  if (!data || data.v !== 1) return false;
+  if (data.graine !== undefined && data.graine !== CONF.graine) {
+    // une graine différente : la carte ne correspondrait plus aux overrides
+    journal(`avertissement : la graine du fichier (${data.graine}) diffère de celle lancée (${CONF.graine}) — reprise quand même`);
+  }
+  heure = data.heure || 60;
+  monde.overrides.clear();
+  (data.overrides || []).forEach(o => monde.overrides.set(o[0] + ',' + o[1] + ',' + o[2], o[3]));
+  monde.crops.clear();
+  (data.crops || []).forEach(c => monde.crops.set(c[0] + ',' + c[1] + ',' + c[2], { x: c[0], y: c[1], z: c[2], t: c[3] }));
+  if (monde.donjonsVaincus) { monde.donjonsVaincus.clear(); (data.donjons || []).forEach(id => monde.donjonsVaincus.add(id)); }
+  if (monde.coffresPilles) { monde.coffresPilles.clear(); (data.pilles || []).forEach(k => monde.coffresPilles.add(k)); }
+  if (monde.pnjsMorts) {
+    monde.pnjsMorts.clear();
+    (data.pnjsMorts || []).forEach(m => { if (m && typeof m[0] === 'string') monde.pnjsMorts.set(m[0], +m[1] || 0); });
+  }
+  if (data.admin) MC.Admin.appliquer(admin, data.admin);
+  return true;
+}
+function sauvegarderMonde() {
+  if (!CONF.mondeFichier) return false;
+  try {
+    fs.writeFileSync(CONF.mondeFichier, JSON.stringify(etatMonde()));
+    return true;
+  } catch (e) { journal('échec de la sauvegarde du monde : ' + e.message); return false; }
+}
+if (CONF.mondeFichier) {
+  try {
+    if (fs.existsSync(CONF.mondeFichier)) {
+      const data = JSON.parse(fs.readFileSync(CONF.mondeFichier, 'utf8'));
+      if (appliquerEtatMonde(data)) journal(`monde repris depuis ${CONF.mondeFichier} (heure ${heure.toFixed(1)})`);
+      else journal(`fichier de monde illisible ou d'une autre version : ${CONF.mondeFichier} — nouvelle carte`);
+    } else {
+      journal(`aucune sauvegarde à ${CONF.mondeFichier} — nouvelle carte, créée à la première sauvegarde`);
+    }
+  } catch (e) { journal('échec de la reprise du monde : ' + e.message); }
+  // sauvegarde régulière : toutes les deux minutes par défaut, comme un
+  // compromis entre sécurité (peu de perte en cas d'arrêt brutal) et coût
+  // disque négligeable. Réglable (MC_SAUVEGARDE_MS) : les tests d'intégration
+  // en ont besoin d'un intervalle court pour vérifier la sauvegarde périodique
+  // sans attendre deux minutes.
+  setInterval(sauvegarderMonde, parseInt(process.env.MC_SAUVEGARDE_MS, 10) || 120000);
+}
 /* Les habitants des villes et villages proches des joueurs : le serveur les
    fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
 const pnjsSuivis = new Map();                 // les morts : monde.pnjsMorts (identifiant → heure)
@@ -126,6 +228,7 @@ function fermer(c, raison) {
   if (!c || !c.vivant) return;
   c.vivant = false;
   clients.delete(c.id);
+  if (c.sessionId) MC.Admin.fermerSession(admin, c.sessionId, heure);
   try { c.socket.destroy(); } catch (e) {}
   const m = chat.systeme(c.nom + ' a quitté la partie');
   diffuser({ t: NP.MSG.QUITTE, id: c.id, nom: c.nom });
@@ -161,7 +264,54 @@ function cheminSur(urlPath) {
   return resolu;
 }
 
+// ── console web d'administration : API HTTP (SPEC-ADMIN-001 à 005/007) ─────
+/* Le jeton n'est JAMAIS accepté en paramètre d'URL (un lien reste dans
+   l'historique, les journaux du proxy, l'onglet ouvert des semaines) :
+   uniquement l'en-tête Authorization, comme n'importe quelle API. */
+function roleRequete(req) {
+  const ent = req.headers.authorization || '';
+  const m = /^Bearer\s+(.+)$/.exec(ent);
+  if (!m) return null;
+  return MC.Admin.authentifier(admin, m[1]);
+}
+function lireCorpsJSON(req, cb) {
+  let brut = '';
+  req.on('data', d => { brut += d; if (brut.length > 8192) req.destroy(); });
+  req.on('end', () => { try { cb(brut ? JSON.parse(brut) : {}); } catch (e) { cb({}); } });
+}
+function repondreJSON(res, code, obj) {
+  const corps = JSON.stringify(obj);
+  res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(corps) });
+  res.end(corps);
+}
+const RE_API = /^\/admin\/api\/([a-z_]+)\/?$/;
+function traiterApiAdmin(req, res) {
+  const url = req.url.split('?')[0];
+  const mm = RE_API.exec(url);
+  if (!mm) return false;
+  const action = mm[1];
+  const r = roleRequete(req);
+  if (!r) { repondreJSON(res, 401, { ok: false, motif: 'non_authentifie' }); return true; }
+  if (req.method === 'GET') {
+    const q = {};
+    new URL(req.url, 'http://localhost').searchParams.forEach((v, k) => { q[k] = v; });
+    const res2 = executerActionAdmin(r.role, r.nom || 'console', action, q);
+    repondreJSON(res, res2.ok ? 200 : 403, res2);
+    return true;
+  }
+  if (req.method === 'POST') {
+    lireCorpsJSON(req, (args) => {
+      const res2 = executerActionAdmin(r.role, r.nom || 'console', action, args);
+      repondreJSON(res, res2.ok ? 200 : 403, res2);
+    });
+    return true;
+  }
+  repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' });
+  return true;
+}
+
 function servir(req, res) {
+  if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   const chemin = cheminSur(req.url);
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
   fs.stat(chemin, (err, st) => {
@@ -192,7 +342,8 @@ serveur.on('upgrade', (req, socket) => {
   const c = {
     id: prochainId++, nom: 'Joueur', socket, vivant: true, locaux: 1,
     pos: { x: SPAWN.x, y: SPAWN.y, z: SPAWN.z }, yaw: 0, pitch: 0,
-    rejoint: false,
+    rejoint: false, ip: socket.remoteAddress || '?',
+    role: null, sessionId: null,             // rôle d'administration (SPEC-ADMIN-006/008)
   };
   clients.set(c.id, c);
 
@@ -230,9 +381,26 @@ function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
   switch (m.t) {
     case NP.MSG.REJOINDRE: {
+      // liste noire, liste blanche, bannissement, e-mail exigé (SPEC-ADMIN-004)
+      const decision = MC.Admin.peutEntrer(admin, { nom: m.nom, email: m.email, invitation: m.invitation }, heure);
+      if (!decision.ok) {
+        envoyer(c, { t: NP.MSG.REFUS, motif: decision.motif });
+        journal(`x ${m.nom} (${c.ip}) refusé — ${decision.motif}`);
+        setTimeout(() => fermer(c, 'entree refusee : ' + decision.motif), 50);
+        break;
+      }
+      if ([...clients.values()].filter(x => x.rejoint).length >= CONF.maxJoueurs) {
+        envoyer(c, { t: NP.MSG.REFUS, motif: 'serveur_complet' });
+        journal(`x ${m.nom} (${c.ip}) refusé — serveur complet (${CONF.maxJoueurs})`);
+        setTimeout(() => fermer(c, 'serveur complet'), 50);
+        break;
+      }
       c.nom = m.nom;
+      c.email = m.email || null;
       c.locaux = m.locaux;
       c.rejoint = true;
+      c.role = MC.Admin.roleDe(admin, c.nom);           // un modérateur nommé retrouve son rôle en revenant
+      c.sessionId = MC.Admin.ouvrirSession(admin, { nom: c.nom, ip: c.ip }, heure);
       c.joueurs = [];
       for (let j = 0; j < c.locaux; j++) c.joueurs.push(creerJoueurServeur(j));
       c.pos = c.joueurs[0].joueur.state.pos;
@@ -287,6 +455,8 @@ function traiter(c, m) {
       if (d > 6 || js.attaqueCd > 0) break;
       js.attaqueCd = 0.4;
       entites.damage(e, m.degats, st.pos, st);
+      // journal des actions (SPEC-ADMIN-002) : les combats aussi
+      MC.Admin.journaliser(admin, { auteur: c.nom, action: 'combat', cible: e.type, details: m.degats, heure });
       break;
     }
 
@@ -339,6 +509,9 @@ function traiter(c, m) {
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id });
+      // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
+      MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
+                                     cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
       break;
     }
 
@@ -348,9 +521,87 @@ function traiter(c, m) {
         diffuser({ t: NP.MSG.CHAT, auteur: msg.auteur, texte: msg.texte,
                    type: msg.type, ts: msg.t });
         journal(`<${c.nom}> ${msg.texte}`);
+        MC.Admin.journaliser(admin, { auteur: c.nom, action: 'chat', cible: msg.texte, heure });
       }
       break;
     }
+
+    case NP.MSG.ADMIN: {
+      traiterAdmin(c, m);
+      break;
+    }
+  }
+}
+
+// ── panneau admin en jeu (SPEC-ADMIN-006) ────────────────────────────────────
+/* Le client déclare une ACTION ; le serveur ne fait jamais confiance à un rôle
+   annoncé par le client — seul `c.role`, attribué PAR le serveur à l'authen-
+   tification, décide. Refuser silencieusement (erreur générique) évite de
+   confirmer à un tiers curieux qu'un jeton particulier existe. */
+function reponseAdmin(c, action, ok, data, erreur) {
+  envoyer(c, { t: NP.MSG.ADMIN_REP, action, ok, data: data || null, erreur: erreur || null });
+}
+function joueursEnLigne() {
+  return tousLesJoueurs().map(({ c: cl, js }) => ({
+    nom: cl.nom, ip: cl.ip, connecteLe: null,
+    x: +js.joueur.state.pos.x.toFixed(1), y: +js.joueur.state.pos.y.toFixed(1), z: +js.joueur.state.pos.z.toFixed(1),
+  }));
+}
+function traiterAdmin(c, m) {
+  const Adm = MC.Admin;
+  if (m.action === 'auth') {
+    const r = Adm.authentifier(admin, m.args && m.args.secret);
+    if (!r) { reponseAdmin(c, 'auth', false, null, 'refuse'); return; }
+    c.role = r.role;
+    if (r.nom) c.nom = c.nom || r.nom;
+    if (r.role === Adm.ROLES.ADMIN && c.rejoint) Adm.noterAdminConnu(admin, c.nom);
+    reponseAdmin(c, 'auth', true, { role: r.role });
+    journal(`+ ${c.nom} (#${c.id}) authentifie en ${r.role}`);
+    return;
+  }
+  if (!c.role) { reponseAdmin(c, m.action, false, null, 'non_authentifie'); return; }
+  const r = executerActionAdmin(c.role, c.nom, m.action, m.args || {});
+  reponseAdmin(c, m.action, r.ok, r.ok ? r.data : null, r.ok ? null : r.motif);
+}
+
+/* Cœur commun au panneau en jeu (WebSocket) ET à la console web (HTTP) : les
+   deux ne doivent JAMAIS diverger sur qui a le droit de faire quoi — d'où un
+   seul endroit qui décide, appelé par les deux façades. */
+function executerActionAdmin(role, nomActeur, action, args) {
+  const Adm = MC.Admin;
+  args = args || {};
+  const roleCible = args.nom ? Adm.roleDe(admin, args.nom) : null;
+  if (!Adm.peutAgir(role, action, roleCible)) return { ok: false, motif: 'refuse' };
+
+  switch (action) {
+    case 'joueurs': return { ok: true, data: Adm.vueJoueurs(admin, joueursEnLigne(), role) };
+    case 'sessions': return { ok: true, data: Adm.vueSessions(admin, args.nom, role) };
+    case 'listes': return { ok: true, data: Adm.vueListes(admin, role) };
+    case 'journal': return { ok: true, data: Adm.vueJournal(admin, role, args.limite) };
+    case 'inventaire': {
+      const cible = [...clients.values()].find(x => x.nom === args.nom);
+      const inv = cible && cible.joueurs && cible.joueurs[0] ? cible.joueurs[0].joueur.state.inv.serialize() : [];
+      return { ok: true, data: inv };
+    }
+    case 'liste_ajouter':
+      return { ok: true, data: Adm.ajouterListe(admin, args.liste, args.categorie, args.valeur, nomActeur, heure) };
+    case 'liste_retirer':
+      return { ok: true, data: Adm.retirerListe(admin, args.liste, args.categorie, args.valeur, nomActeur, heure) };
+    case 'invitation_creer':
+      return { ok: true, data: Adm.creerInvitation(admin, args, nomActeur, heure) };
+    case 'invitation_revoquer':
+      return { ok: true, data: Adm.revoquerInvitation(admin, args.token, nomActeur, heure) };
+    case 'role_nommer':
+      return { ok: true, data: Adm.nommerRole(admin, args.nom, args.role || null, nomActeur, heure) };
+    case 'sanction': {
+      const res = Adm.sanctionner(admin, { nom: args.nom, type: args.type, dureeMs: args.dureeMs, auteur: nomActeur }, heure);
+      if (res.ok && (args.type === 'expulser' || args.type === 'bannir')) {
+        const cible = [...clients.values()].find(x => x.nom === args.nom);
+        if (cible) fermer(cible, 'sanction : ' + args.type);
+      }
+      return { ok: true, data: res };
+    }
+    default: return { ok: false, motif: 'action_inconnue' };
   }
 }
 
@@ -549,18 +800,47 @@ setInterval(() => {
   }
 }, 4);
 
+// ── ouverture automatique du navigateur (SPEC-PACK-001) ─────────────────────
+/* « Lancé sans paramètre, il ouvre le jeu dans le navigateur » : uniquement
+   quand AUCUN paramètre n'a été donné (pas même --port), pour ne jamais
+   surprendre un usage scripté ou les tests, qui passent toujours au moins
+   --port. Best-effort : sans environnement graphique, on l'ignore. */
+function ouvrirNavigateur(url) {
+  try {
+    const { spawn } = require('child_process');
+    let cmd, args;
+    if (process.platform === 'win32') { cmd = 'cmd'; args = ['/c', 'start', '', url]; }
+    else if (process.platform === 'darwin') { cmd = 'open'; args = [url]; }
+    else { cmd = 'xdg-open'; args = [url]; }
+    spawn(cmd, args, { detached: true, stdio: 'ignore' }).unref();
+  } catch (e) { journal('navigateur non ouvert automatiquement : ' + e.message); }
+}
+
 // ── démarrage ────────────────────────────────────────────────────────────────
 serveur.listen(PORT, () => {
   journal(`MiniCraft — serveur sur http://localhost:${PORT}`);
   journal(`graine ${CONF.graine} · mode ${CONF.mode} · difficulté ${CONF.difficulte}`);
   journal(`simulation ${CONF.tickHz} Hz · diffusion d'état ${CONF.etatHz} Hz`);
+  if (SANS_PARAMETRE && !CONF.serveurSeul) {
+    journal('ouverture du navigateur…');
+    ouvrirNavigateur(`http://localhost:${PORT}`);
+  }
 });
 
-process.on('SIGINT', () => {
-  journal('arrêt demandé');
+/* SIGINT (Ctrl+C) ET SIGTERM (arrêt par un gestionnaire de services) doivent
+   tous deux sauvegarder : un serveur seul persistant tourne typiquement sous
+   un tel gestionnaire, qui n'envoie jamais SIGINT. */
+function arreter(signal) {
+  journal(`arrêt demandé (${signal})`);
+  if (CONF.mondeFichier) {
+    const ok = sauvegarderMonde();
+    journal(ok ? `monde sauvegardé dans ${CONF.mondeFichier}` : 'sauvegarde finale échouée');
+  }
   clients.forEach(c => { try { c.socket.destroy(); } catch (e) {} });
   serveur.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 500);
-});
+}
+process.on('SIGINT', () => arreter('SIGINT'));
+process.on('SIGTERM', () => arreter('SIGTERM'));
 
-module.exports = { serveur, cheminSur, CONF };
+module.exports = { serveur, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMonde, appliquerEtatMonde, etatMonde };

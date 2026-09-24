@@ -13,6 +13,18 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.81] - 2026-09-24
+### Ajouté
+
+- Version empaquetée : archive portable avec lanceurs et préparation d'un exécutable Node SEA (tools/paquet.js) ; paramètres de lancement (--serveur, --port, --graine, --monde, --max-joueurs, --pvp, --liste-blanche, --admin) et aide automatique sur demande ou sur erreur, avec suggestion (PACK-001 à 003).
+- Serveur dédié persistant : sauvegarde périodique et à l'arrêt, reprise au lancement (SERVEUR-001).
+- Administration : console web protégée (joueurs, positions, IP, inventaires, journal des actions, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, panneau admin en jeu (/admin), modérateurs aux droits restreints, confidentialité par rôle et journal d'administration (ADMIN-001 à 008).
+
+### Limites connues
+
+- Le journal des actions ne couvre pas encore coffres et échanges (pas encore arbitrés par le serveur).
+- L'exécutable autonome demande l'outil postject pour sa dernière étape (commande affichée par tools/paquet.js).
+
 ## [0.0.80] - 2026-09-24
 
 Première version numérotée : `Z` vaut le nombre de commits antérieurs (79)
@@ -75,4 +87,5 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.81]: #
 [0.0.80]: #
