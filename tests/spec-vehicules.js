@@ -289,10 +289,15 @@
     it('SPEC-MIGR-001 : une sauvegarde d avant les biomes se charge, objets convertis', function () {
       var dec = C.DECALAGE_OBJETS_V1;
       A.equal(dec, 64);
+      // encodage v1 : objets a partir de 64, dans l'espace 8 bits d'alors —
+      // il faut donc défaire les DEUX décalages qui séparent ce format de
+      // l'id courant (128→FIRST_ITEM, SPEC-SAVE-017, puis 64→128).
+      var offAncien = C.FIRST_ITEM - C.ANCIEN_FIRST_ITEM;
+      function versV1(id) { return id - offAncien - dec; }
       var v1 = { v: 1, seed: 5, time: 10, overrides: [[0, 20, 0, B.STONE]], crops: [],
-                 player: { x: 1, y: 30, z: 1, inv: [[I.IRON_PICKAXE - dec, 1, 7], [B.PLANKS, 12]] },
-                 chests: [['1,2,3', [[I.EMERALD - dec, 3]]]],
-                 furnaces: [['4,5,6', [B.IRON_ORE, 2], [I.COAL - dec, 4], 0, 0, 0]] };
+                 player: { x: 1, y: 30, z: 1, inv: [[versV1(I.IRON_PICKAXE), 1, 7], [B.PLANKS, 12]] },
+                 chests: [['1,2,3', [[versV1(I.EMERALD), 3]]]],
+                 furnaces: [['4,5,6', [B.IRON_ORE, 2], [versV1(I.COAL), 4], 0, 0, 0]] };
       var e = G.etatMinimal(5);
       A.ok(MC.Save.apply(v1, e), 'la version 1 est acceptée');
       A.equal(e.player.state.inv.slots[0].id, I.IRON_PICKAXE, 'la pioche retrouve son identité');
@@ -301,8 +306,8 @@
       A.equal(e.chests['1,2,3'].slots[0].id, I.EMERALD, 'coffre converti');
       A.equal(e.furnaces['4,5,6'].fuel.id, I.COAL, 'fourneau converti');
       A.equal(e.world.overrides.get('0,20,0'), B.STONE, 'les blocs posés restent');
-      A.equal(v1.player.inv[0][0], I.IRON_PICKAXE - dec, 'la donnée d origine n est pas modifiée');
-      A.equal(MC.Save.migrerV1(JSON.parse(JSON.stringify(v1))).v, MC.Save.VERSION);
+      A.equal(v1.player.inv[0][0], versV1(I.IRON_PICKAXE), 'la donnée d origine n est pas modifiée');
+      A.equal(MC.Save.migrerV2(MC.Save.migrerV1(JSON.parse(JSON.stringify(v1)))).v, MC.Save.VERSION);
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

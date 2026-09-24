@@ -18,10 +18,12 @@
   function idx(x, y, z) { return (y * CHUNK_Z + z) * CHUNK_X + x; }
 
   // ─── espace d'ids unifié ───────────────────────────────────────────────────
-  // 0 = air, 1..127 = blocs (posables), 128+ = objets (non posables).
-  // Les blocs tiennent sur un octet (Uint8Array des chunks) : 255 au plus.
-  // Un seul espace d'ids permet à l'inventaire, au craft et aux drops de
-  // manipuler indifféremment un bloc ou un objet.
+  // 0 = air, 1..4095 = blocs (posables), 4096+ = objets (non posables).
+  // Les blocs tiennent désormais sur 16 bits (Uint16Array des chunks,
+  // SPEC-SAVE-017) : la marge entre les derniers blocs définis (127) et
+  // FIRST_ITEM laisse de la place à de nouveaux blocs sans jamais plus
+  // toucher à l'id des objets. Un seul espace d'ids permet à l'inventaire,
+  // au craft et aux drops de manipuler indifféremment un bloc ou un objet.
   var B = {
     AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, SAND: 4, LOG: 5, LEAVES: 6,
     PLANKS: 7, COBBLE: 8, BRICK: 9, GLASS: 10, WATER: 11,
@@ -118,10 +120,25 @@
     BIJOU: 221,
   };
 
-  var FIRST_ITEM = 128;
+  /* Ancienne frontière (format de sauvegarde 8 bits, avant SPEC-SAVE-017) :
+     les objets démarraient à 128, dans un espace d'ids partagé avec les
+     blocs sur un seul octet. `I` ci-dessus est encore déclaré avec CES
+     valeurs (128..221) pour ne pas réécrire chaque définition ; elles sont
+     décalées vers le nouvel espace juste après. `ANCIEN_FIRST_ITEM` sert de
+     pivot à la migration d'une sauvegarde ou d'un monde serveur antérieurs
+     (save.js, server.js). */
+  var ANCIEN_FIRST_ITEM = 128;
   /* Les objets démarraient à 64 avant l'arrivée des biomes : une sauvegarde
-     de cette époque est convertie au chargement par ce décalage. */
+     de cette époque est convertie au chargement par ce décalage (vers
+     l'ancien espace 128, puis vers le nouveau ci-dessous). */
   var DECALAGE_OBJETS_V1 = 64;
+  // nouvel espace (SPEC-SAVE-017) : les blocs vont de 1 à 4095, les objets
+  // commencent à 4096 — largement assez de marge pour L24/L29 et la suite.
+  var FIRST_ITEM = 4096;
+  (function () {
+    var decalage = FIRST_ITEM - ANCIEN_FIRST_ITEM;
+    for (var nomObjet in I) I[nomObjet] += decalage;
+  })();
   function isBlock(id) { return id > 0 && id < FIRST_ITEM; }
   function isItem(id) { return id >= FIRST_ITEM; }
 
@@ -732,7 +749,8 @@
     VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
-    FIRST_ITEM: FIRST_ITEM, DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
+    FIRST_ITEM: FIRST_ITEM, ANCIEN_FIRST_ITEM: ANCIEN_FIRST_ITEM,
+    DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
     isLog: isLog, isLeaves: isLeaves, isConifere: isConifere, isWater: isWater, isLava: isLava, TIER_NAME: TIER_NAME,

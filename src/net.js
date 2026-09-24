@@ -132,7 +132,7 @@
           break;
 
         case NP.MSG.BLOC:
-          hooks.onBloc(m.x, m.y, m.z, m.id);
+          hooks.onBloc(m.x, m.y, m.z, m.id, m.etat || 0);
           break;
 
         case NP.MSG.CHAT:
@@ -230,8 +230,8 @@
     function manger(id, j) { return envoyer({ t: NP.MSG.MANGER, id: id, j: j || 0 }); }
     function renaitre(j) { return envoyer({ t: NP.MSG.RENAITRE, j: j || 0 }); }
 
-    function poserBloc(x, y, z, id, outil, j) {
-      return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0 });
+    function poserBloc(x, y, z, id, outil, j, etat) {
+      return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0, etat: etat || 0 });
     }
     function envoyerChat(texte) {
       return envoyer({ t: NP.MSG.CHAT, texte: texte });

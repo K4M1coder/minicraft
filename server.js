@@ -104,11 +104,20 @@ let accEau = 0;
 function etatMonde() {
   const overrides = [];
   monde.overrides.forEach((id, k) => { const p = k.split(','); overrides.push([+p[0], +p[1], +p[2], id]); });
+  // États de bloc (SPEC-SAVE-017) : à part des overrides — poser un état ne
+  // pose pas forcément un bloc, le coupler aux overrides en perdrait au chargement.
+  const etats = [];
+  if (monde.etatsOverrides) {
+    monde.etatsOverrides.forEach((etat, k) => { const p = k.split(','); etats.push([+p[0], +p[1], +p[2], etat]); });
+  }
   const crops = [];
   monde.crops.forEach(c => crops.push([c.x, c.y, c.z, +c.t.toFixed(2)]));
   return {
-    v: 1, graine: CONF.graine, heure,
-    overrides, crops,
+    // v2 (SPEC-SAVE-017) : ajoute la liste `etats` ; les blocs eux-mêmes ne
+    // bougent pas (aucun objet d'inventaire ici, voir le commentaire plus
+    // haut), donc un fichier v1 (sans `etats`) se relit sans conversion d'id.
+    v: 2, graine: CONF.graine, heure,
+    overrides, etats, crops,
     donjons: monde.donjonsVaincus ? Array.from(monde.donjonsVaincus) : [],
     pilles: monde.coffresPilles ? Array.from(monde.coffresPilles) : [],
     pnjsMorts: monde.pnjsMorts ? Array.from(monde.pnjsMorts.entries()) : [],
@@ -117,7 +126,7 @@ function etatMonde() {
   };
 }
 function appliquerEtatMonde(data) {
-  if (!data || data.v !== 1) return false;
+  if (!data || (data.v !== 1 && data.v !== 2)) return false;   // format inconnu : refusé proprement
   if (data.graine !== undefined && data.graine !== CONF.graine) {
     // une graine différente : la carte ne correspondrait plus aux overrides
     journal(`avertissement : la graine du fichier (${data.graine}) diffère de celle lancée (${CONF.graine}) — reprise quand même`);
@@ -125,6 +134,10 @@ function appliquerEtatMonde(data) {
   heure = data.heure || 60;
   monde.overrides.clear();
   (data.overrides || []).forEach(o => monde.overrides.set(o[0] + ',' + o[1] + ',' + o[2], o[3]));
+  if (monde.etatsOverrides) {
+    monde.etatsOverrides.clear();
+    (data.etats || []).forEach(o => { if (o[3]) monde.etatsOverrides.set(o[0] + ',' + o[1] + ',' + o[2], o[3]); });
+  }
   monde.crops.clear();
   (data.crops || []).forEach(c => monde.crops.set(c[0] + ',' + c[1] + ',' + c[2], { x: c[0], y: c[1], z: c[2], t: c[3] }));
   if (monde.donjonsVaincus) { monde.donjonsVaincus.clear(); (data.donjons || []).forEach(id => monde.donjonsVaincus.add(id)); }
@@ -411,7 +424,8 @@ function traiter(c, m) {
       const blocs = [];
       monde.overrides.forEach((id, k) => {
         const p = k.split(',');
-        blocs.push([+p[0], +p[1], +p[2], id]);
+        const etat = monde.etatsOverrides ? (monde.etatsOverrides.get(k) || 0) : 0;
+        blocs.push([+p[0], +p[1], +p[2], id, etat]);
       });
       envoyer(c, {
         t: NP.MSG.BIENVENUE,
@@ -534,13 +548,16 @@ function traiter(c, m) {
         break;
       }
       monde.setBlock(m.x, m.y, m.z, m.id);
+      // état du bloc posé (orientation, niveau… — SPEC-SAVE-017) : 0 par
+      // défaut, comme un bloc cassé ou sans état particulier
+      if (monde.setEtat) monde.setEtat(m.x, m.y, m.z, m.etat || 0);
       // une casse lâche son butin côté serveur : c'est lui qui le distribue
       if (m.id === 0 && avant) {
         const cassure = C.breakTime(avant, m.outil);
         C.dropsOf(avant, cassure.harvests).forEach(d =>
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
-      diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id });
+      diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
       // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });

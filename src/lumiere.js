@@ -17,9 +17,12 @@
   var CX = C.CHUNK_X, CZ = C.CHUNK_Z, WH = C.WORLD_H, idx = C.idx;
   var MAX = 15;
 
-  // tables par identifiant de bloc, calculées une fois
-  var EMISSION = new Uint8Array(256), OPAQUE = new Uint8Array(256);
-  for (var id = 1; id < 256; id++) {
+  /* Tables par identifiant de bloc, calculées une fois. Dimensionnées sur
+     FIRST_ITEM (SPEC-SAVE-017, 16 bits) plutôt que sur 256 : un bloc défini
+     au-delà de l'ancienne limite d'un octet doit lui aussi porter sa lumière
+     et son opacité sans qu'on y repense. */
+  var EMISSION = new Uint8Array(C.FIRST_ITEM), OPAQUE = new Uint8Array(C.FIRST_ITEM);
+  for (var id = 1; id < C.FIRST_ITEM; id++) {
     var d = C.BLOCKS[id];
     if (!d) continue;
     EMISSION[id] = Math.min(MAX, d.light || 0);
@@ -29,8 +32,8 @@
   }
   /* Ce qui laisse passer le ciel en l'affaiblissant : l'eau et le feuillage
      retiennent un peu de jour à chaque bloc — le fond de la mer s'assombrit. */
-  var FILTRE = new Uint8Array(256);
-  for (var id2 = 1; id2 < 256; id2++) {
+  var FILTRE = new Uint8Array(C.FIRST_ITEM);
+  for (var id2 = 1; id2 < C.FIRST_ITEM; id2++) {
     var d2 = C.BLOCKS[id2];
     if (!d2 || OPAQUE[id2]) continue;
     if (d2.liquid) FILTRE[id2] = 2;
