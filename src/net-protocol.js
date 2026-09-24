@@ -183,6 +183,8 @@
     // qu'il éjecte sur signal — voir circuits.js/onDistribuer côté serveur).
     DISTRIB: 'distrib',
   };
+  // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
+  if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
 
   /* Valide un message entrant. Un message sans `t` connu est rejeté : il ne
      doit jamais pouvoir faire planter le serveur. */
@@ -229,9 +231,7 @@
         }
         return null;
       }
-      case MSG.MANGER:
-        if (!estEntier(msg.id)) return null;
-        return { t: msg.t, id: msg.id | 0, j: joueurLocal(msg.j) };
+      case MSG.MANGER: return MC.ContratsV2 ? MC.ContratsV2.validerManger(msg) : (estEntier(msg.id) ? { t: msg.t, id: msg.id | 0, j: joueurLocal(msg.j) } : null);
       case MSG.RENAITRE:
         return { t: msg.t, j: joueurLocal(msg.j) };
       case MSG.TIR: {
@@ -282,8 +282,7 @@
         var txt = String(msg.texte === undefined ? '' : msg.texte).trim();
         if (!txt) return null;
         return { t: msg.t, texte: txt.slice(0, 160) };
-      default:
-        return null;                            // message inconnu : ignoré
+      default: return MC.ContratsV2 ? MC.ContratsV2.valider(msg) : null;
     }
   }
 

@@ -14,6 +14,14 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+
+- Vague 2 (B1, SPEC-SYNC-007 à 017) : raccordement de `MC.ContratsV2` à
+  `NP.valider` — les nouveaux types de message (`CRAFT`, `EQUIP`,
+  `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le
+  protocole réseau, et `MANGER` passe par `ContratsV2.validerManger`
+  (compatible avec la forme historique).
+
 ### Modifié
 
 - Banc de test navigateur (`tests/banc-ui.js`, `tests/index.html`) : retrait
