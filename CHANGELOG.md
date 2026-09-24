@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+## [0.2.0] - 2026-09-24
 ### Ajouté
 
 - Flore sous-marine diversifiée selon la profondeur, la température et la lumière : anémones, algues rouges et brunes, posidonies, gorgones pourpres, éponges, laminaires (MER-010).
@@ -181,6 +182,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.2.0]: #
 [0.1.0]: #
 [0.0.86]: #
 [0.0.85]: #
