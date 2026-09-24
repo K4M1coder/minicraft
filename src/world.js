@@ -450,6 +450,24 @@
        Tout se décide colonne par colonne : aucune structure ne déborde d'un
        chunk, donc rien ne dépend de l'ordre de génération. */
     var FLORE_LAC = [{ id: B.SEAGRASS, p: 0.12 }, { id: B.KELP, p: 0.015 }];
+    /* Proximité d'une côte (0..1), par mailles de 8 blocs mises en cache : la
+       terre émergée la plus proche, cherchée sur deux anneaux. */
+    var cotes = new Map();
+    function coteEn(wx, wz) {
+      var mx = wx >> 3, mz = wz >> 3, k = mx + ',' + mz;
+      var c = cotes.get(k);
+      if (c !== undefined) return c;
+      c = 0;
+      var cx = mx * 8 + 4, cz = mz * 8 + 4;
+      var anneaux = [[12, 1], [30, 0.6], [60, 0.35]];
+      for (var a = 0; a < anneaux.length && !c; a++) for (var d = 0; d < 8; d++) {
+        var ang = d * Math.PI / 4, r = anneaux[a][0];
+        if (Bio.hauteur(Math.round(cx + Math.cos(ang) * r), Math.round(cz + Math.sin(ang) * r)) >= SEA) { c = anneaux[a][1]; break; }
+      }
+      if (cotes.size > 20000) cotes.clear();
+      cotes.set(k, c);
+      return c;
+    }
     function fondMarin(blocks, x, z, wx, wz, h, bio, niveau) {
       var surf = niveau === undefined ? SEA : niveau;
       var prof = surf - h;
@@ -463,8 +481,43 @@
           return;
         }
       }
-      if (prof < 2 || !bio.plantes) return;
+      if (prof < 1 || !bio.plantes) return;
       var y0 = h + 1;
+      // récifs (SPEC-MER-011) : frangeants au ras des côtes chaudes, barrières au
+      // large, atolls et lagons autour des îles volcaniques éteintes
+      if (MC.Recifs && bio.marin) {
+        var tC = Bio.climat(wx, wz).t;
+        var st = tC >= 0.6 ? MC.Recifs.structureEn(wx, wz, { prof: prof, t: tC, cote: coteEn(wx, wz),
+                                   volcan: Bio.volcanProche ? Bio.volcanProche(wx, wz, 1.6) : null,
+                                   bruit: N.fbm((wx + 431) / 70, (wz - 173) / 70, 2, 2, 0.5) }) : null;
+        if (st && st.type === 'lagon') {
+          for (var yl2 = y0; yl2 <= surf - st.sommet - 1 && yl2 < surf; yl2++) blocks[idx(x, yl2, z)] = B.SAND;
+          return;
+        }
+        if (st) {
+          var haut2 = surf - 1 - st.sommet, cols = [B.CORAL_RED, B.CORAL_YELLOW, B.CORAL_BLUE];
+          for (var yr = y0; yr <= haut2 && yr < surf; yr++) {
+            blocks[idx(x, yr, z)] = yr < haut2 - 1 ? B.CORAIL_BLANC : cols[Math.floor(N.hash2(wx * 7 + yr, wz * 3) * 3) % 3];
+          }
+          var top = Math.max(y0, haut2 + 1);
+          if (top < surf) {
+            var hh = N.hash2(wx * 13 - 1, wz * 11 + 2);
+            if (hh < 0.3) blocks[idx(x, top, z)] = [B.CORAL_FAN_RED, B.CORAL_FAN_YELLOW, B.CORAL_FAN_BLUE, B.ANEMONE_ROSE][Math.floor(hh * 13) % 4];
+          }
+          return;
+        }
+        if (prof < 2) return;
+        // flore selon la profondeur, la température et la lumière (SPEC-MER-010)
+        // la flore propre au biome (varech, herbiers…) passe d'abord ; les espèces nouvelles comblent le reste
+        var fl = tirer(bio.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11)) ? null
+               : MC.Recifs.floreEn(B, prof, tC, N.hash2(wx * 41 + 9, wz * 37 - 5), N.hash2(wx * 5 - 3, wz * 9 + 1));
+        if (fl) {
+          if (fl.colonne) for (var yc = y0; yc < y0 + fl.hauteur && yc < surf; yc++) blocks[idx(x, yc, z)] = fl.id;
+          else blocks[idx(x, y0, z)] = fl.id;
+          return;
+        }
+      }
+      if (prof < 2) return;
       // récif : des massifs de corail, coiffés de gorgones et de cornichons
       if (bio.recif && prof <= 10) {
         var rf = N.fbm((wx - 211) / 7, (wz + 97) / 7, 2, 2, 0.5);

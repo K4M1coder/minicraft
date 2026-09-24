@@ -353,6 +353,22 @@
                             drops: [{ id: I.PRISMARINE_SHARD, n: 2 }] });
   planteMarine(B.SEA_PICKLE, 'Cornichon de mer', 107, { light: 6, drops: [{ id: B.SEA_PICKLE, n: 1 }] });
 
+  // ── L35 flore marine (SPEC-MER-010) : blocs 850-859, tuiles 896-905 ──────
+  B.ANEMONE_ROSE = 850; B.ANEMONE_VERTE = 851; B.ALGUE_ROUGE = 852; B.ALGUE_BRUNE = 853;
+  B.POSIDONIE = 854; B.GORGONE_POURPRE = 855; B.EPONGE_JAUNE = 856; B.EPONGE_ORANGE = 857;
+  B.LAMINAIRE = 858; B.CORAIL_BLANC = 859;
+  planteMarine(B.ANEMONE_ROSE, 'Anémone rose', 896);
+  planteMarine(B.ANEMONE_VERTE, 'Anémone verte', 897);
+  planteMarine(B.ALGUE_ROUGE, 'Algue rouge', 898, { drops: [{ id: I.DYE_RED, n: 1, chance: 0.3 }] });
+  planteMarine(B.ALGUE_BRUNE, 'Algue brune', 899);
+  planteMarine(B.POSIDONIE, 'Posidonie', 900);
+  planteMarine(B.GORGONE_POURPRE, 'Gorgone pourpre', 901);
+  defBlock(B.EPONGE_JAUNE, { name: 'Éponge jaune', tiles: [902, 902, 902], hardness: 0.6 });
+  defBlock(B.EPONGE_ORANGE, { name: 'Éponge orange', tiles: [903, 903, 903], hardness: 0.6 });
+  planteMarine(B.LAMINAIRE, 'Laminaire', 904, { needsSupport: false, drops: [{ id: B.LAMINAIRE, n: 1 }] });
+  // le squelette des récifs : corail blanc, dur, sur lequel poussent les colonies
+  defBlock(B.CORAIL_BLANC, { name: 'Corail blanc', tiles: [905, 905, 905], hardness: 1.0, tool: 'pickaxe' });
+
   // ─── minerais et structures ────────────────────────────────────────────────
   defBlock(B.GOLD_ORE, { name: "Minerai d'or", tiles: [108, 108, 108], hardness: 3.0, tool: 'pickaxe',
                          needsTool: true, minTier: 3 });

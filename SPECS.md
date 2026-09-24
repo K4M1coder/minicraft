@@ -641,8 +641,8 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-MER-010 | La flore sous-marine se diversifie : anémones, algues rouges et brunes, posidonies, gorgones, éponges, laminaires, chacune selon la profondeur, la température et la lumière | espèces et conditions de pousse | ⏳ |
-| SPEC-MER-011 | Des récifs se forment : barrières de corail le long des côtes chaudes, récifs frangeants, atolls autour des îles, et leurs lagons | structures récifales générées | ⏳ |
+| SPEC-MER-010 | La flore sous-marine se diversifie : anémones, algues rouges et brunes, posidonies, gorgones, éponges, laminaires, chacune selon la profondeur, la température et la lumière | espèces et conditions de pousse | ✅ |
+| SPEC-MER-011 | Des récifs se forment : barrières de corail le long des côtes chaudes, récifs frangeants, atolls autour des îles, et leurs lagons | structures récifales générées | ✅ |
 | SPEC-SOUTERRAIN-001 | Des biomes souterrains dépendent de ce qui les surmonte : géodes et grottes de cristal sous les montagnes, chambres magmatiques sous les volcans, grottes luxuriantes sous les plaines et les forêts, grottes englouties sous les fonds marins, et au plus profond l'abîme | biome souterrain selon la surface et la profondeur | ✅ |
 | SPEC-SOUTERRAIN-002 | Chaque biome souterrain a ses créatures (chauves-souris, araignées des cavernes, élémentaires de magma, golems de cristal, rôdeurs de l'abîme, créatures aveugles des grottes englouties…) | tables d'apparition souterraines | ✅ |
 | SPEC-SOUTERRAIN-003 | Chaque biome souterrain a ses structures : donjons propres, ruines d'anciennes cités, mines abandonnées avec rails et étais | structures par biome souterrain | ✅ |

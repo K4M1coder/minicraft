@@ -899,6 +899,46 @@
       g.strokeStyle = '#6a4a28'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
     })();
 
+    // ─── flore marine (896-905, SPEC-MER-010) ────────────────────────────
+    function anemone(i, corps, bras) {
+      var o = clear(i);
+      g.fillStyle = corps; g.fillRect(o[0] + 5, o[1] + 10, 6, 5);
+      for (var k = 0; k < 7; k++) {
+        var x = 3 + k * 1.6, h = 4 + ((rnd() * 5) | 0);
+        for (var y = 10 - h; y < 10; y++) px(o[0], o[1], Math.round(x + Math.sin(y) * 0.8), y, bras);
+      }
+    }
+    anemone(896, '#c04a70', '#ff9ac0');                               // 896 anémone rose
+    anemone(897, '#3a8a5a', '#9af0b0');                               // 897 anémone verte
+    function algue(i, c1, c2, large) {
+      var o = clear(i);
+      for (var b = 0; b < 3; b++) {
+        var x0 = 3 + b * 4;
+        for (var y = 2 + b; y < TILE; y++) {
+          var x = x0 + Math.round(Math.sin(y * 0.6 + b) * 1.5);
+          px(o[0], o[1], x, y, y % 3 ? c1 : c2);
+          if (large) px(o[0], o[1], x + 1, y, c1);
+        }
+      }
+    }
+    algue(898, '#b8304a', '#e0607a', false);                          // 898 algue rouge
+    algue(899, '#7a6a2a', '#a08a3a', true);                           // 899 algue brune
+    (function () {                                                    // 900 posidonie : longs rubans
+      var o = clear(900);
+      for (var x = 1; x < TILE; x += 2) for (var y = 1 + ((rnd() * 4) | 0); y < TILE; y++) px(o[0], o[1], x, y, y % 4 ? '#3a7a3a' : '#5a9a4a');
+    })();
+    (function () {                                                    // 901 gorgone pourpre : un éventail ramifié
+      var o = clear(901);
+      for (var a = -4; a <= 4; a++) for (var r = 0; r < 12; r++) {
+        var x = 8 + Math.round(Math.sin(a * 0.3) * r), y = 15 - Math.round(Math.cos(a * 0.3) * r);
+        if (r % 3 !== 2 || a % 2 === 0) px(o[0], o[1], x, y, r > 8 ? '#e070d0' : '#a03a9a');
+      }
+    })();
+    taches(902, [220, 200, 60], 22, 'rgba(150,120,20,.8)', 14, 1);    // 902 éponge jaune (pores)
+    taches(903, [230, 120, 40], 22, 'rgba(140,60,10,.8)', 14, 1);     // 903 éponge orange
+    algue(904, '#5a5a1a', '#7a7a2a', true);                           // 904 laminaire
+    taches(905, [226, 222, 208], 12, 'rgba(180,170,150,.8)', 16, 1);  // 905 corail blanc
+
     // ─── minerais (227-231, SPEC-MINERAI-001) et bioluminescence (232-235, SPEC-LUMIERE-007) ──
     minerai(227, '#d68a4a');                                          // cuivre + étain, tacheté roux
     minerai(228, '#c9c9d8');                                          // argent + lapis, tacheté clair

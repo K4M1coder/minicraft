@@ -293,11 +293,12 @@
       volcans.set(k, v);
       return v;
     }
-    function volcanProche(wx, wz) {
+    // `facteur` : jusqu'où chercher, en rayons du volcan (1 par défaut : sur son cône)
+    function volcanProche(wx, wz, facteur) {
       var rx = Math.floor(wx / REGION_VOLCAN), rz = Math.floor(wz / REGION_VOLCAN);
       for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) {
         var v = volcanDe(rx + a, rz + b);
-        if (v && Math.hypot(wx - v.x, wz - v.z) < v.R) return v;
+        if (v && Math.hypot(wx - v.x, wz - v.z) < v.R * (facteur || 1)) return v;
       }
       return null;
     }

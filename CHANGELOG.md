@@ -17,6 +17,9 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Ajouté
 
+- Flore sous-marine diversifiée selon la profondeur, la température et la lumière : anémones, algues rouges et brunes, posidonies, gorgones pourpres, éponges, laminaires (MER-010).
+- Récifs : frangeants au ras des côtes chaudes, barrières au large, atolls et lagons autour des îles volcaniques éteintes, sur un squelette de corail blanc (MER-011).
+
 - Les commandes /faction s'appliquent : hors ligne à l'état de la partie (sauvegardé), en ligne sur le serveur qui fait foi ; « dire » ne parvient qu'aux membres de la faction principale ; deux membres d'une même faction ne se blessent pas en PvP.
 
 ### Modifié
