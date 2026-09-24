@@ -3,5 +3,8 @@ node_modules/
 *.log
 .DS_Store
 .claude/
-# cahiers de test et d’exploration (conservés localement, non versionnés)
+
+# cahiers de test et d'exploration (SPEC-BANC-014) : produits localement à
+# chaque campagne, jamais versionnés — seuls les N derniers sont gardés
+# (tools/resultats-tests.js), sauf un cahier marqué « conservé »
 tests/resultats/

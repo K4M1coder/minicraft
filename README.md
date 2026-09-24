@@ -139,22 +139,45 @@ npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NOD
 
 ## Tests
 
+Un seul **catalogue** de tests (`tests/catalogue.js`) sert la ligne de commande,
+les crochets git et (à terme) le banc navigateur : chaque test y est classé —
+type (unitaire, fonctionnel, spec, e2e, intégration, charge), domaine (d'après
+les `SPEC-XXX` qu'il cite), groupe, étiquettes (`@lent`, `@bug-NNN`…) — et porte
+une **fiche** (quoi, pourquoi, attendu), déclarée ou déduite de la spec citée
+dans `SPECS.md`. Des **préréglages** nommés (`tests/presets.js`) figent des
+sélections partagées par tout : `commit`, `pr`, `regression`, `bugs`, `en-cours`,
+`e2e`, `integration`, `rapide`, `visuel`, `limites`.
+
 ```bash
-node tests/run.js                # ~950 tests unitaires et fonctionnels (progression sur stderr)
-node tests/run.js climat          # seulement les groupes (ou tests) dont le nom contient « climat »
-node tests/run.js --delai 900     # arrêt au bout de 900 s, en nommant le test en cours
-node tests/gates.js               # les portes de qualité automatiques (G1–G6, G10, G11)
-node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
-node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
-node tests/integration-paquet.js  # tests d'intégration de l'empaquetage
-node tests/integration-pvp.js     # PvP, zones et factions sur un vrai serveur
-node tests/integration-charge.js  # banc de charge, à petite échelle (vérifie qu'il fonctionne)
-node tests/charge.js              # banc de charge complet (1 à 100 joueurs) — voir docs/charge.md
+node tests/run.js                       # tout le catalogue exécutable sous Node (~1100 tests)
+node tests/run.js climat                # filtre positionnel historique : nom du groupe ou du test
+node tests/run.js --preset commit       # rapide (< 60 s), sans navigateur ni intégration, sans @lent
+node tests/run.js --preset pr           # Node + intégration ; sert aussi de CI de merge request
+node tests/run.js --domaine SYNC,NET --type spec   # critères combinables (intersection)
+node tests/run.js --sauf etiquettes=lent           # exclusion
+node tests/run.js --echecs              # relance les échecs de la dernière campagne Node
+node tests/run.js --lister --preset pr  # affiche la sélection et les fiches, sans exécuter
+node tests/run.js --delai 900           # arrêt au bout de 900 s, en nommant le test en cours
+node tests/gates.js                     # les portes de qualité automatiques (G1–G6, G10, G11, G13, G14)
+node tests/integration-net.js           # tests d'intégration réseau (vraies sockets) — aussi via --preset integration/pr
+node tests/integration-admin.js         # tests d'intégration de l'administration et de la persistance
+node tests/integration-paquet.js        # tests d'intégration de l'empaquetage
+node tests/integration-pvp.js           # PvP, zones et factions sur un vrai serveur
+node tests/integration-charge.js        # banc de charge, à petite échelle (vérifie qu'il fonctionne)
+node tests/charge.js                    # banc de charge complet (1 à 100 joueurs) — voir docs/charge.md
 ```
 
 `tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~117 tests
 end-to-end qui pilotent une vraie partie ; `window.runE2E(ensureGame(), null, 'SPEC-XXX')`
 n'en lance qu'une partie, filtrée par nom.
+
+Chaque campagne — navigateur ou ligne de commande, même interrompue par
+`--delai` — écrit son **cahier de test** dans `tests/resultats/<date>_<préréglage>/`
+(`resultats.json`, `rapport.html`, `captures/`) ; non versionné, seuls les 20
+derniers dossiers sont gardés. Le serveur peut aussi recevoir un cahier du banc
+navigateur : `POST /tests/resultats`, réservé à la machine locale (voir
+`node server.js --aide`, option `--tests` pour l'autoriser même en `--serveur`
+dédié).
 
 Plus de 1100 tests au total (unitaires/fonctionnels + end-to-end + intégration),
 toutes les specs non-⏳ de SPECS.md couvertes (`node tests/gates.js`, porte G1).
