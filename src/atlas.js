@@ -4,7 +4,7 @@
   'use strict';
   var MC = G.MC = G.MC || {};
   // 8 × 24 tuiles : terrain d origine, puis biomes, mer, structures, objets et véhicules
-  var TILE = 16, COLS = 16, ROWS = 24;
+  var TILE = 16, COLS = 16, ROWS = 64;          // 1024 tuiles : de la place pour L24, L25, L29
 
   function buildAtlas() {
     var cv = document.createElement('canvas');

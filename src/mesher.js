@@ -8,7 +8,7 @@
   var CX = C.CHUNK_X, CZ = C.CHUNK_Z, WH = C.WORLD_H, idx = C.idx;
 
   // doit suivre atlas.js : 16 colonnes depuis l'arrivée des variantes
-  var ATLAS_COLS = 16, ATLAS_ROWS = 24;
+  var ATLAS_COLS = 16, ATLAS_ROWS = 64;
 
   // -x, +x, -y, +y, -z, +z.  t = index dans tiles[] (0 dessus, 1 côté, 2 dessous).
   // shade = éclairage directionnel bon marché, encodé en couleur par sommet.

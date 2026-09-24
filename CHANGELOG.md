@@ -15,6 +15,10 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+### Modifié
+
+- L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.
+
 ## [0.1.0] - 2026-09-24
 ### Ajouté
 
