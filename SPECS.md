@@ -577,7 +577,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ✅ |
 | SPEC-DONJON-015 | Les donjons ont trois tailles : petits (les donjons actuels, une salle et son accès), moyens (plusieurs salles sur un niveau), grands (plusieurs niveaux et une dizaine de salles ou plus) | taille, nombre de salles et de niveaux par catégorie | ✅ |
 | SPEC-DONJON-016 | La taille dépend du lieu et de la rareté (les grands sont rares et demandent de la place en profondeur ou en surface) ; elle fait croître la difficulté (gardes, sous-gardiens) et le butin | répartition des tailles, gardes et butins selon la taille | ✅ |
-| SPEC-MOB-010 | Chaque créature, chaque habitant et chaque avatar de joueur a plusieurs variantes d'apparence (tailles, couleurs, vêtements selon le métier, accessoires) et un modèle détaillé (tête, corps, membres), animé : marche, course, nage, attaque, regard vers sa cible ; au loin, un modèle simplifié le remplace | variantes, parties, animations, niveau de détail selon la distance | ⏳ |
+| SPEC-MOB-010 | Chaque créature, chaque habitant et chaque avatar de joueur a plusieurs variantes d'apparence (tailles, couleurs, vêtements selon le métier, accessoires) et un modèle détaillé (tête, corps, membres), animé : marche, course, nage, attaque, regard vers sa cible ; au loin, un modèle simplifié le remplace | variantes, parties, animations, niveau de détail selon la distance | ✅ |
 
 ## L20 — rendu lointain
 

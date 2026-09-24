@@ -2082,6 +2082,39 @@
     }
   });
 
+  e2e('SPEC-MOB-010 : les créatures ont des membres animés, un regard, et une silhouette simple au loin', async function (g) {
+    await reset(g);
+    var p = g.player.state.pos;
+    var z = g.entities.spawn('zombie', p.x + 3, p.y, p.z);
+    var v = g.entities.spawn('villager', p.x - 3, p.y, p.z, { role: 'forgeron', pnj: 'e2e-forgeron' });
+    try {
+      await frames(3);
+      var mz = g.render.entityMeshes.get(z.eid), mv = g.render.entityMeshes.get(v.eid);
+      A.ok(mz && mz.userData.membres, 'le zombie a des membres articulés');
+      A.ok(mv && mv.userData.membres && mv.userData.membres.tete, 'l habitant aussi, et une tête');
+      // une entité simulée pilote le maillage du zombie : marche, coup, regard, distance
+      var fe = { pos: { x: mz.position.x, y: mz.position.y, z: mz.position.z }, vel: { x: 2, y: 0, z: 0 }, yaw: 0, age: 0 };
+      var angles = [];
+      for (var i = 0; i < 12; i++) { fe.age += 0.05; g.render.animerMembres(mz, fe, 0.05, 'essai'); angles.push(mz.userData.membres.jambeG.rotation.x); }
+      A.gt(Math.max.apply(null, angles) - Math.min.apply(null, angles), 0.2, 'les jambes bougent en marchant');
+      fe.vel.x = 0; fe.coupA = fe.age; fe.age += 0.18;
+      g.render.animerMembres(mz, fe, 0.05, 'essai');
+      A.lt(mz.userData.membres.brasD.rotation.x, -1, 'le bras se lève pour frapper');
+      fe.coupA = undefined; fe.vise = { x: fe.pos.x - 8, y: fe.pos.y + 1.6, z: fe.pos.z };
+      g.render.animerMembres(mz, fe, 0.05, 'essai');
+      A.close(mz.userData.membres.tete.rotation.y, 1.2, 0.01, 'la tête se tourne vers la cible (bornée)');
+      fe.pos.x += 90; mz.position.x += 90;
+      A.equal(g.render.animerMembres(mz, fe, 0.05, 'essai'), 'simple');
+      A.ok(!mz.userData.detail.visible && mz.userData.simple.visible, 'au loin, un modèle simplifié');
+      // l'habitant forgeron porte son tablier : un accessoire de plus que son voisin
+      A.equal(MC.Apparence.variante('villager', 'e2e-forgeron', 'forgeron').accessoire, 'tablier');
+    } finally {
+      g.entities.list.splice(g.entities.list.indexOf(z), 1);
+      g.entities.list.splice(g.entities.list.indexOf(v), 1);
+      await frames(2);
+    }
+  });
+
   e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
     await reset(g);
     g.time = MC.DayCycle.DAY_LENGTH * 0.2;

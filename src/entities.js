@@ -494,6 +494,8 @@
       }
       /* Dans l'eau, on avance moins vite : sans cela une créature nage aussi
          vite qu'elle court, ce qui rend les poursuites aquatiques absurdes. */
+      // dans l'eau jusqu'à mi-corps : elle nage (et s'anime ainsi, SPEC-MOB-010)
+      e.dansEau = P.inWater(world, { x: e.pos.x, y: e.pos.y + e.h * 0.45, z: e.pos.z }, 0.1);
       if (P.inWater(world, e.pos, e.h) && e.type !== 'item' && e.type !== 'arrow') {
         e.vel.x *= NAGE_FREIN;
         e.vel.z *= NAGE_FREIN;
@@ -871,7 +873,12 @@
           stepBody(e, dt);
         }
         if (e.dead) continue;
+        // ce qu'elle regarde et quand elle frappe, pour l'animer (SPEC-MOB-010)
+        var vue = choix.cible || (choix.joueur ? pj : null);
+        if (vue && vue.pos) { e.vise = e.vise || {}; e.vise.x = vue.pos.x; e.vise.y = vue.pos.y + (vue.h || 1.6) * 0.85; e.vise.z = vue.pos.z; }
+        else e.vise = null;
         if (act && act.attack) {
+          e.coupA = e.age;
           // le coup va à la cible : le joueur, ou la créature combattue
           if (choix.joueur) {
             if (pj === player) events.damage += act.attack;

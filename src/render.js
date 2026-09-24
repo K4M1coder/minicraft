@@ -320,7 +320,8 @@
     var MOB_LOOK = {
       zombie:   { forme: 'bipede', c: [0x3f7a43, 0x4a8f52], yeux: 0xff4444 },
       sheep:    { forme: 'quadrupede', c: [0xf0efe8, 0xe8ded0], yeux: 0x222222 },
-      villager: { forme: 'bipede', c: [0x6b4f3a, 0xc9a882], yeux: 0x222222 },
+      villager: { forme: 'bipede', c: [0x6b4f3a, 0xc9a882], yeux: 0x222222, humain: true },
+      joueur:   { forme: 'bipede', c: [0x4a86c8, 0xc9a882], yeux: 0x222222, humain: true },
       skeleton: { forme: 'bipede', c: [0xd8d8d0, 0xe8e8e0], yeux: 0x111111, mince: true },
       spider:   { forme: 'araignee', c: [0x2e2622, 0x3a302a], yeux: 0xff2222 },
       mummy:    { forme: 'bipede', c: [0xc8b88a, 0xd8c89a], yeux: 0x2a2010 },
@@ -346,9 +347,9 @@
       parrot:   { forme: 'oiseau', c: [0xe03030, 0x3070e0], yeux: 0x111111, bec: 0x333333,
                   variantes: [[0xe03030, 0x3070e0], [0x30c040, 0xf0d030], [0x3080f0, 0xf0f0f0]] },
       eagle:    { forme: 'oiseau', c: [0x5a3a22, 0xf0f0e8], yeux: 0x111111, bec: 0xf0c030 },
-      pillager: { forme: 'bipede', c: [0x4a4a52, 0x9a8a78], yeux: 0x111111 },
-      vindicator: { forme: 'bipede', c: [0x2a2a30, 0x9a8a78], yeux: 0x111111 },
-      garde:    { forme: 'bipede', c: [0x3a5a9a, 0xc9a882], yeux: 0x222222 },
+      pillager: { forme: 'bipede', c: [0x4a4a52, 0x9a8a78], yeux: 0x111111, humain: true },
+      vindicator: { forme: 'bipede', c: [0x2a2a30, 0x9a8a78], yeux: 0x111111, humain: true },
+      garde:    { forme: 'bipede', c: [0x3a5a9a, 0xc9a882], yeux: 0x222222, humain: true },
       boss_zombie:    { forme: 'bipede', c: [0x2f5a33, 0x3a7042], yeux: 0xff2222, couronne: true },
       boss_araignee:  { forme: 'araignee', c: [0x3a1a2a, 0x4a2438], yeux: 0xff66ff, couronne: true },
       boss_squelette: { forme: 'bipede', c: [0xb8b8b0, 0xd8d8d0], yeux: 0x3a6aff, mince: true, couronne: true },
@@ -484,17 +485,45 @@
       var col = L.c;
       if (L.variantes && entite && entite.variante !== undefined) col = L.variantes[entite.variante % L.variantes.length];
       var yeuxY, yeuxZ, ecart, ailes = [], queue = null, main = null;
+      /* SPEC-MOB-010 : chaque individu a sa variante (taille, teinte, et pour
+         les humains vêtements selon le métier et accessoire) ; ses membres
+         sont articulés pour que la pose (MC.Apparence.pose) les anime. */
+      var AP = MC.Apparence;
+      var va = AP ? AP.variante(type, entite ? (entite.pnj || entite.nom || entite.eid || entite.id || 0) : 0, entite && entite.role) : null;
+      if (va && !L.variantes) col = [AP.teinter(col[0], va.teinte), AP.teinter(col[1], va.teinte * 0.6)];
+      var membres = null, teteG = null, yeuxFaits = false;
+      // un membre pivote à son attache (hanche, épaule, cou) : la boîte pend dessous
+      function membre(lx, ly, lz, couleur, px, py, pz) {
+        var gm = new THREE.Group();
+        gm.position.set(px, py, pz);
+        gm.add(boite(lx, ly, lz, couleur, 0, -ly / 2, 0));
+        grp.add(gm);
+        return gm;
+      }
+      function yeuxDans(tete, y, z, ec) {
+        var em = new THREE.MeshBasicMaterial({ color: L.yeux });
+        [-1, 1].forEach(function (s) {
+          var e = new THREE.Mesh(new THREE.BoxGeometry(0.08 * Math.max(1, w), 0.08 * Math.max(1, w), 0.02), em);
+          e.position.set(s * ec, y, z);
+          tete.add(e);
+        });
+        yeuxFaits = true;
+      }
 
       if (L.forme === 'quadrupede') {
-        // corps horizontal sur quatre pattes, tête en avant (vers -Z)
+        // corps horizontal sur quatre pattes articulées, tête en avant (vers -Z) sur son cou
         var pl = h * 0.4;
         grp.add(boite(w * 0.8, h * 0.45, w * 1.3, col[0], 0, pl + h * 0.22, 0.05));
-        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (p) {
-          grp.add(boite(w * 0.2, pl, w * 0.2, col[0], p[0] * w * 0.26, pl / 2, p[1] * w * 0.45));
+        var pattes = [[-1, -1], [1, -1], [-1, 1], [1, 1]].map(function (p) {
+          return membre(w * 0.2, pl, w * 0.2, col[0], p[0] * w * 0.26, pl, p[1] * w * 0.45);
         });
-        grp.add(boite(w * 0.55, h * 0.4, w * 0.45, col[1], 0, h * 0.72, -w * 0.72));
-        if (L.cornes) [-1, 1].forEach(function (s) { grp.add(boite(0.06, 0.2, 0.06, 0x8a7a60, s * w * 0.18, h * 0.98, -w * 0.72)); });
-        yeuxY = h * 0.78; yeuxZ = -w * 0.95; ecart = w * 0.14;
+        teteG = new THREE.Group();
+        teteG.position.set(0, h * 0.62, -w * 0.6);
+        teteG.add(boite(w * 0.55, h * 0.4, w * 0.45, col[1], 0, h * 0.1, -w * 0.12));
+        if (L.cornes) [-1, 1].forEach(function (s) { teteG.add(boite(0.06, 0.2, 0.06, 0x8a7a60, s * w * 0.18, h * 0.36, -w * 0.12)); });
+        grp.add(teteG);
+        yeuxDans(teteG, h * 0.16, -w * 0.35, w * 0.14);
+        membres = { jambeG: pattes[0], jambeD: pattes[1], brasG: pattes[3], brasD: pattes[2], tete: teteG, quadrupede: true };
       } else if (L.forme === 'araignee') {
         // corps bas et large, huit pattes en éventail
         grp.add(boite(w * 0.7, h * 0.5, w * 0.8, col[0], 0, h * 0.45, w * 0.1));
@@ -589,20 +618,32 @@
         grp.add(boite(w * 0.7, h * 0.5, w * 0.6, col[0], 0, h * 0.4, -w * 0.45));
         yeuxY = h * 0.55; yeuxZ = -w * 0.76; ecart = w * 0.2;
       } else {
-        // bipède : le gabarit d'origine, affiné pour les squelettes
-        var ep = L.mince ? 0.45 : 0.7;
-        grp.add(boite(w * (L.mince ? 0.7 : 1), h * 0.62, w * ep, col[0], 0, h * 0.31, 0));
-        grp.add(boite(w * 0.75, h * 0.28, w * 0.75, col[1], 0, h * 0.76, 0));
-        if (L.chapeau) {
-          grp.add(boite(w * 1.2, 0.06, w * 1.2, 0x2a1a3a, 0, h * 0.92, 0));
-          grp.add(boite(w * 0.5, h * 0.25, w * 0.5, 0x2a1a3a, 0, h * 1.05, 0));
-        }
-        yeuxY = h * 0.78; yeuxZ = -w * 0.38; ecart = w * 0.18;
-        main = { x: w * 0.55, y: h * 0.45, z: -w * 0.2 };
+        // bipède articulé : jambes, buste, bras, tête sur le cou
+        var fin = L.mince ? 0.6 : 1;
+        var haut = va && va.haut !== undefined ? va.haut : col[0], bas = va && va.bas !== undefined ? va.bas : AP ? AP.teinter(col[0], -0.25) : col[0];
+        var peau = va && va.peau !== undefined ? va.peau : col[1];
+        var hj = h * 0.38, hb = h * 0.34, ht = h * 0.24, lb = w * 0.3 * fin;
+        var jg = membre(w * 0.34 * fin, hj, w * 0.36 * fin, bas, -w * 0.2, hj, 0);
+        var jd = membre(w * 0.34 * fin, hj, w * 0.36 * fin, bas, w * 0.2, hj, 0);
+        var buste = boite(w * (L.mince ? 0.7 : 0.9), hb, w * 0.5 * (L.mince ? 0.8 : 1), haut, 0, hj + hb / 2, 0);
+        grp.add(buste);
+        var bg = membre(lb, hb * 1.02, lb, L.humain ? haut : col[0], -w * 0.45 - lb * 0.1, hj + hb * 0.97, 0);
+        var bd = membre(lb, hb * 1.02, lb, L.humain ? haut : col[0], w * 0.45 + lb * 0.1, hj + hb * 0.97, 0);
+        if (L.humain) [bg, bd].forEach(function (b) { b.add(boite(lb * 0.95, hb * 0.22, lb * 0.95, peau, 0, -hb * 0.95, 0)); });
+        teteG = new THREE.Group();
+        teteG.position.set(0, hj + hb, 0);
+        teteG.add(boite(w * 0.75, ht, w * 0.75, L.humain ? peau : col[1], 0, ht / 2, 0));
+        if (L.humain && va && va.cheveux !== undefined) teteG.add(boite(w * 0.78, ht * 0.22, w * 0.78, va.cheveux, 0, ht * 0.93, 0.01));
+        grp.add(teteG);
+        yeuxDans(teteG, ht * 0.55, -w * 0.38, w * 0.18);
+        var acc = (va && va.accessoire) || (L.chapeau ? 'chapeau_sorciere' : null);
+        accessoire(acc, teteG, buste, w, ht, hj, hb);
+        membres = { jambeG: jg, jambeD: jd, brasG: bg, brasD: bd, tete: teteG, buste: buste };
+        main = { bras: bd, y: -hb * 0.95, z: -w * 0.1 };
       }
       // deux yeux, pour qu'on voie où le mob regarde
       var eyeMat = new THREE.MeshBasicMaterial({ color: L.yeux });
-      [-1, 1].forEach(function (s) {
+      if (!yeuxFaits) [-1, 1].forEach(function (s) {
         var e = new THREE.Mesh(new THREE.BoxGeometry(0.08 * Math.max(1, w), 0.08 * Math.max(1, w), 0.02), eyeMat);
         e.position.set(s * ecart, yeuxY, yeuxZ);
         grp.add(e);
@@ -611,23 +652,108 @@
       var arme = entite && (entite.arme || (spec && spec.arme));
       if (arme && main) {
         var am = armeMesh(arme, Math.max(1, w * 1.2));
-        if (am) { am.position.set(main.x, main.y, main.z); am.rotation.x = -0.6; grp.add(am); }
+        // tenue au bout du bras droit : elle suit le coup
+        if (am) { am.position.set(0, main.y, main.z); am.rotation.x = -1.2; main.bras.add(am); }
       }
       if (L.couronne) {
         var or = mat(0xf0c040);
         var cw = Math.max(0.4, w * 0.6);
+        // sur la tête quand elle est articulée : la couronne suit le regard
+        var porte = teteG && !membres.quadrupede ? teteG : grp, dy = porte === grp ? 0 : -teteG.position.y;
         var base = new THREE.Mesh(new THREE.BoxGeometry(cw, 0.12, cw), or);
-        base.position.y = h + 0.08;
-        grp.add(base);
+        base.position.y = h + 0.08 + dy;
+        porte.add(base);
         [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (p) {
           var pic = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.18, 0.1), or);
-          pic.position.set(p[0] * cw * 0.4, h + 0.22, p[1] * cw * 0.4);
-          grp.add(pic);
+          pic.position.set(p[0] * cw * 0.4, h + 0.22 + dy, p[1] * cw * 0.4);
+          porte.add(pic);
         });
       }
       grp.userData.ailes = ailes;
       grp.userData.queue = queue;
+      grp.userData.membres = membres;
+      grp.userData.phase = 0;
+      if (va && !(spec && spec.boss)) grp.userData.echelle = va.echelle;
+      // au loin, une silhouette d'une seule boîte remplace le modèle complet
+      var detail = new THREE.Group();
+      while (grp.children.length) detail.add(grp.children[0]);
+      grp.add(detail);
+      var simple = boite(Math.max(0.3, w * (L.forme === 'bipede' ? 0.8 : 1)), h * 0.95, Math.max(0.3, w * (L.forme === 'quadrupede' ? 1.3 : 0.6)),
+                         col[0], 0, h * 0.48, 0);
+      simple.visible = false;
+      grp.add(simple);
+      grp.userData.detail = detail;
+      grp.userData.simple = simple;
+      grp.userData.yeux = spec ? spec.h * 0.85 : 1.5;
+      grp.userData.vmax = spec ? spec.speed : 2;
       return grp;
+    }
+
+    /* Accessoires des bipèdes : sur la tête ou le buste. */
+    function accessoire(nom, tete, buste, w, ht, hj, hb) {
+      if (!nom) return;
+      var bs = buste.position;
+      if (nom === 'chapeau_sorciere') {
+        tete.add(boite(w * 1.2, 0.06, w * 1.2, 0x2a1a3a, 0, ht, 0));
+        tete.add(boite(w * 0.5, ht * 1.1, w * 0.5, 0x2a1a3a, 0, ht * 1.55, 0));
+      } else if (nom === 'chapeau_paille') {
+        tete.add(boite(w * 1.3, 0.05, w * 1.3, 0xd8c070, 0, ht, 0));
+        tete.add(boite(w * 0.7, ht * 0.35, w * 0.7, 0xd8c070, 0, ht * 1.15, 0));
+      } else if (nom === 'chapeau_haut') {
+        tete.add(boite(w * 0.95, 0.04, w * 0.95, 0x141418, 0, ht, 0));
+        tete.add(boite(w * 0.6, ht * 0.8, w * 0.6, 0x141418, 0, ht * 1.4, 0));
+      } else if (nom === 'bonnet') {
+        tete.add(boite(w * 0.8, ht * 0.35, w * 0.8, 0xa03030, 0, ht * 0.95, 0));
+      } else if (nom === 'casquette') {
+        tete.add(boite(w * 0.8, ht * 0.25, w * 0.8, 0x2a5aa0, 0, ht * 0.95, 0));
+        tete.add(boite(w * 0.6, 0.04, w * 0.35, 0x2a5aa0, 0, ht * 0.85, -w * 0.5));
+      } else if (nom === 'casque') {
+        tete.add(boite(w * 0.84, ht * 0.5, w * 0.84, 0x9a9aa2, 0, ht * 0.8, 0));
+      } else if (nom === 'capuche') {
+        tete.add(boite(w * 0.86, ht * 0.9, w * 0.86, 0xd8d8e0, 0, ht * 0.6, 0.04));
+      } else if (nom === 'lunettes') {
+        tete.add(boite(w * 0.6, 0.05, 0.03, 0x202020, 0, ht * 0.55, -w * 0.4));
+      } else if (nom === 'tablier') {
+        buste.parent.add(boite(w * 0.7, hb * 1.3, 0.04, 0x6a4a2a, 0, bs.y - hb * 0.2, -w * 0.27));
+      } else if (nom === 'sac') {
+        buste.parent.add(boite(w * 0.6, hb * 0.6, w * 0.3, 0x7a5a3a, 0, bs.y, w * 0.4));
+      } else if (nom === 'echarpe') {
+        buste.parent.add(boite(w * 0.95, hb * 0.18, w * 0.55, 0xd0a040, 0, bs.y + hb * 0.42, 0));
+      }
+    }
+
+    /* SPEC-MOB-010 : la pose du moment (allure, pas, coup, regard) sur les
+       membres, et le niveau de détail selon la distance à la caméra. */
+    var posPrec = new Map();
+    function animerMembres(m, e, dt, cle) {
+      var AP = MC.Apparence, mb = m.userData.membres;
+      var d = camera.position.distanceTo(m.position);
+      var niv = AP ? AP.niveauDetail(d) : 'complet';
+      if (m.userData.detail) {
+        m.userData.detail.visible = niv === 'complet';
+        m.userData.simple.visible = niv === 'simple';
+      }
+      if (!mb || !AP || niv !== 'complet') return niv;
+      // vitesse : celle de l'entité, ou mesurée d'une image à l'autre (entités distantes)
+      var v;
+      if (e.vel) v = Math.hypot(e.vel.x, e.vel.z);
+      else {
+        var p0 = posPrec.get(cle);
+        v = p0 && dt > 0 ? Math.hypot(e.pos.x - p0.x, e.pos.z - p0.z) / dt : 0;
+        posPrec.set(cle, { x: e.pos.x, z: e.pos.z });
+      }
+      var al = AP.allure(v, m.userData.vmax, !!e.nage || !!e.dansEau);
+      m.userData.phase = AP.avancerPhase(m.userData.phase, Math.max(v, al === 'nage' ? 1 : 0), dt);
+      var age = e.age || 0;
+      var att = e.coupA !== undefined && age - e.coupA < 0.45 ? (age - e.coupA) / 0.45 : -1;
+      var p = AP.pose({ allure: al, phase: m.userData.phase, attaque: att, temps: age,
+                        regard: AP.regard(e.pos, e.yaw || 0, m.userData.yeux, e.vise) });
+      mb.jambeG.rotation.x = p.jambeG; mb.jambeD.rotation.x = p.jambeD;
+      mb.brasG.rotation.x = p.brasG; mb.brasD.rotation.x = p.brasD;
+      mb.tete.rotation.set(-p.tete.tangage, p.tete.lacet, 0, 'YXZ');
+      if (mb.buste) m.userData.detail.rotation.x = -p.buste * 0.35;
+      m.userData.pose = p;
+      return niv;
     }
 
     /* Petites animations : ailes qui battent, queue qui ondule, hélice. */
@@ -701,10 +827,7 @@
         vus.add(d.id);
         var m = maillagesDistants.get(d.id);
         if (!m) {
-          m = mobMesh('villager', { w: 0.6, h: 1.8 });
-          m.traverse(function (o) {
-            if (o.material && o.material.color) o.material.color.setHex(0x4a86c8);
-          });
+          m = mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id });
           m.add(etiquetteNom(d.nom || ('Joueur ' + d.id)));
           m.userData.nom = d.nom;
           scene.add(m);
@@ -721,6 +844,7 @@
         }
         m.position.set(d.pos.x, d.pos.y, d.pos.z);
         m.rotation.y = d.yaw || 0;
+        animerMembres(m, d, dtEntites, 'j' + d.id);
       });
       maillagesDistants.forEach(function (m, id) {
         if (!vus.has(id)) { libererEntite(m); maillagesDistants.delete(id); }
@@ -739,6 +863,7 @@
         }
         m2.position.set(d.pos.x, d.pos.y, d.pos.z);
         m2.rotation.y = d.yaw || 0;
+        animerMembres(m2, d, dtEntites, cle);
       });
       maillagesDistants.forEach(function (m, id) {
         if (!vus.has(id)) { libererEntite(m); maillagesDistants.delete(id); }
@@ -759,7 +884,11 @@
         if (mt.emissive && !m.userData.blesse) mt.emissive.copy(mt.userData.base).multiply(TORCHE).multiplyScalar(t);
       });
     }
+    var dernierSync = 0, dtEntites = 0;
     function syncEntities(entities, net, lumiereEn, jour) {
+      var maintenant = typeof performance !== 'undefined' ? performance.now() : Date.now();
+      dtEntites = dernierSync ? Math.min(0.1, (maintenant - dernierSync) / 1000) : 0.016;
+      dernierSync = maintenant;
       if (net) syncDistants(net);
       var seen = new Set();
       for (var i = 0; i < entities.list.length; i++) {
@@ -789,6 +918,8 @@
           // l'avion se cabre quand il monte, pique quand il descend
           if (e.vehicule === 'avion') m.rotation.x = Math.max(-0.5, Math.min(0.5, e.vel.y * 0.06));
           animer(m, e);
+          animerMembres(m, e, dtEntites, e.eid);
+          if (m.userData.echelle && !e.bebe && m.scale.x !== m.userData.echelle) m.scale.setScalar(m.userData.echelle);
           if (lumiereEn) {
             m.userData.lumT = (m.userData.lumT || 0) - 1;
             if (m.userData.lumT <= 0) { m.userData.lumT = 8; eclairerEntite(m, e, lumiereEn, jour || 0); }
@@ -1825,7 +1956,7 @@
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
       forceTorches: forceTorches,
       PASSES: PASSES,
-      entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
+      entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
       get resolution() { return resolutionVoulue; }, get disposition() { return dispositionVue; }, get ombresActives() { return ombresActives; },
