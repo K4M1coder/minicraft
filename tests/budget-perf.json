@@ -1,0 +1,9 @@
+{
+  "generation": {
+    "seed": 20260924,
+    "chunks": 80,
+    "avgMsMax": 65,
+    "p95MsMax": 90,
+    "caveCacheMax": 600000
+  }
+}

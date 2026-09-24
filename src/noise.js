@@ -28,15 +28,23 @@
       return (a + (b - a) * xf) * (1 - zf) + (c + (d - c) * xf) * zf;
     }
     /* Value noise 3D : sert à creuser les grottes. Interpolation trilinéaire
-       des 8 sommets du cube entier englobant. */
+       des 8 sommets du cube entier englobant. Les 8 appels à hash3 sont
+       écrits à plat plutôt que via une fermeture `at(dx,dy,dz)` : cette
+       fermeture était réallouée à chaque appel de value3 (profilé au
+       2026-09-24 avec node --cpu-prof — value3 et sa fermeture pesaient
+       ensemble près de 10 % du CPU de génération), pour un calcul identique
+       au bit près (SPEC-PERF-001). */
     function value3(x, y, z) {
       var xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
       var xf = smooth(x - xi), yf = smooth(y - yi), zf = smooth(z - zi);
-      function at(dx, dy, dz) { return hash3(xi + dx, yi + dy, zi + dz); }
-      var c00 = at(0,0,0) + (at(1,0,0) - at(0,0,0)) * xf;
-      var c10 = at(0,1,0) + (at(1,1,0) - at(0,1,0)) * xf;
-      var c01 = at(0,0,1) + (at(1,0,1) - at(0,0,1)) * xf;
-      var c11 = at(0,1,1) + (at(1,1,1) - at(0,1,1)) * xf;
+      var v000 = hash3(xi, yi, zi), v100 = hash3(xi + 1, yi, zi);
+      var v010 = hash3(xi, yi + 1, zi), v110 = hash3(xi + 1, yi + 1, zi);
+      var v001 = hash3(xi, yi, zi + 1), v101 = hash3(xi + 1, yi, zi + 1);
+      var v011 = hash3(xi, yi + 1, zi + 1), v111 = hash3(xi + 1, yi + 1, zi + 1);
+      var c00 = v000 + (v100 - v000) * xf;
+      var c10 = v010 + (v110 - v010) * xf;
+      var c01 = v001 + (v101 - v001) * xf;
+      var c11 = v011 + (v111 - v011) * xf;
       var c0 = c00 + (c10 - c00) * yf;
       var c1 = c01 + (c11 - c01) * yf;
       return c0 + (c1 - c0) * zf;
