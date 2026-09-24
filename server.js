@@ -27,9 +27,9 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
+const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres'];
+                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'livre', 'livres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -104,6 +104,9 @@ const chat = MC.Chat.creer({ max: 120 });
 // bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
 const politique = MC.Politique.creer(CONF.graine);
 const guildes = MC.Guildes.creerEtat();
+// L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
+// module et même état joués à l'identique en solo (game.js) et ici.
+const economie = MC.Economie.creerEtat(CONF.graine);
 // SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
 // s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
 const distributeurs = new Map();
@@ -142,6 +145,7 @@ function etatMonde() {
     zones: monde.zonesEtat ? MC.Zones.serialiser(monde.zonesEtat) : null,
     politique: MC.Politique.serialiser(politique),
     guildes: MC.Guildes.serialiser(guildes),
+    economie: MC.Economie.serialiser(economie),
   };
 }
 function appliquerEtatMonde(data) {
@@ -176,6 +180,11 @@ function appliquerEtatMonde(data) {
     const gu = MC.Guildes.charger(data.guildes);
     guildes.factions = gu.factions; guildes.joueurs = gu.joueurs;
     guildes.invitations = gu.invitations; guildes.prochainId = gu.prochainId;
+  }
+  if (data.economie) {
+    const eco = MC.Economie.charger(data.economie);
+    economie.jour = eco.jour; economie.lieux = eco.lieux;
+    economie.joueurs = eco.joueurs; economie.departs = eco.departs;
   }
   return true;
 }
@@ -319,6 +328,29 @@ function avancerPolitique() {
     const m = chat.systeme(a.texte);
     if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   });
+}
+// ── économie (B2, L45) ───────────────────────────────────────────────────────
+/* SPEC-ECO/METIER : avance l'économie d'un jour de jeu à la fois (comme
+   avancerPolitique), rattrapée d'un coup si besoin, sur les lieux déjà
+   connus de `economie` (ceux que `offresPour`/TROC ont créés — un lieu
+   jamais visité n'existe pas encore, § 13 du plan). Applique aussi le frais
+   de garde quotidien sur CHAQUE banque connue : la Map `banques` (canon(nom)
+   → conteneur banque du joueur) est fournie par B1 (inventaire et
+   conteneurs serveur, L43) — tant que B1 n'est pas fusionné, elle n'existe
+   pas et ce bloc ne fait simplement rien (attendu, voir docs/vague-2/B2.md). */
+function avancerEconomie() {
+  const jourCourant = Math.floor(heure / MC.DayCycle.DAY_LENGTH);
+  const saisonJour = MC.DayCycle.saison ? MC.DayCycle.saison(heure).nom : 'ete';
+  while (economie.jour < jourCourant) MC.Economie.tickJour(economie, economie.jour + 1, saisonJour);
+  if (typeof banques !== 'undefined' && banques && banques.forEach) {
+    banques.forEach(b => { if (b && b.slots) MC.Economie.appliquerFraisBanque(b.slots, 1); });
+  }
+}
+/* Offres d'un PNJ pour un joueur nommé (SPEC-SYNC-023, action `consulter`) :
+   `e` l'entité PNJ (role, lieu, pnj — voir peuplerLieux plus bas), `nom` le
+   nom canonique du joueur (remise METIER-004, jamais diffusé aux autres). */
+function offresPour(e, nom) {
+  return MC.Economie.offresDe(economie, e.lieu, e.role, e.pnj, nom);
 }
 // sommet de colonne : qui s'abrite échappe à la foudre
 function abriServeur(x, z) {
@@ -1131,6 +1163,42 @@ function traiter(c, m) {
       traiterOp(c, m, js, { k: 'creatif', i: m.i, id: m.id, n: m.n });
       break;
     }
+
+    /* SPEC-SYNC-023 (B2, L45) : commerce serveur-autoritaire, contre les
+       helpers de l'API inter-lots (docs/vague-2/B1.md § 5) : `seqNouveau`,
+       `envoyerInvMaj`, `refuserOp`, `etatJoueurServeur`, la Map `banques` —
+       tous fournis par B1 (fusionné). */
+    case NP.MSG.TROC: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || js.joueur.state.dead) break;
+      const ent = entites.list.find(e => e.eid === m.eid && e.type === 'villager');
+      if (!ent) break;
+      const st = js.joueur.state;
+      const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+      if (d > MC.ContratsV2.BORNES.PORTEE_TROC) break;
+      // un village hostile ferme le commerce, comme en solo (game.js parlerA) —
+      // piège signalé par docs/vague-2/B2.md § 13 : garder ce contrôle AVANT
+      // executerTroc, côté serveur comme côté client.
+      if (monde.reputation && !MC.Factions.commerceOuvert(monde.reputation)) break;
+
+      if (m.action === 'consulter') {
+        envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });
+        break;
+      }
+      // action === 'echanger' : idempotence par seq (B1), embargo calculé par
+      // B4 après son rebase (SPEC-PVP-006)
+      if (!seqNouveau(js, m.seq)) break;
+      const embargo = false;
+      const r = MC.Economie.executerTroc(economie, etatJoueurServeur(js).inv, {
+        lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: m.offre, fois: m.fois || 1,
+        nom: c.nom, embargo,
+      });
+      if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); break; }
+      envoyerInvMaj(c, m.j, {});
+      MC.Admin.journaliser(admin, { auteur: c.nom, action: 'troc', cible: m.eid, details: r.transaction, heure });
+      envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });
+      break;
+    }
   }
 }
 
@@ -1482,6 +1550,7 @@ setInterval(() => {
     monde.unloadLoin(centres, 5);
     peuplerLieux();
     avancerPolitique();
+    avancerEconomie();
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;

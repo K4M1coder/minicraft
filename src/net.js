@@ -30,6 +30,8 @@
       onRefus: opts.onRefus || function () {},
       // réponse du panneau admin en jeu (SPEC-ADMIN-006)
       onAdminRep: opts.onAdminRep || function () {},
+      // L45 : offres d'un PNJ (réponse à 'consulter' ou 'echanger', SPEC-SYNC-023)
+      onTroc: opts.onTroc || function () {},
     };
 
     function statut(e, info) {
@@ -137,6 +139,11 @@
 
         case NP.MSG.CHAT:
           hooks.onChat({ auteur: m.auteur, texte: m.texte, type: m.type, t: m.ts });
+          break;
+
+        // L45, SPEC-SYNC-023 : réponse du serveur à 'consulter'/'echanger'
+        case NP.MSG.TROC:
+          hooks.onTroc(m);
           break;
 
         case NP.MSG.ARRIVE:
@@ -248,10 +255,19 @@
     function admin(action, args) {
       return envoyer({ t: NP.MSG.ADMIN, action: action, args: args || {} });
     }
+    /* L45, SPEC-SYNC-023 : consulter (pas de seq) ou echanger (seq requis,
+       fourni par l'appelant — synchro.js tient déjà le compteur par joueur
+       local) les offres d'un PNJ. */
+    function troc(action, eid, opts) {
+      opts = opts || {};
+      var msg = { t: NP.MSG.TROC, action: action, eid: eid, j: opts.j || 0 };
+      if (action === 'echanger') { msg.seq = opts.seq; msg.offre = opts.offre; msg.fois = opts.fois || 1; }
+      return envoyer(msg);
+    }
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj,
+      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,

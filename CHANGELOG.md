@@ -69,6 +69,29 @@ respecter (voir PLAN.md, « Commits et versions »).
   câblage dans `src/game.js` (streaming des chunks distribué au pool quand
   il existe, repli synchrone complet sinon — le chemin `onBloc` reste
   synchrone en toute circonstance).
+- Économie et métiers (L45, SPEC-ECO-001 à 007, SPEC-METIER-001 à 005) :
+  `src/economie.js` (`MC.Economie`) — prix dynamiques par lieu et par biome
+  bornés à ±60 % autour de la référence, trésors de lieux qui reviennent vers
+  une cible (masse monétaire bornée), commerce arbitré en deux phases
+  (validation puis mutation atomique, `executerTroc`), frais de garde
+  quotidiens de la banque, cours régional, transfert de surplus par
+  caravane ; `src/metiers.js` (`MC.Metiers`) — offres bonus au-delà de 15
+  échanges avec un PNJ, minerai requis pour les objets forgés, remise de 10 %
+  au statut (20 ventes), sans aucun `Math.random` (hachage déterministe comme
+  `politique.js`). `src/caravanes.js` : `cargaisonDe`, la cargaison pure et
+  déterministe d'un départ de caravane.
+- Commerce (SPEC-SYNC-023, L45) : un PNJ de métier commerce désormais via
+  `MC.Economie` (`game.js` `parlerA`, `ui.js` — prix/stock affichés, clic
+  d'échange conforme au contrat), avec un frais de garde de banque quotidien
+  (`game.js` `frame`) ; côté serveur, section « économie » (`server.js`,
+  `avancerEconomie`, `offresPour`) et `case NP.MSG.TROC`, sur les helpers de
+  B1 (inventaire et conteneurs serveur, L43, fusionné) — `seqNouveau`,
+  `envoyerInvMaj`, `refuserOp`, `etatJoueurServeur`, la Map `banques` ;
+  sauvegarde solo (`save.js`, champ `economie` optionnel) et serveur
+  (`etatMonde`). `tests/integration-troc.js` (vrai serveur, `MC_TEST_INV`,
+  `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
+  déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
+  stock persistés après arrêt/relance `--monde`.
 
 ### Modifié
 
@@ -128,6 +151,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   le groupe affiché par `--lister` pour les tests qui suivaient.
 - Bandeau manquant au-dessus d'un groupe de tests dans `tests/e2e.js`,
   faisant hériter ces tests du groupe précédent dans `--lister`.
+- Économie (SPEC-METIER-002, L45) : le minerai du forgeron (`L.minerai`)
+  n'était jamais alimenté (créé vide, jamais crédité) — toute offre forgée
+  (épée/hache/pioche de fer, pioche de diamant) restait `dispo:false` pour
+  toujours. Un lieu naît désormais avec un stock de minerai (« une mine à
+  proximité », `MINERAI_REF`), reconstitué chaque jour par `tickJour`
+  (indépendamment de la saison, à la différence des récoltes) —
+  `tests/spec-metiers.js` épuise et reconstitue ce stock par de vrais
+  échanges plutôt que de l'écrire à la main.
+- Commerce en ligne (SPEC-FACTION, L45) : le `case NP.MSG.TROC` de
+  `server.js` n'appliquait pas le contrôle « village hostile ferme le
+  commerce » (`MC.Factions.commerceOuvert`) que `game.js` applique en solo
+  avant `executerTroc` — ajouté, comme prévu par docs/vague-2/B2.md § 13.
 - Captures des cahiers de test (SPEC-BANC-011/012) : les vignettes affichées
   dans la page utilisent l'URL de données complète (comme avant), et seul
   l'envoi au serveur en retire le préfixe pour transmettre du base64 pur ;

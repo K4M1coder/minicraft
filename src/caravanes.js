@@ -109,6 +109,20 @@
     return { id: 'b:' + p1.id + '>' + p2.id, role: 'bateau', noeuds: noeuds, a: p1.nom, b: p2.nom };
   }
 
+  /* SPEC-ECO-004 : la cargaison d'un départ de caravane — un objet des clés
+     de `stocksOrigine` (le lieu de départ), tiré par hachage de (trajet,
+     indice de départ), et une quantité 4..11. Pure et déterministe : le
+     même départ rejoué donne toujours la même cargaison (economie.js s'en
+     sert pour l'idempotence, via son propre registre de départs traités). */
+  function cargaisonDe(trajet, indexDepart, stocksOrigine) {
+    var cles = Object.keys(stocksOrigine || {});
+    if (!cles.length) return null;
+    var idx = Math.floor(hache(trajet.id + '|c1|' + indexDepart) * cles.length) % cles.length;
+    var n = 4 + Math.floor(hache(trajet.id + '|c2|' + indexDepart) * 8);
+    return { id: +cles[idx], n: n };
+  }
+
   MC.Caravanes = { enRoute: enRoute, trajetsDe: trajetsDe, voieEau: voieEau, composition: composition,
-                   longueurs: longueurs, pointA: pointA, PERIODE: PERIODE, VITESSE: VITESSE, ESPACEMENT: ESPACEMENT };
+                   longueurs: longueurs, pointA: pointA, cargaisonDe: cargaisonDe,
+                   PERIODE: PERIODE, VITESSE: VITESSE, ESPACEMENT: ESPACEMENT };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

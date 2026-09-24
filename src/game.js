@@ -264,6 +264,17 @@
         if (!m.ok) { chat.systeme('/admin ' + m.action + ' — refusé' + (m.erreur ? ' (' + m.erreur + ')' : '')); return; }
         chat.systeme('/admin ' + m.action + ' → ' + JSON.stringify(m.data).slice(0, 400));
       },
+      /* L45, SPEC-SYNC-023 : offres à jour d'un PNJ (réponse à 'consulter' ou
+         'echanger') — ne redessine que si c'est CE PNJ qui est ouvert. */
+      onTroc: function (m) {
+        if (!ui.container || ui.container.kind !== 'trade' || ui.container.pos !== m.eid) return;
+        var pnj = ui.container.pnj;
+        if (!pnj) return;
+        pnj.offres = m.offres || [];
+        if (m.cours !== undefined) pnj.cours = m.cours;
+        if (m.remise !== undefined) pnj.remise = m.remise;
+        ui.renderContainer();
+      },
     });
 
     // registre d'affichage du HUD (SPEC-HUD-001) : conservé d'une partie à
@@ -280,6 +291,9 @@
       succes: MC.Succes.creer(),
       // factions de joueurs hors ligne (joueurs locaux), sauvegardées avec la partie
       guildes: MC.Guildes ? MC.Guildes.creerEtat() : undefined,
+      // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) —
+      // même module et même état joués à l'identique en solo et en ligne
+      economie: MC.Economie ? MC.Economie.creerEtat(SEED) : undefined,
       // SPEC-PERF-015 : métriques de rendu, calculées en continu indépendamment
       // du panneau F3 qui les affiche (SPEC-PERF-016)
       perf: { msGeneration: 0, msMaillage: 0, appelsDessin: 0, triangles: 0, fps: 0, fpsP50: 0, fpsP95: 0, renderDist: render.RENDER_DIST },
@@ -922,11 +936,21 @@
       var LIBELLES = { info: 'Indiquez-moi les environs', banque: 'Ouvrir mon compte', repos: 'Se reposer (1 émeraude)',
                        reparer: 'Réparer l\'outil en main', detente: 'Profiter du spectacle' };
       var h = ((ent.eid || 0) * 7 + Math.floor(g.time / 20)) % role.repliques.length;
+      /* L45 : un PNJ de métier (lieu connu) commerce via MC.Economie — prix
+         dynamiques, stock, trésor ; un villageois sans métier garde
+         Inv.TRADES/Inv.doTrade tel quel (illimité, prix figé). En ligne, le
+         SERVEUR fait foi (SPEC-SYNC-023) : on envoie 'consulter' et on
+         redessine à sa réponse (onTroc, hook réseau), avec un compteur de
+         seq local très simple (g.seqTroc) — le même patron que les autres
+         opérations d'inventaire prédites, sans prédiction ici (un échange
+         reste rare et bref, § 6 du plan B2). */
+      var enLigne = net.enLigne();
+      var economique = !!(ent.role && ent.lieu && (enLigne || (g.economie && MC.Economie)));
       var opts = {
         titre: role.nom + (ent.nom ? ' — ' + ent.nom : ''),
         villageois: !ent.role,
         replique: role.repliques[h],
-        offres: role.offres,
+        offres: economique ? (enLigne ? [] : MC.Economie.offresDe(g.economie, ent.lieu, ent.role, ent.pnj, g.nomJoueur)) : role.offres,
         services: role.service ? [{ id: role.service, libelle: LIBELLES[role.service] }] : [],
         onService: function (id) {
           var r = rendreService(id, ent);
@@ -934,7 +958,21 @@
           if (r.ok && id === 'info' && chat) chat.systeme(r.message);
           return r;
         },
+        onTrade: economique ? function (indice) {
+          if (enLigne) {
+            g.seqTroc = (g.seqTroc || 0) + 1;
+            net.troc('echanger', ent.eid, { j: 0, seq: g.seqTroc, offre: indice, fois: 1 });
+            return { ok: true, attente: true };   // la confirmation arrive par onTroc/onToi
+          }
+          var r = MC.Economie.executerTroc(g.economie, player.state.inv, {
+            lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: indice, fois: 1,
+            nom: g.nomJoueur, embargo: false,
+          });
+          if (r.ok) opts.offres = MC.Economie.offresDe(g.economie, ent.lieu, ent.role, ent.pnj, g.nomJoueur);
+          return r;
+        } : null,
       };
+      if (economique && enLigne) net.troc('consulter', ent.eid, { j: 0 });
       g.dernierDialogue = { role: ent.role || 'habitant', nom: ent.nom, service: role.service };
       ui.openContainer('trade', player.state.inv, opts, ent.eid);
       input.setState('ui');
@@ -2615,6 +2653,20 @@
         // temps, apparitions, cultures
         g.time += dt;
         g.duree = (g.duree || 0) + dt;
+        // L45 : frais de garde de la banque et pousse/trésor de l'économie, au
+        // changement de jour seulement (jamais en ligne : c'est le serveur qui y fait foi)
+        if (g.economie && !net.enLigne()) {
+          var jourEco = Math.floor(g.time / DC.DAY_LENGTH);
+          if (g.dernierJourEco === undefined) g.dernierJourEco = jourEco;
+          else if (jourEco > g.dernierJourEco) {
+            if (world.banque) MC.Economie.appliquerFraisBanque(world.banque.slots, jourEco - g.dernierJourEco);
+            var saisonJour = DC.saison ? DC.saison(g.time).nom : 'ete';
+            for (var jourAvance = g.dernierJourEco + 1; jourAvance <= jourEco; jourAvance++) {
+              MC.Economie.tickJour(g.economie, jourAvance, saisonJour);
+            }
+            g.dernierJourEco = jourEco;
+          }
+        }
         world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time,
                                     circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
         spawnT += dt;

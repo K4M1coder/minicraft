@@ -1617,16 +1617,30 @@
           box.appendChild(sv);
         }
         var liste = el('div', 'trades');
-        ((pnj && pnj.offres) || Inv.TRADES).forEach(function (tr) {
-          var possible = Inv.canTrade(inv, tr);
+        ((pnj && pnj.offres) || Inv.TRADES).forEach(function (tr, indice) {
+          // L45 : une offre d'économie (MC.Economie.offresDe) porte `dispo` et
+          // `stock` ; une offre villageoise ordinaire (Inv.TRADES) ne les a pas.
+          var possible = tr.dispo !== undefined ? tr.dispo : Inv.canTrade(inv, tr);
           var row = el('div', 'trade' + (possible ? '' : ' ko'));
           tr.give.forEach(function (gv) {
             row.appendChild(slotEl('mini', { id: gv.id, n: gv.n }));
           });
           row.appendChild(el('span', 'arrow', '→'));
           row.appendChild(slotEl('mini result', { id: tr.get.id, n: tr.get.n }));
+          // L45 : stock du village affiché pour une offre d'économie (stock illimité : rien)
+          if (tr.stock !== undefined && tr.stock !== null) row.appendChild(el('span', 'stock', 'stock ' + tr.stock));
           row.addEventListener('mousedown', function (ev) {
             ev.preventDefault(); ev.stopPropagation();
+            // L45 : un PNJ de métier arbitre l'échange via MC.Economie.executerTroc
+            // (prix, stock, trésor) ; un villageois ordinaire garde Inv.doTrade.
+            if (pnj && pnj.onTrade) {
+              var res = pnj.onTrade(indice);
+              if (!res || !res.ok) toast('Échange refusé' + (res && res.motif ? ' (' + res.motif + ')' : ''), 'warn');
+              else if (res.attente) { /* en ligne : la confirmation arrive par INV_MAJ/onTroc, rien à annoncer ici */ }
+              else { toast('Échange conclu : ' + C.nameOf(tr.get.id)); if (hooks.onEchange) hooks.onEchange(); }
+              renderContainer();
+              return;
+            }
             if (!Inv.canTrade(inv, tr)) return;
             var reste = Inv.doTrade(inv, tr);
             if (reste === null) toast('Pas de place dans l\'inventaire', 'warn');

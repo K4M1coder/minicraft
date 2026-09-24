@@ -54,6 +54,9 @@
       // d'avant ce module.
       politique: state.world.politique && MC.Politique ? MC.Politique.serialiser(state.world.politique) : null,
       guildes: state.guildes && MC.Guildes ? MC.Guildes.serialiser(state.guildes) : null,
+      // L45 : prix dynamiques, trésors de lieux, métiers — optionnel, absent
+      // sur une ancienne sauvegarde (un état neuf est créé paresseusement)
+      economie: state.economie && MC.Economie ? MC.Economie.serialiser(state.economie) : null,
       // le compte en banque, commun à toutes les banques du monde
       banque: state.world.banque ? state.world.banque.serialize() : [],
       // les habitants tués, et quand : ils ne ressuscitent pas au chargement
@@ -184,6 +187,7 @@
       w.politique.factions = pol.factions; w.politique.relations = pol.relations; w.politique.annonces = pol.annonces;
     }
     if (state.guildes !== undefined && MC.Guildes) state.guildes = MC.Guildes.charger(data.guildes);
+    if (state.economie !== undefined && MC.Economie && data.economie) state.economie = MC.Economie.charger(data.economie);
     if (w.banque) w.banque.load(data.banque || []);
     if (w.pnjsMorts) {
       w.pnjsMorts.clear();
