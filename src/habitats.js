@@ -82,6 +82,13 @@
      village et maison restent sur des mailles bien plus fines, ce qui les
      multiplie autour de chaque ville et dans la campagne alentour. */
   var LIEUX = {
+    /* SPEC-HABITAT-013 : la mégapole n'apparaît qu'en zone hyperurbaine
+       (MC.Densite) — rare par construction (le bruit de population qui la
+       classe ainsi ne culmine que sur de vastes échelles) — et sur un très
+       grand terrain plat (une plaine, ou un rivage) : plus d'un kilomètre de
+       côté (9 parcelles de 140, marge comprise). */
+    megapole: { nom: 'Mégapole', region: 20000, proba: 0.6, lots: 9, pas: 140, lot: 108, marge: 24,
+                biomes: ['plaines', 'savane', 'desert'], denivele: 8 },
     ville:   { nom: 'Ville', region: 2400, proba: 0.55, lots: 5, pas: 16, lot: 12, marge: 6,
                biomes: ['plaines', 'foret', 'desert', 'savane', 'taiga', 'jungle', 'badlands'], denivele: 10 },
     village: { nom: 'Village', region: 224, proba: 0.5, lots: 3, pas: 13, lot: 10, marge: 4,
@@ -91,7 +98,9 @@
                biomes: ['plaines', 'foret', 'desert', 'savane', 'taiga', 'jungle', 'marais', 'badlands',
                         'montagnes', 'champignons', 'pics_glaces', 'glacier'], denivele: 6 },
   };
-  var ORDRE_LIEUX = ['ville', 'village', 'maison'];
+  // l'ordre fixe le rang : un lieu plus tôt dans la liste exclut les
+  // suivants de son emprise (`occupePar`) — la mégapole avant tout le reste
+  var ORDRE_LIEUX = ['megapole', 'ville', 'village', 'maison'];
   /* Densité par biome (SPEC-HABITAT-008) : villages et maisons isolées se font
      rares en montagne, désert, badlands et glace — la campagne s'y vide,
      seule la ville (déjà limitée aux biomes vivables) continue d'y apparaître
@@ -110,6 +119,9 @@
     ferme:      { nom: 'Ferme', role: 'fermier' },
     loisirs:    { nom: 'Loisirs', role: 'animateur' },
     place:      { nom: 'Place', role: null },
+    tour:       { nom: 'Tour', role: 'habitant' },       // HABITAT-013 : cœur de mégapole
+    immeuble:   { nom: 'Immeuble', role: 'habitant' },    // HABITAT-013 : quartiers d'immeubles
+    port:       { nom: 'Port', role: null },              // HABITAT-013/ROUTE-008 : quai en bord d'eau
   };
   var ARTISANS = ['forgeron', 'menuisier', 'tisserand'];
   var LOISIRS = ['parc', 'fontaine', 'theatre'];
@@ -168,9 +180,15 @@
     return DEBUTS[Math.floor(h1 * DEBUTS.length) % DEBUTS.length] + FINS[Math.floor(h2 * FINS.length) % FINS.length];
   }
 
-  function creer(N, hauteur, biomeDe) {
-    var caches = { ville: new Map(), village: new Map(), maison: new Map() };
-    var PLAFONDS = { ville: 64, village: 512, maison: 4096 };
+  /* `riviereDe` (optionnel, Bio.riviere) : L38, pour la carte de densité
+     (eau douce/côtes — SPEC-DENSITE-001) et pour savoir si une mégapole ou un
+     village borde un fleuve et mérite un port (HABITAT-013, ROUTE-008). */
+  function creer(N, hauteur, biomeDe, riviereDe) {
+    var caches = { megapole: new Map(), ville: new Map(), village: new Map(), maison: new Map() };
+    var PLAFONDS = { megapole: 16, ville: 64, village: 512, maison: 4096 };
+    // SPEC-DENSITE-001/002 : carte de densité, point d'extension unique
+    // (repartitionOk) d'où naissent les lieux selon leur classe
+    var Dens = MC.Densite ? MC.Densite.creer(N, hauteur, biomeDe, riviereDe) : null;
 
     function lieuDeRegion(kind, rx, rz) {
       var cache = caches[kind], k = rx + ',' + rz;
@@ -187,7 +205,7 @@
       return l;
     }
 
-    var PORTEE = { ville: 70, village: 26, maison: 10 };
+    var PORTEE = { megapole: 140, ville: 70, village: 26, maison: 10 };
     /* SPEC-HABITAT-012 : la taille d'une ville varie — petite (3×3 parcelles),
        moyenne (5×5, la taille d'origine) ou grande cité (7×7) — tirée une
        fois par région, indépendamment du reste de sa construction. */
@@ -210,8 +228,21 @@
       var z = rz * R + m + Math.floor(N.hash2(rx * 419, rz * 263 + graineK) * (R - 2 * m));
       return { x: x, z: z, demi: demi };
     }
+    /* Même chose pour la mégapole (HABITAT-013) : taille fixe (contrairement
+       à la ville), mais un espacement bien plus grand encore. */
+    function candidatMegapole(rx, rz) {
+      var def = LIEUX.megapole, R = def.region, graineK = 41;
+      if (N.hash2(rx * 5381 + graineK, rz * 33391 - graineK) > def.proba) return null;
+      var demi = Math.floor((def.lots * def.pas) / 2) + def.marge;
+      var m = demi + 8;
+      var x = rx * R + m + Math.floor(N.hash2(rx * 131 + graineK, rz * 977) * (R - 2 * m));
+      var z = rz * R + m + Math.floor(N.hash2(rx * 419, rz * 263 + graineK) * (R - 2 * m));
+      return { x: x, z: z, demi: demi };
+    }
     // SPEC-HABITAT-008 : deux villes restent à plusieurs kilomètres l'une de l'autre
     var ESPACEMENT_VILLES = 1300;
+    // HABITAT-013 : les mégapoles, elles, restent à des dizaines de kilomètres
+    var ESPACEMENT_MEGAPOLES = 7000;
     // un lieu plus grand passe avant : un village ne s'installe pas dans une ville
     function occupePar(kind, x, z) {
       var rang = ORDRE_LIEUX.indexOf(kind);
@@ -226,20 +257,35 @@
       return false;
     }
 
-    /* SPEC-HABITAT-008 : la répartition des lieux, isolée dans une seule
-       fonction — c'est ici, et seulement ici, qu'une future carte de densité
-       (zones vierge/rurale/urbaine/hyperurbaine, mégapoles — L38) viendrait
-       se brancher pour moduler ou remplacer ces deux règles (espacement des
-       villes, rareté de la campagne) sans toucher au reste de `construire`.
-       `false` refuse le lieu à cet endroit. */
+    /* SPEC-HABITAT-008/SPEC-DENSITE-002 : la répartition des lieux, isolée
+       dans une seule fonction — c'est ici que la carte de densité (MC.Densite,
+       zones vierge/rurale/urbaine/hyperurbaine — L38) module en douceur la
+       probabilité de chaque genre de lieu, en plus de l'espacement des
+       villes/mégapoles et de la rareté de la campagne par biome, sans
+       toucher au reste de `construire`. `false` refuse le lieu à cet endroit. */
     function repartitionOk(kind, rx, rz, x, z, bio, graineK) {
-      /* deux villes ne s'installent jamais à moins de plusieurs centaines de
-         blocs l'une de l'autre — on ne construit jamais la région voisine
-         (récursion croisée : elle nous vérifierait à son tour), seulement sa
-         position candidate, pure et sans cache. Le départage est arbitraire
-         mais fixe (rz puis rx) : une région ne cède la place qu'à une
-         voisine « antérieure » dans cet ordre, ce qui reste vrai quel que
-         soit l'ordre réel de génération des chunks. */
+      /* deux villes (ou deux mégapoles) ne s'installent jamais à moins de
+         plusieurs centaines/milliers de blocs l'une de l'autre — on ne
+         construit jamais la région voisine (récursion croisée : elle nous
+         vérifierait à son tour), seulement sa position candidate, pure et
+         sans cache. Le départage est arbitraire mais fixe (rz puis rx) :
+         une région ne cède la place qu'à une voisine « antérieure » dans cet
+         ordre, ce qui reste vrai quel que soit l'ordre réel de génération
+         des chunks. */
+      if (kind === 'megapole') {
+        for (var avm = -1; avm <= 1; avm++) for (var bvm = -1; bvm <= 1; bvm++) {
+          if (!avm && !bvm) continue;
+          var rzM = rz + bvm, rxM = rx + avm;
+          if (!(rzM < rz || (rzM === rz && rxM < rx))) continue;
+          var candM = candidatMegapole(rxM, rzM);
+          if (candM && Math.hypot(candM.x - x, candM.z - z) < ESPACEMENT_MEGAPOLES) return false;
+        }
+        // SPEC-DENSITE-002 : une mégapole ne naît qu'en zone hyperurbaine —
+        // rare et très espacée par construction du bruit de population (un
+        // seul calcul, comme ci-dessous : inutile de le refaire au second appel)
+        if (Dens && !bio && Dens.classeEn(x, z).classe !== 'hyperurbaine') return false;
+        return true;
+      }
       if (kind === 'ville') {
         for (var av = -1; av <= 1; av++) for (var bv = -1; bv <= 1; bv++) {
           if (!av && !bv) continue;
@@ -248,20 +294,40 @@
           var cand = candidatVille(rxV, rzV);
           if (cand && Math.hypot(cand.x - x, cand.z - z) < ESPACEMENT_VILLES) return false;
         }
-        return true;
-      }
-      // la campagne (village, maison isolée) se raréfie en montagne, désert,
-      // badlands et glace — un tirage propre au biome
-      if (bio && DENSITE_CAMPAGNE[bio.id] !== undefined &&
+      } else if (bio && DENSITE_CAMPAGNE[bio.id] !== undefined &&
           N.hash2(rx * 1013 + 37 + graineK, rz * 2027 - 19) > DENSITE_CAMPAGNE[bio.id]) return false;
+      /* SPEC-DENSITE-002 : transitions progressives plutôt qu'un tranchant
+         net — presque rien en zone vierge, la campagne (village/maison)
+         pleine en zone rurale puis en repli à mesure que l'urbain gagne, la
+         ville pleine en zone urbaine et cédant à son tour la place à la
+         mégapole en entrant dans l'hyperurbain.
+         Ce test est coûteux (plusieurs `hauteur`/`biomeDe` de plus) : on ne
+         le fait qu'au premier appel de `construire` (bio encore null, avant
+         même le sondage du biome) — le second, avec le biome en main, ne
+         referait que le même calcul déterministe pour le même résultat. */
+      if (Dens && !bio) {
+        var d = Dens.classeEn(x, z);
+        // presque rien en zone vierge (versRurale ≈ 0 juste là) pour les deux
+        // genres ; en zone hyperurbaine, la ville cède un peu la place à la
+        // mégapole, la campagne beaucoup plus — mais rurale ET urbaine restent
+        // pleinement fertiles pour l'une comme pour l'autre (pas de tranchant
+        // net entre elles : seules les deux extrémités de la carte s'éclaircissent)
+        var pVierge = 1 - (1 - d.versRurale) * 0.9;
+        // la ville garde sa place jusque dans l'hyperurbain (des satellites
+        // plausibles autour d'une mégapole) ; la campagne (village, maison),
+        // elle, s'efface bien davantage — c'est la mégapole qui prend le relais
+        var p = kind === 'ville' ? pVierge : pVierge * (1 - d.versHyper * 0.85);
+        var r = N.hash2(rx * 1523 + graineK * 3 + 7, rz * 3121 - graineK * 5 - 11);
+        if (r > p) return false;
+      }
       return true;
     }
 
     function construire(kind, rx, rz) {
       var def = LIEUX[kind], R = def.region;
-      var graineK = kind === 'ville' ? 7 : kind === 'village' ? 13 : 29;
+      var graineK = kind === 'ville' ? 7 : kind === 'village' ? 13 : kind === 'megapole' ? 41 : 29;
       if (N.hash2(rx * 5381 + graineK, rz * 33391 - graineK) > def.proba) return null;
-      // taille propre à cette ville (SPEC-HABITAT-012) ; village et maison gardent leur taille unique
+      // taille propre à cette ville (SPEC-HABITAT-012) ; les autres genres gardent leur taille unique
       var lotsN = kind === 'ville' ? tailleVille(rx, rz) : def.lots;
       var demi = Math.floor((lotsN * def.pas) / 2) + def.marge;
       var m = demi + 8;
@@ -271,14 +337,16 @@
       var bio = biomeDe ? biomeDe(x, z) : null;
       if (!bio || bio.marin || def.biomes.indexOf(bio.id) < 0) return null;
       if (!repartitionOk(kind, rx, rz, x, z, bio, graineK)) return null;
-      // terrain : pas trop accidenté, au sec
-      var hs = [];
-      for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) hs.push(hauteur(x + i * demi / 2, z + j * demi / 2));
+      // terrain : pas trop accidenté, au sec — l'échantillon reste borné à un
+      // rayon raisonnable même pour un lieu très étendu (la mégapole) : au-delà,
+      // le relief continental varie de toute façon, plaine ou pas
+      var hs = [], rSonde = Math.min(demi, 180) / 2;
+      for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) hs.push(hauteur(x + i * rSonde, z + j * rSonde));
       hs.sort(function (a, b) { return a - b; });
       var h0 = hs[Math.floor(hs.length / 2)], denivele = hs[hs.length - 1] - hs[0];
       if (denivele > def.denivele * 2 || h0 <= SEA + 1 || h0 > WH - 40) return null;
       if (occupePar(kind, x, z)) return null;
-      var urbain = kind === 'ville';
+      var urbain = kind === 'ville' || kind === 'megapole';
       var st = stylePour(bio.id, urbain);
       var l = {
         id: kind + ':' + rx + ',' + rz, kind: kind, nom: kind === 'maison' ? 'Maison de ' + PRENOMS[Math.floor(N.hash2(rx, rz * 7) * PRENOMS.length) % PRENOMS.length]
@@ -606,7 +674,58 @@
                            x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0, y1: y0 + 4,
                            porte: { x: p(cx, 0)[0], z: p(cx, 0)[1] } });
       },
+      /* HABITAT-013 : le cœur de la mégapole — une tour, haute (gabarit
+         borné par C.WORLD_H, sans jamais crever le plafond du monde), avec
+         une échelle intérieure à chaque étage (fournie par `corps`, comme
+         pour n'importe quel bâtiment à étages). */
+      tour: function (l, st, o, ox, oz, L, rot, y0) {
+        var sb = {}, k; for (k in st) sb[k] = st[k];
+        sb.mur = B.CHAUX; sb.forme = 'plat'; sb.toit = st.coin; sb.fenetre = B.GLASS;
+        var w = Math.min(13, L - 6), d = w;
+        var maxEt = Math.max(1, Math.floor((WH - 8 - y0) / 4));
+        var etages = Math.min(maxEt, 9 + Math.floor(o.hash(ox, 41, oz) * 12));
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+        var b = corps(l, sb, o, p, w, d, y0, etages, 'tour', null, rot);
+        pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
+      },
+      /* HABITAT-013 : un immeuble de logements — plus large et plus haut
+         qu'une maison urbaine, mais bâti avec les mêmes outils (`corps`). */
+      immeuble: function (l, st, o, ox, oz, L, rot, y0) {
+        var w = Math.min(16, L - 6), d = Math.min(12, L - 8);
+        var etages = 3 + Math.floor(o.hash(ox, 43, oz) * 5);
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+        var b = corps(l, st, o, p, w, d, y0, etages, 'immeuble', null, rot);
+        pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
+      },
     };
+
+    /* HABITAT-013/ROUTE-008 : un quai de planches, posé quand le lieu borde
+       la mer ou un grand fleuve — cherché par un sondage tout autour de son
+       emprise (peu coûteux : quelques dizaines d'appels à biomeDe/riviereDe,
+       une seule fois par lieu). Rien n'est posé si aucune eau n'est trouvée. */
+    function portSiCotier(l, st, o) {
+      var trouve = null;
+      for (var a = 0; a < 16 && !trouve; a++) {
+        var ang = a * Math.PI / 8;
+        var bx = l.x + Math.cos(ang) * (l.demi + 6), bz = l.z + Math.sin(ang) * (l.demi + 6);
+        var b = biomeDe ? biomeDe(bx, bz) : null;
+        var estEau = (b && b.marin) || (riviereDe && riviereDe(bx, bz) > 0.975);
+        if (estEau) trouve = ang;
+      }
+      if (trouve === null) return;
+      var dx = Math.cos(trouve), dz = Math.sin(trouve);
+      var px = l.x + dx * l.demi, pz = l.z + dz * l.demi, y = l.h0;
+      var x0 = px, z0 = pz, x1 = px, z1 = pz;
+      for (var d2 = 0; d2 <= 14; d2++) {
+        var x = Math.round(px + dx * d2), z = Math.round(pz + dz * d2);
+        o.pose(x, y - 1, z, st.soubassement || B.LOG);
+        o.pose(x, y, z, B.PLANKS);
+        if (d2 % 4 === 0) o.pose(x, y + 1, z, B.LANTERN);
+        x0 = Math.min(x0, x); x1 = Math.max(x1, x); z0 = Math.min(z0, z); z1 = Math.max(z1, z);
+      }
+      l.batiments.push({ type: 'port', nom: 'Port', lieu: l.id, x0: x0, z0: z0, x1: x1, z1: z1, y0: y, y1: y + 2,
+                         porte: { x: Math.round(px), z: Math.round(pz) } });
+    }
 
     // ─── plans ───────────────────────────────────────────────────────────────
     function melanger(liste, graine) {
@@ -686,13 +805,35 @@
       var periph = melanger(extra, g + 3);
       return coeur.concat(periph).slice(0, total);
     }
+    /* Programme d'une mégapole (HABITAT-013) : un cœur de tours, une
+       couronne d'immeubles largement parsemée de parcs — jamais la moindre
+       maison individuelle ni ferme, contrairement à la ville. */
+    function programmeMegapole(n, g) {
+      var total = n * n - 1;
+      var coeur = melanger([['tour'], ['tour'], ['tour'], ['tour'], ['tour'], ['tour'],
+                            ['loisirs', 'parc'], ['loisirs', 'fontaine']], g + 2);
+      var extra = [];
+      for (var i = 0; i < total - coeur.length; i++) {
+        extra.push(i % 6 === 0 ? ['loisirs', 'parc'] : ['immeuble']);
+      }
+      var periph = melanger(extra, g + 3);
+      return coeur.concat(periph).slice(0, total);
+    }
     var PLANS = {
+      megapole: function (l, st, o, rx, rz) {
+        var g = rx * 7 + rz * 13, n = l.lots || LIEUX.megapole.lots;
+        var programme = programmeMegapole(n, g);
+        var defTaille = { lots: n, pas: LIEUX.megapole.pas, lot: LIEUX.megapole.lot, marge: LIEUX.megapole.marge };
+        grille(l, st, o, defTaille, programme, true);
+        portSiCotier(l, st, o);
+      },
       ville: function (l, st, o, rx, rz) {
         var g = rx * 7 + rz * 13, n = l.lots || LIEUX.ville.lots;
         var art = melanger(ARTISANS, g), loi = melanger(LOISIRS, g + 1);
         var programme = programmeVille(n, g, art, loi);
         var defTaille = { lots: n, pas: LIEUX.ville.pas, lot: LIEUX.ville.lot, marge: LIEUX.ville.marge };
         grille(l, st, o, defTaille, programme, true);
+        portSiCotier(l, st, o);
       },
       village: function (l, st, o, rx, rz) {
         var g = rx * 11 + rz * 5;
@@ -700,6 +841,7 @@
         var prog = melanger([['point_info'], ['salon'], ['magasin'], ['artisan', art], ['ferme'], ['maison'],
                              ['loisirs', loi], ['marche']], g);
         grille(l, st, o, LIEUX.village, prog, false);
+        portSiCotier(l, st, o);
       },
       maison: function (l, st, o, rx, rz) {
         var L = LIEUX.maison.lot, ox = l.x - Math.floor(L / 2), oz = l.z - Math.floor(L / 2);
