@@ -27,7 +27,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres'];
 
@@ -367,6 +367,14 @@ function fermer(c, raison) {
   if (!c || !c.vivant) return;
   c.vivant = false;
   clients.delete(c.id);
+  // B1 : range l'inventaire/équipement de chaque joueur local dans le
+  // registre nommé (la banque, elle, reste un conteneur vivant dans `banques`).
+  if (c.joueurs) {
+    c.joueurs.forEach(js => {
+      if (!js.cleReg) return;
+      joueursRegistre.set(js.cleReg, MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg)));
+    });
+  }
   if (c.sessionId) MC.Admin.fermerSession(admin, c.sessionId, heure);
   try { c.socket.destroy(); } catch (e) {}
   const m = chat.systeme(c.nom + ' a quitté la partie');
@@ -718,6 +726,10 @@ const FLOOD_SECONDES_APRES_AVERTISSEMENT = 3;               // secondes ABERRANT
 const FLOOD_TYPES_PAR_JOUEUR = new Set([
   NP.MSG.BLOC, NP.MSG.BOUGE, NP.MSG.ATTAQUE, NP.MSG.TIR, NP.MSG.MANGER, NP.MSG.RENAITRE, NP.MSG.DISTRIB,
 ]);
+/* B1 (vague 2, SPEC-SECU-005/006 étendu) : les nouveaux messages c→s portent
+   tous un joueur local (`m.j`) — budgets propres à chaque type, donnés par
+   MC.ContratsV2.BUDGETS_FLOOD (« troc » y figure déjà, pour B2). */
+if (MC.ContratsV2) Object.keys(MC.ContratsV2.BUDGETS_FLOOD).forEach(t => FLOOD_TYPES_PAR_JOUEUR.add(t));
 
 /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
    TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un
@@ -762,7 +774,8 @@ function antiFloodOk(c, m) {
   if (m.t === NP.MSG.CHAT) return floodVerifie(c, m, '_fl_chat', FLOOD_CHAT_FENETRE_MS, FLOOD_CHAT_MAX);
   const parJoueur = FLOOD_TYPES_PAR_JOUEUR.has(m.t);
   const cle = '_fl_' + m.t + (parJoueur ? '_' + (m.j || 0) : '');
-  const budget = m.t === NP.MSG.BLOC ? FLOOD_MAX_BLOC : FLOOD_MAX_GENERAL;
+  const budgetV2 = MC.ContratsV2 && MC.ContratsV2.BUDGETS_FLOOD[m.t];
+  const budget = m.t === NP.MSG.BLOC ? FLOOD_MAX_BLOC : (budgetV2 || FLOOD_MAX_GENERAL);
   return floodVerifie(c, m, cle, FLOOD_FENETRE_MS, budget);
 }
 
@@ -812,7 +825,20 @@ function traiter(c, m) {
       c.role = MC.Admin.roleDe(admin, c.nom);           // un modérateur nommé retrouve son rôle en revenant
       c.sessionId = MC.Admin.ouvrirSession(admin, { nom: c.nom, ip: c.ip }, heure);
       c.joueurs = [];
-      for (let j = 0; j < c.locaux; j++) c.joueurs.push(creerJoueurServeur(j));
+      for (let j = 0; j < c.locaux; j++) {
+        const js = creerJoueurServeur(j);
+        // B1 (registre des joueurs nommés) : une clé tenue par un joueur DÉJÀ
+        // connecté (même nom, écran partagé compris) reste éphémère — jamais
+        // restaurée, jamais écrasée dans le registre à la fermeture.
+        const cleReg = MC.ContratsV2 ? MC.ContratsV2.cleRegistre(c.nom, j) : null;
+        js.cleReg = (cleReg && !cleRegDejaConnectee(cleReg)) ? cleReg : null;
+        if (js.cleReg) {
+          const rec = joueursRegistre.get(js.cleReg);
+          if (rec) MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
+          else if (MC_TEST_INV) MC_TEST_INV.forEach(p => js.joueur.state.inv.add(p[0], p[1]));
+        }
+        c.joueurs.push(js);
+      }
       c.pos = c.joueurs[0].joueur.state.pos;
       // l'état complet du monde modifié, pour que le nouveau venu voie les
       // constructions faites avant son arrivée
@@ -833,6 +859,24 @@ function traiter(c, m) {
         joueurs: [...clients.values()].filter(x => x.id !== c.id && x.rejoint)
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),
+      });
+      // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
+      // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
+      c.joueurs.forEach((js, j) => envoyerInvMaj(c, j, {}));
+      // SPEC-SYNC-011 : l'équipement déjà visible des joueurs présents (et
+      // réciproquement, le sien à eux) — un emplacement vide n'est pas annoncé.
+      tousLesJoueurs().forEach(({ c: autreC, j: autreJ, js: autreJs }) => {
+        if (autreC.id === c.id) return;
+        MC.ContratsV2.EQUIP_SLOTS.forEach(slot => {
+          const pile = autreJs.joueur.state.equip[slot];
+          if (pile) envoyer(c, { t: NP.MSG.EQUIP_VU, id: autreC.id, j: autreJ, slot, objet: pile.id });
+        });
+      });
+      c.joueurs.forEach((js, j) => {
+        MC.ContratsV2.EQUIP_SLOTS.forEach(slot => {
+          const pile = js.joueur.state.equip[slot];
+          if (pile) diffuser({ t: NP.MSG.EQUIP_VU, id: c.id, j, slot, objet: pile.id }, c.id);
+        });
       });
       diffuser({ t: NP.MSG.ARRIVE, id: c.id, nom: c.nom, locaux: c.locaux }, c.id);
       const sm = chat.systeme(c.nom + ' a rejoint la partie' +
@@ -914,12 +958,21 @@ function traiter(c, m) {
     }
 
     case NP.MSG.MANGER: {
+      // B1 (SPEC-SYNC-009) : validé contre l'inventaire serveur — le client
+      // ne peut plus se nourrir d'un objet qu'il ne possède pas réellement.
       const js = c.joueurs && c.joueurs[m.j];
-      const d = C.ITEMS[m.id];
-      if (!js || !d || !d.food) break;
-      const st = js.joueur.state;
-      st.hunger = Math.min(20, st.hunger + d.food);
-      if (d.soin) js.joueur.heal(d.soin);
+      if (!js) break;
+      const r = MC.Conteneurs.appliquer(ctxJoueur(js), { k: 'manger', id: m.id, i: m.i });
+      if (r.ok) {
+        const st = js.joueur.state;
+        if (r.effets.food) st.hunger = Math.min(20, st.hunger + r.effets.food);
+        if (r.effets.soin) js.joueur.heal(r.effets.soin);
+        if (r.effets.cru) { st.malade = (st.malade || 0) + 20; st.malaiseT = 0; }
+        if (r.effets.lache) lacherAuxPieds(js, r.effets.lache);
+        if (m.seq !== undefined && seqNouveau(js, m.seq)) envoyerInvMaj(c, m.j, {});
+      } else if (m.seq !== undefined && seqNouveau(js, m.seq)) {
+        refuserOp(c, m.j, m.seq, r.motif);
+      }
       break;
     }
 
@@ -1034,6 +1087,50 @@ function traiter(c, m) {
       traiterAdmin(c, m);
       break;
     }
+
+    // ── B1 : inventaire, équipement, grille de fabrication (SPEC-SYNC-007 à
+    // 011, 014) — chaque opération passe par MC.Conteneurs.appliquer, la même
+    // fonction pure que la prédiction client et le solo (docs/vague-2/B1.md).
+    case NP.MSG.CRAFT: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      traiterOp(c, m, js, { k: 'craft', fois: m.fois });
+      break;
+    }
+    case NP.MSG.EQUIP: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      const r = traiterOp(c, m, js, { k: 'equip', slot: m.slot, i: m.i });
+      if (r && r.ok) diffuserEquipVu(c, m.j, js, m.slot);
+      break;
+    }
+    // le transfert inv↔grille ne dépend d'aucun registre de conteneur posé —
+    // un transfert vers/depuis 'cont' échoue proprement (motif 'ferme') tant
+    // que le registre des conteneurs (B1, étape 7) n'est pas branché.
+    case NP.MSG.CONTENEUR_TRANSFERT: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      traiterOp(c, m, js, { k: 'transfert', de: m.de, vers: m.vers, n: m.n });
+      break;
+    }
+    case NP.MSG.INV_CONSOMMER: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      traiterOp(c, m, js, { k: 'consommer', ops: m.ops });
+      break;
+    }
+    case NP.MSG.INV_LACHER: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      traiterOp(c, m, js, { k: 'lacher', i: m.i, n: m.n });
+      break;
+    }
+    case NP.MSG.INV_CREATIF: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      traiterOp(c, m, js, { k: 'creatif', i: m.i, id: m.id, n: m.n });
+      break;
+    }
   }
 }
 
@@ -1144,6 +1241,111 @@ function executerActionAdmin(role, nomActeur, action, args) {
   }
 }
 
+// ── inventaire et conteneurs (B1, SPEC-SYNC-007 à 017) ──────────────────────
+/* Le serveur devient la seule source de vérité pour l'inventaire, l'équipement
+   et la grille de fabrication : le même module pur MC.Conteneurs que le solo
+   et la prédiction client (docs/vague-2/B1.md § 3). Cette section ne connaît
+   ENCORE PAS le registre des conteneurs posés (coffres, fourneaux… — étape 7) :
+   seule la banque, par joueur nommé, existe déjà comme conteneur vivant. */
+const joueursRegistre = new Map();   // cleRegistre(nom, j) → enregistrement { v:1, inv, equip, banque }
+const banques = new Map();           // cleRegistre(nom, j) → conteneur 'banque' (API figée, § 5 du plan)
+/* MC_TEST_INV='[[id,n],…]' : inventaire initial d'un joueur SANS enregistrement
+   (jamais rejoint sous ce nom auparavant) — lu une fois au démarrage, comme
+   MC_TEST_PANNE ; réservé aux suites d'intégration, jamais en exploitation. */
+let MC_TEST_INV = null;
+try { MC_TEST_INV = process.env.MC_TEST_INV ? JSON.parse(process.env.MC_TEST_INV) : null; }
+catch (e) { MC_TEST_INV = null; }
+
+function banqueDe(cleReg) {
+  let b = banques.get(cleReg);
+  if (!b) { b = MC.Conteneurs.creerConteneur('banque'); banques.set(cleReg, b); }
+  return b;
+}
+// une clé de registre déjà tenue par un joueur CONNECTÉ (écran partagé
+// compris) : la seconde connexion sous le même nom reste éphémère (jamais
+// restaurée, jamais réécrite dans le registre à sa fermeture).
+function cleRegDejaConnectee(cleReg) {
+  for (const cl of clients.values()) {
+    if (!cl.joueurs) continue;
+    if (cl.joueurs.some(j2 => j2.cleReg === cleReg)) return true;
+  }
+  return false;
+}
+/* ctx pour MC.Conteneurs.appliquer : la banque est déjà un conteneur
+   accessible par sa clé propre ('banque') ; un conteneur posé (coffre,
+   fourneau…) n'existe pas encore ici (étape 7) — renvoyer null fait échouer
+   proprement l'opération (motif 'ferme'), sans planter. */
+function ctxJoueur(js) {
+  return {
+    joueur: { inv: js.joueur.state.inv, equip: js.joueur.state.equip, grille: js.grille },
+    conteneur: (cle) => (cle === 'banque' && js.cleReg) ? banqueDe(js.cleReg) : null,
+    regles,
+    stats: { faim: js.joueur.state.hunger, vie: js.joueur.state.hp, vieMax: MC.PlayerConst.MAX_HP },
+    eauProche: () => eauProcheDe(js.joueur.state.pos),
+  };
+}
+// approximation volontairement large (pas un rayon lancé) : juste assez pour
+// distinguer « près d'une source d'eau » de « nulle part près de l'eau »,
+// seule chose que vérifie INV_CONSOMMER { vers } (SEAU → SEAU_EAU).
+function eauProcheDe(pos) {
+  const cx = Math.floor(pos.x), cy = Math.floor(pos.y), cz = Math.floor(pos.z);
+  for (let dx = -3; dx <= 3; dx++) for (let dy = -2; dy <= 2; dy++) for (let dz = -3; dz <= 3; dz++) {
+    if (C.isWater(monde.getBlock(cx + dx, cy + dy, cz + dz))) return true;
+  }
+  return false;
+}
+function etatJoueurServeur(js) {
+  return { inv: js.joueur.state.inv, equip: js.joueur.state.equip, grille: js.grille };
+}
+// § 5 du plan (API figée, appelée telle quelle par B2 et B4) : seq strictement
+// croissant par connexion et joueur local ; un doublon (seq ≤ dernier connu)
+// est ignoré — ni effet, ni réponse (idempotence, SPEC-SYNC-008/014).
+function seqNouveau(js, seq) {
+  if (!(seq > js.dernierSeq)) return false;
+  js.dernierSeq = seq;
+  return true;
+}
+function envoyerInvMaj(c, j, opts) {
+  const js = c.joueurs && c.joueurs[j];
+  if (!js) return;
+  js.revInv = (js.revInv || 0) + 1;
+  envoyer(c, MC.ContratsV2.messageInvMaj(etatJoueurServeur(js),
+    Object.assign({}, opts, { j, rev: js.revInv, ack: js.dernierSeq })));
+}
+function refuserOp(c, j, seq, motif) {
+  envoyerInvMaj(c, j, { refus: [{ seq, motif }] });
+}
+function lacherAuxPieds(js, pile) {
+  if (!pile || !pile.n) return;
+  const p = js.joueur.state.pos;
+  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n);
+}
+/* Cœur commun à CRAFT, EQUIP, CONTENEUR_TRANSFERT, INV_CONSOMMER, INV_LACHER,
+   INV_CREATIF : vérifie l'idempotence du `seq`, applique l'opération pure,
+   lâche au sol ce qu'elle a éventuellement fait déborder, puis répond par un
+   INV_MAJ (ack ou refus) — TOUJOURS, jamais deux messages non atomiques. */
+function traiterOp(c, m, js, op) {
+  if (!seqNouveau(js, m.seq)) return null;
+  const r = MC.Conteneurs.appliquer(ctxJoueur(js), op);
+  if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); return r; }
+  if (r.effets && r.effets.lache) lacherAuxPieds(js, r.effets.lache);
+  envoyerInvMaj(c, m.j, {});
+  return r;
+}
+/* SPEC-SYNC-011 : EQUIP_VU n'est diffusé qu'aux AUTRES joueurs à portée de vue
+   (même rayon que la diffusion d'état, § 4 du plan — 96 blocs), jamais à
+   l'auteur du changement (déjà informé par son propre INV_MAJ). */
+function diffuserEquipVu(c, j, js, slot) {
+  const pile = js.joueur.state.equip[slot];
+  const objet = pile ? pile.id : 0;
+  const pos = js.joueur.state.pos;
+  clients.forEach(cl => {
+    if (cl.id === c.id || !cl.rejoint || !cl.joueurs) return;
+    const proche = cl.joueurs.some(x => Math.hypot(x.joueur.state.pos.x - pos.x, x.joueur.state.pos.z - pos.z) < 96);
+    if (proche) envoyer(cl, { t: NP.MSG.EQUIP_VU, id: c.id, j, slot, objet });
+  });
+}
+
 // ── joueurs simulés ──────────────────────────────────────────────────────────
 /* Un joueur du serveur : le MÊME code que celui du client (player.js), piloté
    par les entrées reçues. C'est lui qui fait foi sur la position et les
@@ -1151,7 +1353,11 @@ function executerActionAdmin(role, nomActeur, action, args) {
 function creerJoueurServeur(j) {
   const joueur = MC.createPlayer(monde, entites, regles);
   joueur.state.pos.x = SPAWN.x + j * 1.2; joueur.state.pos.y = SPAWN.y; joueur.state.pos.z = SPAWN.z;
-  return { joueur, entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
+  // B1 : grille de fabrication propre à ce joueur local, et idempotence des
+  // messages d'inventaire (dernierSeq, revInv — voir seqNouveau/envoyerInvMaj).
+  const grille = MC.Inventory.create(MC.ContratsV2 ? MC.ContratsV2.BORNES.SLOTS_GRILLE : 9);
+  return { joueur, grille, cleReg: null, dernierSeq: 0, revInv: 0,
+           entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
 }
 const PORTEE_BLOC = 7;
 function blocAutorise(js, m, avant, c) {
@@ -1387,10 +1593,19 @@ setInterval(() => {
     const x = joueurs.find(y => y.js.joueur.state === d.joueur);
     if (x) x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
   });
-  // le butin ramassé part au client du joueur qui l'a pris
+  /* B1 (SPEC-SYNC-007) : le ramassage est désormais rangé dans l'inventaire
+     SERVEUR (`js.joueur.pickUp`, le même code que le solo) — le client ne
+     l'ajoute plus lui-même, il apprend le gain par l'INV_MAJ qui suit. Un
+     inventaire déjà plein rend le reliquat au sol ; DONNE ne sert plus qu'au
+     retour visuel/sonore (toast, son de ramassage), jamais à l'ajout. */
   ev.picked.forEach(p => {
     const x = joueurs.find(y => y.js.joueur.state === p.joueur);
-    if (x) envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: p.n });
+    if (!x) return;
+    const reste = x.js.joueur.pickUp(p.id, p.n, p.data);
+    const pris = p.n - reste;
+    if (pris > 0) envoyerInvMaj(x.c, x.j, { gain: { id: p.id, n: pris } });
+    if (reste > 0) entites.dropItem(p.joueur.pos.x, p.joueur.pos.y + 1, p.joueur.pos.z, p.id, reste, null, p.data);
+    envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: pris > 0 ? pris : p.n });
   });
   entites.mergeItems();
 

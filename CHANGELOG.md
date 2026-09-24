@@ -35,6 +35,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   propre fiche (`teste`/`pourquoi`/`attendu`) en 2e argument de `e2e()`,
   sans changement de nom ni de logique — 100 % du catalogue e2e (136 tests)
   est maintenant couvert (SPEC-BANC-002).
+- Vague 2 (B1, SPEC-SYNC-007 à 011, 014 — partie serveur) : `server.js` route
+  désormais `CRAFT`, `EQUIP`/`EQUIP_VU`, `MANGER` (validé contre l'inventaire
+  réel), `CONTENEUR_TRANSFERT` (inv ↔ grille), `INV_CONSOMMER`, `INV_LACHER`
+  et `INV_CREATIF` vers `MC.Conteneurs.appliquer`, avec les helpers figés de
+  l'API inter-lots (`seqNouveau`, `envoyerInvMaj`, `refuserOp`,
+  `lacherAuxPieds`, `etatJoueurServeur`, `banques`) ; le ramassage (`ev.picked`)
+  range désormais réellement l'objet dans l'inventaire serveur (`DONNE` ne
+  sert plus qu'au retour sonore/visuel) ; registre en mémoire des joueurs
+  nommés (inventaire, équipement, banque restaurés à la reconnexion sous le
+  même nom, `MC_TEST_INV` pour les tests) ; budgets anti-flood des nouveaux
+  messages c→s. `tests/integration-inventaire.js` (nouveau, 29 tests) prouve
+  ce comportement sur un vrai serveur. Le registre des conteneurs posés
+  (coffres, fourneaux…) et la persistance disque (`--monde`) restent à venir.
 
 ### Modifié
 
