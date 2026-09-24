@@ -48,6 +48,17 @@ respecter (voir PLAN.md, « Commits et versions »).
   messages c→s. `tests/integration-inventaire.js` (nouveau, 29 tests) prouve
   ce comportement sur un vrai serveur. Le registre des conteneurs posés
   (coffres, fourneaux…) et la persistance disque (`--monde`) restent à venir.
+- Économie et métiers (L45, SPEC-ECO-001 à 007, SPEC-METIER-001 à 005) :
+  `src/economie.js` (`MC.Economie`) — prix dynamiques par lieu et par biome
+  bornés à ±60 % autour de la référence, trésors de lieux qui reviennent vers
+  une cible (masse monétaire bornée), commerce arbitré en deux phases
+  (validation puis mutation atomique, `executerTroc`), frais de garde
+  quotidiens de la banque, cours régional, transfert de surplus par
+  caravane ; `src/metiers.js` (`MC.Metiers`) — offres bonus au-delà de 15
+  échanges avec un PNJ, minerai requis pour les objets forgés, remise de 10 %
+  au statut (20 ventes), sans aucun `Math.random` (hachage déterministe comme
+  `politique.js`). `src/caravanes.js` : `cargaisonDe`, la cargaison pure et
+  déterministe d'un départ de caravane.
 
 ### Modifié
 
