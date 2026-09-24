@@ -83,6 +83,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L22** | Couverture : portes, trappes, échelles, lianes, combat (PvE, PvP), physique, véhicules, recettes, butins, succès, options, commandes | `PORTE` `COMBAT` `PHYS` `RECETTE` `DROP` `SUCCES` `OPTION` `CMD` | à faire |
 | **L35** | Profondeurs : flore et récifs sous-marins, biomes souterrains (créatures, donjons, ruines, mines), bioluminescence, tous les minerais | `MER` `SOUTERRAIN` `LUMIERE` `MINERAI` | à faire |
 | **L36** | Ambiance sonore complète et spatialisée : environnement, créatures, actions, interactions, événements (absorbe la proposition L30) | `AUDIO` | à faire |
+| **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
 porte G1 ne les exige qu'une fois implémentés. Chaque lot passe ses specs à ✅
