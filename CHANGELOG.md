@@ -14,6 +14,32 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Modifié
+
+- Banc de test navigateur (`tests/banc-ui.js`, `tests/index.html`) : retrait
+  de l'adaptateur de repli, consommation du vrai catalogue partagé
+  (`tests/catalogue.js`, `tests/presets.js`) et exécution réelle des tests
+  unitaires/e2e (`G.T.run`, `runCampagneE2E`) ; catalogue navigateur aligné
+  sur `node tests/run.js` (`spec-perf.js`/`limites-sondes.js`/`spec-limites.js`
+  chargés, auparavant absents de la page par oubli).
+
+### Corrigé
+
+- Captures des cahiers de test (SPEC-BANC-011/012) : les vignettes affichées
+  dans la page utilisent l'URL de données complète (comme avant), et seul
+  l'envoi au serveur en retire le préfixe pour transmettre du base64 pur ;
+  vérifié de bout en bout par une vraie campagne e2e (Playwright), sans
+  erreur console — chaque test garde ses propres captures, distinctes,
+  valides, visibles dans le rapport et les exports web/PDF/Word.
+- Métriques par test (SPEC-BANC-012) : les champs envoyés par le banc
+  navigateur (`fps_moyen`, `appels_dessin`, `memoire_js`) ne correspondaient
+  pas au schéma attendu par `tests/rapport.js` (`fps_moy`, `appels`,
+  `memoire`) — rapport.html, les exports et la moyenne d'images/s de la
+  campagne restaient vides silencieusement. Renommés pour correspondre.
+- Boutons d'export du cahier : la sonde `HEAD` censée les masquer si la
+  route n'existait pas encore provoquait un 405 (le serveur n'accepte que
+  `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
+  désormais stable dans le noyau.
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité
@@ -180,6 +206,62 @@ respecter (voir PLAN.md, « Commits et versions »).
 - Panneau F3 (métriques : FPS/p50/p95, appels de dessin, triangles, ms
   génération/maillage, distance de vue) et `g.perf`, calculé en continu
   indépendamment de son affichage (SPEC-PERF-015/016).
+### Ajouté (banc de test)
+- Banc de test navigateur refondu (`tests/index.html`, `tests/banc-ui.js`,
+  `tests/banc.css`) : menu de sélection type → domaine → groupe → test avec
+  recherche, préréglages et compteur, sélection reflétée dans l'adresse
+  (SPEC-BANC-007) ; disposition en quatre zones qui tient à 1280×800 et
+  800×600 sans défilement de page — liste des tests effectués et résumé fixe
+  à gauche, tests lents et en erreur en haut à droite, rendu 3D intégré en bas
+  à droite (SPEC-BANC-008) ; progression en direct pour les tests unitaires
+  (exécutés par lots entre deux `await`) comme pour les end-to-end, étapes et
+  avancement affichés avant la fin de chaque test (SPEC-BANC-009) ; délai par
+  test (60 s par défaut, surchargeable par fiche), le test dépassé est marqué
+  « délai dépassé » avec son étape courante et la campagne continue
+  (SPEC-BANC-010) ; captures d'image compressées au début, à chaque étape, à
+  la fin et à l'échec de chaque test end-to-end, vignettes agrandissables
+  (SPEC-BANC-011) ; métriques par test (images, images/s moyenne/min/p95, ms
+  par image, appels de dessin, triangles, mémoire JS, assertions) et fiche
+  quoi/pourquoi/attendu dépliable avec étapes, assertions, attendu/obtenu,
+  message et pile d'appel (SPEC-BANC-012, SPEC-BANC-013) ; envoi du cahier de
+  test à `POST /tests/resultats` en fin de campagne (ou à la fermeture de la
+  page), avec repli en téléchargement local si le serveur ne répond pas
+  (SPEC-BANC-014) ; nettoyage systématique en fin de test et de campagne —
+  dialogues d'histoire, journal et écrans résiduels sont refermés
+  (SPEC-BANC-016).
+- `MC_DEBUG` (`src/debug.js`) : pilotage manuel ou par les tests du rendu
+  intégré — téléporter, régler l'heure, la saison, la météo, la distance de
+  vue, agrandir le rendu en plein panneau puis le réduire, capturer une image
+  (SPEC-BANC-017) ; un panneau repliable dans le banc l'expose à la main, et
+  il est aussi disponible dans le jeu (`window.MC_DEBUG`) à la console.
+- `e2e(nom, fiche, fn)` accepte désormais une fiche facultative (quoi,
+  pourquoi, attendu, délai), et `etape(libellé, n, total)` /
+  `capture(libellé)` sont disponibles dans un test end-to-end pour détailler
+  sa progression et illustrer son déroulé.
+- Le rendu intégré du banc tourne dans une surface virtuelle à résolution
+  fixe (800×600 minimum lisible, 1280×800 par défaut, ou 1600×900/1920×1080
+  au choix dans le panneau `MC_DEBUG`), mise à l'échelle par CSS pour tenir
+  dans le quart qui l'affiche : le jeu ne se croit plus dans une minuscule
+  fenêtre (menus, HUD et échelle d'interface restent lisibles, quelle que
+  soit la taille de la page). `g.tailleVue()` (`src/game.js`) donne la taille
+  de référence de l'hôte du rendu, utilisée par l'échelle d'interface
+  (SPEC-OPTION-007) à la place de la taille de la fenêtre.
+- L'espace de rendu du jeu ne descend jamais sous 800×600, quel que soit
+  l'hôte ou la façon de lancer le jeu (`index.html`, banc, ancien hôte
+  réduit…) : `src/game.js` pose désormais une surface interne (`.mc-surface`)
+  qui garde ce plancher et se réduit à l'échelle, centrée, rapport d'aspect
+  conservé, si l'hôte est plus petit — rendu, HUD, menus et dialogues en
+  profitent tous, puisqu'ils y vivent tous (SPEC-OPTION-008).
+- Lien « Cahiers » vers `/tests/cahiers` dans l'en-tête du banc, et boutons
+  d'export du cahier de la campagne (web, PDF, Word) à côté du lien du
+  rapport en fin de campagne, masqués si la route correspondante n'existe
+  pas sur le serveur.
+- La page remplit toute la fenêtre quelle que soit sa taille (aucune largeur
+  ni hauteur fixe) ; les tests lents sont signalés dans leur zone pendant
+  qu'ils tournent, pas seulement une fois terminés ; le menu de sélection se
+  referme automatiquement après « Lancer », « Tout », « Relancer les
+  échecs » ou l'ouverture d'un test, d'un rapport ou d'une vignette, pour
+  rendre toute sa hauteur à la liste des tests.
 
 ### Corrigé
 - Les cahiers de test n'affichaient pas les captures d'écran du banc
@@ -232,6 +314,31 @@ respecter (voir PLAN.md, « Commits et versions »).
   bas, sans moyen de les atteindre : les écrans et l'inventaire défilent
   désormais verticalement et horizontalement, le haut restant toujours
   accessible (SPEC-OPTION-007).
+- SPEC-ZONE-003 échouait en campagne e2e complète depuis le nouveau banc
+  (mais pas isolément dans l'ancien testeur) : la boucle d'attente de
+  l'annonce de zone guettait la sous-chaîne « PvP » n'importe où dans
+  `document.body.textContent`, or le panneau de sélection du banc affiche en
+  permanence des libellés de spec qui la contiennent déjà (« SPEC-ZONE — zones
+  de jeu (PvP/PvE… ) »). La condition était donc déjà vraie avant la première
+  image, la boucle n'attendait jamais réellement le tick où l'annonce paraît,
+  et l'assertion suivante la ratait. Le test attend désormais le changement
+  de l'indicateur de zone lui-même (`.zone-indicateur`), sans ambiguïté avec
+  le reste de la page, et vérifie le texte de l'annonce dans son conteneur
+  dédié (`.toasts`) plutôt que dans toute la page.
+- SPEC-HISTOIRE-014 échouait de façon non déterministe en campagne e2e
+  complète (jamais isolément) : `tests/e2e.js` simule le verrou de pointeur
+  en redéfinissant `document.pointerLockElement`, mais n'empêchait pas les
+  VRAIES API `canvas.requestPointerLock()`/`document.exitPointerLock()`
+  appelées par `src/input.js` à chaque changement d'état — sous automatisation
+  (Playwright/CDP), un octroi réel peut aboutir sans geste utilisateur,
+  contrairement à un navigateur utilisé à la main. Un octroi tardif et
+  asynchrone déclenchait alors un VRAI `pointerlockchange`, lu par
+  `isLocked()` via le getter truqué (donc désynchronisé du vrai verrou), ce
+  qui pouvait remettre le jeu en pause en pleine partie après un test qui
+  enchaîne plusieurs changements d'état verrouillés (SPEC-HISTOIRE-009 juste
+  avant, dans la campagne complète). Les vraies API sont désormais coupées
+  une fois pour toutes dès le premier verrou simulé : seule `fakeLock` pilote
+  `pointerLockElement` pendant les tests.
 
 ## [0.3.0] - 2026-09-24
 ### Corrigé

@@ -13,9 +13,40 @@
 
   function createGame(host) {
     var atlas = MC.buildAtlas();
+
+    /* SPEC-OPTION-008 : l'espace de rendu ne descend jamais sous 800×600,
+       quel que soit `host` (fenêtre réduite, cadre d'un banc de test, ancien
+       hôte 640×400…) — une SURFACE interne, posée dans `host`, garde
+       toujours au moins ce plancher (rendu, HUD, menus, dialogues : tout
+       vit dedans, jamais dans `host` directement) ; si `host` est plus
+       petit, la surface le dépasse et s'affiche réduite par une
+       transformation CSS (échelle uniforme, centrée, rapport d'aspect
+       conservé — les clics restent justes : le navigateur fait déjà cette
+       correction lui-même pour tout événement souris). Limité à ce seul
+       dimensionnement : le reste du rendu (render.js) est repris ailleurs. */
+    var PLANCHER_L = 800, PLANCHER_H = 600;
+    var surface = document.createElement('div');
+    surface.className = 'mc-surface';
+    surface.style.position = 'absolute';
+    surface.style.transformOrigin = 'top left';
+    if (getComputedStyle(host).position === 'static') host.style.position = 'relative';
+    host.appendChild(surface);
+    function redimensionnerSurface() {
+      var hw = host.clientWidth || PLANCHER_L, hh = host.clientHeight || PLANCHER_H;
+      var l = Math.max(PLANCHER_L, hw), h = Math.max(PLANCHER_H, hh);
+      surface.style.width = l + 'px';
+      surface.style.height = h + 'px';
+      var echelle = Math.min(hw / l, hh / h) || 1;
+      surface.style.transform = echelle < 1 ? 'scale(' + echelle + ')' : 'none';
+      surface.style.left = Math.round((hw - l * echelle) / 2) + 'px';
+      surface.style.top = Math.round((hh - h * echelle) / 2) + 'px';
+    }
+    redimensionnerSurface();
+    window.addEventListener('resize', redimensionnerSurface);
+
     // le GPU se choisit avant de créer le rendu (SPEC-OPTION-004)
     var optionsLues = MC.Options ? MC.Options.charger((function () { try { return window.localStorage; } catch (e) { return null; } })()) : null;
-    var render = MC.createRenderer(host, atlas, { renderDist: 6,
+    var render = MC.createRenderer(surface, atlas, { renderDist: 6,
       powerPreference: optionsLues ? MC.Options.preferenceGpu(optionsLues.gpu) : undefined,
       // SPEC-RENDU-001/002 : le message et l'arrêt du rendu passent par l'UI ;
       // les maillages de chunks visibles sont remis en file (dirty), le reste
@@ -175,7 +206,7 @@
     }
     g.signalerSucces = signalerSucces;
 
-    var ui = MC.createUI(host, atlas, {
+    var ui = MC.createUI(surface, atlas, {
       onSelectSlot: selectSlot,
       onPlay: startGame,
       onResume: resume,
@@ -258,6 +289,16 @@
     /* Réglages du joueur (SPEC-OPTION-001, 003) : lus au démarrage, appliqués
        aussitôt qu'on les change, conservés avec l'affichage du HUD. */
     g.options = MC.Options.charger(hudStockage);
+    /* Taille de référence pour l'échelle d'interface (SPEC-OPTION-007) : celle
+       de l'hôte du rendu, pas forcément celle de la fenêtre — le banc de test
+       y loge le jeu dans une surface virtuelle mise à l'échelle par CSS, plus
+       petite que la fenêtre, et l'interface doit suivre CETTE taille, pas
+       celle (bien plus grande) de la fenêtre du navigateur qui héberge le
+       banc. `g.tailleVue()` reste le point d'entrée unique de cette mesure. */
+    function tailleVue() {
+      return { l: (surface && surface.clientWidth) || window.innerWidth, h: (surface && surface.clientHeight) || window.innerHeight };
+    }
+    g.tailleVue = tailleVue;
     function appliquerOptions() {
       var o = g.options;
       input.setSensibilite(o.sensibilite);
@@ -274,11 +315,13 @@
       render.setResolution(o.resolution);
       ui.zoneHud && ui.zoneHud(g.disposition.segments[g.disposition.principal]);
       ui.majTouches && ui.majTouches(o.touches);
-      ui.echelle && ui.echelle(MC.Options.echelleInterface(o.tailleInterface, window.innerWidth, window.innerHeight));
+      var tv = tailleVue();
+      ui.echelle && ui.echelle(MC.Options.echelleInterface(o.tailleInterface, tv.l, tv.h));
     }
-    // en « auto », l'interface suit la taille de la fenêtre (SPEC-OPTION-007)
+    // en « auto », l'interface suit la taille de l'hôte (SPEC-OPTION-007)
     window.addEventListener('resize', function () {
-      if (ui.echelle) ui.echelle(MC.Options.echelleInterface(g.options.tailleInterface, window.innerWidth, window.innerHeight));
+      var tv = tailleVue();
+      if (ui.echelle) ui.echelle(MC.Options.echelleInterface(g.options.tailleInterface, tv.l, tv.h));
     });
     function reglerOption(cle, v) {
       g.options = MC.Options.regler(g.options, cle, v);
@@ -2416,7 +2459,7 @@
                           DC.sunIntensity(g.time));
 
       // une camera par joueur, puis un rendu par vue
-      var taille = [host.clientWidth || innerWidth, host.clientHeight || innerHeight];
+      var taille = [surface.clientWidth || innerWidth, surface.clientHeight || innerHeight];
       var vues = MC.Split.dispositions(equipe.length, taille[0], taille[1]);
       g.vues = vues;
       for (var vi = 0; vi < equipe.length; vi++) {
