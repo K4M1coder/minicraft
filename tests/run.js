@@ -39,7 +39,15 @@ const optionsToutes = (nom) => { const out = []; for (let i = 0; i < args.length
 const drapeau = (nom) => args.includes(nom);
 const silencieux = drapeau('--silencieux');
 const SEUIL_LENT = 20;
-const DELAI_TEST_MS_DEFAUT = 30000; // délai coopératif par test (SPEC-BANC-010, volet Node) — voir tests/harness.js T.etape()
+/* Filet de sécurité contre un test qui ne rend JAMAIS la main (deadlock),
+   PAS un couperet pour un test simplement lent (SPEC-BANC-010, révisé) : un
+   test lent continue jusqu'à son vrai résultat (ok/échec), signalé au passage
+   dans la zone des lents (SEUIL_LENT ci-dessus, un simple AVERTISSEMENT). Le
+   délai reste coopératif (tests/harness.js T.etape()) : un test qui n'appelle
+   jamais etape() ne peut pas être coupé — voir son commentaire. Généreux par
+   construction (15 min) : seul un test qui boucle réellement sans fin doit
+   jamais l'atteindre. */
+const DELAI_TEST_MS_DEFAUT = 15 * 60 * 1000;
 
 // ── --delai N : un processus parent surveille l'enfant qui exécute la suite ──
 if (option('--delai') && !process.env.MC_RUN_ENFANT) {
@@ -450,8 +458,17 @@ if (e2eSelectionnes.length) {
   fs.writeFileSync(tmpEntree, JSON.stringify(e2eSelectionnes.map(t => (
     { id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche }
   ))));
-  const delaiTestE2eMs = 45000;
-  const delaiGlobalE2eMs = Math.max(60000, e2eSelectionnes.length * (delaiTestE2eMs + 3000));
+  // Filet de sécurité, pas un couperet pour un test lent (SPEC-BANC-010,
+  // révisé) : un test e2e réel termine typiquement en quelques secondes ;
+  // seul un test VRAIMENT bloqué (session CDP figée) doit un jour atteindre
+  // ces 15 minutes, coupées par tools/e2e-headless.js (Runtime.terminateExecution)
+  // pour que la campagne continue avec le test suivant plutôt que de rester
+  // pendue indéfiniment. delaiGlobalE2eMs est un plafond théorique (le pire
+  // cas où TOUS les tests sélectionnés bloqueraient chacun à leur tour) : il
+  // n'est atteint en pratique que si l'infrastructure elle-même est cassée —
+  // borné à 2 h pour rester raisonnable même avec beaucoup de tests.
+  const delaiTestE2eMs = 15 * 60 * 1000;
+  const delaiGlobalE2eMs = Math.min(2 * 60 * 60 * 1000, Math.max(60000, e2eSelectionnes.length * (delaiTestE2eMs + 3000)));
   const t0e2e = Date.now();
   const rE2E = require('child_process').spawnSync(process.execPath, [
     path.join(root, 'tools', 'e2e-headless.js'),

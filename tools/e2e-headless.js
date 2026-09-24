@@ -56,8 +56,11 @@ const NAV = require('./navigateur.js');
 
 const RACINE = path.join(__dirname, '..');
 const DELAI_DEMARRAGE_DEFAUT = 20000;
-const DELAI_TEST_DEFAUT = 30000;
-const DELAI_GLOBAL_DEFAUT = 5 * 60 * 1000;
+// Filet de sécurité contre un test qui ne rend jamais la main (session CDP
+// bloquée), pas un couperet pour un test simplement lent (SPEC-BANC-010,
+// révisé) — voir tests/run.js pour le même choix côté appelant CLI.
+const DELAI_TEST_DEFAUT = 15 * 60 * 1000;
+const DELAI_GLOBAL_DEFAUT = 20 * 60 * 1000;
 const MAX_MESSAGES_CONSOLE = 4000; // borne mémoire d'une longue campagne
 
 function dodo(ms) { return new Promise((r) => setTimeout(r, ms)); }

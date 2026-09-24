@@ -198,6 +198,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   porte la rotation), vérifié par reconstruction algébrique face à `pushUV` (la
   référence sans repli greedy) et reproduit/confirmé corrigé en navigateur réel
   (Playwright, seed -1001861235).
+- Banc de test (SPEC-BANC-010, révision) : le délai par test e2e/Node
+  coupait un test dès qu'il dépassait son délai (60 s côté e2e navigateur,
+  45 s côté navigateur sans fenêtre `tools/e2e-headless.js`, 30 s côté Node)
+  — un test réel simplement LENT (rendu logiciel, machine chargée) était
+  donc marqué « delai » puis compté en échec, avant même d'avoir pu finir de
+  s'exécuter. Devient un filet de sécurité contre un test qui ne rend
+  VRAIMENT jamais la main (deadlock) : généreux par défaut (15 min sur les
+  trois volets), configurable par `fiche.delai`. Le seuil « lent » (signal
+  en direct dans la zone des tests lents) reste inchangé et ne fait toujours
+  pas échouer un test. Corrige aussi un bug latent de `tests/catalogue.js`
+  (`ficheDe()`) : `fiche.delai` ne survivait pas à la déduction de fiche
+  depuis la spec citée quand le test ne déclarait QUE `{ delai: N }`.
 - Workers de chunk (L47, B3, revue adversariale) : le message `init` était
   envoyé via `pool.envoyer()`, qui ne distribue qu'à UN SEUL worker libre —
   correct pour `genere`/`maille`, faux pour `init` qui doit atteindre CHAQUE
