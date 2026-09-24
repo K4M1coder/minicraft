@@ -398,11 +398,11 @@
       if (r.metriques) {
         var mx = r.metriques;
         bloc.appendChild(el('div', { class: 'metriques' }, [
-          'images ' + (mx.images || 0) + ' · fps moy ' + (mx.fps_moyen ? mx.fps_moyen.toFixed(1) : '—') +
+          'images ' + (mx.images || 0) + ' · fps moy ' + (mx.fps_moy ? mx.fps_moy.toFixed(1) : '—') +
           ' · min ' + (mx.fps_min ? mx.fps_min.toFixed(1) : '—') + ' · p95 ' + (mx.fps_p95 ? mx.fps_p95.toFixed(1) : '—') +
-          (mx.appels_dessin != null ? ' · dessins ' + mx.appels_dessin : '') +
+          (mx.appels != null ? ' · dessins ' + mx.appels : '') +
           (mx.triangles != null ? ' · triangles ' + mx.triangles : '') +
-          (mx.memoire_js != null ? ' · mémoire ' + Math.round(mx.memoire_js / 1048576) + ' Mo' : ''),
+          (mx.memoire != null ? ' · mémoire ' + Math.round(mx.memoire / 1048576) + ' Mo' : ''),
         ]));
       }
       if (r.captures && r.captures.length) {
@@ -610,7 +610,7 @@
       var lents = etat.resultats.filter(function (r) { return r.duree_ms > etat.seuilLentMs; })
         .sort(function (a, b) { return b.duree_ms - a.duree_ms; }).slice(0, 10)
         .map(function (r) { return { nom: r.nom, duree_ms: r.duree_ms }; });
-      var fpsValeurs = etat.resultats.filter(function (r) { return r.metriques && r.metriques.fps_moyen; }).map(function (r) { return r.metriques.fps_moyen; });
+      var fpsValeurs = etat.resultats.filter(function (r) { return r.metriques && r.metriques.fps_moy; }).map(function (r) { return r.metriques.fps_moy; });
       var fpsMoyen = fpsValeurs.length ? fpsValeurs.reduce(function (a, b) { return a + b; }, 0) / fpsValeurs.length : null;
 
       var gpu = null;
@@ -620,10 +620,21 @@
         if (dbg) gpu = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
       } catch (e) { /* rien */ }
 
+      // les captures gardent leur URL de données complète (c.base64) tant
+      // qu'elles restent affichées en vignettes dans la page (voir
+      // afficherFini/agrandir) ; on ne retire le préfixe data:…;base64,
+      // qu'ici, au moment de les envoyer au serveur, qui attend du base64
+      // pur (tools/resultats-tests.js le tolère aussi avec préfixe, mais
+      // l'envoyer nu est le format attendu — voir aussi l'index `fichier`,
+      // qu'il fait foi sur le libellé, répété d'un test à l'autre).
+      function basePure(donnees) {
+        var i = String(donnees || '').indexOf(',');
+        return i >= 0 && /^data:/.test(donnees) ? donnees.slice(i + 1) : donnees;
+      }
       var captures = [];
       var resultatsPourEnvoi = etat.resultats.map(function (r) {
         var refsCaptures = (r.captures || []).map(function (c) {
-          captures.push({ libelle: c.libelle, type: c.type, base64: c.base64 });
+          captures.push({ libelle: c.libelle, type: c.type, base64: basePure(c.base64) });
           return { libelle: c.libelle, fichier: captures.length - 1 };
         });
         var copie = Object.assign({}, r);
@@ -672,21 +683,20 @@
       if (m) ajouterExports(conteneur, m[1]);
     }
     /* Boutons d'export du cahier (web/PDF/Word), servis par la bibliothèque
-       des cahiers du noyau (GET /tests/cahiers/<dossier>/export?format=…) ;
-       masqués si cette route n'existe pas encore sur le serveur (404). */
-    async function ajouterExports(conteneur, dossier) {
+       des cahiers du noyau (GET /tests/cahiers/<dossier>/export?format=…,
+       SPEC-BANC-019/020/021) : la route n'accepte que GET (le noyau répond
+       405 à toute autre méthode) et `afficherLienRapport` n'appelle
+       `ajouterExports` qu'après un envoi RÉUSSI du cahier, donc le dossier
+       existe forcément déjà côté serveur — pas besoin d'une sonde HEAD
+       (qui déclencherait elle-même un 405, journalisé comme échec réseau
+       par le navigateur alors que les liens, eux, fonctionnent). */
+    function ajouterExports(conteneur, dossier) {
       var formats = [['html', 'Web'], ['pdf', 'PDF'], ['docx', 'Word']];
-      for (var i = 0; i < formats.length; i++) {
-        var lien = '/tests/cahiers/' + encodeURIComponent(dossier) + '/export?format=' + formats[i][0];
-        var disponible = true;
-        try {
-          var rep = await fetch(lien, { method: 'HEAD' });
-          if (rep.status === 404) disponible = false;
-        } catch (e) { disponible = false; }
-        if (!disponible) continue;
+      formats.forEach(function (f) {
+        var lien = '/tests/cahiers/' + encodeURIComponent(dossier) + '/export?format=' + f[0];
         conteneur.appendChild(document.createTextNode(' — '));
-        conteneur.appendChild(el('a', { href: lien, target: '_blank' }, [formats[i][1]]));
-      }
+        conteneur.appendChild(el('a', { href: lien, target: '_blank' }, [f[1]]));
+      });
     }
     function replisLocal(cahier) {
       var blob = new Blob([JSON.stringify(cahier, null, 2)], { type: 'application/json' });

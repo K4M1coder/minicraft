@@ -66,12 +66,12 @@
       var c = document.createElement('canvas');
       c.width = cw; c.height = ch;
       c.getContext('2d').drawImage(src, 0, 0, cw, ch);
-      // base64 PUR (sans le préfixe data:image/jpeg;base64,) : le serveur
-      // (tools/resultats-tests.js) sait aussi retirer un préfixe s'il en
-      // trouve un, mais l'envoyer déjà nu est le format attendu.
-      var url = c.toDataURL('image/jpeg', 0.7);
-      var i = url.indexOf(',');
-      return { libelle: libelle || '', type: 'image/jpeg', base64: i >= 0 ? url.slice(i + 1) : url };
+      // URL de données complète : banc-ui.js l'utilise TELLE QUELLE comme
+      // src des vignettes affichées dans la page (SPEC-BANC-011) — retirer
+      // le préfixe ici casserait leur affichage. C'est envoyerCahier(),
+      // au moment d'envoyer au serveur, qui retire le préfixe pour envoyer
+      // du base64 pur (voir tests/banc-ui.js).
+      return { libelle: libelle || '', type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.7) };
     } catch (e) { return null; }
   }
 
@@ -2708,12 +2708,16 @@
         try { info = g.render.renderer.info.render; } catch (e) { /* rien */ }
         var mem = null;
         try { mem = performance.memory ? performance.memory.usedJSHeapSize : null; } catch (e) { /* rien */ }
+        // noms de champs alignés sur le schéma documenté par tests/rapport.js
+        // (noyau, SPEC-BANC-012/013/014) : fps_moy/appels/memoire, pas
+        // fps_moyen/appels_dessin/memoire_js — sinon rapport.html, les
+        // exports et la campagne affichent ces métriques comme absentes.
         return {
           images: ctx.images.length,
-          fps_moyen: moyenne(fps), fps_min: fps.length ? Math.min.apply(null, fps) : 0, fps_p95: p95,
+          fps_moy: moyenne(fps), fps_min: fps.length ? Math.min.apply(null, fps) : 0, fps_p95: p95,
           ms_image: moyenne(deltas),
-          appels_dessin: info ? info.calls : null, triangles: info ? info.triangles : null,
-          memoire_js: mem,
+          appels: info ? info.calls : null, triangles: info ? info.triangles : null,
+          memoire: mem,
         };
       }
       function conclure(etat, message, pile, attendu, obtenu) {
