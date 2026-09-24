@@ -51,6 +51,11 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC.Lumiere.depuisTableaux` complètent l'API pour permettre à un chunk
   brut, reçu sans overrides ni lumières, d'être intégré exactement comme un
   chunk généré en place.
+- Coquilles de Worker (`src/worker-monde.js`, `src/worker-maillage.js`) et
+  pool navigateur (`src/workers.js`, détection de disponibilité + repli) ;
+  câblage dans `src/game.js` (streaming des chunks distribué au pool quand
+  il existe, repli synchrone complet sinon — le chemin `onBloc` reste
+  synchrone en toute circonstance).
 
 ### Modifié
 

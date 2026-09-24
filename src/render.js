@@ -377,47 +377,20 @@
     function disposerGeom(obj) {
       if (obj && obj.geometry && obj.geometry.__mcGen === contexteGen) obj.geometry.dispose();
     }
-    function toGeometry(raw) {
-      var g = new THREE.BufferGeometry();
-      g.setAttribute('position', new THREE.Float32BufferAttribute(raw.positions, 3));
-      g.setAttribute('normal', new THREE.Float32BufferAttribute(raw.normals, 3));
-      g.setAttribute('uv', new THREE.Float32BufferAttribute(raw.uvs, 2));
-      g.setAttribute('color', new THREE.Float32BufferAttribute(raw.colors, 3));
-      g.setAttribute('lum', new THREE.Float32BufferAttribute(raw.lums && raw.lums.length ? raw.lums
-                                                               : new Float32Array(raw.positions.length / 3), 1));
-      g.setAttribute('ciel', new THREE.Float32BufferAttribute(raw.ciels && raw.ciels.length ? raw.ciels
-                                                                : new Float32Array(raw.positions.length / 3).fill(1), 1));
-      var nv = raw.positions.length / 3;
-      g.setAttribute('onde', new THREE.Float32BufferAttribute(raw.ondes && raw.ondes.length === nv * 4 ? raw.ondes
-                                                                : new Float32Array(nv * 4), 4));
-      g.setAttribute('onde2', new THREE.Float32BufferAttribute(raw.ondes2 && raw.ondes2.length === nv * 4 ? raw.ondes2
-                                                                 : new Float32Array(nv * 4), 4));
-      g.setAttribute('immerge', new THREE.Float32BufferAttribute(raw.immerges && raw.immerges.length === nv ? raw.immerges
-                                                                   : new Float32Array(nv), 1));
-      g.setAttribute('souple', new THREE.Float32BufferAttribute(raw.souples && raw.souples.length === nv ? raw.souples
-                                                                  : new Float32Array(nv), 1));
-      // SPEC-SAISON-004 : classe de teinte saisonnière par sommet (0 rien, 1
-      // caduc, 2 conifère, 3 dessus d'herbe) — voir avecLumiereDesBlocs.
-      g.setAttribute('feuillage', new THREE.Float32BufferAttribute(raw.feuillages && raw.feuillages.length === nv ? raw.feuillages
-                                                                     : new Float32Array(nv), 1));
-      /* uvBase/uvRep (SPEC-PERF-011 à 013, sous-lot A3) : le greedy meshing de
-         mesher.js fusionne des faces coplanaires de même tuile en un seul
-         grand quad — mais l'atlas n'a pas de mipmaps ni de retour à la ligne
-         par tuile (NearestFilter, une seule texture pour tout l'atlas), donc
-         étirer l'UV du quad fusionné aurait zoomé/flouté la texture au lieu
-         de la répéter. `uvBase` (origine de la tuile dans l'atlas) et
-         `uvRep` (coordonnée locale « dépliée », pouvant dépasser [0,1] sur un
-         quad fusionné) laissent le shader (avecLumiereDesBlocs ci-dessous)
-         reconstruire l'échantillonnage avec un fract() par fragment, pour
-         que la texture se répète à l'identique au lieu de s'étirer. */
-      g.setAttribute('uvBase', new THREE.Float32BufferAttribute(raw.uvBases && raw.uvBases.length === nv * 2 ? raw.uvBases
-                                                                   : new Float32Array(nv * 2), 2));
-      g.setAttribute('uvRep', new THREE.Float32BufferAttribute(raw.uvReps && raw.uvReps.length === nv * 2 ? raw.uvReps
-                                                                  : new Float32Array(nv * 2), 2));
-      g.setIndex(raw.indices);
-      g.computeBoundingSphere();
-      return tagGen(g);
-    }
+    /* uvBase/uvRep (SPEC-PERF-011 à 013, sous-lot A3) : le greedy meshing de
+       mesher.js fusionne des faces coplanaires de même tuile en un seul
+       grand quad — mais l'atlas n'a pas de mipmaps ni de retour à la ligne
+       par tuile (NearestFilter, une seule texture pour tout l'atlas), donc
+       étirer l'UV du quad fusionné aurait zoomé/flouté la texture au lieu
+       de la répéter. `uvBase` (origine de la tuile dans l'atlas) et
+       `uvRep` (coordonnée locale « dépliée », pouvant dépasser [0,1] sur un
+       quad fusionné) laissent le shader (avecLumiereDesBlocs ci-dessous)
+       reconstruire l'échantillonnage avec un fract() par fragment, pour
+       que la texture se répète à l'identique au lieu de s'étirer. Les
+       valeurs par défaut de ces attributs (et de lum/ciel/onde…, voir
+       SPEC-SAISON-004) sont désormais posées par MC.TachesChunks.
+       versTableauxTypes (SPEC-PERF-008), une seule fois, plutôt qu'ici :
+       Worker ET repli synchrone (syncChunk ci-dessous) partagent ce code. */
 
     // une passe de rendu = un maillage par chunk ; l'ordre de rendu va
     // de l'opaque au fondu, ce dernier devant être dessiné en dernier
@@ -426,10 +399,102 @@
                   ['meshC', matCutout, 'cutout', 1],
                   ['meshT', matBlend, 'blend', 2]];
 
+    /* SPEC-PERF-014 : attributs d'une passe déjà typée (MC.TachesChunks.
+       versTableauxTypes — worker OU repli synchrone via syncChunk ci-dessous)
+       — nom THREE, clé du tableau source, nombre de composantes. */
+    var ATTRS_PASSE = [
+      ['position', 'positions', 3], ['normal', 'normals', 3], ['uv', 'uvs', 2], ['color', 'colors', 3],
+      ['lum', 'lums', 1], ['ciel', 'ciels', 1], ['onde', 'ondes', 4], ['onde2', 'ondes2', 4],
+      ['immerge', 'immerges', 1], ['souple', 'souples', 1], ['feuillage', 'feuillages', 1],
+      ['uvBase', 'uvBases', 2], ['uvRep', 'uvReps', 2],
+    ];
+    // compteur d'instrumentation SPEC-PERF-014 : géométries RECRÉÉES (pas
+    // seulement réécrites) — voir render.perf()
+    var geometriesCreees = 0;
+    /* Nouvelle géométrie dimensionnée avec une marge (SPEC-PERF-014) : un
+       futur remaillage du même chunk qui grossit un peu (pousse une porte,
+       une culture) réutilise ce tampon au lieu d'en recréer un. */
+    function toGeometryCapacite(raw, marge) {
+      var nv = raw.positions.length / 3, ni = raw.indices.length;
+      var capVerts = Math.max(nv, Math.ceil(nv * marge));
+      var capIdx = Math.max(ni, Math.ceil(ni * marge));
+      var g = new THREE.BufferGeometry();
+      ATTRS_PASSE.forEach(function (m) {
+        var arr = new Float32Array(capVerts * m[2]);
+        arr.set(raw[m[1]]);
+        g.setAttribute(m[0], new THREE.Float32BufferAttribute(arr, m[2]));
+      });
+      var idxArr = new Uint32Array(capIdx);
+      idxArr.set(raw.indices);
+      g.setIndex(new THREE.Uint32BufferAttribute(idxArr, 1));
+      g.setDrawRange(0, ni);
+      g.userData.capVerts = capVerts;
+      g.userData.capIdx = capIdx;
+      g.computeBoundingSphere();
+      return tagGen(g);
+    }
+    // réécrit les attributs d'une géométrie EXISTANTE (capacité suffisante)
+    // en place, sans réallouer ni recréer aucun tampon GPU (SPEC-PERF-014)
+    function ecrireEnPlace(g, raw) {
+      ATTRS_PASSE.forEach(function (m) {
+        var attr = g.getAttribute(m[0]);
+        attr.array.set(raw[m[1]]);
+        attr.needsUpdate = true;
+      });
+      g.index.array.set(raw.indices);
+      g.index.needsUpdate = true;
+      g.setDrawRange(0, raw.indices.length);
+      g.computeBoundingSphere();
+    }
+    /* SPEC-PERF-014 : applique un maillage déjà calculé (passes typées,
+       venues d'un Worker ou du repli synchrone) — SEUL chemin qui touche la
+       scène/le GPU pour un chunk, partagé par les deux origines (même
+       résultat, même code). `passes` : { opaque, lumineux, cutout, blend }
+       (MC.ContratsV2.PASSES_MAILLAGE), chacune une passe typée ou `null`. */
+    function appliquerMaillage(chunk, passes, lumiere, simplifie) {
+      chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
+      // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
+      chunk.lumiere = lumiere;
+      for (var i = 0; i < PASSES.length; i++) {
+        var key = PASSES[i][0], mat = PASSES[i][1], passName = PASSES[i][2];
+        var raw = passes ? passes[passName] : null;
+        var mesh = chunk[key];
+        if (!raw) {
+          if (mesh) { maillagesEau.delete(mesh); scene.remove(mesh); disposerGeom(mesh); chunk[key] = null; }
+          continue;
+        }
+        var nv = raw.positions.length / 3, ni = raw.indices.length;
+        if (mesh && mesh.geometry && mesh.geometry.__mcGen === contexteGen &&
+            mesh.geometry.userData.capVerts >= nv && mesh.geometry.userData.capIdx >= ni) {
+          ecrireEnPlace(mesh.geometry, raw);
+          continue;
+        }
+        if (mesh) { maillagesEau.delete(mesh); scene.remove(mesh); disposerGeom(mesh); chunk[key] = null; }
+        var g = toGeometryCapacite(raw, 1.3);
+        geometriesCreees++;
+        var m = new THREE.Mesh(g, mat);
+        m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
+        m.renderOrder = PASSES[i][3];
+        m.castShadow = passName !== 'blend';
+        m.receiveShadow = true;
+        // ombre correcte sur les grands quads fusionnés (feuillage, cultures)
+        if (passName === 'cutout') m.customDepthMaterial = matDepthCutout;
+        if (passName === 'blend') maillagesEau.add(m);
+        scene.add(m);
+        chunk[key] = m;
+      }
+      chunk.dirty = false;
+      chunk.simplifie = !!simplifie;
+    }
+
     var maillagesEau = new Set();
+    /* Chemin synchrone (repli sans Worker, ou remaillage immédiat) :
+       buildChunk local + conversion (MC.TachesChunks.versTableauxTypes,
+       SPEC-PERF-008) + appliquerMaillage — EXACTEMENT ce que fait un
+       résultat de Worker une fois reçu (game.js), pour un résultat
+       identique quelle que soit l'origine. */
     function syncChunk(world, chunk, simplifie) {
       var sample = world.getBlock;
-      var passes = PASSES;
       // une propagation de lumière par chunk, partagée par ses quatre passes
       var lumiere = MC.Lumiere && world.chunkDe ? MC.Lumiere.eclairer(world.chunkDe, chunk.cx, chunk.cz) : null;
       // l'eau des chunks voisins : les coins partagés s'agitent pareil des deux côtés
@@ -440,32 +505,15 @@
         if (!c2.eau.nature[k]) return null;
         return { nature: c2.eau.nature[k], flux: { x: c2.eau.flux[k * 2] / 127, z: c2.eau.flux[k * 2 + 1] / 127 }, prof: c2.eau.prof[k] };
       }
-      chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
-      // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
-      chunk.lumiere = lumiere;
-      for (var i = 0; i < passes.length; i++) {
-        var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
+      var passes = {};
+      MC.ContratsV2.PASSES_MAILLAGE.forEach(function (pass) {
         // fusion (7e argument) : greedy meshing actif pour le rendu réel
         // (SPEC-PERF-011 à 013) — voir mesher.js pour pourquoi ce n'est pas
         // le comportement par défaut de buildChunk.
         var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie, true);
-        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); disposerGeom(chunk[key]); chunk[key] = null; }
-        if (raw) {
-          var m = new THREE.Mesh(toGeometry(raw), mat);
-          m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
-          m.renderOrder = passes[i][3];
-          m.castShadow = pass !== 'blend';
-          m.receiveShadow = true;
-          // ombre correcte sur les grands quads fusionnés (feuillage,
-          // cultures) — voir matDepthCutout ci-dessus
-          if (pass === 'cutout') m.customDepthMaterial = matDepthCutout;
-          if (pass === 'blend') maillagesEau.add(m);
-          scene.add(m);
-          chunk[key] = m;
-        }
-      }
-      chunk.dirty = false;
-      chunk.simplifie = !!simplifie;
+        passes[pass] = MC.TachesChunks.versTableauxTypes(raw);
+      });
+      appliquerMaillage(chunk, passes, lumiere, simplifie);
     }
 
     function disposeChunk(chunk) {
@@ -2388,7 +2436,10 @@
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
-      syncChunk: syncChunk, disposeChunk: disposeChunk, syncEntities: syncEntities,
+      syncChunk: syncChunk, appliquerMaillage: appliquerMaillage, disposeChunk: disposeChunk, syncEntities: syncEntities,
+      // SPEC-PERF-014 : géométries de chunk réellement recréées (bornées : la
+      // réutilisation en place ne les incrémente pas)
+      perf: function () { return { geometriesCreees: geometriesCreees }; },
       updateAmbience: updateAmbience, setHighlight: setHighlight, setCamera: setCamera,
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
       updateLumieresPortees: updateLumieresPortees,

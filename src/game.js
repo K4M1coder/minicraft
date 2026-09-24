@@ -11,6 +11,20 @@
   var PROCHE_SIMPLE = 6;                   // en chunks : en deçà, toujours le maillage complet
   var SPAWN_INTERVAL = 3.5;
 
+  /* SPEC-PERF-006/007 : dossier de src/*.js, calculé à partir de l'URL de CE
+     script — index.html le sert depuis 'src/', tests/index.html depuis
+     '../src/' : les workers (src/worker-monde.js, src/worker-maillage.js)
+     doivent être demandés au même endroit, avec le même jeton anti-cache
+     `?v=` que le reste (window.MC_VERSION, ou un jeton local si absent —
+     banc de test). */
+  var BASE_SRC = (function () {
+    var s = typeof document !== 'undefined' ? document.currentScript : null;
+    if (s && s.src) return s.src.replace(/[^/]*(\?.*)?$/, '');
+    return 'src/';
+  })();
+  var JETON_VERSION = (typeof window !== 'undefined' && window.MC_VERSION) || String(Date.now());
+  function urlWorker(nom) { return BASE_SRC + nom + '.js?v=' + JETON_VERSION; }
+
   function createGame(host) {
     var atlas = MC.buildAtlas();
 
@@ -61,6 +75,91 @@
 
     var SEED = 20260921;
     var world = MC.createWorld(SEED);
+
+    /* SPEC-PERF-004 à 010 : génération et maillage en Web Workers, avec
+       repli synchrone (SPEC-PERF-006) si `Worker` est indisponible (file://,
+       CSP), ne peut pas être créé, ou tombe en erreur de façon répétée.
+       `fileChunks` (pur, testé sous Node — src/file-chunks.js) ordonnance
+       les deux ; les pools eux-mêmes vivent ici (navigateur seulement). */
+    var fileChunks = MC.FileChunks.creer({
+      integrationsGenParImage: GEN_BUDGET, integrationsMailleParImage: MESH_BUDGET,
+    });
+    // SPEC-PERF-007 : un seul worker de génération (chaque worker a SES
+    // propres caches de bruit) ; le maillage se répartit sur plusieurs
+    var NB_WORKERS_MAILLAGE = (typeof navigator !== 'undefined' && navigator.hardwareConcurrency)
+      ? Math.min(Math.max(1, navigator.hardwareConcurrency - 1), 4) : 2;
+    var poolGeneration = null, poolMaillage = null;
+    // requêtes de maillage en vol : simplifié demandé, pour reposer sur le
+    // chunk à l'intégration (le message `maillage` ne le reporte pas)
+    var simplifieEnVol = Object.create(null);
+    var erreursGen = 0, erreursMaille = 0;
+    function fermerPools() {
+      if (poolGeneration) { poolGeneration.fermer(); poolGeneration = null; }
+      if (poolMaillage) { poolMaillage.fermer(); poolMaillage = null; }
+    }
+    function onMessagePool(genre, data) {
+      if (data && data.type === 'erreur') {
+        var ferme = false;
+        if (data.cx !== undefined) {
+          // le worker a répondu (il fonctionne) mais CETTE tâche a échoué :
+          // elle revient en jeu, et 3 échecs d'affilée coupent le pool
+          fileChunks.echec(genre, data.cx, data.cz);
+          if (genre === 'genere') { erreursGen++; if (erreursGen >= 3 && poolGeneration) { poolGeneration.fermer(); poolGeneration = null; ferme = true; } }
+          else { erreursMaille++; if (erreursMaille >= 3 && poolMaillage) { poolMaillage.fermer(); poolMaillage = null; ferme = true; } }
+        } else {
+          /* SPEC-PERF-006 : un `error` natif du Worker (script introuvable,
+             CSP, exception non rattrapée) — pas de cx/cz, donc rien à
+             remettre en jeu précisément, et rien ne garantit qu'un second
+             `error` arrivera un jour pour ce même worker (un worker mort
+             reste juste silencieux). On coupe IMMÉDIATEMENT, sans attendre
+             3 coups qui ne viendraient jamais — mieux vaut basculer trop
+             tôt sur le repli synchrone que rester bloqué. */
+          if (genre === 'genere' && poolGeneration) { poolGeneration.fermer(); poolGeneration = null; ferme = true; }
+          else if (genre === 'maille' && poolMaillage) { poolMaillage.fermer(); poolMaillage = null; ferme = true; }
+        }
+        /* Un pool coupé laisse potentiellement des tâches « en vol » dont
+           personne ne répondra plus jamais — nouvelle époque = elles
+           retombent dans la file au prochain `voulus()`, le repli
+           synchrone (ou l'autre pool encore vivant, ré-initialisé) les
+           reprend. */
+        if (ferme) { simplifieEnVol = Object.create(null); reinitialiserPools(); }
+        return;
+      }
+      if (genre === 'genere') erreursGen = 0; else erreursMaille = 0;
+      fileChunks.recu(data, function (cx, cz) {
+        var c = world.chunks.get(world.key(cx, cz));
+        return c ? c.version : -1;
+      });
+    }
+    function demarrerPools() {
+      fermerPools();
+      if (!MC.Workers || !MC.Workers.disponible()) return;
+      poolGeneration = MC.Workers.creerPool({
+        script: urlWorker('worker-monde'), taille: 1,
+        onMessage: function (d) { onMessagePool('genere', d); },
+        onErreur: function () { onMessagePool('genere', { type: 'erreur' }); },
+      });
+      poolMaillage = MC.Workers.creerPool({
+        script: urlWorker('worker-maillage'), taille: NB_WORKERS_MAILLAGE,
+        onMessage: function (d) { onMessagePool('maille', d); },
+        onErreur: function () { onMessagePool('maille', { type: 'erreur' }); },
+      });
+      var initMsg = { type: 'init', epoque: fileChunks.epoque, graine: SEED, options: { zonePolitique: null }, v: MC.ContratsV2.VERSION };
+      if (poolGeneration) poolGeneration.envoyer(initMsg, []);
+      if (poolMaillage) poolMaillage.envoyer(initMsg, []);
+    }
+    demarrerPools();
+    /* SPEC-PERF-009 : nouvelle époque + réinitialisation des workers déjà
+       créés (même graine ou nouvelle) — partagée par remplacerMonde(),
+       newWorld() et perdrePartie() (tout ce qui vide/remplace `world`). */
+    function reinitialiserPools(zonePolitique) {
+      var epoque = fileChunks.nouvelleEpoque();
+      var initMsg = { type: 'init', epoque: epoque, graine: world.seed,
+                       options: { zonePolitique: zonePolitique || null }, v: MC.ContratsV2.VERSION };
+      if (poolGeneration) poolGeneration.envoyer(initMsg, []);
+      if (poolMaillage) poolMaillage.envoyer(initMsg, []);
+    }
+
     var entities = MC.createEntities(world);
     // `world` et `entities` sont reassignes quand on change de partie
     var regles = MC.Modes.regles('survie', 'facile');
@@ -489,6 +588,13 @@
       grille = creerGrilleLointaine();
       // les habitants suivis appartenaient à l'ancien monde
       pnjsSuivis.clear();
+      /* SPEC-PERF-009 : nouvelle époque — tout résultat en vol d'un worker
+         pour l'ANCIEN monde (autre graine) sera rejeté à réception. Les
+         workers de génération reçoivent la graine/zone du nouveau monde ;
+         le maillage ne connaît pas la graine (il ne lit que l'instantané
+         reçu dans chaque `maille`), seule l'époque compte pour lui. */
+      simplifieEnVol = Object.create(null);
+      reinitialiserPools(mondeOpts && mondeOpts.zonePolitique);
       return world;
     }
     g.remplacerMonde = remplacerMonde;
@@ -1163,6 +1269,10 @@
 
     function newWorld() {
       world.reset(render.disposeChunk);        // vide AUSSI le registre de lumieres
+      // SPEC-PERF-009 : tout résultat de worker encore en vol pour l'ancien
+      // contenu (mêmes coordonnées, contenu différent) doit être rejeté
+      simplifieEnVol = Object.create(null);
+      reinitialiserPools();
       entities.list.length = 0;
       render.libererToutesEntites();           // libere geometries ET materiaux
       for (var k in furnaces) delete furnaces[k];
@@ -1269,6 +1379,34 @@
       return out;
     }
 
+    // un chunk lointain est-il maillé « allégé » à cette distance ?
+    function estSimplifie(d2, R) { return d2 > PROCHE_SIMPLE * PROCHE_SIMPLE && d2 > (R * 0.55) * (R * 0.55); }
+
+    /* SPEC-PERF-004/007/009/014 : applique les résultats de worker déjà
+       reçus par fileChunks (budget SPEC-PERF-005 : au plus
+       integrationsGenParImage/integrationsMailleParImage par image) —
+       `world.integrerChunk` et `render.appliquerMaillage` sont EXACTEMENT ce
+       que fait le chemin synchrone (`world.getChunk`/`render.syncChunk`),
+       juste appelés depuis un résultat reçu plutôt que calculés ici. */
+    function integrerResultatsWorkers() {
+      fileChunks.aIntegrer('genere').forEach(function (msg) {
+        var k = world.key(msg.cx, msg.cz), dejaLa = world.chunks.has(k);
+        world.integrerChunk(msg.cx, msg.cz, { blocks: msg.blocks, etats: msg.etats, eau: msg.eau });
+        g.perf.msGeneration = msg.ms;
+        if (!dejaLa) world.marquerVoisins(msg.cx, msg.cz);
+      });
+      fileChunks.aIntegrer('maille').forEach(function (msg) {
+        var k = world.key(msg.cx, msg.cz);
+        var simplifie = !!simplifieEnVol[k];
+        delete simplifieEnVol[k];
+        var c = world.chunks.get(k);
+        if (!c) return;   // déchargé entre l'envoi de la tâche et la réception
+        var lumiereObj = msg.lumiere ? MC.Lumiere.depuisTableaux(msg.lumiere.niveaux, msg.lumiere.ciel, msg.lumiere.sources) : null;
+        render.appliquerMaillage(c, msg.passes, lumiereObj, simplifie);
+        g.perf.msMaillage = msg.ms;
+      });
+    }
+
     // ─── streaming des chunks ────────────────────────────────────────────────
     function streamChunks(unlimited) {
       var centres = centresStreaming();
@@ -1280,45 +1418,104 @@
       var aGenerer = world.chunksVoulus(centres, R + 1);
       var aMailler = world.chunksVoulus(centres, R);
 
-      var genMax = unlimited ? 1e9 : GEN_BUDGET, meshMax = unlimited ? 1e9 : MESH_BUDGET;
-      var gen = 0, manquants = 0;
-      for (var i = 0; i < aGenerer.length; i++) {
-        var cx = aGenerer[i][1], cz = aGenerer[i][2];
-        if (world.chunks.has(world.key(cx, cz))) continue;
-        if (gen >= genMax) { manquants++; continue; }
-        // SPEC-PERF-015 : ms de génération du DERNIER chunk généré
-        var tGen0 = performance.now();
-        world.getChunk(cx, cz, true);
-        g.perf.msGeneration = performance.now() - tGen0;
-        // les 8 voisins : leurs faces de bordure ET leur occlusion ambiante changent
-        world.marquerVoisins(cx, cz);
-        gen++;
-      }
+      integrerResultatsWorkers();
 
-      var meshed = 0, attente = 0;
-      for (var j = 0; j < aMailler.length; j++) {
-        if (meshed >= meshMax) { attente++; continue; }
-        var mx = aMailler[j][1], mz = aMailler[j][2];
-        var c = world.chunks.get(world.key(mx, mz));
-        if (!c || !c.dirty) continue;
-        // voisinage 3×3 complet, sinon coutures et ombres de contact fausses
-        // bord du disque : ses voisins en diagonale ne seront jamais générés, ce n'est pas un retard
-        if (!world.voisinsCharges(mx, mz)) continue;
-        // au loin, un maillage allégé ; il reprend ses plantes quand on s'approche
-        // SPEC-PERF-015 : ms de maillage du DERNIER chunk remaillé
-        var tMesh0 = performance.now();
-        render.syncChunk(world, c, aMailler[j][0] > PROCHE_SIMPLE * PROCHE_SIMPLE && aMailler[j][0] > (R * 0.55) * (R * 0.55));
-        g.perf.msMaillage = performance.now() - tMesh0;
-        meshed++;
+      var genMax = unlimited ? 1e9 : GEN_BUDGET, meshMax = unlimited ? 1e9 : MESH_BUDGET;
+      var gen = 0, manquants = 0, meshed = 0, attente = 0;
+      // SPEC-PERF-006 : `unlimited` (chargement/téléportation) reste
+      // entièrement synchrone — un aller-retour worker n'a pas sa place dans
+      // un appel qui doit produire un monde jouable avant de rendre la main.
+      var avecWorkers = !unlimited && (poolGeneration || poolMaillage);
+
+      if (avecWorkers) {
+        var aGenererVoulu = aGenerer.filter(function (e) { return !world.chunks.has(world.key(e[1], e[2])); });
+        var aMaillerVoulu = aMailler.filter(function (e) {
+          var c = world.chunks.get(world.key(e[1], e[2]));
+          return c && c.dirty && world.voisinsCharges(e[1], e[2]);
+        });
+        fileChunks.voulus(centres, aGenererVoulu, aMaillerVoulu);
+
+        if (poolGeneration) {
+          var envoiGen = fileChunks.distribuer('genere', poolGeneration.libres());
+          envoiGen.forEach(function (t) {
+            poolGeneration.envoyer({ type: 'genere', epoque: fileChunks.epoque, cx: t.cx, cz: t.cz }, []);
+          });
+          manquants = Math.max(0, aGenererVoulu.length - envoiGen.length);
+        } else {
+          for (var i = 0; i < aGenerer.length; i++) {
+            var cx = aGenerer[i][1], cz = aGenerer[i][2];
+            if (world.chunks.has(world.key(cx, cz))) continue;
+            if (gen >= genMax) { manquants++; continue; }
+            var tGen0 = performance.now();
+            world.getChunk(cx, cz, true);
+            g.perf.msGeneration = performance.now() - tGen0;
+            world.marquerVoisins(cx, cz);
+            gen++;
+          }
+        }
+
+        if (poolMaillage) {
+          var envoiMaille = fileChunks.distribuer('maille', poolMaillage.libres());
+          envoiMaille.forEach(function (t) {
+            var c = world.chunks.get(world.key(t.cx, t.cz));
+            if (!c) { fileChunks.echec('maille', t.cx, t.cz); return; }
+            var simplifie = estSimplifie(t.priorite, R);
+            simplifieEnVol[world.key(t.cx, t.cz)] = simplifie;
+            var voisins = MC.TachesChunks.instantaneVoisins(world, t.cx, t.cz);
+            poolMaillage.envoyer(
+              { type: 'maille', epoque: fileChunks.epoque, cx: t.cx, cz: t.cz, version: c.version,
+                simplifie: simplifie, fusion: true, voisins: voisins },
+              MC.ContratsV2.transferablesDe({ voisins: voisins }));
+          });
+          attente = Math.max(0, aMaillerVoulu.length - envoiMaille.length);
+        } else {
+          for (var j = 0; j < aMailler.length; j++) {
+            if (meshed >= meshMax) { attente++; continue; }
+            var mx = aMailler[j][1], mz = aMailler[j][2];
+            var c2 = world.chunks.get(world.key(mx, mz));
+            if (!c2 || !c2.dirty || !world.voisinsCharges(mx, mz)) continue;
+            var tMesh0 = performance.now();
+            render.syncChunk(world, c2, estSimplifie(aMailler[j][0], R));
+            g.perf.msMaillage = performance.now() - tMesh0;
+            meshed++;
+          }
+        }
+      } else {
+        // ── repli synchrone complet (SPEC-PERF-006) : sans Worker, ou priming ──
+        for (var ii = 0; ii < aGenerer.length; ii++) {
+          var cxs = aGenerer[ii][1], czs = aGenerer[ii][2];
+          if (world.chunks.has(world.key(cxs, czs))) continue;
+          if (gen >= genMax) { manquants++; continue; }
+          var tGen1 = performance.now();
+          world.getChunk(cxs, czs, true);
+          g.perf.msGeneration = performance.now() - tGen1;
+          world.marquerVoisins(cxs, czs);
+          gen++;
+        }
+        for (var jj2 = 0; jj2 < aMailler.length; jj2++) {
+          if (meshed >= meshMax) { attente++; continue; }
+          var mx2 = aMailler[jj2][1], mz2 = aMailler[jj2][2];
+          var c3 = world.chunks.get(world.key(mx2, mz2));
+          if (!c3 || !c3.dirty || !world.voisinsCharges(mx2, mz2)) continue;
+          var tMesh1 = performance.now();
+          render.syncChunk(world, c3, estSimplifie(aMailler[jj2][0], R));
+          g.perf.msMaillage = performance.now() - tMesh1;
+          meshed++;
+        }
       }
       // chunks voulus pas encore affichés : la distance de vue n'avance que s'ils sont rattrapés
       g.enAttente = attente + manquants;
 
-      world.unloadLoin(centres, R + 3, render.disposeChunk);
+      world.unloadLoin(centres, R + 3, function (c) {
+        // un chunk déchargé : plus la peine de garder une tâche en file/en
+        // vol pour lui, ni un résultat déjà reçu (SPEC-PERF-005)
+        fileChunks.oublier(c.cx, c.cz);
+        render.disposeChunk(c);
+      });
       // un chunk allégé qu'on approche redevient complet
-      for (var jj = 0; jj < aMailler.length && jj < 200; jj++) {
-        if (aMailler[jj][0] > PROCHE_SIMPLE * PROCHE_SIMPLE) break;
-        var cs = world.chunks.get(world.key(aMailler[jj][1], aMailler[jj][2]));
+      for (var kk = 0; kk < aMailler.length && kk < 200; kk++) {
+        if (aMailler[kk][0] > PROCHE_SIMPLE * PROCHE_SIMPLE) break;
+        var cs = world.chunks.get(world.key(aMailler[kk][1], aMailler[kk][2]));
         if (cs && cs.simplifie) cs.dirty = true;
       }
     }
@@ -2136,6 +2333,8 @@
       if (st && g.partieId) MC.Saves.supprimer(st, g.partieId);
       g.partieId = null;
       world.reset(render.disposeChunk);
+      simplifieEnVol = Object.create(null);
+      reinitialiserPools();
       entities.list.length = 0;
       render.libererToutesEntites();
       ui.toast('Cauchemar : la carte et la sauvegarde ont ete detruites', 'warn');
