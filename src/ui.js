@@ -301,9 +301,15 @@
       overlay.querySelector('#btn-menu-fin').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
     }
     var LIBELLES = { hostile: 'Hostile', neutre: 'Neutre', amical: 'Amical' };
-    function panneauFactions(rep) {
+    var LIBELLES_POL = { hostile: 'Hostile', neutre: 'Neutre', allie: 'Alliée' };
+    /* `politique` : { etat: MC.Politique, rep } — factions PNJ nées du monde
+       (SPEC-FACTION-006/007/008) ; `guilde` : { etat: MC.Guildes, joueur } —
+       la ou les factions du joueur (SPEC-FACTION-009 à 013). Les deux sont
+       optionnels : le panneau de base (camps des créatures) reste inchangé
+       si l'appelant ne les fournit pas. */
+    function panneauFactions(rep, politique, guilde) {
       var F = MC.Factions;
-      factionsEl.innerHTML = '<div class="carte-tete"><b>Factions</b><span class="carte-aide">J pour fermer</span></div>' +
+      var html = '<div class="carte-tete"><b>Factions</b><span class="carte-aide">J pour fermer</span></div>' +
         F.ORDRE.map(function (id) {
           var f = F.FACTIONS[id], v = rep ? rep.get(id) : f.depart, st = F.statut(id, rep);
           var pct = (v + 100) / 2;
@@ -313,6 +319,34 @@
             '<div class="faction-jauge"><div style="width:' + pct + '%"></div><i style="left:50%"></i></div>' +
             '<small>Réputation ' + (v > 0 ? '+' : '') + v + ' · ennemis : ' + ennemis + '</small></div>';
         }).join('');
+      if (politique && politique.etat && MC.Politique) {
+        var P = MC.Politique, pe = politique.etat, prep = politique.rep;
+        var ids = Array.from(pe.factions.keys()).sort();
+        html += '<h4>Royaumes et factions du monde</h4>' + (ids.length ? ids.map(function (id) {
+          var f = pe.factions.get(id);
+          var st2 = prep ? prep.statut(id) : 'neutre';
+          return '<div class="faction"><div class="faction-l"><b>' + ech(f.nom) + '</b>' +
+            '<span class="st ' + (st2 === 'allie' ? 'amical' : st2) + '">' + LIBELLES_POL[st2] + '</span></div>' +
+            '<small>' + ech(P.TYPES[f.type].nom) + ' · ' + ech(f.caractere) + ' · objectif : ' + ech(f.objectif) + '</small></div>';
+        }).join('') : '<p class="aide">Aucune faction découverte pour l\'instant.</p>');
+      }
+      if (guilde && guilde.etat && guilde.joueur && MC.Guildes) {
+        var GU = MC.Guildes, ge = guilde.etat, fs = GU.factionsDe(ge, guilde.joueur);
+        html += '<h4>Votre faction</h4>';
+        if (fs.principale) {
+          var fp = ge.factions.get(fs.principale);
+          html += '<div class="faction"><div class="faction-l"><b>' + ech(fp ? fp.nom : fs.principale) + '</b>' +
+            '<span class="st amical">Principale</span></div><small>Rang : ' + ech(GU.rangDe(ge, fs.principale, guilde.joueur) || '?') + '</small></div>';
+        } else {
+          html += '<p class="aide">Vous n\'appartenez à aucune faction — /faction creer &lt;nom&gt;</p>';
+        }
+        if (fs.secondaires.length) {
+          html += '<small>Secondaires : ' + fs.secondaires.map(function (id) {
+            var f = ge.factions.get(id); return ech(f ? f.nom : id);
+          }).join(', ') + '</small>';
+        }
+      }
+      factionsEl.innerHTML = html;
       factionsEl.style.display = '';
       factionsVisibles = true;
       return factionsEl;

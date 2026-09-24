@@ -12,14 +12,14 @@
   var MC = G.MC = G.MC || {};
 
   var LISTE = ['aide', 'heure', 'jour', 'nuit', 'ou', 'graine', 'vider',
-               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin'];
+               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin', 'faction'];
 
   function msg(texte) { return { messages: texte ? [texte] : [], actions: [] }; }
   function action(texte, act) { return { messages: texte ? [texte] : [], actions: [act] }; }
 
   function aide() {
     return 'Commandes : /heure /jour /nuit /ou /graine /vider /aide /meteo /succes ' +
-           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin …';
+           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin /faction …';
   }
 
   /* Panneau admin en jeu (SPEC-ADMIN-006), exposé via le chat plutôt qu'un
@@ -67,6 +67,60 @@
                    'liste ajouter|retirer <blanche|noire> <nom|email> <valeur> | ' +
                    'invitation <usagesMax> <expireMin> [email] | invitation revoquer <jeton> | ' +
                    'role <nom> [retirer] | sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin]');
+    }
+  }
+
+  /* Faction de joueurs (SPEC-FACTION-009 à 012) : comme /admin, cette commande
+     ne fait AUCUN effet — elle traduit en une action réseau/locale que
+     l'appelant (server.js en ligne, game.js hors ligne) applique via
+     MC.Guildes, qui seul détient l'état et décide qui a le droit de quoi. */
+  function faction(args) {
+    var sous = (args[0] || '').toLowerCase();
+    var reste = args.slice(1);
+    switch (sous) {
+      case 'creer':
+        return action('Création de la faction…', { type: 'faction', action: 'creer',
+          args: { nom: reste[0], couleur: reste[1] || null, emblem: reste[2] || null, devise: reste.slice(3).join(' ') || '' } });
+      case 'postuler':
+        return action('Candidature envoyée…', { type: 'faction', action: 'postuler', args: { faction: reste[0] } });
+      case 'accepter':
+        return action('Candidature acceptée…', { type: 'faction', action: 'accepter', args: { faction: reste[0], joueur: reste[1] } });
+      case 'refuser':
+        return action('Candidature refusée…', { type: 'faction', action: 'refuser', args: { faction: reste[0], joueur: reste[1] } });
+      case 'inviter':
+        return action('Invitation envoyée…', { type: 'faction', action: 'inviter', args: { faction: reste[0], joueur: reste[1] } });
+      case 'rejoindre':
+        return action('Invitation acceptée…', { type: 'faction', action: 'accepterInvitation', args: { faction: reste[0] } });
+      case 'quitter':
+        return action('Vous quittez la faction…', { type: 'faction', action: 'quitter', args: { faction: reste[0] } });
+      case 'nommer':
+        return action('Rang modifié…', { type: 'faction', action: 'nommerRang',
+          args: { faction: reste[0], joueur: reste[1], rang: reste[2] } });
+      case 'promouvoir':
+        return action('Promotion…', { type: 'faction', action: 'promouvoir', args: { faction: reste[0], joueur: reste[1] } });
+      case 'retrograder':
+        return action('Rétrogradation…', { type: 'faction', action: 'retrograder', args: { faction: reste[0], joueur: reste[1] } });
+      case 'exclure':
+        return action('Exclusion…', { type: 'faction', action: 'exclure', args: { faction: reste[0], joueur: reste[1] } });
+      case 'transmettre':
+        return action('Transmission du commandement…', { type: 'faction', action: 'transmettre', args: { faction: reste[0], joueur: reste[1] } });
+      case 'dissoudre':
+        return action('Dissolution…', { type: 'faction', action: 'dissoudre', args: { faction: reste[0] } });
+      case 'principale':
+        return action('Faction principale…', { type: 'faction', action: 'principale', args: { faction: reste[0] } });
+      case 'relation':
+        return action('Relation déclarée…', { type: 'faction', action: 'relation',
+          args: { faction: reste[0], cible: reste[1], relation: reste[2] } });
+      case 'dire':
+        return action('', { type: 'faction', action: 'dire', args: { texte: reste.join(' ') } });
+      case 'info': case '': case undefined:
+        return action('Informations de faction…', { type: 'faction', action: 'info', args: {} });
+      default:
+        return msg('/faction creer <nom> [couleur] [emblème] [devise…] | postuler <faction> | ' +
+                   'accepter|refuser <faction> <joueur> | inviter <faction> <joueur> | rejoindre <faction> | ' +
+                   'quitter <faction> | nommer <faction> <joueur> <rang> | promouvoir|retrograder|exclure <faction> <joueur> | ' +
+                   'transmettre <faction> <joueur> | dissoudre <faction> | principale <faction> | ' +
+                   'relation <faction> <cible> <alliee|neutre|ennemie> | dire <texte> | info');
     }
   }
 
@@ -140,6 +194,8 @@
       case 'admin':
         if (!ctx.enLigne) return msg('Le panneau admin exige d\'être en ligne.');
         return admin(cmd.args || []);
+      case 'faction':
+        return faction(cmd.args || []);
       default:
         return msg('Commande inconnue : /' + cmd.nom);
     }

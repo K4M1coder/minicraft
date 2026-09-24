@@ -29,7 +29,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'noise', 'biomes', 'densite', 'volcanisme', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'split', 'net-protocol', 'parametres', 'admin'];
+                 'chat', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -91,6 +91,10 @@ const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
 const monde = MC.createWorld(CONF.graine);
 const entites = MC.createEntities(monde);
 const chat = MC.Chat.creer({ max: 120 });
+// SPEC-FACTION-006 à 013 : factions PNJ (royaumes, guildes marchandes, ordres,
+// bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
+const politique = MC.Politique.creer(CONF.graine);
+const guildes = MC.Guildes.creerEtat();
 let heure = 60;
 let meteoT = null;
 let accEau = 0;
@@ -113,6 +117,8 @@ function etatMonde() {
     pilles: monde.coffresPilles ? Array.from(monde.coffresPilles) : [],
     pnjsMorts: monde.pnjsMorts ? Array.from(monde.pnjsMorts.entries()) : [],
     admin: MC.Admin.serialiser(admin),
+    politique: MC.Politique.serialiser(politique),
+    guildes: MC.Guildes.serialiser(guildes),
   };
 }
 function appliquerEtatMonde(data) {
@@ -133,6 +139,16 @@ function appliquerEtatMonde(data) {
     (data.pnjsMorts || []).forEach(m => { if (m && typeof m[0] === 'string') monde.pnjsMorts.set(m[0], +m[1] || 0); });
   }
   if (data.admin) MC.Admin.appliquer(admin, data.admin);
+  if (data.politique) {
+    const pol = MC.Politique.charger(data.politique);
+    politique.seed = pol.seed; politique.jour = pol.jour;
+    politique.factions = pol.factions; politique.relations = pol.relations; politique.annonces = pol.annonces;
+  }
+  if (data.guildes) {
+    const gu = MC.Guildes.charger(data.guildes);
+    guildes.factions = gu.factions; guildes.joueurs = gu.joueurs;
+    guildes.invitations = gu.invitations; guildes.prochainId = gu.prochainId;
+  }
   return true;
 }
 function sauvegarderMonde() {
@@ -179,6 +195,35 @@ function peuplerLieux() {
     const e = entites.spawn('villager', p.x, p.y + 0.05, p.z,
                             { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
     pnjsSuivis.set(p.id, e);
+  });
+}
+/* SPEC-FACTION-006/007/008 : les royaumes et guildes marchandes se découvrent
+   au fil des villes/mégapoles explorées par les joueurs (comme les habitants,
+   habitats.js ne connaît que ce qui a été chargé) ; la simulation avance d'un
+   jour de jeu à la fois, rattrapée d'un coup si le serveur est resté longtemps
+   sans public — toujours de façon déterministe (graine + jour). Chaque
+   naissance et chaque événement notable (raid, alliance, guerre…) s'annonce
+   dans le chat, comme un message système. */
+function avancerPolitique() {
+  if (monde.habitats) {
+    const sites = [];
+    tousLesJoueurs().forEach(({ js }) => {
+      const p = js.joueur.state.pos;
+      monde.habitats.lieuxProches(p.x, p.z, 300).forEach(l => {
+        if ((l.kind === 'ville' || l.kind === 'megapole') && !sites.some(s => s.id === l.id)) {
+          sites.push({ id: l.id, kind: l.kind, x: l.x, z: l.z, nom: l.nom });
+        }
+      });
+    });
+    MC.Politique.decouvrir(politique, sites);
+  }
+  const jourCourant = Math.floor(heure / MC.DayCycle.DAY_LENGTH);
+  if (jourCourant <= politique.jour) return;
+  const avant = politique.annonces.length;
+  MC.Politique.tourDuMonde(politique, jourCourant);
+  politique.annonces.slice(avant).forEach(a => {
+    const m = chat.systeme(a.texte);
+    if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   });
 }
 // sommet de colonne : qui s'abrite échappe à la foudre
@@ -673,6 +718,7 @@ setInterval(() => {
     monde.chunksVoulus(centres, 3).forEach(v => monde.getChunk(v[1], v[2], true));
     monde.unloadLoin(centres, 5);
     peuplerLieux();
+    avancerPolitique();
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;
