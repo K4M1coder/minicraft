@@ -2,7 +2,7 @@
 /* tools/version.js — monte la version et publie l'entrée « Non publié » du
    journal (CHANGELOG.md, format Tenez un Changelog).
 
-   node tools/version.js            Z + 1  (chaque commit, au minimum)
+   node tools/version.js            Z + 1  (chaque tâche terminée, au minimum)
    node tools/version.js y          Y + 1, Z = 0 (fonctionnalité notable)
    node tools/version.js x          X + 1, Y = Z = 0 (rupture de compatibilité)
    node tools/version.js --verifier contrôle seulement (porte G10)

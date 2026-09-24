@@ -5,7 +5,7 @@ Toutes les évolutions notables de MiniCraft sont consignées ici.
 Le format suit [Tenez un Changelog](https://keepachangelog.com/fr/1.1.0/) et
 le projet adopte le [versionnage sémantique](https://semver.org/lang/fr/) :
 `X.Y.Z`, chaque nombre ayant de 1 à 5 chiffres (jusqu'à `99999.99999.99999`).
-Chaque commit fait monter au moins `Z` d'un cran (`node tools/version.js`) ;
+Chaque tâche terminée (une spec ou un lot livré) fait monter au moins `Z` d'un cran (`node tools/version.js`) ; les commits intermédiaires consignent leurs changements sous « Non publié » sans monter la version ;
 `Y` monte pour une fonctionnalité notable qui reste compatible, `X` pour ce
 qui rompt la compatibilité (sauvegardes, protocole réseau). La version du jeu
 (`MC.Core.VERSION_JEU`) est toujours celle de la dernière entrée publiée ; la
