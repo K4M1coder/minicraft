@@ -119,6 +119,12 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L25** | Objets (validé) : tissu et armures, armes, gemmes et bijoux, nourriture et cuisine, coffres piégés et surprises | `OBJET` | à faire |
 | **L29** | Mécanismes et électricité (validé) : distributeurs, pistons, générateurs éolien/hydro/thermique, câbles, batteries, portes logiques, détecteurs, appareils, blocs de commande — après L40 | `MECA` | à faire |
 | **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, modérateurs (sanctions sans accès aux données personnelles), panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
+| **L43** | Synchronisation permanente : inventaire, équipement, craft et conteneurs autoritaires côté serveur, véhicules simulés en ligne, persistance du joueur (déconnexion/relance), commerce PNJ (`TROC`), politique et guildes envoyées au join, objets au sol répliqués | `SYNC` | à faire |
+| **L44** | Sécurité et fiabilité du serveur : rattrapage des exceptions, tampon et anti-flood bornés, portée vérifiée avant génération, jetons admin cryptographiques, en-têtes HTTP, sauvegarde atomique et asynchrone, purge des structures d'administration, découpage de `server.js` en modules, diffusion sans délai d'une redéfinition de zone | `SECU` `SERVEUR` | à faire |
+| **L45** | Économie vivante, progression des métiers et transport : prix dynamique borné, puits de monnaie, caravanes marchandes avec cargaison réelle, carburant et réparation des véhicules, risque d'attaque, péages de faction | `ECO` `METIER` `TRANSPORT` | à faire |
+| **L46** | Factions, quêtes, PvP et environnement interconnectés : territoire agissant sur les zones de jeu, embargo commercial en guerre, quêtes nées d'un besoin réel, enjeux et sanctions PvP, catastrophes qui endommagent bâtiments/routes/population, donjons rattachés au territoire | `FACTION` `QUETE` `PVP` `ENV` `DONJON` | à faire |
+| **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | à faire |
+| **L48** | Rendu fiable et adaptatif : contexte WebGL perdu/restauré, réfraction et antialias/DPR pilotés par le FPS, mobs instanciés, détection d'un rendu logiciel, culling de chunks | `RENDU` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
 porte G1 ne les exige qu'une fois implémentés. Chaque lot passe ses specs à ✅
@@ -140,6 +146,30 @@ L1 ──┬── L2 ── L3 ──┬── L4
 L7 (écran partagé) doit précéder L8 (réseau) : le passage à N joueurs locaux
 impose la refonte qui rend ensuite les joueurs distants triviaux à ajouter.
 L'inverse obligerait à refaire le travail deux fois.
+
+### Vagues d'implémentation — L43 à L48
+
+Le détail par lot (fichiers possédés, messages `NP.MSG.*`, structures de
+données) est dans `docs/design-lots.md`. Ces six lots touchent en grande
+partie `server.js` (L43, L44, une partie de L46) : au plus 4 sous-lots
+tournent en parallèle, et le découpage de `server.js` en modules
+(SPEC-SERVEUR-008, fin de L44) passe **après** tous les lots qui modifient ce
+fichier, pas seulement ceux de son propre lot.
+
+- **Vague 1** (4 en parallèle, fichiers disjoints) : fiabilité transport
+  (L44, `server.js` bas niveau + `net-protocol.js`), bruit et génération
+  (L47), greedy meshing (L47), fiabilité/adaptatif du rendu (L48).
+- **Vague 2** (4 en parallèle, dépend de la vague 1) : inventaire et
+  conteneurs serveur (L43, `server.js` routage applicatif), économie et
+  métiers (L45), Workers génération+maillage (L47), PvP enjeux et sanctions
+  (L46, `server.js` zone combat).
+- **Vague 3** (3 en parallèle, dépend de la vague 2) : persistance joueur et
+  véhicules (L43/L44, `server.js` zone persistance), transport et fret (L45),
+  factions/environnement/donjons/quêtes (L46).
+- **Vague 4** (dernière) : sécurité périphérique — jetons, en-têtes HTTP,
+  `Origin`, diffusion de zone (L44) — puis, une fois toutes les vagues
+  précédentes fusionnées dans `server.js`, le découpage en modules purs
+  (SPEC-SERVEUR-008).
 
 ---
 
