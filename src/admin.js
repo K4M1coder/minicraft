@@ -120,7 +120,7 @@
   var ACTIONS_ADMIN_SEUL = ['invitation_creer', 'invitation_revoquer', 'liste_ajouter',
     'liste_retirer', 'role_nommer', 'reglages', 'zone_definir', 'zone_retirer'];
     // `mesures` (SPEC-SERVEUR-002) : lecture seule, partagée avec les modérateurs pour la supervision.
-  var ACTIONS_PARTAGEES = ['joueurs', 'sessions', 'journal', 'inventaire', 'sanction', 'listes', 'mesures'];
+  var ACTIONS_PARTAGEES = ['joueurs', 'sessions', 'journal', 'inventaire', 'sanction', 'listes', 'mesures', 'faction_gerer'];
 
   function peutAgir(roleActeur, action, roleCible) {
     if (!roleActeur) return false;

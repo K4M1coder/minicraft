@@ -14,19 +14,11 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
 ### Ajouté
 
 - Les blocs se stockent désormais sur 16 bits (Uint16Array) partout où ils vivent — chunks, mailleur, lumière, sauvegardes, réseau, monde serveur — et l'espace d'ids sépare largement blocs (1..4095) et objets (4096+), levant la limite d'un octet (SPEC-SAVE-017).
 - Un état par bloc (orientation, moitié haute/basse, forme d'angle, connexions, allumé/éteint, niveau d'énergie), stocké à côté des blocs, 0 par défaut : `world.getEtat`/`setEtat`, sauvegardé et transmis par le réseau (préparation de L24/L29, aucun nouveau bloc n'en tire encore parti).
-
-### Modifié
-
-- Format de sauvegarde v3 (`MC.Save.VERSION`) : les objets d'inventaire d'une sauvegarde 8 bits (v1 ou v2) sont convertis vers le nouvel espace d'ids au chargement, sans perte ; un format inconnu est refusé proprement.
-- Format du monde serveur (`--monde`) passé en v2 : une liste `etats` à part des overrides de bloc ; un fichier v1 (blocs seuls) reste lisible.
-- Le protocole réseau accepte des ids de bloc jusqu'à 65535 (au lieu de 255) et transmet l'état d'un bloc posé.
-
-### Ajouté
-
 - Versionnage encadré : Commits conventionnels vérifiés par un crochet commit-msg,
   journal obligatoire pour tout feat/fix/perf touchant au code, version modifiable
   seulement dans un commit de publication ; `tools/version.js --publier` calcule le
@@ -41,6 +33,16 @@ respecter (voir PLAN.md, « Commits et versions »).
 - Banc de charge serveur (`tests/charge.js`) : simule sans rendu de 1 à 100 clients réels par paliers (protocole complet — déplacement, minage, pose, combat, chat), groupés ou répartis en zones distinctes, et mesure durée des tics (moyenne, p95), mémoire, débit réseau par client et latence des poses de bloc ; échoue si un seuil est dépassé. Instrumentation serveur légère et désactivable (`MC_MESURES=1`), exposée en lecture par la console d'administration (action `mesures`) (SERVEUR-002). Analyse et chiffres dans `docs/charge.md`.
 - `--max-joueurs` accepte désormais jusqu'à 100 (au lieu de 64), pour couvrir le plus grand palier du banc de charge.
 - `tests/integration-charge.js` : vérifie que le banc de charge fonctionne (deux paliers minuscules, quelques secondes).
+- Factions PNJ autonomes (`src/politique.js`, `MC.Politique`) : royaumes des villes/mégapoles, guildes marchandes, ordres, bandits en zone vierge et cultes près des volcans naissent du monde de façon déterministe (graine + site), avec siège, territoire, ressources, caractère et objectifs ; simulation à gros grain par jour de jeu, rattrapable d'un bloc de façon déterministe (mêmes jours, même ordre = même état, en direct comme après rechargement) ; relations (alliance/neutralité/rivalité/guerre) qui évoluent et s'annoncent ; actions autonomes (caravanes, patrouilles, raids, avant-postes) qui déplacent les territoires ; quêtes simples selon les objectifs ; réputation du joueur (et de sa faction) envers chaque faction PNJ (FACTION-006, FACTION-007, FACTION-008).
+- Factions de joueurs (`src/guildes.js`, `MC.Guildes`) : création (nom unique, couleur, emblème, devise), rangs (chef, officier, membre, recrue), nominations/promotion/rétrogradation/exclusion/transmission, dissolution automatique ; candidature, acceptation/refus, invitation, départ ; une faction principale et des secondaires multiples, changement de principale ; diplomatie (alliée/neutre/ennemie) envers d'autres factions de joueurs ou PNJ ; `peutBlesser(etat, a, b)` interdit les dégâts entre membres d'une même faction ; persistance aller-retour ; renommage/dissolution par un administrateur ou un modérateur via `MC.Admin` (FACTION-009 à FACTION-013).
+- Commandes `/faction creer|postuler|accepter|refuser|inviter|rejoindre|quitter|nommer|promouvoir|retrograder|exclure|transmettre|dissoudre|principale|relation|dire|info` (`src/commandes.js`), et panneau Factions (touche J) enrichi des royaumes/factions du monde et de la faction du joueur (`src/ui.js`).
+- Le serveur fait foi sur les deux systèmes : découverte des royaumes/guildes marchandes au fil des villes explorées, simulation politique avancée d'un jour de jeu à la fois avec annonces dans le chat, et persistance dans le fichier `--monde` comme dans la sauvegarde locale (`server.js`, `src/save.js`).
+
+### Modifié
+
+- Format de sauvegarde v3 (`MC.Save.VERSION`) : les objets d'inventaire d'une sauvegarde 8 bits (v1 ou v2) sont convertis vers le nouvel espace d'ids au chargement, sans perte ; un format inconnu est refusé proprement.
+- Format du monde serveur (`--monde`) passé en v2 : une liste `etats` à part des overrides de bloc ; un fichier v1 (blocs seuls) reste lisible.
+- Le protocole réseau accepte des ids de bloc jusqu'à 65535 (au lieu de 255) et transmet l'état d'un bloc posé.
 
 ### Corrigé
 
@@ -49,6 +51,8 @@ respecter (voir PLAN.md, « Commits et versions »).
 ### Limites connues
 
 - SPEC-COMBAT-002 ne couvre que le PvP EN LIGNE : l'écran partagé local ne simule pas de combat entre joueurs locaux (le moteur d'entités hors ligne ne cible que le premier joueur de l'équipe), une limite préexistante non reprise dans cette tâche.
+- Les commandes /faction produisent des actions que le jeu et le serveur n'acheminent pas encore vers MC.Guildes (la logique est complète et testée ; l'acheminement reste à brancher).
+- Cultes et bandits ne naissent côté serveur que des sites qu'on lui fournit ; la découverte automatique ne couvre que villes et mégapoles.
 
 ## [0.0.86] - 2026-09-24
 ### Ajouté

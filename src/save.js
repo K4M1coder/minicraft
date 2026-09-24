@@ -48,6 +48,12 @@
       reperes: state.world.reperes ? state.world.reperes.serialiser() : [],
       suivi: state.world.reperes && state.world.reperes.suivi ? state.world.reperes.suivi : 0,
       reputation: state.world.reputation ? state.world.reputation.serialiser() : null,
+      // SPEC-FACTION-006 à 013 : factions du monde (naissance, relations, jour
+      // de simulation) et factions de joueurs (guilde locale) — l'un et
+      // l'autre optionnels, pour ne rien changer aux sauvegardes qui datent
+      // d'avant ce module.
+      politique: state.world.politique && MC.Politique ? MC.Politique.serialiser(state.world.politique) : null,
+      guildes: state.guildes && MC.Guildes ? MC.Guildes.serialiser(state.guildes) : null,
       // le compte en banque, commun à toutes les banques du monde
       banque: state.world.banque ? state.world.banque.serialize() : [],
       // les habitants tués, et quand : ils ne ressuscitent pas au chargement
@@ -151,6 +157,12 @@
     }
     if (w.exploration) w.exploration.charger(data.explores || []);
     if (w.reputation) w.reputation.charger(data.reputation);
+    if (w.politique && MC.Politique && data.politique) {
+      var pol = MC.Politique.charger(data.politique);
+      w.politique.seed = pol.seed; w.politique.jour = pol.jour;
+      w.politique.factions = pol.factions; w.politique.relations = pol.relations; w.politique.annonces = pol.annonces;
+    }
+    if (state.guildes !== undefined && MC.Guildes) state.guildes = MC.Guildes.charger(data.guildes);
     if (w.banque) w.banque.load(data.banque || []);
     if (w.pnjsMorts) {
       w.pnjsMorts.clear();
