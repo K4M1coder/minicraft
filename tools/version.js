@@ -91,7 +91,10 @@ function ecrire(avant, apres) {
 }
 function installer() {
   // chemin absolu : les worktrees (agents) partagent ces crochets même quand leur branche est antérieure
-  git('config core.hooksPath "' + path.join(RACINE, '.githooks').split(path.sep).join('/') + '"');
+  // …et toujours ceux du dépôt PRINCIPAL, même lancé depuis un worktree (qui disparaîtra)
+  const commun = path.resolve(RACINE, git('rev-parse --git-common-dir').trim());
+  const principal = path.dirname(commun);
+  git('config core.hooksPath "' + path.join(principal, '.githooks').split(path.sep).join('/') + '"');
   return git('config --get core.hooksPath').trim();
 }
 
