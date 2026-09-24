@@ -800,3 +800,34 @@ test s'en sert pour suivre l'exécution et construire ses rapports.
 | SPEC-BANC-015 | Le serveur de test ne reçoit des résultats que de la machine locale, borne leur taille, n'écrit que dans `tests/resultats/` sous des noms qu'il fabrique lui-même (aucune traversée de répertoire), et refuse hors mode test | un envoi depuis une autre adresse, trop gros ou avec un nom `../x` est refusé ; un envoi valide crée le dossier attendu | ⏳ |
 | SPEC-BANC-016 | Chaque test part d'un état connu et n'en laisse aucun : la fin d'un test e2e et la fin de campagne referment dialogues, écrans et fenêtres ouverts, et remettent options et parties comme avant | après la campagne, aucun dialogue ni écran de test ne reste visible ; relancer un test seul donne le même résultat que dans la campagne | ⏳ |
 | SPEC-BANC-017 | Le rendu intégré se pilote aussi à la main et par les tests via une même interface (`MC_DEBUG`) : téléporter, régler l'heure, la saison et la météo, la distance de vue, agrandir le rendu en plein panneau, capturer une image | chaque commande change l'état attendu du jeu ; agrandir puis réduire rétablit la taille et le rapport d'aspect | ⏳ |
+
+## PERF — performances (lot A : bruit et génération)
+
+Source : audit rendu (scratchpad/audit-limites.md, LIM-23) et
+scratchpad/specs-perf.md (2026-09-24) — profilé avec `node --cpu-prof` sur 80
+chunks en spirale autour de l'origine : `hash3` (src/noise.js) pesait 66 % du
+CPU de génération, `value3`/sa fermeture `at` 10 %, presque entièrement
+consommés par `isCave` (src/world.js), qui appelle `fbm3` jusqu'à 3 fois par
+bloc creusable (2 octaves × 8 `hash3` chacun). Génération moyenne mesurée :
+~98-112 ms/chunk. Ce lot ne touche ni le maillage (src/mesher.js, un autre
+agent) ni les Web Workers (hors périmètre) : uniquement le bruit et la
+génération de chunk.
+
+Technique reprise de src/densite.js `valeurCoin`/`valeurLisse`, déjà utilisée
+pour la densité humaine (12× plus rapide sur les chunks de ville, v0.3.0) :
+un coin de grille grossière (`CAVE_PAS_XZ` = 4 blocs en x/z, `CAVE_PAS_Y` = 8
+en y) est calculé une fois et mis en cache dans une `Map` bornée, puis
+interpolé trilinéairement entre ses 8 voisins — au lieu d'appeler `fbm3` à
+chaque bloc. Le bruit de grotte varie sur 26 à 40 blocs de corrélation, bien
+au-dessus du pas de grille choisi, donc l'écart introduit reste minime
+(mesuré : SPEC-PERF-003). `value3` (src/noise.js) perd aussi sa fermeture
+`at(dx,dy,dz)`, réallouée à chaque appel : les 8 appels à `hash3` sont écrits
+à plat, pour un résultat identique au bit près.
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-PERF-001 | Le bruit 3D des grottes (`isCave`, src/world.js — `fbm3` sur les champs tunnels a/b et cavernes) se calcule sur une grille de coins espacés d'un pas fixe (4 blocs en x/z, 8 en y), mis en cache, et s'interpole trilinéairement entre les 8 coins voisins — même technique que `valeurCoin`/`valeurLisse` de src/densite.js | `node tests/bench-generation.js` mesure un temps moyen de génération inférieur à 65 ms/chunk sur 80 chunks en spirale (mesuré ~44-45 ms/chunk le 2026-09-24, contre ~98-112 ms/chunk avant le cache — environ 60 % de réduction, au-delà des 40 % visés) ; `tests/spec-perf.js` (SPEC-PERF-001) répète la mesure avec un seuil généreux | ✅ |
+| SPEC-PERF-002 | Les trois caches de coins de bruit de grotte (tunnels a, tunnels b, cavernes) sont bornés en mémoire (comme `coins.size > 200000` de densite.js) : au-delà d'un seuil fixe par champ, l'ensemble du champ est purgé, sans fuite mémoire sur une session longue | `tests/spec-perf.js` (SPEC-PERF-002) sonde 18000 colonnes très écartées sur toute leur hauteur : la taille totale du cache (`world.perf.caveCacheSize()`) ne dépasse jamais 600000 coins (3 × 200000) et au moins une purge est observée sous la charge | ✅ |
+| SPEC-PERF-003 | Le relief des grottes interpolé reste quasi indiscernable du calcul exact : l'écart entre `isCave` interpolé et `isCave` calculé directement par `fbm3` (sans cache) reste sous une tolérance fixe sur un large échantillon de blocs | `tests/spec-perf.js` (SPEC-PERF-003) compare les deux versions sur 40 chunks en spirale (plus de 400000 blocs) : écart mesuré ~0.78 % le 2026-09-24, tolérance fixée à 2 % | ✅ |
+| SPEC-PERF-017 | Un banc de non-régression sous Node (`tests/bench-generation.js`, dérivé de scratchpad/bench.js) mesure la génération sur un échantillon fixe de chunks (même spirale) et échoue si un seuil déclaré est dépassé (ms moyen, p95, taille du cache de bruit) | `node tests/bench-generation.js` sort avec un code non nul et un message explicite si un seuil de tests/budget-perf.json est dépassé ; sort 0 sinon | ✅ |
+| SPEC-PERF-018 | Un budget de performance CI regroupe les seuils du banc (SPEC-PERF-017) dans un fichier déclaratif (`tests/budget-perf.json`), lu par le banc et par un gate dédié, pour que dépasser un seuil fasse échouer la même étape que `node tests/gates.js` | `node tests/gates.js` échoue (porte G12) si un budget du fichier est dépassé par la dernière mesure du banc, réussit sinon | ✅ |

@@ -138,18 +138,61 @@
        On ne creuse jamais assez haut pour percer le fond de l'océan : l'eau
        ne s'écoule pas, une brèche laisserait une poche d'air sous la mer. */
     var CAVE_TOP_MARGIN = 5;
+    /* Cache de grille pour le bruit 3D des grottes (SPEC-PERF-001/002/003) :
+       même technique que src/densite.js `valeurCoin`/`valeurLisse` — un coin
+       de grille grossière tous les CAVE_PAS_XZ/CAVE_PAS_Y blocs, mis en cache
+       dans une Map bornée, interpolé trilinéairement entre ses 8 voisins,
+       au lieu d'appeler fbm3 (8 hash3 par octave, jusqu'à 3 fbm3 par bloc
+       creusable) à chaque bloc. Profilé (2026-09-24, node --cpu-prof, 80
+       chunks en spirale) : hash3 pesait 66 % du CPU de génération, presque
+       entièrement depuis isCave — le point chaud visé par ce cache.
+       Les trois champs (tunnels a/b, cavernes) varient sur 26 à 40 blocs de
+       corrélation ; un pas de grille de 4 blocs en x/z et 8 en y reste bien
+       en-dessous de cette échelle, donc l'écart introduit par l'interpolation
+       reste minime — mesuré sur un échantillon de colonnes par
+       tests/spec-perf.js (SPEC-PERF-003). Chaque Map est bornée comme dans
+       densite.js (purge totale au-delà de 200000 coins) : aucune fuite sur
+       une session longue (SPEC-PERF-002). */
+    var CAVE_PAS_XZ = 4, CAVE_PAS_Y = 8;
+    var caveCoinsA = new Map(), caveCoinsB = new Map(), caveCoinsCav = new Map();
+    function borner(m) { if (m.size > 200000) m.clear(); }
+    function coinCave(cache, calc, gx, gy, gz) {
+      var k = gx + ',' + gy + ',' + gz, v = cache.get(k);
+      if (v === undefined) {
+        borner(cache);
+        v = calc(gx * CAVE_PAS_XZ, gy * CAVE_PAS_Y, gz * CAVE_PAS_XZ);
+        cache.set(k, v);
+      }
+      return v;
+    }
+    function calcA(wx, wy, wz) { return N.fbm3(wx / 26, wy / 15, wz / 26, 2, 2, 0.5); }
+    function calcB(wx, wy, wz) { return N.fbm3((wx + 411) / 34, (wy + 77) / 19, (wz - 233) / 34, 2, 2, 0.5); }
+    function calcCav(wx, wy, wz) { return N.fbm3((wx - 911) / 40, (wy + 13) / 12, (wz + 577) / 40, 2, 2, 0.5); }
+    function champCaveLisse(cache, calc, wx, wy, wz) {
+      var fx = wx / CAVE_PAS_XZ, fy = wy / CAVE_PAS_Y, fz = wz / CAVE_PAS_XZ;
+      var gx = Math.floor(fx), gy = Math.floor(fy), gz = Math.floor(fz);
+      var ux = fx - gx, uy = fy - gy, uz = fz - gz;
+      var c000 = coinCave(cache, calc, gx, gy, gz), c100 = coinCave(cache, calc, gx + 1, gy, gz);
+      var c010 = coinCave(cache, calc, gx, gy + 1, gz), c110 = coinCave(cache, calc, gx + 1, gy + 1, gz);
+      var c001 = coinCave(cache, calc, gx, gy, gz + 1), c101 = coinCave(cache, calc, gx + 1, gy, gz + 1);
+      var c011 = coinCave(cache, calc, gx, gy + 1, gz + 1), c111 = coinCave(cache, calc, gx + 1, gy + 1, gz + 1);
+      var c00 = c000 + (c100 - c000) * ux, c10 = c010 + (c110 - c010) * ux;
+      var c01 = c001 + (c101 - c001) * ux, c11 = c011 + (c111 - c011) * ux;
+      var c0 = c00 + (c10 - c00) * uy, c1 = c01 + (c11 - c01) * uy;
+      return c0 + (c1 - c0) * uz;
+    }
     function isCave(wx, wy, wz, surface) {
       if (wy < 2) return false;
       var plafond = Math.min(surface - CAVE_TOP_MARGIN, SEA - 3);
       if (wy > plafond) return false;
-      var a = N.fbm3(wx / 26, wy / 15, wz / 26, 2, 2, 0.5);
-      var b = N.fbm3((wx + 411) / 34, (wy + 77) / 19, (wz - 233) / 34, 2, 2, 0.5);
+      var a = champCaveLisse(caveCoinsA, calcA, wx, wy, wz);
+      var b = champCaveLisse(caveCoinsB, calcB, wx, wy, wz);
       // les deux seuils doivent tomber ensemble : intersection = tunnels
       if (a > 0.60 && b > 0.56) return true;
       /* Cavernes : de grandes salles, aplaties (le bruit varie plus vite en
          hauteur qu'en largeur), entre 8 et 28 de profondeur. */
       if (wy >= 6 && wy <= 28) {
-        var cav = N.fbm3((wx - 911) / 40, (wy + 13) / 12, (wz + 577) / 40, 2, 2, 0.5);
+        var cav = champCaveLisse(caveCoinsCav, calcCav, wx, wy, wz);
         if (cav > 0.66) return true;
       }
       return false;
@@ -1207,6 +1250,13 @@
       coulerFeu: coulerFeu, get feuEnAttente() { return feuFile.size; }, pluieIci: pluieIci,
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
+      /* Métriques du cache de bruit de grotte (SPEC-PERF-002), pour le banc de
+         non-régression et les tests de fuite mémoire — jamais utilisé par la
+         génération elle-même. */
+      perf: {
+        caveCacheSize: function () { return caveCoinsA.size + caveCoinsB.size + caveCoinsCav.size; },
+        caveCachePas: { xz: CAVE_PAS_XZ, y: CAVE_PAS_Y },
+      },
     };
   }
 

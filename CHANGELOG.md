@@ -20,6 +20,22 @@ respecter (voir PLAN.md, « Commits et versions »).
   deux colonnes quand la place le permet (SPEC-OPTION-007).
 - Les répliques du mode histoire se répondent aussi au clavier : Entrée ou
   Espace pour continuer, 1 à 9 pour un choix (SPEC-HISTOIRE-014).
+- Banc de non-régression `tests/bench-generation.js` et budget déclaratif
+  `tests/budget-perf.json`, vérifiés par une nouvelle porte G12
+  (SPEC-PERF-017/018).
+
+### Performances
+- Génération de chunk environ 60 % plus rapide (~98-112 ms/chunk → ~44-45 ms/chunk
+  mesurés sur 80 chunks en spirale, même graine) : le bruit 3D des grottes
+  (`isCave`, src/world.js), qui pesait à lui seul plus des trois quarts du CPU
+  de génération (`hash3` 66 %, `value3` 10 % au profilage), se calcule
+  désormais sur une grille grossière (4 blocs en x/z, 8 en y) mise en cache et
+  interpolée trilinéairement — même technique que la densité humaine
+  (src/densite.js) qui avait déjà rendu les chunks de ville 12× plus rapides.
+  Écart mesuré face au bruit exact : ~0,78 % des blocs creusables sur 40
+  chunks, sous la tolérance de 2 % (SPEC-PERF-001/002/003). `value3`
+  (src/noise.js) perd aussi sa fermeture allouée à chaque appel, pour un
+  résultat inchangé au bit près.
 
 ### Corrigé
 - Le popup du mode histoire gardait la souris capturée : la capture demandée au
