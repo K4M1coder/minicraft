@@ -140,7 +140,29 @@
       if (lx < -M || lx >= CX + M || lz < -M || lz >= CZ + M) return MAX;
       return copieC[(ly * LZ + lz + M) * LX + lx + M];
     }
-    return { niveau: niveau, ciel: ciel, sources: sources };
+    // fenêtre plate (SPEC-PERF-008) : ce que `depuisTableaux` reconstruit
+    // à l'identique de l'autre côté d'un worker, sans refaire la propagation
+    return { niveau: niveau, ciel: ciel, sources: sources, niveauxPlat: copie, cielPlat: copieC };
+  }
+
+  /* Reconstruit le même objet qu'`eclairer()` ({ niveau, ciel, sources }) à
+     partir de la fenêtre plate déjà calculée ailleurs (worker de maillage) —
+     SPEC-PERF-008 : le thread principal ne refait jamais la propagation,
+     seulement les fermetures de lecture. Mêmes formules que `niveau`/`ciel`
+     ci-dessus (M=1, marge d'un chunk). */
+  function depuisTableaux(niveaux, ciel, sources) {
+    var M = 1, LX = CX + 2 * M, LZ = CZ + 2 * M;
+    function niveau(lx, ly, lz) {
+      if (ly < 0 || ly >= WH || lx < -M || lx >= CX + M || lz < -M || lz >= CZ + M) return 0;
+      return niveaux[(ly * LZ + lz + M) * LX + lx + M];
+    }
+    function cielF(lx, ly, lz) {
+      if (ly >= WH) return MAX;
+      if (ly < 0) return 0;
+      if (lx < -M || lx >= CX + M || lz < -M || lz >= CZ + M) return MAX;
+      return ciel[(ly * LZ + lz + M) * LX + lx + M];
+    }
+    return { niveau: niveau, ciel: cielF, sources: sources };
   }
 
   /* ─── lumière du ciel ────────────────────────────────────────────────────
@@ -249,5 +271,6 @@
   }
 
   MC.Lumiere = { MAX: MAX, emission: emission, opaque: opaque, emetteurs: emetteurs,
-                 eclairer: eclairer, chunksTouches: chunksTouches, lumiereEn: lumiereEn, eclat: eclat };
+                 eclairer: eclairer, depuisTableaux: depuisTableaux,
+                 chunksTouches: chunksTouches, lumiereEn: lumiereEn, eclat: eclat };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

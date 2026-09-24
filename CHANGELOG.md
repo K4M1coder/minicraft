@@ -35,6 +35,22 @@ respecter (voir PLAN.md, « Commits et versions »).
   propre fiche (`teste`/`pourquoi`/`attendu`) en 2e argument de `e2e()`,
   sans changement de nom ni de logique — 100 % du catalogue e2e (136 tests)
   est maintenant couvert (SPEC-BANC-002).
+- Génération et maillage de chunks en Web Workers (L47, SPEC-PERF-004 à
+  010, 014) : un ordonnateur pur (`src/file-chunks.js`) priorise par
+  distance, borne les intégrations par image et rejette les résultats
+  périmés (époque de monde ou version de chunk) ; un module de tâches
+  partagé (`src/taches-chunks.js`) exécute la génération brute et le
+  maillage (greedy meshing compris) à l'IDENTIQUE dans un Worker ou sur le
+  thread principal (repli synchrone sans Worker, SPEC-PERF-006 — `file://`,
+  CSP, ou erreurs répétées) ; les résultats sont transférés sans copie
+  (tableaux typés, SPEC-PERF-008) et les géométries de chunk sont réécrites
+  en place plutôt que recréées à chaque remaillage tant que leur capacité
+  suffit (SPEC-PERF-014, `render.appliquerMaillage`). Un seul worker de
+  génération par défaut (ses propres caches de bruit), jusqu'à 4 workers de
+  maillage. `world.genererBrut`/`world.integrerChunk` et
+  `MC.Lumiere.depuisTableaux` complètent l'API pour permettre à un chunk
+  brut, reçu sans overrides ni lumières, d'être intégré exactement comme un
+  chunk généré en place.
 
 ### Modifié
 
