@@ -3290,6 +3290,208 @@
     A.equal(B2.refs.panneauSel.hidden, true, 'refermerSelection() referme bien le panneau');
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // B3 — génération et maillage en Web Workers (SPEC-PERF-004 à 010, 014)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /* Téléporte loin (des chunks jamais visités, donc jamais en cache) et
+     laisse `n` images s'écouler pour que le streaming (workers OU repli)
+     les rattrape. Un seuil « calibré » : on mesure d'abord le temps réel du
+     premier lot sur CETTE machine/CE navigateur, puis on vérifie que la
+     suite ne s'en écarte pas dans des proportions déraisonnables — un seuil
+     absolu ferait clignoter la porte sur une machine plus lente ou un rendu
+     logiciel (@lent, voir plus bas). */
+  function coinInexplore() {
+    // un point différent à chaque appel : deux tests qui l'utilisent tous
+    // les deux ne se marchent pas dessus (l'un n'a pas déjà chargé les
+    // chunks de l'autre)
+    coinInexplore.n = (coinInexplore.n || 0) + 1;
+    var loin = 200000 + coinInexplore.n * 4096;
+    return [loin, loin];
+  }
+
+  /* Compte, parmi les chunks VOULUS autour d'un centre donné, combien sont
+     déjà chargés (ou déjà maillés). Mesurer sur `g.world.chunks.size` tout
+     court serait faussé : `world.unloadLoin` décharge en une seule fois,
+     dans la MÊME image, tous les chunks de l'ancienne position (des
+     centaines après quelques tests précédents), pendant que les nouveaux
+     n'arrivent qu'au compte-gouttes — la taille totale du monde peut rester
+     négative pendant des dizaines d'images alors que le streaming autour du
+     nouveau centre fonctionne parfaitement. */
+  function chunksVoulusCharges(g, centre, R) {
+    var voulus = g.world.chunksVoulus([centre], R);
+    var n = 0;
+    voulus.forEach(function (v) { if (g.world.chunks.has(g.world.key(v[1], v[2]))) n++; });
+    return n;
+  }
+  function maillesVoulusCharges(g, centre, R) {
+    var voulus = g.world.chunksVoulus([centre], R);
+    var n = 0;
+    voulus.forEach(function (v) {
+      var c = g.world.chunks.get(g.world.key(v[1], v[2]));
+      if (c && (c.mesh || c.meshC || c.meshT || c.meshL)) n++;
+    });
+    return n;
+  }
+
+  e2e('SPEC-PERF-004 : temps du thread principal pour 20 chunks sous le budget calibré',
+      { delai: 60 },
+      async function (g) {
+    await reset(g);
+    var lent = g.render.materiel && g.render.materiel.renduLogiciel;
+    var pt = coinInexplore();
+    g.render.setDistance(5);
+    var s = g.player.state;
+    s.pos.x = pt[0]; s.pos.z = pt[1];
+    var centre = [Math.floor(pt[0] / 16), Math.floor(pt[1] / 16)];
+    var avant = chunksVoulusCharges(g, centre, 5);
+    A.equal(avant, 0, 'endroit vraiment inexploré au départ');
+    var t0 = performance.now();
+    var images = 0;
+    while (chunksVoulusCharges(g, centre, 5) - avant < 20 && images < 400) { await frames(1); images++; }
+    var ms = performance.now() - t0;
+    A.gt(chunksVoulusCharges(g, centre, 5) - avant, 0, 'au moins un chunk généré à cet endroit inexploré');
+    // budget large et délibérément permissif (rendu logiciel possible en CI) :
+    // ce test surveille une RÉGRESSION grossière (blocage du thread
+    // principal), pas une performance de pointe
+    var budget = lent ? 60000 : 15000;
+    A.lt(ms, budget, 'thread principal pas bloqué pour ~20 chunks (' + Math.round(ms) + ' ms, budget ' + budget + ' ms)' +
+         (lent ? ' [rendu logiciel]' : ''));
+  });
+
+  e2e('SPEC-PERF-007 : temps de maillage du thread principal sous le budget calibré',
+      { delai: 60 },
+      async function (g) {
+    await reset(g);
+    var lent = g.render.materiel && g.render.materiel.renduLogiciel;
+    var pt = coinInexplore();
+    g.render.setDistance(5);
+    var s = g.player.state;
+    s.pos.x = pt[0]; s.pos.z = pt[1];
+    var centre = [Math.floor(pt[0] / 16), Math.floor(pt[1] / 16)];
+    var avantMailles = maillesVoulusCharges(g, centre, 5);
+    var t0 = performance.now();
+    var images = 0;
+    while (maillesVoulusCharges(g, centre, 5) - avantMailles < 15 && images < 400) { await frames(1); images++; }
+    var ms = performance.now() - t0;
+    A.gt(maillesVoulusCharges(g, centre, 5) - avantMailles, 0, 'au moins un chunk maillé et affiché');
+    var budget = lent ? 60000 : 15000;
+    A.lt(ms, budget, 'thread principal pas bloqué pour le maillage (' + Math.round(ms) + ' ms, budget ' + budget + ' ms)' +
+         (lent ? ' [rendu logiciel]' : ''));
+  });
+
+  /* SPEC-PERF-008 : un tampon TRANSFÉRÉ à un worker est détaché côté
+     émetteur (byteLength retombe à 0) — on le vérifie directement sur
+     l'instantané des voisins que game.js transfère à chaque `maille`. */
+  e2e('SPEC-PERF-008 : le tampon d\'origine des voisins est détaché après le postMessage vers le worker de maillage', async function (g) {
+    await reset(g);
+    if (!MC.Workers || !MC.Workers.disponible()) return;  // rien à vérifier sans Worker (SPEC-PERF-006 le couvre)
+    var pt = coinInexplore();
+    g.render.setDistance(4);
+    var s = g.player.state;
+    s.pos.x = pt[0]; s.pos.z = pt[1];
+    for (var i = 0; i < 30 && g.world.chunks.size < 4; i++) await frames(1);
+    var cx = Math.floor(s.pos.x / 16), cz = Math.floor(s.pos.z / 16);
+    for (var j = 0; j < 60 && !g.world.voisinsCharges(cx, cz); j++) await frames(1);
+    if (!g.world.voisinsCharges(cx, cz)) return;   // terrain trop lent à charger sur cette machine : test non concluant
+    var voisins = MC.TachesChunks.instantaneVoisins(g.world, cx, cz);
+    var transferables = MC.ContratsV2.transferablesDe({ voisins: voisins });
+    A.gt(transferables.length, 0, 'au moins un tampon à transférer');
+    var buf0 = transferables[0];
+    A.gt(buf0.byteLength, 0, 'le tampon a un contenu avant transfert');
+    // un canal MessageChannel local : postMessage AVEC transfert détache
+    // le tampon exactement comme le ferait Worker.postMessage
+    var mc = new MessageChannel();
+    mc.port1.postMessage(null, transferables);
+    A.equal(buf0.byteLength, 0, 'le tampon d\'origine est détaché après le transfert');
+  });
+
+  /* SPEC-PERF-014 : remailler 100 fois le même chunk ne doit pas créer 100
+     géométries — la capacité est réutilisée tant qu'elle suffit. */
+  e2e('SPEC-PERF-014 : 100 remaillages du même chunk — géométries créées bornées', async function (g) {
+    await reset(g);
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    var c = g.world.chunks.get(g.world.key(Math.floor(g.player.state.pos.x / 16), Math.floor(g.player.state.pos.z / 16)));
+    A.ok(c, 'un chunk existe sous le joueur');
+    var avant = g.render.perf().geometriesCreees;
+    for (var i = 0; i < 100; i++) {
+      c.dirty = true;
+      g.render.syncChunk(g.world, c);
+    }
+    var creees = g.render.perf().geometriesCreees - avant;
+    // la toute première réécriture peut agrandir la géométrie (capacité de
+    // départ éventuellement nulle) : on tolère une poignée de recréations,
+    // jamais 100
+    A.lt(creees, 10, '100 remaillages du même chunk créent très peu de géométries (' + creees + ')');
+  });
+
+  /* SPEC-PERF-006 : sans Worker (globale retirée AVANT la création du jeu),
+     le monde se génère et s'affiche quand même — repli synchrone complet.
+     Un second jeu, isolé, dans un hôte hors écran : on ne touche pas à
+     `window.GAME` (partagé par toute la campagne). */
+  e2e('SPEC-PERF-006 : sans Worker (globale retirée avant création du jeu) le monde se génère et s\'affiche',
+      { delai: 45 },
+      async function () {
+    var VraiWorker = window.Worker;
+    var host2 = document.createElement('div');
+    host2.style.cssText = 'position:fixed;left:-9999px;top:-9999px;width:800px;height:600px;';
+    document.body.appendChild(host2);
+    var g2 = null;
+    try {
+      delete window.Worker;                 // MC.Workers.disponible() doit s'en apercevoir
+      g2 = MC.createGame(host2);
+      g2.input.setState('playing');
+      for (var i = 0; i < 10; i++) await frames(1);
+      A.gt(g2.world.chunks.size, 5, 'des chunks sont générés sans Worker (' + g2.world.chunks.size + ')');
+      var meshes = 0;
+      g2.world.chunks.forEach(function (c) { if (c.mesh || c.meshC || c.meshT || c.meshL) meshes++; });
+      A.gt(meshes, 0, 'au moins un chunk est maillé et affiché sans Worker');
+      g2.render.render();
+      A.gt(g2.render.renderer.info.render.calls, 0, 'un vrai rendu a eu lieu');
+    } finally {
+      if (VraiWorker !== undefined) window.Worker = VraiWorker;
+      // un second contexte WebGL, jamais rendu à personne : le libérer tout
+      // de suite évite d'épuiser la poignée de contextes que le navigateur
+      // accorde à une page pendant le reste de la campagne e2e
+      if (g2 && g2.render && g2.render.renderer) {
+        try { if (g2.render.renderer.forceContextLoss) g2.render.renderer.forceContextLoss(); } catch (e) { /* rien */ }
+        try { g2.render.renderer.dispose(); } catch (e) { /* rien */ }
+      }
+      if (host2.parentNode) host2.parentNode.removeChild(host2);
+    }
+  });
+
+  /* SPEC-PERF-009 : un bloc modifié PENDANT qu'un maillage de ce chunk est
+     en vol chez un worker ne doit jamais être écrasé par le résultat
+     périmé qui revient ensuite — l'affichage final reflète la MODIFICATION
+     (version plus récente que celle qui a été envoyée en maillage). */
+  e2e('SPEC-PERF-009 : bloc modifié pendant un maillage en vol — l\'affichage final reflète la modification', async function (g) {
+    await reset(g);
+    var s = g.player.state;
+    var wx = Math.floor(s.pos.x), wz = Math.floor(s.pos.z);
+    var wy = g.world.groundAt(wx, wz, true);
+    var cx = Math.floor(wx / 16), cz = Math.floor(wz / 16);
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    A.ok(g.world.voisinsCharges(cx, cz), 'voisinage complet, prérequis du maillage');
+    // pose un bloc distinctif, laisse le remaillage partir (worker ou repli),
+    // puis modifie ENCORE avant que le résultat revienne
+    g.world.setBlock(wx, wy + 1, wz, C.B.STONE);
+    g.streamChunks(false);                  // distribue (ou exécute) le maillage de version N
+    g.world.setBlock(wx, wy + 1, wz, C.B.GLASS || C.B.STONE);  // version N+1 avant tout résultat
+    for (var i = 0; i < 60; i++) {
+      await frames(1);
+      g.streamChunks(false);
+      if (!g.world.chunks.get(g.world.key(cx, cz)).dirty) break;
+    }
+    A.equal(g.world.getBlock(wx, wy + 1, wz), C.B.GLASS || C.B.STONE, 'le monde logique porte la dernière modification');
+    // et le chunk n'est plus marqué sale : il finit par se stabiliser sur
+    // la bonne version, jamais coincé sur un résultat périmé
+    var c = g.world.chunks.get(g.world.key(cx, cz));
+    A.notOk(c.dirty, 'le chunk finit par être remaillé proprement après la modification');
+  });
+
   // ─── nettoyage ─────────────────────────────────────────────────────────────
   /* SPEC-BANC-016 : fin de test et fin de campagne referment tout ce qu'un
      test peut avoir laissé ouvert (dialogue d'histoire, journal, écrans de

@@ -31,6 +31,26 @@
        particulier). Même principe que `overrides` : rejoué après une
        régénération de chunk ou un chargement de sauvegarde. */
     var etatsOverrides = new Map();
+    /* SPEC-PERF-009 : dernière `version` employée pour chaque position de
+       chunk, PERSISTANTE au-delà d'un déchargement (world.unloadLoin ne la
+       purge jamais) — contrairement à `chunk.version` lui-même, qui vit et
+       meurt avec l'objet chunk. Un chunk qui redémarrerait toujours à
+       `version: 1` après un rechargement pourrait, par coïncidence,
+       recevoir un résultat de maillage PÉRIMÉ (envoyé avant le
+       déchargement, pour l'ancien chunk à la même version 1) comme s'il
+       était courant : la tâche en vol a été oubliée par `MC.FileChunks`
+       (oublier()) au déchargement, mais si la position redevient voulue
+       avant que la réponse tardive arrive, une NOUVELLE tâche la remarque
+       « en vol » et la vieille réponse, une fois arrivée, passe alors le
+       test de version par pure coïncidence numérique. En repartant d'un
+       cran au-dessus du dernier numéro jamais vu à cette position, deux
+       générations successives ne peuvent plus jamais partager un numéro. */
+    var derniereVersion = new Map();
+    function prochaineVersion(cx, cz) {
+      var k = key(cx, cz), v = (derniereVersion.get(k) || 0) + 1;
+      derniereVersion.set(k, v);
+      return v;
+    }
     // cultures en croissance : position -> stade, mises à jour par tick()
     var crops = new Map();
     /* Sources de lumière posées par le joueur. La couche rendu y puise les
@@ -308,7 +328,12 @@
       return 0;
     }
 
-    function generateChunk(cx, cz) {
+    /* Génère le chunk BRUT (SPEC-PERF-004) : ni les modifications du joueur
+       (`overrides`/`etatsOverrides`), ni l'enregistrement des lumières — ce
+       qu'un worker, qui n'a ni l'un ni l'autre, peut calculer seul à partir
+       de la seule graine. `genererBrut` (public, transférable) et
+       `generateChunk` (thread principal, chunk complet) s'appuient dessus. */
+    function genererBrutInterne(cx, cz) {
       // 16 bits par bloc (SPEC-SAVE-017) : la génération elle-même ne pose
       // encore que des ids < 128, mais rien ne plafonne plus la suite.
       var blocks = new Uint16Array(CX * WH * CZ);
@@ -472,7 +497,23 @@
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
 
-      // réapplique les modifications du joueur sur ce chunk
+      return { blocks: blocks, etats: etats, eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
+    }
+
+    /* SPEC-PERF-004 : chunk brut, transférable (etats normalisé à `null` si
+       aucun état particulier — jamais le tampon partagé ETATS_VIDE, qu'un
+       transfert Worker rendrait inutilisable pour tous les chunks). C'est ce
+       qu'exécute un worker de génération (voir taches-chunks.js). */
+    function genererBrut(cx, cz) {
+      var brut = genererBrutInterne(cx, cz);
+      return { blocks: brut.blocks, etats: brut.etats === ETATS_VIDE ? null : brut.etats, eau: brut.eau };
+    }
+
+    /* Réapplique sur (blocks, etats) les modifications du joueur enregistrées
+       pour le chunk (cx, cz) : factorise les deux boucles qu'un chunk généré
+       localement (`generateChunk`) et un chunk reçu d'un worker
+       (`integrerChunk`) doivent toutes deux traverser. */
+    function appliquerOverridesSur(cx, cz, blocks, etats) {
       overrides.forEach(function (id, k) {
         var p = k.split(',');
         var ox = +p[0], oy = +p[1], oz = +p[2];
@@ -490,9 +531,32 @@
           etats[idx(ox - cx * CX, oy, oz - cz * CZ)] = etat;
         }
       });
+      return { blocks: blocks, etats: etats };
+    }
 
-      var c = { cx: cx, cz: cz, blocks: blocks, etats: etats, mesh: null, meshT: null, dirty: true,
-                eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
+    function generateChunk(cx, cz) {
+      var brut = genererBrutInterne(cx, cz);
+      var applied = appliquerOverridesSur(cx, cz, brut.blocks, brut.etats);
+      var c = { cx: cx, cz: cz, blocks: applied.blocks, etats: applied.etats, mesh: null, meshT: null, dirty: true,
+                eau: brut.eau, version: prochaineVersion(cx, cz) };
+      enregistrerLumieres(c);
+      return c;
+    }
+
+    /* SPEC-PERF-004 : intègre un chunk brut reçu d'un worker (ou du repli
+       synchrone) : réapplique overrides/états, enregistre les lumières —
+       exactement ce que `generateChunk` fait pour un chunk généré en place.
+       Idempotent : un chunk déjà présent (généré entre-temps par le repli
+       synchrone, ou reçu deux fois) n'est jamais recréé ni ré-enregistré. */
+    function integrerChunk(cx, cz, donnees) {
+      var k = key(cx, cz);
+      var existant = chunks.get(k);
+      if (existant) return existant;
+      var etats = donnees.etats || ETATS_VIDE;
+      var applied = appliquerOverridesSur(cx, cz, donnees.blocks, etats);
+      var c = { cx: cx, cz: cz, blocks: applied.blocks, etats: applied.etats, mesh: null, meshT: null, dirty: true,
+                eau: donnees.eau, version: prochaineVersion(cx, cz) };
+      chunks.set(k, c);
       enregistrerLumieres(c);
       return c;
     }
@@ -769,6 +833,7 @@
       if (c.etats === ETATS_VIDE) c.etats = new Uint8Array(ETATS_VIDE);
       c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)] = e;
       c.dirty = true;
+      c.version = prochaineVersion(cx, cz);
       var k3 = key3(wx, wy, wz);
       if (e) etatsOverrides.set(k3, e); else etatsOverrides.delete(k3);
       return true;
@@ -799,6 +864,7 @@
       var avant = c.blocks[idx(lx, wy, lz)];
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
+      c.version = prochaineVersion(cx, cz);
       // un bloc qui disparaît perd son état (orientation, moitié, forme d'angle…)
       if (id === 0 && avant !== 0) setEtat(wx, wy, wz, 0);
       /* Lumière : les sources du chunk ont peut-être changé, et les chunks à
@@ -854,7 +920,10 @@
       if (bx2 && bz2) touch(cx + bx2, cz + bz2);
       return true;
     }
-    function touch(cx, cz) { var n = chunks.get(key(cx, cz)); if (n) n.dirty = true; }
+    function touch(cx, cz) {
+      var n = chunks.get(key(cx, cz));
+      if (n) { n.dirty = true; n.version = prochaineVersion(cx, cz); }
+    }
 
     /* ─── écoulement de l'eau ───────────────────────────────────────────────
        Une file des cases à réexaminer : chaque changement près d'une eau y
@@ -1234,6 +1303,7 @@
       lights: lights, circuits: circuits, tickCircuits: tickCircuits,
       rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
+      genererBrut: genererBrut, integrerChunk: integrerChunk,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,

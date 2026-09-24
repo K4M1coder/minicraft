@@ -48,6 +48,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   messages c→s. `tests/integration-inventaire.js` (nouveau, 29 tests) prouve
   ce comportement sur un vrai serveur. Le registre des conteneurs posés
   (coffres, fourneaux…) et la persistance disque (`--monde`) restent à venir.
+- Génération et maillage de chunks en Web Workers (L47, SPEC-PERF-004 à
+  010, 014) : un ordonnateur pur (`src/file-chunks.js`) priorise par
+  distance, borne les intégrations par image et rejette les résultats
+  périmés (époque de monde ou version de chunk) ; un module de tâches
+  partagé (`src/taches-chunks.js`) exécute la génération brute et le
+  maillage (greedy meshing compris) à l'IDENTIQUE dans un Worker ou sur le
+  thread principal (repli synchrone sans Worker, SPEC-PERF-006 — `file://`,
+  CSP, ou erreurs répétées) ; les résultats sont transférés sans copie
+  (tableaux typés, SPEC-PERF-008) et les géométries de chunk sont réécrites
+  en place plutôt que recréées à chaque remaillage tant que leur capacité
+  suffit (SPEC-PERF-014, `render.appliquerMaillage`). Un seul worker de
+  génération par défaut (ses propres caches de bruit), jusqu'à 4 workers de
+  maillage. `world.genererBrut`/`world.integrerChunk` et
+  `MC.Lumiere.depuisTableaux` complètent l'API pour permettre à un chunk
+  brut, reçu sans overrides ni lumières, d'être intégré exactement comme un
+  chunk généré en place.
+- Coquilles de Worker (`src/worker-monde.js`, `src/worker-maillage.js`) et
+  pool navigateur (`src/workers.js`, détection de disponibilité + repli) ;
+  câblage dans `src/game.js` (streaming des chunks distribué au pool quand
+  il existe, repli synchrone complet sinon — le chemin `onBloc` reste
+  synchrone en toute circonstance).
 
 ### Modifié
 
@@ -71,6 +92,32 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 
+- Workers de chunk (L47, B3, revue adversariale) : le message `init` était
+  envoyé via `pool.envoyer()`, qui ne distribue qu'à UN SEUL worker libre —
+  correct pour `genere`/`maille`, faux pour `init` qui doit atteindre CHAQUE
+  worker (chacun garde sa propre `epoqueCourante` en portée de module). Sur
+  un pool de maillage à plusieurs workers (le cas normal, jusqu'à 4), seul
+  celui choisi par `envoyer()` recevait son `init` ; les autres restaient
+  bloqués sur une époque périmée et ignoraient silencieusement toute tâche
+  reçue par la suite (aucune réponse, donc jamais libérés) — sous charge de
+  maillage suffisante pour occuper tous les workers, le nombre de chunks
+  maillés se figeait définitivement, certains restant `dirty` pour
+  toujours. `src/workers.js` expose désormais `pool.diffuser(msg)` (envoie
+  à TOUS les workers du pool, sans jamais marquer un worker occupé),
+  utilisée par `src/game.js` pour `init` (démarrage et
+  `remplacerMonde`/`newWorld`/`perdrePartie`) à la place d'`envoyer()`.
+  Reproduit et vérifié corrigé en conditions réelles (Playwright/Chrome,
+  pool de 4 workers de maillage, ~200 chunks demandés d'un coup : tous les
+  chunks dont le voisinage est chargé finissent maillés, plus aucun blocage).
+- Chunk : `chunk.version` repartait toujours de `1` à chaque régénération
+  (déchargement puis rechargement de la même position) — un résultat de
+  maillage périmé, envoyé avant un déchargement puis oublié par
+  `MC.FileChunks`, pouvait par coïncidence numérique passer pour courant si
+  la position redevenait voulue avant l'arrivée de cette réponse tardive
+  (cas rare). `world.js` retient désormais, par position de chunk et pour
+  toute la durée de vie du monde, le dernier numéro de version employé
+  (persistant au-delà d'un déchargement) : deux générations successives à la
+  même position ne partagent plus jamais de numéro.
 - Catalogue de tests (`tests/catalogue.js`, `ficheDe()`) : `fiche.delai` ne
   survivait pas au passage du test brut à l'entrée du catalogue — un test
   e2e voulant un délai plus court que le défaut tournait donc à son délai
