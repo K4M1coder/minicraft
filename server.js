@@ -29,7 +29,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes'];
+                 'chat', 'commandes', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -523,6 +523,8 @@ function traiter(c, m) {
         const d2 = Math.hypot(vst.pos.x - st.pos.x, vst.pos.y + 0.9 - st.pos.y - 1.6, vst.pos.z - st.pos.z);
         if (d2 > 6) break;
         if (!pvpAutorise(st.pos, vst.pos)) break;
+        // deux membres d'une même faction ne se blessent pas (SPEC-FACTION-012)
+        if (!MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom)) break;
         js.attaqueCd = 0.4;
         const avant = vst.dead;
         vst.hurtCd = 0;
@@ -610,6 +612,23 @@ function traiter(c, m) {
     }
 
     case NP.MSG.CHAT: {
+      /* /faction … : le serveur fait foi sur les factions de joueurs
+         (SPEC-FACTION-009 à 013) ; la réponse ne va qu'à l'intéressé, et
+         « dire » ne va qu'aux membres de sa faction principale. */
+      if (typeof m.texte === 'string' && /^\/faction(\s|$)/.test(m.texte)) {
+        const r = MC.Commandes.executer({ nom: 'faction', args: m.texte.trim().split(/\s+/).slice(1) }, {});
+        const actions = (r.actions || []).filter(a => a.type === 'faction');
+        if (!actions.length) (r.messages || []).forEach(t => envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: t, type: 'systeme' }));
+        actions.forEach(a => {
+          const res = MC.Guildes.appliquerAction(guildes, c.nom, a);
+          if (res.canal) {
+            const membres = new Set(res.canal.membres);
+            clients.forEach(cl => { if (cl.rejoint && membres.has(cl.nom)) envoyer(cl, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'faction' }); });
+          } else envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'systeme' });
+          MC.Admin.journaliser(admin, { auteur: c.nom, action: 'faction', cible: a.action, details: res.ok, heure });
+        });
+        break;
+      }
       const msg = chat.envoyer(c.nom, m.texte);
       if (msg) {
         diffuser({ t: NP.MSG.CHAT, auteur: msg.auteur, texte: msg.texte,

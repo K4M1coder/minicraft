@@ -130,6 +130,8 @@
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
+      // factions de joueurs hors ligne (joueurs locaux), sauvegardées avec la partie
+      guildes: MC.Guildes ? MC.Guildes.creerEtat() : undefined,
     };
 
     /* SPEC-SUCCES-001 : signale un événement au suivi de la partie ; ce qui
@@ -1711,6 +1713,13 @@
           case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
           case 'quitter': net.deconnecter(); break;
           case 'rendu': render.reglerRealiste(a.realiste); break;
+          // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
+          case 'faction':
+            if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); break; }
+            g.guildes = g.guildes || MC.Guildes.creerEtat();
+            var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
+            chat.systeme(rf.message);
+            break;
           case 'admin': net.admin(a.action, a.args); break;
         }
       });

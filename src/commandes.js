@@ -75,6 +75,12 @@
      l'appelant (server.js en ligne, game.js hors ligne) applique via
      MC.Guildes, qui seul détient l'état et décide qui a le droit de quoi. */
   function faction(args) {
+    var r = factionSans(args);
+    // la commande d'origine accompagne l'action : en ligne, le jeu la relaie au serveur
+    (r.actions || []).forEach(function (a) { a.brut = args.join(' '); });
+    return r;
+  }
+  function factionSans(args) {
     var sous = (args[0] || '').toLowerCase();
     var reste = args.slice(1);
     switch (sous) {

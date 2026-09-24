@@ -115,5 +115,25 @@
       A.ok(GU.dissoudreParAdmin(e2, f1).ok);
       A.notOk(e2.factions.has(f1));
     });
+
+    it('SPEC-FACTION-010 : les commandes /faction s appliquent par nom de faction et répondent en clair', function () {
+      var G2 = MC.Guildes, e = G2.creerEtat();
+      function cmd(qui, texte) {
+        var r = MC.Commandes.executer({ nom: 'faction', args: texte.split(' ') }, {});
+        A.equal(r.actions[0].brut, texte, 'la commande d origine accompagne l action');
+        return G2.appliquerAction(e, qui, r.actions[0]);
+      }
+      A.ok(/fondée/.test(cmd('Alice', 'creer Loups').message));
+      A.ok(/déjà pris/.test(cmd('Carl', 'creer loups').message), 'nom unique, sans égard à la casse');
+      A.ok(cmd('Bob', 'postuler Loups').ok);
+      A.equal(cmd('Carl', 'accepter Loups Bob').ok, false, 'un non-membre ne décide pas');
+      A.ok(/Bob rejoint/.test(cmd('Alice', 'accepter Loups Bob').message));
+      var dire = cmd('Bob', 'dire salut');
+      A.ok(dire.canal && dire.canal.membres.indexOf('Alice') >= 0 && dire.message.indexOf('[Loups] Bob : salut') === 0);
+      A.ok(cmd('Bob', 'info').message.indexOf('Principale : Loups (recrue)') === 0);
+      A.ok(/Vous quittez/.test(cmd('Bob', 'quitter Loups').message));
+      A.ok(/aucune faction/.test(cmd('Bob', 'info').message));
+      A.ok(/introuvable/.test(cmd('Bob', 'postuler Ours').message));
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

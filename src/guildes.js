@@ -242,6 +242,63 @@
      dégâts entre deux joueurs — c'est la SEULE chose que cette fonction
      décide ; elle ne juge pas de la diplomatie (alliée n'empêche pas les
      dégâts, seule l'appartenance commune protège). */
+  /* Applique une action issue de /faction (MC.Commandes) au nom de `joueurId` :
+     le nom de faction se résout en identifiant, chaque action appelle sa
+     fonction, et le résultat revient en message lisible. `dire` renvoie le
+     canal (les membres à qui le serveur ou le jeu remettra le message). */
+  var MOTIFS = { nom_invalide: 'nom invalide', nom_pris: 'ce nom est déjà pris', introuvable: 'faction introuvable',
+                 deja_membre: 'déjà membre', refuse: 'vous n\'en avez pas le droit', pas_membre: 'vous n\'en êtes pas membre',
+                 relation_invalide: 'relation : alliee, neutre ou ennemie', rang_invalide: 'rang : officier, membre ou recrue' };
+  function idDe(etat, nomOuId) {
+    if (!nomOuId) return null;
+    if (etat.factions.has(nomOuId)) return nomOuId;
+    var c = canon(nomOuId), res = null;
+    etat.factions.forEach(function (f, id) { if (canon(f.nom) === c) res = id; });
+    return res;
+  }
+  function appliquerAction(etat, joueurId, a) {
+    var x = a.args || {}, fid = idDe(etat, x.faction), r, nomF = x.faction;
+    function rendu(res, ok) {
+      if (!res.ok) return { ok: false, message: 'Faction : ' + (MOTIFS[res.motif] || res.motif || 'refusé') };
+      return { ok: true, message: ok };
+    }
+    switch (a.action) {
+      case 'creer': r = creerFaction(etat, joueurId, x); return rendu(r, 'Faction « ' + x.nom + ' » fondée ; vous en êtes le chef.');
+      case 'postuler': return rendu(postuler(etat, joueurId, fid), 'Candidature envoyée à « ' + nomF + ' ».');
+      case 'accepter': return rendu(accepter(etat, joueurId, fid, x.joueur), x.joueur + ' rejoint « ' + nomF + ' ».');
+      case 'refuser': return rendu(refuser(etat, joueurId, fid, x.joueur), 'Candidature de ' + x.joueur + ' refusée.');
+      case 'inviter': return rendu(inviter(etat, joueurId, fid, x.joueur), x.joueur + ' est invité dans « ' + nomF + ' ».');
+      case 'accepterInvitation': return rendu(accepterInvitation(etat, joueurId, fid), 'Vous rejoignez « ' + nomF + ' ».');
+      case 'quitter': return rendu(quitter(etat, joueurId, fid), 'Vous quittez « ' + nomF + ' ».');
+      case 'nommerRang': return rendu(nommerRang(etat, joueurId, fid, x.joueur, x.rang), x.joueur + ' est désormais ' + x.rang + '.');
+      case 'promouvoir': return rendu(promouvoir(etat, joueurId, fid, x.joueur), x.joueur + ' est promu.');
+      case 'retrograder': return rendu(retrograder(etat, joueurId, fid, x.joueur), x.joueur + ' est rétrogradé.');
+      case 'exclure': return rendu(exclure(etat, joueurId, fid, x.joueur), x.joueur + ' est exclu.');
+      case 'transmettre': return rendu(transmettre(etat, joueurId, fid, x.joueur), x.joueur + ' dirige désormais « ' + nomF + ' ».');
+      case 'dissoudre':
+        if (!fid) return rendu({ ok: false, motif: 'introuvable' });
+        if (rangDe(etat, fid, joueurId) !== 'chef') return rendu({ ok: false, motif: 'refuse' });
+        return rendu(dissoudre(etat, fid), '« ' + nomF + ' » est dissoute.');
+      case 'principale': return rendu(definirPrincipale(etat, joueurId, fid), '« ' + nomF + ' » est votre faction principale.');
+      case 'relation': {
+        var cible = idDe(etat, x.cible) || x.cible;
+        return rendu(declarerRelation(etat, joueurId, fid, cible, x.relation), '« ' + nomF + ' » se déclare ' + x.relation + ' envers ' + x.cible + '.');
+      }
+      case 'dire': {
+        var mine = factionsDe(etat, joueurId).principale;
+        if (!mine) return rendu({ ok: false, motif: 'pas_membre' });
+        var f = etat.factions.get(mine);
+        return { ok: true, message: '[' + f.nom + '] ' + joueurId + ' : ' + (x.texte || ''), canal: { faction: mine, membres: membresDe(etat, mine) } };
+      }
+      case 'info': default: {
+        var mes = factionsDe(etat, joueurId);
+        var nom = function (id) { var g = etat.factions.get(id); return g ? g.nom + ' (' + rangDe(etat, id, joueurId) + ')' : id; };
+        if (!mes.principale) return { ok: true, message: 'Vous n\'appartenez à aucune faction. /faction creer <nom> pour en fonder une.' };
+        return { ok: true, message: 'Principale : ' + nom(mes.principale) + (mes.secondaires.length ? ' · secondaires : ' + mes.secondaires.map(nom).join(', ') : '') };
+      }
+    }
+  }
+
   function peutBlesser(etat, a, b) {
     if (a === b) return false;
     if (memeFaction(etat, a, b)) return false;
@@ -304,7 +361,7 @@
 
   MC.Guildes = {
     RANGS: RANGS,
-    creerEtat: creerEtat, creerFaction: creerFaction, dissoudre: dissoudre,
+    creerEtat: creerEtat, creerFaction: creerFaction, dissoudre: dissoudre, appliquerAction: appliquerAction,
     rangDe: rangDe, estMembre: estMembre,
     nommerRang: nommerRang, promouvoir: promouvoir, retrograder: retrograder,
     exclure: exclure, transmettre: transmettre,

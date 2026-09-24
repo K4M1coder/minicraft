@@ -206,6 +206,28 @@ async function attendreDemarrage(port) {
     eq(toiB && toiB[0] && toiB[0].pv, 15,
        'SPEC-COMBAT-002 : en zone PvP et avec --pvp on, l\'attaque blesse réellement Bob');
 
+    // factions de joueurs (SPEC-FACTION-010, 012) : le serveur fait foi
+    a.envoyer({ t: 'chat', texte: '/faction creer Loups' });
+    const cree = await a.attendre('chat', 3000, m => /Loups/.test(m.texte || '') && /fondée/.test(m.texte || ''));
+    ok(!!cree, 'SPEC-FACTION-009 : /faction creer fonde la faction sur le serveur', cree && cree.texte);
+    b.envoyer({ t: 'chat', texte: '/faction postuler Loups' });
+    await b.attendre('chat', 3000, m => /Candidature envoyée/.test(m.texte || ''));
+    a.envoyer({ t: 'chat', texte: '/faction accepter Loups Bob' });
+    const acc = await a.attendre('chat', 3000, m => /Bob rejoint/.test(m.texte || ''));
+    ok(!!acc, 'SPEC-FACTION-010 : le chef accepte la candidature', acc && acc.texte);
+    a.envoyer({ t: 'attaque', j: 0, degats: 5, joueurCible: bB.id + '/0' });
+    await dodo(600);
+    toiB = (b.messages.filter(m => m.t === 'etat').pop() || {}).toi;
+    eq(toiB && toiB[0] && toiB[0].pv, 15, 'SPEC-FACTION-012 : deux membres d\'une même faction ne se blessent pas');
+    b.envoyer({ t: 'chat', texte: '/faction dire rendez-vous au col' });
+    const canal = await a.attendre('chat', 3000, m => m.type === 'faction');
+    ok(/\[Loups\] Bob : rendez-vous au col/.test(canal.texte), 'SPEC-FACTION-012 : le canal de faction porte le message', canal.texte);
+    await dodo(200);
+    ok(!admin.messages.some(m => m.t === 'chat' && m.type === 'faction'), 'SPEC-FACTION-012 : un non-membre ne le reçoit pas');
+    b.envoyer({ t: 'chat', texte: '/faction quitter Loups' });
+    await b.attendre('chat', 3000, m => /Vous quittez/.test(m.texte || ''));
+    await dodo(500);
+
     // une cible qui n'existe pas ne fait aucun dégât (mêmes règles qu'en PvE)
     a.envoyer({ t: 'attaque', j: 0, degats: 100, joueurCible: '9999/0' });
     await dodo(150);

@@ -15,6 +15,10 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+### Ajouté
+
+- Les commandes /faction s'appliquent : hors ligne à l'état de la partie (sauvegardé), en ligne sur le serveur qui fait foi ; « dire » ne parvient qu'aux membres de la faction principale ; deux membres d'une même faction ne se blessent pas en PvP.
+
 ### Modifié
 
 - L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.
@@ -56,7 +60,6 @@ respecter (voir PLAN.md, « Commits et versions »).
 ### Limites connues
 
 - SPEC-COMBAT-002 ne couvre que le PvP EN LIGNE : l'écran partagé local ne simule pas de combat entre joueurs locaux (le moteur d'entités hors ligne ne cible que le premier joueur de l'équipe), une limite préexistante non reprise dans cette tâche.
-- Les commandes /faction produisent des actions que le jeu et le serveur n'acheminent pas encore vers MC.Guildes (la logique est complète et testée ; l'acheminement reste à brancher).
 - Cultes et bandits ne naissent côté serveur que des sites qu'on lui fournit ; la découverte automatique ne couvre que villes et mégapoles.
 
 ## [0.0.86] - 2026-09-24
