@@ -15,6 +15,12 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+### Ajouté
+
+- Verre teinté (7 couleurs), béton (poudre + eau, 7 couleurs), laine et terre cuite dans les teintes manquantes, avec les colorants noir (encre de calmar), blanc (poudre d'os) et gris (charbon) — SPEC-CONSTR-005.
+- Marbre et poutres de chaque essence de bois, et le chaume : nouveaux matériaux de construction, avec leurs recettes ; marbre et ardoise apparaissent aussi naturellement en sous-sol — SPEC-CONSTR-006.
+- Le feu : un bloc B.FEU qui prend aux matériaux inflammables (bois, feuillages, laine, chaume, foin…), se propage à un voisin, s'éteint dans l'eau ou sous la pluie, éclaire et fume ; foyer, cheminée et torches fument aussi, et la fumée dérive avec le vent de son altitude ; un briquet (silex et acier) ou la lave l'allument — SPEC-CONSTR-007.
+
 ### Modifié
 
 - L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.

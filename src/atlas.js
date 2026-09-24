@@ -1018,6 +1018,72 @@
       g.fillStyle = '#8a8c94'; g.fillRect(o[0] + 2, o[1] + 1, 2, 2); g.fillRect(o[0] + 12, o[1] + 1, 2, 2);
     })();
 
+    // ─── L24 matériaux (SPEC-CONSTR-005/006/007) : tuiles 512-559 ─────────────
+    fiole(512, '#202020'); fiole(513, '#f0eee0'); fiole(514, '#8a8a8a');   // teintures noire/blanche/grise
+    (function () {                                                        // 515 briquet
+      var o = clear(515);
+      g.fillStyle = '#787878'; g.fillRect(o[0] + 3, o[1] + 6, 9, 6);
+      g.fillStyle = '#b0b0b0'; g.fillRect(o[0] + 4, o[1] + 7, 7, 2);
+      g.fillStyle = '#e0a030'; g.fillRect(o[0] + 6, o[1] + 3, 3, 4);       // silex
+    })();
+    var TEINTES_ATLAS = [
+      [190, 44, 40], [230, 200, 40], [50, 70, 180], [70, 140, 50],
+      [40, 38, 42], [230, 226, 214], [140, 140, 144],
+    ];
+    TEINTES_ATLAS.forEach(function (rgb, i) {
+      (function () {                                                      // 520-526 verre teinté : fondu, clairsemé
+        var o = clear(520 + i);
+        for (var y = 0; y < TILE; y++) for (var x = 0; x < TILE; x++) {
+          if ((x + y) % 4 === 0) continue;
+          var n = (rnd() - 0.5) * 20;
+          px(o[0], o[1], x, y, 'rgba(' + clamp(rgb[0] + n) + ',' + clamp(rgb[1] + n) + ',' + clamp(rgb[2] + n) + ',.55)');
+        }
+      })();
+      // 527-533 béton en poudre : terne et granuleux ; 534-540 béton durci : dense et lisse
+      grain(527 + i, [rgb[0] * 0.55 + 40, rgb[1] * 0.55 + 40, rgb[2] * 0.55 + 40], 22);
+      grain(534 + i, [rgb[0] * 0.7 + 20, rgb[1] * 0.7 + 20, rgb[2] * 0.7 + 20], 9);
+    });
+    grain(541, [26, 26, 28], 14); grain(542, [232, 228, 218], 10); grain(543, [128, 128, 132], 14);  // laines
+    grain(544, [90, 110, 150], 16); grain(545, [90, 130, 90], 16); grain(546, [40, 36, 34], 14);
+    grain(547, [212, 200, 176], 14); grain(548, [130, 128, 126], 14);                                // terres cuites
+    (function () {                                                        // 549 marbre : veiné
+      var o = grain(549, [222, 218, 212], 8);
+      g.strokeStyle = 'rgba(150,150,150,.35)';
+      for (var i = 0; i < 3; i++) {
+        g.beginPath(); g.moveTo(o[0] + rnd() * TILE, o[1]); g.lineTo(o[0] + rnd() * TILE, o[1] + TILE); g.stroke();
+      }
+    })();
+    (function () {                                                        // 550 chaume : bottes de paille
+      var o = grain(550, [176, 150, 66], 20);
+      g.strokeStyle = 'rgba(120,96,34,.5)';
+      for (var y = 1; y < TILE; y += 2) {
+        g.beginPath(); g.moveTo(o[0], o[1] + y); g.lineTo(o[0] + TILE, o[1] + y + (rnd() - 0.5) * 2); g.stroke();
+      }
+    })();
+    [551, 552, 553, 554, 555].forEach(function (t, i) {                  // poutres, une par essence
+      var o = grain(t, [150 - i * 6, 112 - i * 4, 68 - i * 3], 18);
+      g.fillStyle = 'rgba(70,50,26,.4)';
+      g.fillRect(o[0] + 1, o[1], 1, TILE); g.fillRect(o[0] + TILE - 2, o[1], 1, TILE);
+    });
+    (function () {                                                        // 556 feu : flamme (fond transparent)
+      var o = clear(556);
+      for (var y = 0; y < TILE; y++) for (var x = 0; x < TILE; x++) {
+        var spread = 1.5 + (TILE - y) * 0.22;
+        if (Math.abs(x - 8) > spread * (0.35 + rnd() * 0.65)) continue;
+        var t2 = y / TILE;
+        px(o[0], o[1], x, y, 'rgb(255,' + clamp(90 + t2 * 160) + ',' + clamp(20 + t2 * 50) + ')');
+      }
+    })();
+    grain(557, [200, 90, 40], 16);                                        // 557 foyer, dessus : braises
+    (function () {                                                        // 558 foyer, côté : pierre
+      var o = grain(558, [120, 118, 122], 22);
+      g.strokeStyle = 'rgba(70,70,74,.5)'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
+    })();
+    (function () {                                                        // 559 cheminée : pierre suie
+      var o = grain(559, [110, 106, 108], 20);
+      g.fillStyle = 'rgba(40,38,40,.35)'; g.fillRect(o[0], o[1] + TILE - 3, TILE, 3);
+    })();
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec

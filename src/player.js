@@ -305,6 +305,20 @@
       return 'verse';
     }
 
+    /* Briquet (SPEC-CONSTR-007) : allume un feu sur la face visée, si elle
+       peut prendre (un matériau inflammable tout près, ou un appui solide). */
+    function utiliserBriquet() {
+      var hit = P.raycast(world, eyePos(), lookDir(), REACH, function (id) { return id !== 0; });
+      if (!hit) return null;
+      var x = hit.x + hit.nx, y = hit.y + hit.ny, z = hit.z + hit.nz;
+      if (y < 0 || y >= C.WORLD_H) return null;
+      if (!C.isReplaceable(world.getBlock(x, y, z))) return null;
+      if (!MC.Feu || !MC.Feu.peutAllumer(world.getBlock, x, y, z)) return null;
+      world.setBlock(x, y, z, B.FEU);
+      if (world.setEtat) world.setEtat(x, y, z, 0);
+      return 'allume';
+    }
+
     // ─── poser / utiliser ────────────────────────────────────────────────────
     /* Renvoie une chaîne décrivant ce qui s'est passé : 'place', 'till',
        'plant', 'open:craft', 'open:furnace', 'eat', ou null. */
@@ -340,6 +354,7 @@
       // la carte s'ouvre d'un clic droit
       if (idef && idef.carte) return 'carte';
       if (idef && idef.seau) return utiliserSeau(idef.seau);
+      if (idef && idef.briquet) return utiliserBriquet();
       // véhicule : c'est le jeu qui le fait apparaître (voir vehicules.js)
       if (idef && idef.vehicule) return 'vehicule:' + idef.vehicule;
 

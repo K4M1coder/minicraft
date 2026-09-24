@@ -224,6 +224,11 @@
          cette couche traversée, pas à une hauteur absolue fixe. */
       if ((bio.id === 'desert' || bio.id === 'badlands') && y > h - 20 &&
           nc >= 0.2 && nc < 0.208) return B.SEL;
+      /* L24 (SPEC-CONSTR-006) : marbre et ardoise, poches rares en sous-sol —
+         un peu partout, plus fréquentes dans les biomes à strates (montagnes,
+         badlands). Une plage inutilisée par les filons ci-dessus (0.19-0.20). */
+      if (y < h - 5 && y > 20 && nc >= 0.19 && nc < (bio.strates ? 0.196 : 0.193)) return B.MARBRE;
+      if (y < h - 5 && y > 12 && nc >= 0.196 && nc < (bio.strates ? 0.2 : 0.198)) return B.ARDOISE;
       return B.STONE;
     }
 
@@ -699,6 +704,14 @@
       // l'eau alentour devra peut-être couler
       if (MC.Eau && (C.isWater(avant) || C.isWater(id) || eauVoisine(wx, wy, wz))) signalerEau(wx, wy, wz);
 
+      /* L24 (SPEC-CONSTR-007) : le feu, sa propagation et son extinction se
+         rejouent au prochain passage de coulerFeu — signalé dès qu'un feu
+         apparaît/disparaît ici, ou qu'un matériau inflammable ou de la lave
+         est posé (pour l'allumage à la lave). */
+      if (MC.Feu && (id === B.FEU || avant === B.FEU || id === B.LAVA || avant === B.LAVA || C.isInflammable(id))) {
+        signalerFeu(wx, wy, wz);
+      }
+
       // un bloc de bordure change la silhouette du chunk voisin
       if (lx === 0) touch(cx - 1, cz);
       if (lx === CX - 1) touch(cx + 1, cz);
@@ -742,6 +755,53 @@
           setBlock(ch[0], ch[1], ch[2], ch[3]);
           faits.push(ch);
         });
+      });
+      return faits;
+    }
+
+    /* ─── le feu ─────────────────────────────────────────────────────────────
+       Même schéma que l'eau : une file des cases à réexaminer, traitée par
+       lots bornés (coulerFeu). `pluieIci` interroge la météo du monde (SEUL
+       endroit qui la connaisse ici) : à ciel ouvert, sous une pluie ou une
+       neige, un feu s'éteint. */
+    var feuFile = new Map();
+    function signalerFeu(x, y, z) {
+      for (var i = 0; i < 7; i++) {
+        var a = x + VOISINS6[i][0], b = y + VOISINS6[i][1], c2 = z + VOISINS6[i][2];
+        if (b <= 0 || b >= WH) continue;
+        feuFile.set(key3(a, b, c2), [a, b, c2]);
+      }
+    }
+    function cielOuvert(x, y, z) {
+      for (var yy = y + 1; yy < WH; yy++) if (getBlock(x, yy, z)) return false;
+      return true;
+    }
+    function pluieIci(x, y, z, temps) {
+      if (!meteo || temps === undefined || !cielOuvert(x, y, z)) return false;
+      var et = meteo.etat(temps);
+      var cl = Bio.climat(x, z);
+      var bio = biomeAt ? biomeAt(x, z) : null;
+      var tempC = meteo.temperature(cl.t, y, temps, et, bio && bio.id);
+      var p = meteo.precipitation(x, z, temps, tempC, bio && bio.id, et);
+      return !!p.forme;
+    }
+    function coulerFeu(max, temps, rand) {
+      var faits = [], n = 0, lot = [];
+      feuFile.forEach(function (p, k) { if (n++ < (max || 48)) { lot.push(p); feuFile.delete(k); } });
+      function appliquer(ch) {
+        setBlock(ch[0], ch[1], ch[2], ch[3]);
+        setEtat(ch[0], ch[1], ch[2], ch[4] || 0);
+        faits.push(ch);
+      }
+      lot.forEach(function (p) {
+        if (!estCharge(p[0], p[2])) return;
+        var id = getBlock(p[0], p[1], p[2]);
+        if (id === B.FEU) {
+          var pluie = pluieIci(p[0], p[1], p[2], temps);
+          MC.Feu.etapeFeu(getBlock, getEtat, p[0], p[1], p[2], rand, pluie).forEach(appliquer);
+        } else if (MC.Feu.inflammable(id)) {
+          MC.Feu.allumerParLave(getBlock, p[0], p[1], p[2], rand).forEach(appliquer);
+        }
       });
       return faits;
     }
@@ -840,7 +900,7 @@
     }
 
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
-    var eauT = 0, gelT = 0;
+    var eauT = 0, gelT = 0, feuT = 0;
     function tick(dt, stageTime, rand, opts) {
       var st = stageTime || 14;
       var r = rand || Math.random;
@@ -851,6 +911,11 @@
         if (eauT >= 0.25) { eauT = 0; coulerEau(96); }
       }
       var temps = opts && opts.temps;
+      // le feu avance deux fois par seconde (SPEC-CONSTR-007)
+      if (MC.Feu && !(opts && opts.feu === false)) {
+        feuT += dt;
+        if (feuT >= 0.5) { feuT = 0; coulerFeu(48, temps, r); }
+      }
       var mult = multCroissance(temps);
       crops.forEach(function (c2) {
         if (mult === null) return;                    // pas l'hiver
@@ -1027,6 +1092,7 @@
       get zones() { return zones; }, zonesEtat: zonesEtat, zoneEn: zoneEn, reglesZoneEn: reglesZoneEn,
       accorderPolitiqueZone: accorderPolitiqueZone,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
+      coulerFeu: coulerFeu, get feuEnAttente() { return feuFile.size; }, pluieIci: pluieIci,
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
     };

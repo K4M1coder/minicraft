@@ -1619,6 +1619,47 @@
       return panaches.filter(function (m) { return m.visible; }).length;
     }
 
+    /* ── Fumée du feu, des foyers, cheminées et torches (SPEC-CONSTR-007) :
+       un filet léger par source, borné en nombre (les plus proches d'abord),
+       qui monte et dérive avec le vent de son altitude. La position de
+       chaque particule vient de MC.Feu.deriveeFumee (fonction pure, testée
+       sous Node) : le rendu ne fait qu'y injecter l'âge et le vent du poste. */
+    var MAX_FUMEES = 12, NB_PART_FUMEE = 26, fumeesPool = [];
+    function fumeePetite() {
+      var g = new THREE.BufferGeometry(), pos = new Float32Array(NB_PART_FUMEE * 3);
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      var m = new THREE.Points(g, new THREE.PointsMaterial({ size: 6, map: texFumee, transparent: true, depthWrite: false,
+                                                             opacity: 0.35, color: 0x9a958c, sizeAttenuation: true }));
+      m.frustumCulled = false; m.renderOrder = 4;
+      m.userData = { ages: new Float32Array(NB_PART_FUMEE).map(function () { return Math.random() * 6; }) };
+      scene.add(m);
+      return m;
+    }
+    /* `liste` : [{ x, y, z }] (une case par source) ; `vent`(y) → {x, z}. */
+    function majFumees(liste, dt, vent) {
+      while (fumeesPool.length < Math.min(MAX_FUMEES, liste.length)) fumeesPool.push(fumeePetite());
+      var F = MC.Feu;
+      fumeesPool.forEach(function (m, i) {
+        var v = liste[i];
+        m.visible = !!v;
+        if (!v) return;
+        var p = m.geometry.attributes.position.array, ages = m.userData.ages;
+        var vie = 6;
+        for (var k = 0; k < NB_PART_FUMEE; k++) {
+          ages[k] += dt;
+          if (ages[k] > vie) ages[k] -= vie;
+          var pos = F ? F.deriveeFumee(v.x, v.y, v.z, ages[k], 1.4, vent) : { x: v.x, y: v.y + ages[k] * 1.4, z: v.z };
+          var ang = k * 2.39996, r = 0.15 + ages[k] * 0.18;
+          p[k * 3] = pos.x + Math.cos(ang) * r;
+          p[k * 3 + 1] = pos.y;
+          p[k * 3 + 2] = pos.z + Math.sin(ang) * r;
+        }
+        m.geometry.attributes.position.needsUpdate = true;
+      });
+      for (var j = liste.length; j < fumeesPool.length; j++) fumeesPool[j].visible = false;
+      return fumeesPool.filter(function (m) { return m.visible; }).length;
+    }
+
     /* Un éclair : un trait brisé du nuage au sol, et un flash qui blanchit
        ciel et lumière un instant. */
     function eclair(x, ySol, z, force) {
@@ -2068,7 +2109,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
-      majVolcans: majVolcans, panaches: panaches, syncFigurants: syncFigurants, figurants: figurants,
+      majVolcans: majVolcans, panaches: panaches, majFumees: majFumees, syncFigurants: syncFigurants, figurants: figurants,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
       get resolution() { return resolutionVoulue; }, get disposition() { return dispositionVue; }, get ombresActives() { return ombresActives; },
       formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },

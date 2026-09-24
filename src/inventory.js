@@ -236,6 +236,60 @@
   shapeless(I.BIJOU, 1, [I.ARGENT_LINGOT, I.SAPHIR]);
   shapeless(I.BIJOU, 1, [I.ARGENT_LINGOT, I.EMERALD]);
 
+  // ─── L24 matériaux (SPEC-CONSTR-005/006/007) ──────────────────────────────
+  // teintures manquantes : encre de calmar (noir), poudre d'os (blanc), charbon (gris)
+  shapeless(I.DYE_BLACK, 2, [I.INK_SAC]);
+  shapeless(I.DYE_WHITE, 2, [I.BONE_MEAL]);
+  shapeless(I.DYE_GRAY, 2, [I.COAL]);
+  // verre teinté : une teinture + du verre
+  var TEINTES_DYE = [
+    [B.VERRE_ROUGE, I.DYE_RED], [B.VERRE_JAUNE, I.DYE_YELLOW], [B.VERRE_BLEU, I.DYE_BLUE],
+    [B.VERRE_VERT, I.DYE_GREEN], [B.VERRE_NOIR, I.DYE_BLACK], [B.VERRE_BLANC, I.DYE_WHITE],
+    [B.VERRE_GRIS, I.DYE_GRAY],
+  ];
+  TEINTES_DYE.forEach(function (t) { shapeless(t[0], 8, [B.GLASS, B.GLASS, B.GLASS, B.GLASS,
+    B.GLASS, B.GLASS, B.GLASS, B.GLASS, t[1]]); });
+  // béton en poudre : sable + gravier + teinture ; il durcit au contact d'un seau d'eau
+  var BETON_POUDRE_DYE = [
+    [B.BETON_POUDRE_ROUGE, I.DYE_RED], [B.BETON_POUDRE_JAUNE, I.DYE_YELLOW], [B.BETON_POUDRE_BLEU, I.DYE_BLUE],
+    [B.BETON_POUDRE_VERT, I.DYE_GREEN], [B.BETON_POUDRE_NOIR, I.DYE_BLACK], [B.BETON_POUDRE_BLANC, I.DYE_WHITE],
+    [B.BETON_POUDRE_GRIS, I.DYE_GRAY],
+  ];
+  var BETON_DURCI = [
+    [B.BETON_ROUGE, B.BETON_POUDRE_ROUGE], [B.BETON_JAUNE, B.BETON_POUDRE_JAUNE], [B.BETON_BLEU, B.BETON_POUDRE_BLEU],
+    [B.BETON_VERT, B.BETON_POUDRE_VERT], [B.BETON_NOIR, B.BETON_POUDRE_NOIR], [B.BETON_BLANC, B.BETON_POUDRE_BLANC],
+    [B.BETON_GRIS, B.BETON_POUDRE_GRIS],
+  ];
+  BETON_POUDRE_DYE.forEach(function (t) { shapeless(t[0], 8, [B.SAND, B.SAND, B.SAND, B.SAND,
+    B.GRAVEL, B.GRAVEL, B.GRAVEL, B.GRAVEL, t[1]]); });
+  BETON_DURCI.forEach(function (t) { shapeless(t[0], 4, [t[1], t[1], t[1], t[1], I.SEAU_EAU]); });
+  // laine et terre cuite : les teintes manquantes (rouge/jaune existaient déjà)
+  shapeless(B.WOOL_BLACK, 1, [B.WOOL, I.DYE_BLACK]);
+  shapeless(B.WOOL_WHITE, 1, [B.WOOL, I.DYE_WHITE]);
+  shapeless(B.WOOL_GRAY, 1, [B.WOOL, I.DYE_GRAY]);
+  shapeless(B.TERRACOTTA_BLUE, 1, [B.TERRACOTTA, I.DYE_BLUE]);
+  shapeless(B.TERRACOTTA_GREEN, 1, [B.TERRACOTTA, I.DYE_GREEN]);
+  shapeless(B.TERRACOTTA_BLACK, 1, [B.TERRACOTTA, I.DYE_BLACK]);
+  shapeless(B.TERRACOTTA_WHITE, 1, [B.TERRACOTTA, I.DYE_WHITE]);
+  shapeless(B.TERRACOTTA_GRAY, 1, [B.TERRACOTTA, I.DYE_GRAY]);
+
+  // ─── L24 matériaux (SPEC-CONSTR-006) : marbre, chaume, poutres ────────────
+  // le marbre se taille aussi (rare, mais on n'a pas à attendre d'en trouver) ;
+  // il se trouve surtout naturellement en sous-sol (voir world.js:filon).
+  shaped(B.MARBRE, 1, ['SSS', 'SSS', 'SSS'], { S: B.STONE });
+  shaped(B.CHAUME, 1, ['WWW', 'WWW'], { W: I.WHEAT });
+  // poutres : trois planches empilées (une colonne, motif distinct des
+  // planches elles-mêmes — 'LL' est déjà pris par la recette planches <- troncs)
+  shaped(B.POUTRE_CHENE, 2, ['P', 'P', 'P'], { P: B.PLANKS });
+  shaped(B.POUTRE_SAPIN, 2, ['P', 'P', 'P'], { P: B.PLANCHES_SAPIN });
+  shaped(B.POUTRE_BOULEAU, 2, ['P', 'P', 'P'], { P: B.PLANCHES_BOULEAU });
+  shaped(B.POUTRE_ACACIA, 2, ['P', 'P', 'P'], { P: B.PLANCHES_ACACIA });
+  shaped(B.POUTRE_JUNGLE, 2, ['P', 'P', 'P'], { P: B.PLANCHES_JUNGLE });
+
+  // ─── L24 matériaux (SPEC-CONSTR-007) : briquet ────────────────────────────
+  // silex et acier : un lingot de fer et un pavé (à défaut d'un objet « silex »)
+  shapeless(I.BRIQUET, 1, [I.IRON_INGOT, B.COBBLE]);
+
   // outils : 3 matériaux × 5 familles
   var MATS = [[B.PLANKS, 1], [B.COBBLE, 2], [I.IRON_INGOT, 3], [I.DIAMOND, 4]];
   var TOOLSETS = {
