@@ -87,6 +87,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L38** | Carte de densité (vierge, rurale, urbaine, hyperurbaine) combinée aux biomes et à l'environnement, mégapoles, hiérarchie des routes et rivières navigables, zones de jeu PvP/PvE/PvP seul/PvE seul/sûres ; prolonge L18 (en cours) et complète COMBAT-002, HABITAT-010/011, ROUTE-006 | `DENSITE` `HABITAT` `ROUTE` `ZONE` | à faire |
 | **L39** | Factions PNJ autonomes (objectifs, actions, territoires, relations, quêtes) et factions de joueurs (création, rangs, candidatures, départ, une principale et des secondaires, canal, diplomatie, persistance) | `FACTION` | à faire |
 | **L40** | Technique : blocs sur 16 bits et migration des sauvegardes (les 128 identifiants de bloc sont épuisés) | `SAVE` | à faire |
+| **L41** | Options d'affichage : choix du GPU, résolutions (800×600 à 4K, native), plein écran, choix de l'écran, affichage étendu sur deux ou trois écrans horizontaux ou verticaux | `OPTION` | à faire |
 | **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, modérateurs (sanctions sans accès aux données personnelles), panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
