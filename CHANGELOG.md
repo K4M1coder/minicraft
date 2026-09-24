@@ -21,6 +21,13 @@ respecter (voir PLAN.md, « Commits et versions »).
   `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le
   protocole réseau, et `MANGER` passe par `ContratsV2.validerManger`
   (compatible avec la forme historique).
+- Vague 2 (B1, SPEC-SYNC-007 à 017 partielles) : module pur `src/conteneurs.js`
+  (`MC.Conteneurs`) — inventaire, équipement, grille de fabrication et
+  conteneurs (transfert, craft, equip, consommer, manger, lâcher, créatif,
+  rendre la grille, déclarer un distributeur), fourneau (`tickFour`),
+  prédiction (`creerPrediction`) et enregistrement joueur persistable
+  (`versEnregistrement`/`depuisEnregistrement`) ; même code pour le solo, la
+  prédiction client et le serveur (raccordement réseau et serveur à venir).
 
 ### Modifié
 
