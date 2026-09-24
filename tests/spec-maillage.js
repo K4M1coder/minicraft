@@ -195,7 +195,7 @@
       A.ok(true, 'aucune exception : la rotation ne bloque jamais la construction, seulement l\'extension');
     });
 
-    it('même rendu : surface totale couverte identique (naïf vs fusionné), sur un échantillon de vrais chunks générés', function () {
+    it('SPEC-PERF-011 à 013 : même rendu — surface totale couverte identique (naïf vs fusionné), sur un échantillon de vrais chunks générés', function () {
       var w = MC.createWorld(20260924 + 47);
       var total = 0, totalG = 0, totalN = 0;
       for (var cx = 0; cx < 3; cx++) for (var cz = 0; cz < 3; cz++) {
