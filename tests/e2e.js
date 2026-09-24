@@ -66,7 +66,12 @@
       var c = document.createElement('canvas');
       c.width = cw; c.height = ch;
       c.getContext('2d').drawImage(src, 0, 0, cw, ch);
-      return { libelle: libelle || '', type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.7) };
+      // base64 PUR (sans le préfixe data:image/jpeg;base64,) : le serveur
+      // (tools/resultats-tests.js) sait aussi retirer un préfixe s'il en
+      // trouve un, mais l'envoyer déjà nu est le format attendu.
+      var url = c.toDataURL('image/jpeg', 0.7);
+      var i = url.indexOf(',');
+      return { libelle: libelle || '', type: 'image/jpeg', base64: i >= 0 ? url.slice(i + 1) : url };
     } catch (e) { return null; }
   }
 

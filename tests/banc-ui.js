@@ -1,90 +1,11 @@
 /* banc-ui.js — interface du banc de test (SPEC-BANC-007 à 017), au-dessus
-   du noyau de test (tests/harness.js, tests/e2e.js) et, à terme, du
-   catalogue partagé (tests/catalogue.js, tests/presets.json) que construit
-   un autre lot en parallèle.
-
-   CONTRAT avec le noyau : `MC_TESTS.construire/selection/PRESETS/indexSpecs`.
-   Tant que `tests/catalogue.js` (etc.) n'existe pas dans ce chantier, les
-   fonctions ci-dessous sont un ADAPTATEUR DE REPLI qui reconstitue la même
-   forme de données à partir de ce qui existe déjà (`T.suites`, la liste des
-   tests e2e) : chaque entrée porte `_repli: true`. À la fusion avec le
-   noyau, ce bloc (section « MC_TESTS — adaptateur de repli ») doit être
-   retiré et remplacé par le vrai catalogue. */
+   du noyau de test (tests/harness.js, tests/catalogue.js, tests/presets.js,
+   tests/rapport.js, tests/e2e.js). `MC_TESTS` (tests/catalogue.js) fournit
+   le catalogue et la sélection, `G.T` (tests/harness.js) exécute les tests
+   unitaires/fonctionnels/spec, `G.E2E_LISTE`/`G.runCampagneE2E` (tests/e2e.js)
+   les end-to-end — voir plus bas `executerUnitaires`/`executerE2E`. */
 (function (G) {
   'use strict';
-
-  // ══════════════════════════════════════════════════════════════════════
-  // MC_TESTS — adaptateur de repli
-  // ══════════════════════════════════════════════════════════════════════
-  var RE_SPEC = /SPEC-[A-Z]+-\d{3}/g;
-  var RE_ETIQ = /@[a-z0-9-]+/g;
-
-  function specsDe(texte) {
-    var vues = Object.create(null), out = [];
-    (texte.match(RE_SPEC) || []).forEach(function (s) { if (!vues[s]) { vues[s] = 1; out.push(s); } });
-    return out;
-  }
-  function domainesDe(specs) {
-    var vues = Object.create(null), out = [];
-    specs.forEach(function (s) {
-      var d = s.split('-')[1];
-      if (!vues[d]) { vues[d] = 1; out.push(d); }
-    });
-    return out;
-  }
-  function etiquettesDe(texte) { return texte.match(RE_ETIQ) || []; }
-
-  /* Analyse grossière de SPECS.md : une ligne de tableau (identifiant de
-     spec, texte, vérification, état) donne teste/attendu par défaut à un
-     test qui cite cette spec mais n'a pas sa propre fiche. */
-  function indexSpecs(texteSpecsMd) {
-    var index = Object.create(null);
-    if (!texteSpecsMd) return index;
-    texteSpecsMd.split('\n').forEach(function (ligne) {
-      var m = ligne.match(/^\s*\|\s*(SPEC-[A-Z]+-\d{3})\s*\|\s*(.*?)\s*\|\s*(.*?)\s*\|\s*([^|]*)\|\s*$/);
-      if (!m) return;
-      index[m[1]] = { texte: m[2], verification: m[3], etat: (m[4] || '').trim() };
-    });
-    return index;
-  }
-
-  function ficheDefaut(nom, specs, index) {
-    if (specs.length && index && index[specs[0]]) {
-      var e = index[specs[0]];
-      return { teste: e.texte, pourquoi: 'couvre ' + specs[0] + (specs.length > 1 ? ' (et ' + (specs.length - 1) + ' autre(s))' : ''),
-               attendu: e.verification, source: specs[0] };
-    }
-    return { teste: nom, pourquoi: '', attendu: '', source: null };
-  }
-
-  var idCompteur = 0;
-  function construire(T, e2eListe, specsIndex) {
-    var out = [];
-    (T && T.suites || []).forEach(function (suite) {
-      suite.tests.forEach(function (t) {
-        var texte = suite.name + ' — ' + t.name;
-        var specs = specsDe(texte);
-        var fiche = t.fiche || ficheDefaut(t.name, specs, specsIndex);
-        out.push({
-          id: 'unit:' + (idCompteur++), nom: t.name, type: 'unitaire', fichier: null,
-          groupe: suite.name, domaines: domainesDe(specs), specs: specs,
-          etiquettes: etiquettesDe(texte), fiche: fiche,
-          _repli: true, _fn: t.fn, _suite: suite.name,
-        });
-      });
-    });
-    (e2eListe || []).forEach(function (t, i) {
-      var specs = specsDe(t.name);
-      var fiche = t.fiche || ficheDefaut(t.name, specs, specsIndex);
-      out.push({
-        id: 'e2e:' + i, nom: t.name, type: 'e2e', fichier: 'tests/e2e.js', groupe: 'end-to-end',
-        domaines: domainesDe(specs), specs: specs, etiquettes: etiquettesDe(t.name),
-        fiche: fiche, delai: fiche && fiche.delai,
-        _repli: true, _test: t,
-      });
-    });
-    return out;
-  }
 
   function dernierEchecs() {
     try {
@@ -95,47 +16,11 @@
   function memoriserEchecs(idsEchecs) {
     try { localStorage.setItem('mc-banc-derniers-echecs', JSON.stringify(idsEchecs)); } catch (e) { /* rien */ }
   }
-
-  function contientUn(liste, elements) {
-    if (!liste || !liste.length) return true;
-    return elements.some(function (e) { return liste.indexOf(e) >= 0; });
-  }
-  function correspond(t, criteres) {
-    if (criteres.tout) return true;
-    if (criteres.tests && criteres.tests.length && criteres.tests.indexOf(t.nom) < 0 && criteres.tests.indexOf(t.id) < 0) return false;
-    if (criteres.types && criteres.types.length && criteres.types.indexOf(t.type) < 0) return false;
-    if (criteres.groupes && criteres.groupes.length && criteres.groupes.indexOf(t.groupe) < 0) return false;
-    if (criteres.domaines && criteres.domaines.length && !contientUn(criteres.domaines, t.domaines)) return false;
-    if (criteres.liste && criteres.liste.length && criteres.liste.indexOf(t.nom) < 0 && criteres.liste.indexOf(t.id) < 0) return false;
-    if (criteres.echecs) {
-      var derniers = dernierEchecs();
-      if (derniers.indexOf(t.id) < 0) return false;
-    }
-    return true;
-  }
-  function selection(catalogue, criteres) {
-    criteres = criteres || {};
-    var gardes = catalogue.filter(function (t) { return correspond(t, criteres); });
-    if (criteres.sauf && criteres.sauf.length) {
-      var exclus = catalogue.filter(function (t) { return correspond(t, criteres.sauf.reduce(function (a, s) { return Object.assign({}, a, s); }, {})); });
-      var idsExclus = exclus.map(function (t) { return t.id; });
-      gardes = gardes.filter(function (t) { return idsExclus.indexOf(t.id) < 0; });
-    }
-    return gardes;
-  }
-
-  /* Préréglages navigateur (indépendants des préréglages Node du crochet, qui
-     vivent dans tests/presets.json côté noyau). Ceux-ci servent le testeur
-     manuel qui ouvre la page. */
-  var PRESETS = [
-    { nom: 'tout', description: 'toute la suite, unitaires et e2e', pour: 'testeur', criteres: { tout: true } },
-    { nom: 'e2e', description: 'uniquement les tests de bout en bout (partie réelle)', pour: 'testeur', criteres: { types: ['e2e'] } },
-    { nom: 'unitaires', description: 'uniquement la logique pure', pour: 'développeur', criteres: { types: ['unitaire'] } },
-    { nom: 'echecs', description: 'relance les échecs de la dernière campagne', pour: 'développeur', criteres: { echecs: true } },
-  ];
-
-  G.MC_TESTS = { construire: construire, selection: selection, PRESETS: PRESETS, indexSpecs: indexSpecs,
-                 memoriserEchecs: memoriserEchecs, dernierEchecs: dernierEchecs, _repli: true };
+  // `MC_TESTS.selection` (tests/catalogue.js) ne sait rien de « échecs » de
+  // la dernière campagne du navigateur (mémorisés côté client, localStorage) :
+  // on le résout ici et on le passe en `tests`/`liste` explicite.
+  G.MC_TESTS.memoriserEchecs = memoriserEchecs;
+  G.MC_TESTS.dernierEchecs = dernierEchecs;
 
   // ══════════════════════════════════════════════════════════════════════
   // Utilitaires
@@ -434,7 +319,13 @@
       if (preset) { cocherSelon(preset.criteres); urlDepuisCriteres({ preset: preset.nom }); }
     });
     refs.btnTout.addEventListener('click', function () { cocherSelon({ tout: true }); urlDepuisCriteres({}); refermerSelection(); });
-    refs.btnEchecs.addEventListener('click', function () { cocherSelon({ echecs: true }); urlDepuisCriteres({}); refermerSelection(); });
+    refs.btnEchecs.addEventListener('click', function () {
+      // `MC_TESTS.selection` attend, pour la clé `echecs`, la LISTE des ids/noms
+      // en échec (comme `tests`/`liste`), pas un simple drapeau — c'est ici,
+      // côté navigateur, qu'on la résout depuis la mémorisation locale.
+      cocherSelon({ echecs: G.MC_TESTS.dernierEchecs() });
+      urlDepuisCriteres({}); refermerSelection();
+    });
     refs.btnLancer.addEventListener('click', function () { refermerSelection(); lancer(); });
     refs.btnArreter.addEventListener('click', function () { etat.arretDemande = true; });
     refs.seuilLent.addEventListener('change', function () {
@@ -587,46 +478,53 @@
     }
 
     // ── exécution des unitaires par lots, avec progression (SPEC-BANC-009) ──
+    // `G.T.run` (tests/harness.js) exécute un lot de tests SYNCHRONE : on
+    // l'appelle un test à la fois (filtre = [nom]) pour garder la main entre
+    // deux, comme avant — `debutTest`/`finTest` retrouvent l'entrée du
+    // catalogue par groupe+nom (un même nom de test peut exister dans deux
+    // groupes différents, d'où la clé composée).
+    var DELAI_UNITAIRE_MS = 30000; // même défaut que tests/run.js (DELAI_TEST_MS_DEFAUT)
     async function executerUnitaires(liste) {
-      var parSuite = Object.create(null), ordre = [];
-      liste.forEach(function (t) {
-        if (!parSuite[t._suite]) { parSuite[t._suite] = []; ordre.push(t._suite); }
-        parSuite[t._suite].push(t);
-      });
-      var depuisDebut = 0;
-      for (var s = 0; s < ordre.length; s++) {
-        if (etat.arretDemande) break;
-        var tests = parSuite[ordre[s]];
-        for (var i = 0; i < tests.length; i++) {
-          if (etat.arretDemande) break;
-          var t = tests[i];
-          afficherEnCours(t);
-          majResume(t.nom + ' — en cours');
-          var t0 = performance.now();
-          var r;
-          try {
-            t._fn();
-            r = { etat: 'reussi', duree_ms: performance.now() - t0, etapes: [], assertions: { ok: 1, ko: 0 }, captures: [] };
-          } catch (e) {
-            var msg = (e && e.message) || String(e);
-            r = { etat: 'echec', duree_ms: performance.now() - t0, etapes: [], assertions: { ok: 0, ko: 1 },
-                  message: msg, pile: (e && e.stack) || null, captures: [] };
-          }
+      if (!liste.length) return;
+      var parClef = Object.create(null);
+      liste.forEach(function (t) { parClef[t.groupe + '\u0000' + t.nom] = t; });
+      var suivi = {
+        debutTest: function (groupe, nom) {
+          var t = parClef[groupe + '\u0000' + nom];
+          if (t) { afficherEnCours(t); majResume(t.nom + ' — en cours'); }
+        },
+        finTest: function (groupe, nom, ok, ms, detail) {
+          var t = parClef[groupe + '\u0000' + nom];
+          if (!t) return;
+          var r = { etat: ok ? 'reussi' : 'echec', duree_ms: ms, etapes: (detail && detail.etapes) || [],
+                    assertions: (detail && detail.assertions) || { ok: 0, ko: 0 },
+                    message: (detail && detail.message) || null, pile: (detail && detail.pile) || null, captures: [] };
           etat.resultats.push(Object.assign({ id: t.id, nom: t.nom, type: t.type, groupe: t.groupe,
                                                domaines: t.domaines, specs: t.specs, fiche: t.fiche }, r));
           afficherFini(t, r);
           majResume();
-          depuisDebut++;
-          if (depuisDebut % 12 === 0) await attendre0();  // laisse le DOM se rafraîchir
-        }
-        await attendre0();
+        },
+      };
+      for (var i = 0; i < liste.length; i++) {
+        if (etat.arretDemande) break;
+        G.T.run([liste[i].nom], suivi, { delaiMs: DELAI_UNITAIRE_MS });
+        if ((i + 1) % 12 === 0) await attendre0();  // laisse le DOM se rafraîchir
       }
+      await attendre0();
     }
 
     // ── exécution de la campagne e2e ────────────────────────────────────────
     async function executerE2E(liste) {
       if (!liste.length) return;
-      var tests = liste.map(function (t) { return Object.assign({}, t._test, { id: t.id, nom: t.nom, domaines: t.domaines, specs: t.specs, fiche: t.fiche }); });
+      // le catalogue (tests/catalogue.js) ne porte pas la fonction du test —
+      // seul G.E2E_LISTE (tests/e2e.js) l'a : on la retrouve par nom.
+      var parNom = Object.create(null);
+      (G.E2E_LISTE || []).forEach(function (e) { parNom[e.name] = e; });
+      var tests = liste.map(function (t) {
+        var e = parNom[t.nom];
+        if (!e) return null;
+        return Object.assign({}, e, { id: t.id, nom: t.nom, domaines: t.domaines, specs: t.specs, fiche: t.fiche });
+      }).filter(function (t) { return t; });
       var testActif = null, t0Actif = 0, minuteurLent = null;
       await G.runCampagneE2E(game, tests, {
         debutTest: function (t) {
