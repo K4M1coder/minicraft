@@ -174,6 +174,32 @@ fichier, pas seulement ceux de son propre lot.
   précédentes fusionnées dans `server.js`, le découpage en modules purs
   (SPEC-SERVEUR-008).
 
+#### Vague 2 — plan d'exécution
+
+Détail exécutable dans `docs/vague-2/` : [README](docs/vague-2/README.md)
+(dépendances réelles, ordre, zones de `server.js` par lot avec leurs lignes,
+stratégie de fusion, critères de fin, risques) et un fichier par sous-lot —
+[B1](docs/vague-2/B1.md) inventaire et conteneurs serveur,
+[B2](docs/vague-2/B2.md) économie et métiers (commerce par `TROC`),
+[B3](docs/vague-2/B3.md) génération et maillage en Web Workers,
+[B4](docs/vague-2/B4.md) PvP enjeux et sanctions. Les interfaces communes
+sont figées en code dans `src/contrats-vague2.js` (`MC.ContratsV2`, testé par
+`tests/spec-contrats-vague2.js`) : les quatre agents codent contre lui sans
+le modifier. En bref :
+
+- **Prérequis** : fusionner le greedy meshing (A3, pas encore dans master)
+  avant de lancer B3.
+- **Parallélisme** : les quatre sous-lots démarrent ensemble. B2 et B4 ne
+  dépendent de B1 que pour leur branchement en ligne (inventaire serveur
+  réel) : ils codent leurs modules purs et leurs handlers contre le contrat
+  et les fonctions serveur que B1 s'engage à exposer, puis se rebasent.
+- **Fusion** : B3 dès qu'il est prêt ; puis B1 → B2 → B4, portes vertes et
+  revue adversariale avant chaque fusion ; publication en fin de vague.
+- **Specs corrigées** par la revue de cette vague (SYNC-007 à 015, 017, 023 ;
+  ECO-001, 003 à 006 ; PVP-001 à 006 ; PERF-004 à 010, 014) et deux trous
+  ajoutés pour la vague 3 : SPEC-SYNC-027 (présentoirs visibles de tous) et
+  SPEC-SYNC-028 (pose et tir validés contre l'inventaire serveur).
+
 ---
 
 ## 4. Risques identifiés et parades

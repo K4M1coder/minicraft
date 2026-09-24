@@ -20,7 +20,7 @@ const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[
    toucher au navigateur. C'est la porte qui protège toute la stratégie de test. */
 const PURS = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
               'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-              'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'ambiance'];
+              'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'ambiance'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net'];
 
 function lire(p) { return fs.readFileSync(path.join(root, p), 'utf8'); }
