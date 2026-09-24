@@ -13,6 +13,11 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.83] - 2026-09-24
+### Modifié
+
+- README mis à jour : monde, temps, êtres, options, commandes, architecture, limites connues.
+
 ## [0.0.82] - 2026-09-24
 ### Ajouté
 
@@ -94,6 +99,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.83]: #
 [0.0.82]: #
 [0.0.81]: #
 [0.0.80]: #

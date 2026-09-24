@@ -9,6 +9,10 @@ Aucune dépendance npm, aucun build, aucun asset : les textures sont peintes au
 runtime sur un `<canvas>`, les bruitages synthétisés en WebAudio, et le serveur
 implémente WebSocket à la main. Seul Three.js est chargé depuis un CDN.
 
+Version courante : voir [CHANGELOG.md](CHANGELOG.md) (versionnage sémantique,
+format *Tenez un Changelog* ; `node tools/version.js` monte la version à chaque
+commit, la porte G10 vérifie l'accord entre le jeu et le journal).
+
 ---
 
 ## Lancer
@@ -136,15 +140,16 @@ npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NOD
 ## Tests
 
 ```bash
-node tests/run.js                # 768 tests unitaires et fonctionnels
-node tests/gates.js               # les 6 portes de qualité automatiques
+node tests/run.js                # ~790 tests unitaires et fonctionnels
+node tests/gates.js               # les portes de qualité automatiques (G1–G6, G10)
 node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
 node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
 node tests/integration-paquet.js  # tests d'intégration de l'empaquetage
 ```
 
-`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** 101 tests
-end-to-end qui pilotent une vraie partie.
+`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~115 tests
+end-to-end qui pilotent une vraie partie ; `window.runE2E(ensureGame(), null, 'SPEC-XXX')`
+n'en lance qu'une partie, filtrée par nom.
 
 Plus de 900 tests au total (unitaires/fonctionnels + end-to-end + intégration),
 toutes les specs non-⏳ de SPECS.md couvertes (`node tests/gates.js`, porte G1).
@@ -170,23 +175,60 @@ difficulté, une graine et le nombre de joueurs locaux.
 | `F` | descendre du véhicule |
 | `C` | carte (avec une carte en main) : clic pose un repère, clic droit l'enlève |
 | `J` | factions et réputation |
+| `K` | succès et progression |
 | `H` | journal de l'histoire (mode histoire) |
 | clic droit sur un véhicule | monter · `Maj` + clic : soute du camion |
 | `T` | chat (`/` ouvre sur une commande) |
 | `M` | couper le son |
 | `1` – `9`, molette | choisir un objet |
 | `F5` | sauvegarder |
+| `F1` | afficher ou masquer tout le HUD |
 | `Échap` | pause |
+
+Toutes ces touches se **remappent** dans *Options* (accueil ou pause) ; un
+conflit est signalé, et l'aide affiche toujours les touches en vigueur.
 
 **Manettes** (joueurs 2 à 4) : stick gauche déplacer, stick droit regarder,
 A sauter, L3 courir, LT miner, RT utiliser, LB/RB changer d'objet, Y inventaire.
 
 **Commandes du chat** : `/aide` `/heure` `/jour` `/nuit` `/ou` `/graine` `/vider`
-`/rejoindre [adresse]` `/quitter` `/qui`.
+`/meteo` `/succes` `/rendu [realiste|simple]` `/rejoindre [adresse]` `/quitter` `/qui`,
+et `/admin …` pour un administrateur ou un modérateur connecté.
+
+**Options.** Sensibilité, volume, champ de vision, distance de vue maximale,
+rendu réaliste lointain, ombres ; GPU (préférence haute performance ou
+économie, appliquée au prochain lancement), résolution (native, 800×600,
+1024×768, 1080p, 1440p, 4K — seules celles que l'écran affiche), plein écran,
+écran d'affichage, vue étendue sur deux ou trois écrans côte à côte ou empilés.
+Tout s'applique aussitôt et se conserve. *Affichage* masque chaque composant
+du HUD séparément.
 
 ---
 
 ## Contenu
+
+**Le monde.** 128 blocs de haut, biomes qui se fondent les uns dans les autres
+à l'échelle du kilomètre, montagnes et volcans (en chaînes, actifs ou éteints,
+de plusieurs types), rivières et lacs, mer et océan. Sous terre, des biomes
+propres à ce qui les surmonte (géodes, chambres magmatiques, grottes
+luxuriantes ou englouties, abîme), leurs créatures, leurs cités anciennes,
+tous les minerais et des organismes bioluminescents. Une **carte de densité**
+(vierge, rurale, urbaine, hyperurbaine) place fermes, hameaux, villages,
+villes et **mégapoles**, reliés par une hiérarchie de routes (grands axes,
+commerce, chemins ruraux, tourisme), des ponts et des fleuves navigables.
+
+**Le temps.** Une journée dure 20 minutes, une année 3 heures, en quatre
+saisons : durée du jour, températures, neige, feuillages qui roussissent,
+lacs qui gèlent, cultures en saison. Météo déterministe (la même pour tous) :
+cinq couches de nuages qui dérivent avec le vent de leur altitude, pluie,
+neige, orages, cyclones et tornades, brume des creux au petit matin.
+
+**Les êtres.** Créatures, habitants et avatars ont des membres articulés et
+animés (marche, course, nage, coups, regard vers leur cible), une variante
+propre à chaque individu, des vêtements et accessoires selon le métier, et une
+silhouette simplifiée au loin. Les habitants tués restent morts ; la
+population se renouvelle et les animaux se reproduisent. Ambiance sonore
+spatialisée : lieux, créatures, matières, interactions, événements.
 
 **Modes.** *Survie* : faim, dégâts, usure des outils, blocs consommés.
 *Créatif* : vol, invulnérabilité, casse instantanée, blocs illimités.
@@ -399,16 +441,21 @@ modules** que le client, plutôt que de réécrire une simulation qui divergerai
 
 ```
 src/
-  core · noise · biomes · donjons · habitats · histoire · carte          logique pure,
-  meteo · lointain · world · lumiere · mesher · physics · faune
-  factions · synchro · inventory · vehicules · entities
-  player · daycycle · save · saves · modes · chat · split · gamepad    testable sous
-  net-protocol                                                          Node
+  core · noise · biomes · densite · souterrain · donjons · habitats     logique pure,
+  routes · histoire · recits · carte · eau · meteo · lointain · world
+  lumiere · ombres · succes · mesher · physics · faune · factions       testable sous
+  inventory · vehicules · entities · player · synchro · daycycle        Node
+  save · saves · modes · chat · commandes · options · apparence
+  split · hud · gamepad · net-protocol · parametres · admin · livre
+  ambiance
   audio · atlas · render · ui · input · net · game                     navigateur
   ui.css                                              partagé jeu / page de tests
 server.js                    serveur Node sans dépendance (statique + WebSocket)
-tests/  harness · unit · functional · spec-* · e2e · integration-net · gates · run
-SPECS.md   293 specs identifiées      PLAN.md   méthode et portes de qualité
+admin.html                   console web d'administration
+tools/  version.js (version et journal) · paquet.js (empaquetage)
+tests/  harness · unit · functional · spec-* · e2e · integration-* · gates · run
+SPECS.md   ~450 specs identifiées     PLAN.md   méthode, lots et portes de qualité
+CHANGELOG.md   journal des modifications
 ```
 
 ### Méthode
@@ -461,11 +508,11 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 
 ## Limites connues
 
-- La lumière des blocs ne se mêle pas à celle du ciel : un bloc sous terre reste
-  éclairé par l'ambiance nocturne. L'obscurité n'influence pas l'apparition des
-  monstres, qui dépend de l'heure seule.
-- Le mode histoire se joue en solo (hors ligne) ; il n'y a qu'une histoire.
-- Les nuages ne projettent pas d'ombre, et la météo ne change pas le vol des avions.
+- L'obscurité n'influence pas l'apparition des monstres en surface, qui dépend
+  de l'heure seule.
+- Le mode histoire se joue en solo (hors ligne), en trois archétypes (épopée,
+  enquête, colonie).
+- La météo ne change pas le vol des avions.
 - En ligne, inventaire, craft, fourneaux et cultures restent côté client ; le
   serveur valide positions, stats, blocs et combats, pas le contenu des sacs.
 - Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
@@ -475,15 +522,16 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne
   trouve pas en jouant (terre labourée par exemple) ; seuls les stades de croissance
   du blé en sont écartés.
-- L'eau ne s'écoule pas.
 - Les gardiens de donjon ne s'éveillent qu'en solo et en écran partagé : en ligne,
   les créatures appartiennent au serveur, qui ne les simule pas encore.
 - Les véhicules ne sont pas disponibles en ligne (le serveur ne les simule pas).
 - L'avion et le sous-marin se pilotent au clavier ; à la manette, on monte avec
   « utiliser » et l'on descend avec le bouton de vol.
 - Les créatures ne poursuivent que le joueur 1 d'un écran partagé.
-- Les habitants d'un lieu reviennent au prochain chargement de la partie même
-  s'ils avaient été tués (seul le serveur, et la session en cours, s'en souviennent).
 - Pas de greedy meshing ; tout tourne sur le thread principal.
-- Les sauvegardes sont locales au navigateur ; le serveur ne persiste pas son monde
-  entre deux démarrages.
+- Les sauvegardes solo sont locales au navigateur ; le serveur persiste son monde
+  avec `--monde <fichier>`.
+- Les identifiants de bloc sont limités à 128 tant que le passage aux blocs sur
+  16 bits (L40) n'est pas livré : escaliers, dalles, mécanismes (L24, L29) en
+  dépendent.
+- Le journal d'administration ne couvre pas encore coffres et échanges.
