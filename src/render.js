@@ -78,6 +78,11 @@
     // `dirty`) par l'appelant via `onContextRestored`, qui les remaillera au
     // rythme normal du streaming (game.js).
     var contextePerdu = false;
+    // Numéro de génération de contexte GL : incrémenté à chaque restauration
+    // réelle. Sert à marquer les géométries reconstructibles (toGeometry,
+    // tagGen plus bas) pour ne jamais dispose() un objet d'une génération
+    // révolue — voir la note détaillée près de `toGeometry`/`disposerGeom`.
+    var contexteGen = 0;
     var cbContextLost = typeof opts.onContextLost === 'function' ? opts.onContextLost : null;
     var cbContextRestored = typeof opts.onContextRestored === 'function' ? opts.onContextRestored : null;
     renderer.domElement.addEventListener('webglcontextlost', function (ev) {
@@ -87,14 +92,23 @@
     }, false);
     renderer.domElement.addEventListener('webglcontextrestored', function () {
       contextePerdu = false;
+      contexteGen++;
       // textures et matériaux : on force un ré-upload/relien plutôt que de
       // supposer que le navigateur les a conservés
       atlas.texture.needsUpdate = true;
       [matOpaque, matCutout, matBlend, matLumineux].forEach(function (m) { if (m) m.needsUpdate = true; });
-      // render targets de réfraction : leurs textures GPU sont perdues, on
-      // les force à se redimensionner (donc se recréer) au prochain rendu
-      rtRefraction.setSize(4, 4); rtRefraction.__rempli = false;
-      rtEcran.setSize(4, 4);
+      // render targets de réfraction : on ABANDONNE les anciennes instances
+      // plutôt que de les redimensionner (`.setSize()` déclenchait leur
+      // dispose() interne, qui retombe sur l'ancien contexte GL capturé par
+      // l'écouteur 'dispose' de Three.js — voir la note près de
+      // `disposerGeom`). De nouvelles instances évitent tout appel GL sur les
+      // anciennes ; celles-ci sont simplement abandonnées au ramasse-miettes.
+      rtRefraction = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+      rtEcran = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+      // carte d'ombres du soleil (FBO interne à Three.js) : même règle, on
+      // abandonne la référence sans la dispose ; Three.js la reconstruit
+      // seule dès le prochain rendu avec `castShadow` actif.
+      if (sun && sun.shadow) sun.shadow.map = null;
       if (cbContextRestored) cbContextRestored();
     }, false);
 
@@ -286,6 +300,25 @@
     scene.add(highlight);
 
     // ─── chunks ──────────────────────────────────────────────────────────────
+    /* SPEC-RENDU-002 (revue adversariale de bf733bf) : Three.js (r128) attache
+       un écouteur 'dispose' à chaque géométrie la première fois qu'elle est
+       rendue (WebGLGeometries/WebGLAttributes) ; cet écouteur capture par
+       fermeture le contexte GL et les caches internes ACTIFS à ce moment-là.
+       À la restauration (`webglcontextrestored`), Three.js reconstruit ces
+       caches de zéro (`initGLContext`) mais NE DÉTACHE JAMAIS les anciens
+       écouteurs des objets déjà créés : un `.dispose()` appelé plus tard sur
+       une géométrie créée AVANT la perte retombe donc sur l'ancien contexte
+       capturé, ce qui lève « INVALID_OPERATION / object does not belong to
+       this context » (reproduit en direct via WEBGL_lose_context, ~200
+       avertissements sur 149 chunks). On tague chaque géométrie qui peut être
+       reconstruite après coup (chunks, relief/arbres/silhouettes lointains)
+       avec le numéro de génération de contexte en cours, et on ne dispose
+       jamais une géométrie d'une génération révolue : on abandonne juste la
+       référence, le ramasse-miettes JS s'en charge sans toucher au GPU. */
+    function tagGen(obj) { if (obj) obj.__mcGen = contexteGen; return obj; }
+    function disposerGeom(obj) {
+      if (obj && obj.geometry && obj.geometry.__mcGen === contexteGen) obj.geometry.dispose();
+    }
     function toGeometry(raw) {
       var g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(raw.positions, 3));
@@ -311,7 +344,7 @@
                                                                      : new Float32Array(nv), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
-      return g;
+      return tagGen(g);
     }
 
     // une passe de rendu = un maillage par chunk ; l'ordre de rendu va
@@ -341,7 +374,7 @@
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
         var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie);
-        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
+        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); disposerGeom(chunk[key]); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);
           m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
@@ -360,7 +393,7 @@
     function disposeChunk(chunk) {
       PASSES.forEach(function (p) {
         var k = p[0];
-        if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); chunk[k].geometry.dispose(); chunk[k] = null; }
+        if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); disposerGeom(chunk[k]); chunk[k] = null; }
       });
     }
 
@@ -1340,7 +1373,8 @@
       g.setIndex(new THREE.BufferAttribute(raw.indices, 1));
       g.computeVertexNormals();
       g.computeBoundingSphere();
-      if (lointain) { scene.remove(lointain); lointain.geometry.dispose(); }
+      tagGen(g);
+      if (lointain) { scene.remove(lointain); disposerGeom(lointain); }
       lointain = new THREE.Mesh(g, matLointain);
       scene.add(lointain);
       majArbresLointains(grille);
@@ -1402,10 +1436,13 @@
     })();
     var arbresLointains = null;
     function majArbresLointains(grille) {
-      if (arbresLointains) { scene.remove(arbresLointains); arbresLointains.dispose && arbresLointains.dispose(); arbresLointains = null; }
+      // note : `InstancedMesh` n'a pas de `.dispose()` propre en r128 — seule
+      // sa géométrie clonée ci-dessous a besoin d'être libérée (matArbres est
+      // un matériau partagé, jamais recréé par chunk).
+      if (arbresLointains) { scene.remove(arbresLointains); disposerGeom(arbresLointains); arbresLointains = null; }
       var l = MC.Lointain.imposteurs(grille, { max: 50000 });
       if (!l.length) return 0;
-      var g = geoArbre.clone();
+      var g = tagGen(geoArbre.clone());
       var ess = new Float32Array(l.length);
       var m = new THREE.InstancedMesh(g, matArbres, l.length), mat4 = new THREE.Matrix4();
       l.forEach(function (a, i) {
@@ -1441,12 +1478,12 @@
       var sig = (lieux || []).map(function (l) { return l.id; }).join('|');
       if (sig === sigSilhouettes) return false;
       sigSilhouettes = sig;
-      if (silhouettesLointaines) { scene.remove(silhouettesLointaines); silhouettesLointaines.dispose && silhouettesLointaines.dispose(); silhouettesLointaines = null; }
+      if (silhouettesLointaines) { scene.remove(silhouettesLointaines); disposerGeom(silhouettesLointaines); silhouettesLointaines = null; }
       var boites = MC.Lointain.silhouettes(lieux);
       if (!boites.length) return true;
       var parLieu = {};
       (lieux || []).forEach(function (l) { parLieu[l.id] = l; });
-      var geo = new THREE.BoxGeometry(1, 1, 1);
+      var geo = tagGen(new THREE.BoxGeometry(1, 1, 1));
       geo.translate(0, 0.5, 0);
       var m = new THREE.InstancedMesh(geo, matSilhouettes, boites.length), mat4 = new THREE.Matrix4(), col = new THREE.Color();
       boites.forEach(function (b, i) {
@@ -2090,6 +2127,17 @@
       return v;
     }
     function setDPR(palier) { dprPalier = palier > 0 ? palier : dprPalier; return appliquerDPR(); }
+    /* Coordination à venir avec SPEC-OPTION-008 (plancher 800×600 de la
+       surface d'affichage, porté par un autre lot dans hostSize()) : l'ordre
+       ci-dessous est volontaire et doit être conservé par la fusion —
+       1) `sz = hostSize()` d'abord (la taille CSS/plancher de l'hôte, déjà
+          garantie ≥ 800×600 par cet autre lot) ; 2) `appliquerDPR()` ensuite,
+          qui LIT `sz` via `plafondDPR()` pour calculer le plafond des options
+          (SPEC-OPTION-005) — si l'ordre s'inversait, le DPR se calculerait
+          sur l'ancienne taille d'un redimensionnement ; 3) `renderer.setSize`
+          en dernier, avec la taille déjà connue. Ne pas laisser la fusion
+          intercaler un calcul de DPR entre un changement de taille d'hôte et
+          sa prise en compte ici. */
     function resize() {
       var s = hostSize();
       sz = s;

@@ -174,6 +174,20 @@ respecter (voir PLAN.md, « Commits et versions »).
   si bien que tous les tests pointaient vers les images du premier. Le préfixe
   est désormais retiré, et l'index envoyé par le banc fait foi (SPEC-BANC-011,
   SPEC-BANC-014) ; les exports web, PDF et Word intègrent ainsi chaque capture.
+- Revue adversariale de la qualité adaptative et de la perte de contexte GPU
+  (L48) : après une restauration de contexte WebGL (`webglcontextrestored`),
+  redimensionner les cibles de réfraction (`setSize`) ou disposer une
+  géométrie de chunk/InstancedMesh (arbres, silhouettes lointaines) créée
+  AVANT la perte retombait sur l'ancien contexte GL capturé par les
+  écouteurs internes de Three.js r128, levant ~200 avertissements console
+  (« object does not belong to this context ») au premier remaillage massif.
+  Les render targets de réfraction sont désormais recréées plutôt que
+  redimensionnées, et chaque géométrie reconstructible porte le numéro de
+  génération du contexte GL courant : on ne dispose jamais une géométrie
+  d'une génération révolue, on abandonne juste la référence au ramasse-
+  miettes (SPEC-RENDU-002). La carte d'ombres du soleil (FBO interne à
+  Three.js) est abandonnée sans dispose à la restauration et se reconstruit
+  seule au rendu suivant.
 - Revue adversariale du transport réseau (L44, sous-lot A1) : un budget
   anti-flood unique par connexion (30 msg/s) pouvait expulser à tort un
   joueur légitime — creuser en créatif avec casse instantanée envoie jusqu'à

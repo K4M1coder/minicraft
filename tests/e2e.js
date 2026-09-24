@@ -2592,6 +2592,76 @@
     await reset(g);
   });
 
+  /* SPEC-RENDU-002 (revue adversariale de bf733bf) : Three.js n'a jamais
+     détaché les anciens écouteurs 'dispose' de ses géométries au redémarrage
+     du contexte GL — un dispose() tardif sur une géométrie de chunk créée
+     AVANT la perte retombait sur l'ancien contexte et levait une erreur GL,
+     visible en console (« object does not belong to this context »),
+     reproduit en direct avec ~200 avertissements sur 149 chunks. Ce test
+     provoque le même scénario complet (perte → restauration → remaillage
+     réel des chunks marqués dirty par onContextRestored, game.js) et vérifie
+     qu'aucun message console lié au GL/contexte n'apparaît. */
+  e2e('SPEC-RENDU-002 : perte puis restauration puis remaillage des chunks ne lèvent aucun avertissement console', async function (g) {
+    await reset(g);
+    var gl = g.render.renderer.getContext();
+    var ext = gl.getExtension('WEBGL_lose_context');
+    A.ok(ext, 'l’extension de simulation est disponible dans ce navigateur');
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    for (var i = 0; i < 15; i++) await frames(1);
+    A.gt(g.world.chunks.size, 0, 'des chunks sont chargés avant la perte (' + g.world.chunks.size + ')');
+
+    var messages = [];
+    var origWarn = console.warn, origError = console.error;
+    console.warn = function () { messages.push(Array.prototype.slice.call(arguments).join(' ')); return origWarn.apply(console, arguments); };
+    console.error = function () { messages.push(Array.prototype.slice.call(arguments).join(' ')); return origError.apply(console, arguments); };
+    try {
+      ext.loseContext();
+      await frames(3);
+      ext.restoreContext();
+      await frames(5);
+      // tous les chunks visibles sont marqués dirty par onContextRestored
+      // (game.js) ; remeshDirtyNear() n'en remaille que 3 par image, on
+      // laisse donc tourner assez d'images pour tous les rattraper.
+      var tours = Math.ceil(g.world.chunks.size / 3) + 15;
+      for (var k = 0; k < tours; k++) await frames(1);
+    } finally {
+      console.warn = origWarn;
+      console.error = origError;
+    }
+    var suspectes = messages.filter(function (m) { return /context|GL_INVALID|does not belong|WEBGL|WebGL/i.test(m); });
+    A.equal(suspectes.length, 0, 'aucun avertissement GL/contexte (' + suspectes.length + ') : ' + suspectes.slice(0, 3).join(' | '));
+  });
+
+  /* SPEC-RENDU-002 (revue, point 2) : la carte d'ombres du soleil (FBO
+     interne à Three.js) n'était jamais reconstruite après restauration —
+     `sun.shadow.map` reste abandonné (jamais dispose()) puis Three.js le
+     régénère tout seul dès le premier rendu avec `castShadow` actif. */
+  e2e('SPEC-RENDU-002 : la carte d’ombres du soleil se reconstruit après restauration du contexte', async function (g) {
+    await reset(g);
+    var gl = g.render.renderer.getContext();
+    var ext = gl.getExtension('WEBGL_lose_context');
+    A.ok(ext, 'l’extension de simulation est disponible');
+    g.render.setDistance(3);
+    g.streamChunks(true);
+    for (var i = 0; i < 10; i++) await frames(1);
+    A.ok(g.render.ombresActives, 'les ombres sont actives par défaut');
+    g.render.renderViews(g.vues);
+    var carteAvant = g.render.sun.shadow.map;
+    A.ok(carteAvant, 'une carte d’ombres existe avant la perte');
+    ext.loseContext();
+    await frames(3);
+    ext.restoreContext();
+    // la boucle de jeu normale tourne pendant ces images (game.js) : elle a
+    // déjà pu redessiner (et donc reconstruire la carte) avant qu'on
+    // revienne ici — on vérifie donc la RECONSTRUCTION (nouvelle instance),
+    // pas un instant `null` qu'un rendu concurrent aurait déjà comblé.
+    await frames(5);
+    var carteApres = g.render.sun.shadow.map;
+    A.ok(carteApres, 'la carte d’ombres est reconstruite après restauration');
+    A.ok(carteApres !== carteAvant, 'c’est une NOUVELLE carte, pas l’ancienne réutilisée après un contexte périmé');
+  });
+
   // ─── exécution ─────────────────────────────────────────────────────────────
   /* `filtre` (facultatif) : ne lance que les tests dont le nom le contient. */
   async function runE2E(g, onProgress, filtre) {
