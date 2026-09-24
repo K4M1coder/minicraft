@@ -353,7 +353,7 @@
                                                         : nomDe(N.hash2(rx * 3, rz * 5 + graineK), N.hash2(rx * 11 + graineK, rz * 17)),
         biome: bio.id, style: st.nom, x: x, z: z, demi: demi, h0: h0, denivele: denivele, lots: lotsN,
         batiments: [], pnjs: [], lampes: 0,
-        blocs: new Map(),                 // clé de chunk → [x, y, z, id, x, y, z, id, …]
+        blocs: new Map(),                 // clé de chunk → [x, y, z, id, etat, x, y, z, id, etat, …]
         plateforme: { x0: x - demi, z0: z - demi, x1: x + demi, z1: z + demi, h0: h0,
                       surface: bio.surface || B.GRASS, sousSol: bio.sousSol || B.DIRT, routes: [] },
       };
@@ -364,12 +364,17 @@
 
     // ─── outils de construction ─────────────────────────────────────────────
     function outilsPour(l, st) {
-      function pose(x, y, z, id) {
+      /* `etat` (optionnel, 5e champ, SPEC-CONSTR-003) : orientation d'un
+         escalier de toiture, moitié d'une dalle de faîtage… stocké en
+         parallèle de l'id dans `l.blocs` et rejoué par world.js (setEtat) en
+         même temps que le bloc — jamais interrogé aux voisins, contrairement
+         aux clôtures/murets (voir formes.js). */
+      function pose(x, y, z, id, etat) {
         if (y <= 0 || y >= WH) return;
         var k = Math.floor(x / CX) + ',' + Math.floor(z / CZ);
         var a = l.blocs.get(k);
         if (!a) { a = []; l.blocs.set(k, a); }
-        a.push(x, y, z, id);
+        a.push(x, y, z, id, etat || 0);
         if (id && C.BLOCKS[id] && C.BLOCKS[id].light) l.lampes++;
       }
       /* Un repère local de bâtiment : u le long de la façade, v en profondeur,
@@ -387,9 +392,13 @@
       return { pose: pose, repere: repere, hash: function (a, b, c) { return N.hash3(a, b || 0, c || 0); } };
     }
 
-    /* Une maison générique : sol, murs avec poteaux d'angle, fenêtres, porte,
-       étages (échelle), toit selon la forme du style. Renvoie le bâtiment. */
-    function corps(l, st, o, p, w, d, y0, etages, type, nom, rot) {
+    /* Le gros œuvre seul : sol, murs avec poteaux d'angle, fenêtres, pilotis
+       — sans porte, sans échelle, sans lumière, sans toit ni entrée dans
+       `l.batiments`. Sert de brique à `corps` (le bâtiment complet) et aux
+       ailes secondaires d'un plan en L (SPEC-HABITAT-010, BATISSEURS.maison).
+       Renvoie {y0, haut} : le rez-de-chaussée et le sommet des murs après
+       l'éventuel exhaussement sur pilotis. */
+    function corpsBrut(l, st, o, p, w, d, y0, etages) {
       var H = 4, haut = y0 + etages * H;
       var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       var pil = st.pilotis || 0;
@@ -419,6 +428,17 @@
           o.pose(x, y, z, id);
         }
       }
+      return { y0: y0, haut: haut };
+    }
+
+    /* Une maison générique : le gros œuvre (`corpsBrut`), la porte, les
+       étages (échelle), une lumière, le toit selon la forme du style.
+       Renvoie le bâtiment. */
+    function corps(l, st, o, p, w, d, y0, etages, type, nom, rot) {
+      var H = 4;
+      var brut = corpsBrut(l, st, o, p, w, d, y0, etages);
+      y0 = brut.y0; var haut = brut.haut;
+      var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       // porte : fermée, orientée vers l'extérieur (la rue) — SPEC-PORTE-001
       var pu = Math.floor(w / 2);
       var idPorteBat = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
@@ -440,6 +460,15 @@
       return bat;
     }
 
+    /* SPEC-CONSTR-003 : toit en pente fait d'escaliers orientés, faîtage en
+       dalle haute (ou en bloc plein si le matériau n'a pas de dalle — tous
+       les matériaux de toiture des styles pignon/raide ont leur escalier,
+       voir core.js L24, mais pas tous leur dalle). Les formes plates et
+       dômes/chapeaux, elles, restent en blocs pleins : le style l'exige
+       (désert, igloos, champignons…). Un bâtiment composé (plan en L) pose
+       simplement un toit par volume : là où deux pans se recoupent, le
+       second recouvre le premier — une noue approximative plutôt qu'un
+       raccord parfaitement mitré, mais jamais de trou. */
     function toit(st, o, p, w, d, y) {
       var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       var forme = st.forme;
@@ -462,22 +491,44 @@
         }
         return;
       }
-      // pignon (raide : deux rangs par marche) : pans le long de w, pignons pleins
-      var pasY = forme === 'raide' ? 2 : 1, moitie = Math.ceil(d / 2);
+      // pignon/raide : deux pans le long de w, montant en escaliers vers le
+      // faîtage (raide : une marche pleine puis l'escalier, deux fois plus
+      // raide qu'un pignon simple) ; pignons (u=0 et u=w-1) pleins sous le toit.
+      var Fo = MC.Formes, matDef = C.BLOCKS[st.toit];
+      var escId = matDef && matDef.escalier, dalleId = matDef && matDef.dalle;
+      var raide = forme === 'raide', pasY = raide ? 2 : 1, moitie = Math.ceil(d / 2);
+      // direction du monde vers laquelle "v" croît à cette rotation, dérivée
+      // de p() elle-même (donc juste quel que soit rot) : le pan côté v<0
+      // grimpe vers +v (le faîtage), le pan côté v>=d grimpe vers -v.
+      var d0 = p(0, 0), d1 = p(0, 1);
+      var orAvant = C.orientDeRegard({ x: d1[0] - d0[0], z: d1[1] - d0[1] });
+      var orArriere = (orAvant + 2) & 3;
       for (var k = 0; k <= moitie; k++) {
-        for (var s = 0; s < pasY; s++) {
-          var yy = y + k * pasY + s;
+        var faite = k >= moitie, yy0 = y + k * pasY;
+        [[k - 1, orAvant], [d - k, orArriere]].forEach(function (pair) {
+          var vv = pair[0], orient = pair[1];
+          if (vv < -1 || vv > d) return;
           for (var u3 = -1; u3 <= w; u3++) {
-            [k - 1, d - k].forEach(function (vv) {
-              if (vv < -1 || vv > d) return;
-              o.pose(fx(u3, vv), yy, fz(u3, vv), st.toit);
-            });
+            var x = fx(u3, vv), z = fz(u3, vv);
+            if (faite) {
+              if (dalleId) o.pose(x, yy0, z, dalleId, Fo.packDalle(true));
+              else o.pose(x, yy0, z, st.toit);
+            } else if (raide) {
+              o.pose(x, yy0, z, st.toit);
+              if (escId) o.pose(x, yy0 + 1, z, escId, Fo.packEscalier(orient, false, Fo.DROIT));
+              else o.pose(x, yy0 + 1, z, st.toit);
+            } else if (escId) {
+              o.pose(x, yy0, z, escId, Fo.packEscalier(orient, false, Fo.DROIT));
+            } else {
+              o.pose(x, yy0, z, st.toit);
+            }
           }
-          // pignons : le mur remonte sous le toit
-          for (var v3 = k; v3 < d - k; v3++) {
-            o.pose(fx(0, v3), yy, fz(0, v3), st.mur);
-            o.pose(fx(w - 1, v3), yy, fz(w - 1, v3), st.mur);
-          }
+        });
+        // pignons : le mur remonte sous le toit, sur toute sa hauteur locale
+        var yTop = (!faite && raide) ? yy0 + 1 : yy0;
+        for (var v3 = k; v3 < d - k; v3++) for (var yw = yy0; yw <= yTop; yw++) {
+          o.pose(fx(0, v3), yw, fz(0, v3), st.mur);
+          o.pose(fx(w - 1, v3), yw, fz(w - 1, v3), st.mur);
         }
       }
     }
@@ -497,11 +548,41 @@
     /* Chaque bâtisseur reçoit l'origine de sa parcelle (ox, oz), sa taille
        (L × L), l'orientation de sa façade vers la rue, et le niveau du sol. */
     var BATISSEURS = {
+      /* SPEC-HABITAT-010 : trois plans reconnaissables — carrée (presque
+         aussi large que profonde), longère (large et basse) et en L (un
+         corps principal et une aile secondaire accolée à l'arrière, posée en
+         gros œuvre seul par `corpsBrut` : pas de porte ni d'habitant propres,
+         juste un volume de plus sous le même toit de style). En ville, le
+         gabarit suit la densité : une maison mitoyenne, mur à mur avec la
+         parcelle voisine, façade étroite et plusieurs étages plutôt qu'un des
+         trois plans de la campagne. */
       maison: function (l, st, o, ox, oz, L, rot, y0, urbain) {
-        var w = 7 + Math.floor(o.hash(ox, 1, oz) * 3), d = 6 + Math.floor(o.hash(ox, 2, oz) * 2);
         var etages = urbain ? 1 + Math.floor(o.hash(ox, 3, oz) * 3) : 1;
-        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, etages, 'maison', rot);
+        var plan, w, d, p, b;
+        if (urbain) {
+          plan = 'mitoyenne';
+          w = Math.max(5, L - 2); d = 6 + Math.floor(o.hash(ox, 2, oz) * 2);
+          p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+          b = corps(l, st, o, p, w, d, y0, etages, 'maison', null, rot);
+        } else {
+          var choix = Math.floor(o.hash(ox, 4, oz) * 3);
+          plan = ['carree', 'longere', 'L'][choix];
+          if (plan === 'carree') { w = 7 + Math.floor(o.hash(ox, 1, oz) * 2); d = w - 1; }
+          else if (plan === 'longere') { w = Math.min(L - 2, 10 + Math.floor(o.hash(ox, 1, oz) * 3)); d = 5; }
+          else { w = 6; d = 5; }
+          p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+          b = corps(l, st, o, p, w, d, y0, etages, 'maison', null, rot);
+          if (plan === 'L') {
+            // aile secondaire, accolée au mur du fond (aucun recouvrement
+            // avec le corps principal, toujours dans la parcelle — HABITAT-011)
+            var w2 = 3, d2 = 3;
+            var offU = Math.floor((w - w2) / 2);
+            var p2 = o.repere(ox + Math.floor((L - w) / 2) + offU, oz + 1 + d, w2, d2, rot);
+            var brut2 = corpsBrut(l, st, o, p2, w2, d2, y0, 1);
+            toit(st, o, p2, w2, d2, brut2.haut);
+          }
+        }
+        b.plan = plan;
         // un lit (laine), une table, un coffre
         var q = function (u, v) { return p(u, v); };
         var c = q(w - 2, 1); o.pose(c[0], b.y0, c[1], B.WOOL_RED);
@@ -510,8 +591,11 @@
         pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
       },
       point_info: function (l, st, o, ox, oz, L, rot, y0) {
-        var w = 7, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'point_info', rot);
+        var variantes = [[7, 7], [9, 6]], vi = Math.floor(o.hash(ox, 30, oz) * variantes.length);
+        var w = variantes[vi][0], d = variantes[vi][1];
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+        var b = corps(l, st, o, p, w, d, y0, 1, 'point_info', null, rot);
+        b.plan = 'v' + vi;
         var a = p(1, 1), c = p(w - 2, 1);
         o.pose(a[0], b.y0, a[1], B.PANNEAU_INFO); o.pose(c[0], b.y0, c[1], B.PANNEAU_INFO);
         var f = p(Math.floor(w / 2) - 2, -1), g2 = p(Math.floor(w / 2) + 2, -1);
@@ -519,11 +603,13 @@
         pnj(l, 'guide', b.dedans.x, b.y0, b.dedans.z, b);
       },
       banque: function (l, st, o, ox, oz, L, rot, y0) {
-        var w = 11, d = 9, sb = {}, k;
+        var variantes = [[11, 9], [13, 10]], vi = Math.floor(o.hash(ox, 31, oz) * variantes.length);
+        var w = variantes[vi][0], d = variantes[vi][1], sb = {}, k;
         for (k in st) sb[k] = st[k];
         sb.mur = B.STONE_BRICK; sb.coin = B.STONE_BRICK; sb.sol = B.STONE_BRICK; sb.forme = 'plat'; sb.toit = B.STONE_BRICK;
         var p = o.repere(ox + Math.floor((L - w) / 2), oz, w, d, rot);
-        var b = corps(l, sb, o, p, w, d, y0, 2, 'banque', rot);
+        var b = corps(l, sb, o, p, w, d, y0, 2, 'banque', null, rot);
+        b.plan = 'v' + vi;
         for (var u = 2; u < w - 2; u++) { var cp = p(u, 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         o.pose(p(Math.floor(w / 2), 3)[0], b.y0, p(Math.floor(w / 2), 3)[1], 0);
         [[2, d - 2], [4, d - 2], [6, d - 2], [8, d - 2]].forEach(function (c) {
@@ -536,8 +622,11 @@
         pnj(l, 'banquier', ban[0] + 0.5, b.y0, ban[1] + 0.5, b);
       },
       salon: function (l, st, o, ox, oz, L, rot, y0) {
-        var w = Math.min(11, L), d = Math.min(9, L - 1), p = o.repere(ox + Math.floor((L - w) / 2), oz, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'salon', rot);
+        var alterne = o.hash(ox, 32, oz) < 0.5;
+        var w = Math.min(alterne ? 11 : 9, L), d = Math.min(alterne ? 9 : 11, L - 1);
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz, w, d, rot);
+        var b = corps(l, st, o, p, w, d, y0, 1, 'salon', null, rot);
+        b.plan = alterne ? 'large' : 'profond';
         for (var u = 1; u < w - 1; u++) { var cp = p(u, d - 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         [[1, d - 2], [2, d - 2], [3, d - 2]].forEach(function (c) { var q = p(c[0], c[1]); o.pose(q[0], b.y0, q[1], B.TONNEAU); o.pose(q[0], b.y0 + 1, q[1], B.TONNEAU); });
         // tables et leurs lanternes
@@ -548,20 +637,25 @@
         pnj(l, 'aubergiste', ab[0] + 0.5, b.y0, ab[1] + 0.5, b);
       },
       magasin: function (l, st, o, ox, oz, L, rot, y0) {
-        var w = 9, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-        var b = corps(l, st, o, p, w, d, y0, 1, 'magasin', rot);
+        var variantes = [[9, 7], [11, 6]], vi = Math.floor(o.hash(ox, 33, oz) * variantes.length);
+        var w = variantes[vi][0], d = variantes[vi][1];
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+        var b = corps(l, st, o, p, w, d, y0, 1, 'magasin', null, rot);
+        b.plan = 'v' + vi;
         for (var u = 1; u < w - 1; u++) { var cp = p(u, 3); o.pose(cp[0], b.y0, cp[1], B.COMPTOIR); }
         o.pose(p(Math.floor(w / 2), 3)[0], b.y0, p(Math.floor(w / 2), 3)[1], 0);
-        [[1, d - 2], [3, d - 2], [5, d - 2], [7, d - 2]].forEach(function (c) { var q = p(c[0], c[1]); o.pose(q[0], b.y0, q[1], B.CHEST); });
+        for (var uc = 1; uc < w - 1; uc += 2) { var qc = p(uc, d - 2); o.pose(qc[0], b.y0, qc[1], B.CHEST); }
         var f = p(1, -1); lampadaire(l, st, o, f[0], b.y0, f[1]);
         var m = p(Math.floor(w / 2), 5);
         pnj(l, 'marchand', m[0] + 0.5, b.y0, m[1] + 0.5, b);
       },
       artisan: function (l, st, o, ox, oz, L, rot, y0, urbain, sous) {
-        var w = 9, d = 7, p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
+        var variantes = [[9, 7], [11, 8]], vi = Math.floor(o.hash(ox, 34, oz) * variantes.length);
+        var w = variantes[vi][0], d = variantes[vi][1];
+        var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
         var noms = { forgeron: 'Forge', menuisier: 'Menuiserie', tisserand: 'Atelier du tisserand' };
         var b = corps(l, st, o, p, w, d, y0, 1, 'artisan', noms[sous], rot);
-        b.metier = sous;
+        b.metier = sous; b.plan = 'v' + vi;
         var outilsAtelier = sous === 'forgeron' ? [B.ENCLUME, B.FURNACE, B.FURNACE, B.COBBLE]
                           : sous === 'menuisier' ? [B.CRAFTING_TABLE, B.PLANKS, B.TONNEAU, B.BOOKSHELF]
                           : [B.WOOL_RED, B.WOOL_BLUE, B.WOOL_YELLOW, B.WOOL_GREEN];
@@ -569,20 +663,24 @@
         pnj(l, sous, b.dedans.x, b.y0, b.dedans.z, b);
       },
       marche: function (l, st, o, ox, oz, L, rot, y0) {
-        // quatre étals sous des toiles de couleur, autour d'une allée
+        // deux plans reconnaissables : quatre petits étals aux coins, ou
+        // deux grands étals plus fournis (HABITAT-010)
+        var grand = o.hash(ox, 35, oz) < 0.5;
+        var taille = grand ? 5 : 4;
         var toiles = [B.WOOL_RED, B.WOOL_YELLOW, B.WOOL_BLUE, B.WOOL_GREEN];
         var p = o.repere(ox, oz, L, L, rot);
-        [[1, 1], [L - 5, 1], [1, L - 5], [L - 5, L - 5]].forEach(function (c, i) {
-          for (var u = 0; u < 4; u++) for (var v = 0; v < 4; v++) {
+        [[1, 1], [L - 1 - taille, 1], [1, L - 1 - taille], [L - 1 - taille, L - 1 - taille]].forEach(function (c, i) {
+          for (var u = 0; u < taille; u++) for (var v = 0; v < taille; v++) {
             var q = p(c[0] + u, c[1] + v);
-            if ((u === 0 || u === 3) && (v === 0 || v === 3)) for (var y = y0; y < y0 + 3; y++) o.pose(q[0], y, q[1], st.coin);
+            if ((u === 0 || u === taille - 1) && (v === 0 || v === taille - 1)) for (var y = y0; y < y0 + 3; y++) o.pose(q[0], y, q[1], st.coin);
             o.pose(q[0], y0 + 3, q[1], toiles[i]);
-            if (v === 1 && u > 0 && u < 3) o.pose(q[0], y0, q[1], B.COMPTOIR);
+            if (v === 1 && u > 0 && u < taille - 1) o.pose(q[0], y0, q[1], B.COMPTOIR);
           }
-          var lan = p(c[0] + 1, c[1] + 3); o.pose(lan[0], y0, lan[1], B.LANTERN);
+          var lan = p(c[0] + 1, c[1] + taille - 1); o.pose(lan[0], y0, lan[1], B.LANTERN);
         });
         var c0 = p(0, 0), c1 = p(L - 1, L - 1);
-        var bat = { type: 'marche', nom: 'Marché', lieu: l.id, x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
+        var bat = { type: 'marche', nom: 'Marché', plan: grand ? 'grand' : 'petit', lieu: l.id,
+                    x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
                     x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0, y1: y0 + 4,
                     porte: { x: p(Math.floor(L / 2), 0)[0], z: p(Math.floor(L / 2), 0)[1] } };
         l.batiments.push(bat);
@@ -590,29 +688,36 @@
         pnj(l, 'marchand_ambulant', m1[0] + 0.5, y0, m1[1] + 0.5, bat);
         pnj(l, 'marchand_ambulant', m2[0] + 0.5, y0, m2[1] + 0.5, bat);
       },
+      /* SPEC-HABITAT-010 : deux plans — 'champ' (petite grange, grand champ)
+         et 'grange' (grange plus vaste, champ réduit) — typiques de la
+         campagne (villages/villes seulement : la ferme n'apparaît jamais en
+         mégapole, voir programmeMegapole). */
       ferme: function (l, st, o, ox, oz, L, rot, y0) {
-        // un champ de blé irrigué par une rigole, et une grange de foin
+        var grange = o.hash(ox, 36, oz) < 0.5;
+        var gw = grange ? Math.min(L - 2, 7) : 5, gd = grange ? 4 : 3;
+        var champDebut = gd + 1;
         var p = o.repere(ox, oz, L, L, rot);
-        for (var u = 0; u < L; u++) for (var v = 0; v < L - 4; v++) {
-          var q = p(u, v + 4);
+        for (var u = 0; u < L; u++) for (var v = 0; v < L - champDebut; v++) {
+          var q = p(u, v + champDebut);
           if (u === Math.floor(L / 2)) { o.pose(q[0], y0 - 1, q[1], B.WATER); continue; }
           o.pose(q[0], y0 - 1, q[1], B.FARMLAND);
           o.pose(q[0], y0, q[1], (u + v) % 3 === 0 ? B.WHEAT2 : B.WHEAT3);
         }
-        for (var gu = 0; gu < 5; gu++) for (var gv = 0; gv < 3; gv++) for (var y = y0; y < y0 + 3; y++) {
+        for (var gu = 0; gu < gw; gu++) for (var gv = 0; gv < gd; gv++) for (var y = y0; y < y0 + 3; y++) {
           var r = p(gu, gv);
-          var bord = gu === 0 || gu === 4 || gv === 0 || gv === 2 || y === y0 + 2;
+          var bord = gu === 0 || gu === gw - 1 || gv === 0 || gv === gd - 1 || y === y0 + 2;
           o.pose(r[0], y, r[1], bord ? (y === y0 + 2 ? B.HAY : st.mur) : (y === y0 ? B.HAY : 0));
         }
-        var porte = p(2, 0), idPorteFerme = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
+        var porte = p(Math.min(2, gw - 1), 0), idPorteFerme = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
         o.pose(porte[0], y0, porte[1], idPorteFerme); o.pose(porte[0], y0 + 1, porte[1], idPorteFerme);
-        var lan = p(6, 1); o.pose(lan[0], y0, lan[1], B.LANTERN);
+        var lan = p(gw + 1, 1); o.pose(lan[0], y0, lan[1], B.LANTERN);
         var c0 = p(0, 0), c1 = p(L - 1, L - 1);
-        var bat = { type: 'ferme', nom: 'Ferme', lieu: l.id, x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
+        var bat = { type: 'ferme', nom: 'Ferme', plan: grange ? 'grange' : 'champ', lieu: l.id,
+                    x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
                     x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0, y1: y0 + 3,
                     porte: { x: porte[0], z: porte[1] } };
         l.batiments.push(bat);
-        var f = p(7, 2);
+        var f = p(gw, 2);
         pnj(l, 'fermier', f[0] + 0.5, y0, f[1] + 0.5, bat);
       },
       loisirs: function (l, st, o, ox, oz, L, rot, y0, urbain, sous) {
@@ -654,47 +759,62 @@
         var a = p(cx + 2, cx - 2);
         pnj(l, 'animateur', a[0] + 0.5, sous === 'theatre' ? y0 + 1 : y0, a[1] + 0.5, bat);
       },
-      // la place centrale : dallée, un puits, des lampadaires aux quatre coins
+      /* la place centrale : dallée, un puits, des lampadaires aux quatre
+         coins — deux plans (HABITAT-010) : un puits simple, ou un grand
+         bassin entouré de quatre piliers supplémentaires. */
       place: function (l, st, o, ox, oz, L, rot, y0) {
+        var bassin = o.hash(ox, 37, oz) < 0.5;
         var p = o.repere(ox, oz, L, L, rot), cx = Math.floor(L / 2);
         for (var u = 0; u < L; u++) for (var v = 0; v < L; v++) { var q = p(u, v); o.pose(q[0], y0 - 1, q[1], st.place); }
-        for (var du = -1; du <= 1; du++) for (var dv = -1; dv <= 1; dv++) {
+        var rEau = bassin ? 1.5 : 0.5;
+        for (var du = -2; du <= 2; du++) for (var dv = -2; dv <= 2; dv++) {
+          if (Math.hypot(du, dv) > rEau) continue;
           var w2 = p(cx + du, cx + dv);
-          if (du === 0 && dv === 0) { for (var yw = y0 - 4; yw < y0; yw++) o.pose(w2[0], yw, w2[1], B.WATER); continue; }
-          o.pose(w2[0], y0, w2[1], st.coin);
-          o.pose(w2[0], y0 + 3, w2[1], st.toit);
+          for (var yw = y0 - 4; yw < y0; yw++) o.pose(w2[0], yw, w2[1], B.WATER);
         }
-        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(function (c) {
+        // piliers autour du point d'eau : au ras du bassin (large) ou du puits (simple)
+        var rp = bassin ? 2 : 1;
+        [[-rp, -rp], [rp, -rp], [-rp, rp], [rp, rp]].forEach(function (c) {
           var q2 = p(cx + c[0], cx + c[1]); o.pose(q2[0], y0 + 1, q2[1], st.coin); o.pose(q2[0], y0 + 2, q2[1], st.coin);
         });
-        var lp = p(cx, cx - 1); o.pose(lp[0], y0 + 2, lp[1], B.LANTERN);
+        var lp = p(cx, cx - rp); o.pose(lp[0], y0 + 2, lp[1], B.LANTERN);
         [[0, 0], [L - 1, 0], [0, L - 1], [L - 1, L - 1]].forEach(function (c) { var q3 = p(c[0], c[1]); lampadaire(l, st, o, q3[0], y0, q3[1]); });
         var c0 = p(0, 0), c1 = p(L - 1, L - 1);
-        l.batiments.push({ type: 'place', nom: 'Place de ' + l.nom, lieu: l.id, x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
+        l.batiments.push({ type: 'place', nom: 'Place de ' + l.nom, plan: bassin ? 'bassin' : 'puits', lieu: l.id,
+                           x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
                            x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0, y1: y0 + 4,
                            porte: { x: p(cx, 0)[0], z: p(cx, 0)[1] } });
       },
       /* HABITAT-013 : le cœur de la mégapole — une tour, haute (gabarit
          borné par C.WORLD_H, sans jamais crever le plafond du monde), avec
          une échelle intérieure à chaque étage (fournie par `corps`, comme
-         pour n'importe quel bâtiment à étages). */
+         pour n'importe quel bâtiment à étages). SPEC-HABITAT-010 : deux
+         plans — élancée (étroite, très haute) ou massive (large, moins
+         d'étages) — plutôt qu'un seul gabarit répété partout. */
       tour: function (l, st, o, ox, oz, L, rot, y0) {
         var sb = {}, k; for (k in st) sb[k] = st[k];
         sb.mur = B.CHAUX; sb.forme = 'plat'; sb.toit = st.coin; sb.fenetre = B.GLASS;
-        var w = Math.min(13, L - 6), d = w;
+        var elancee = o.hash(ox, 41, oz) < 0.5;
+        var w = Math.min(elancee ? 9 : 13, L - 6), d = w;
         var maxEt = Math.max(1, Math.floor((WH - 8 - y0) / 4));
-        var etages = Math.min(maxEt, 9 + Math.floor(o.hash(ox, 41, oz) * 12));
+        var baseEt = elancee ? 12 : 7, spreadEt = elancee ? 14 : 8;
+        var etages = Math.min(maxEt, baseEt + Math.floor(o.hash(ox, 42, oz) * spreadEt));
         var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
         var b = corps(l, sb, o, p, w, d, y0, etages, 'tour', null, rot);
+        b.plan = elancee ? 'elancee' : 'massive';
         pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
       },
       /* HABITAT-013 : un immeuble de logements — plus large et plus haut
-         qu'une maison urbaine, mais bâti avec les mêmes outils (`corps`). */
+         qu'une maison urbaine, mais bâti avec les mêmes outils (`corps`).
+         SPEC-HABITAT-010 : une barre (longue, basse) ou un plot (carré,
+         plus haut) selon le tirage. */
       immeuble: function (l, st, o, ox, oz, L, rot, y0) {
-        var w = Math.min(16, L - 6), d = Math.min(12, L - 8);
-        var etages = 3 + Math.floor(o.hash(ox, 43, oz) * 5);
+        var barre = o.hash(ox, 43, oz) < 0.5;
+        var w = Math.min(barre ? 16 : 11, L - 6), d = Math.min(barre ? 12 : 11, L - 8);
+        var etages = barre ? 3 + Math.floor(o.hash(ox, 44, oz) * 5) : 5 + Math.floor(o.hash(ox, 44, oz) * 6);
         var p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
         var b = corps(l, st, o, p, w, d, y0, etages, 'immeuble', null, rot);
+        b.plan = barre ? 'barre' : 'plot';
         pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
       },
     };
@@ -905,7 +1025,7 @@
           n++;
         }
         var a = l.blocs.get(cx + ',' + cz);
-        if (a) for (var i = 0; i < a.length; i += 4) { put(a[i], a[i + 1], a[i + 2], a[i + 3]); n++; }
+        if (a) for (var i = 0; i < a.length; i += 5) { put(a[i], a[i + 1], a[i + 2], a[i + 3], a[i + 4]); n++; }
       });
       return n;
     }

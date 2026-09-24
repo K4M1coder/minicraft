@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 ### Ajouté
+
 - Mobilier d'intérieur (SPEC-INTERIEUR-002) : lit (on y dort, la nuit passe, la
   réapparition s'y fixe), table, chaise, armoire, étagère, bibliothèque
   (conteneurs), tapis, lampe (source de lumière), vase, présentoir et socle
@@ -33,13 +34,19 @@ respecter (voir PLAN.md, « Commits et versions »).
 - Bijoux (SPEC-OBJET-003) : l'émeraude porte vraiment chance au butin (minage `C.dropsOf` et butin des créatures tuées, resserre le tirage aléatoire sans jamais toucher un drop déjà garanti) ; le diamant donne une vraie lumière portée qui suit chaque joueur local qui le porte (lumière ponctuelle dynamique dans `render.js`, moins coûteuse qu'une source posée sur le monde qui exigerait de remailler les chunks en continu).
 - Foudre et feu (SPEC-CONSTR-007) : un éclair tombé près d'un joueur allume ce qu'il touche s'il est inflammable (le bloc frappé, sinon celui juste au-dessus), hors ligne et côté serveur — `MC.Feu.allumerParFoudre`.
 - En ligne, la fusion de deux dalles en bloc plein (SPEC-CONSTR-002) est synchronisée aux autres joueurs : `player.js/useOn` distingue désormais la fusion (qui modifie la case VISÉE) de la pose ordinaire (case adjacente) par un résultat `'place-ici'`, et le serveur l'autorise explicitement (`blocAutorise`).
+- Plusieurs plans reconnaissables par type de bâtiment généré : trois pour la maison (carrée, longère, en L avec une aile), au moins deux pour les autres (point info, banque, salon, magasin, artisan, marché, ferme, place, tour, immeuble), tirés procéduralement ; le gabarit suit la densité — maisons mitoyennes en ville, fermes en campagne, tours et immeubles réservés au cœur des mégapoles (SPEC-HABITAT-010).
+- Toitures en pente faites d'escaliers orientés vers le faîtage, avec un faîtage en dalle (ou en bloc plein selon le matériau) qui s'ajuste à la largeur du toit ; les formes plates, dômes et chapeaux restent en blocs pleins là où le style l'exige (SPEC-CONSTR-003, `src/habitats.js` `toit`, cinquième champ d'état dans `l.blocs` rejoué par `world.js`/`setEtat`).
+
+### Corrigé
+
+- Cinq bâtisseurs (maison, point info, banque, salon, magasin) appelaient `corps(..., 'type', rot)` en confondant les paramètres `nom` et `rot` : la porte n'était jamais orientée selon la façade. Les appels passent maintenant `null` pour `nom` et `rot` au bon rang (SPEC-PORTE-001).
 
 ### Limites connues
 
 - Coffres piégés/surprises : semés dans les donjons (dont la cité ancienne) ; les camps de bandits n'existent pas encore comme structure générée dans le code (seulement des factions politiques sans bâti propre), donc rien à y semer pour l'instant.
 - Le contenu d'un distributeur en ligne (`NP.MSG.DISTRIB`) est envoyé au serveur à la fermeture de son interface, sans confirmation immédiate aux autres joueurs déjà en train de le regarder — même limite que les coffres et fourneaux, dont le contenu n'est pas du tout synchronisé entre joueurs en ligne (hors sujet de ce lot).
 - Un bloc de commande en ligne ne routent que l'action `/heure` (avancer l'heure du monde) ; les autres actions du chat (`/faction`, `/rejoindre`…) n'ont pas de sens sans joueur qui tape et sont ignorées plutôt que mal simulées.
-
+- Le plan « en L » de la maison pose l'aile secondaire en gros œuvre seul (pas de porte, pas d'accès intérieur direct depuis le corps principal) : purement une variation de silhouette, pas une pièce habitable de plus.
 
 ## [0.2.0] - 2026-09-24
 ### Ajouté

@@ -411,9 +411,17 @@
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
       // villes, villages et maisons : terrain nivelé, rues, bâtiments
-      if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id) {
+      // SPEC-CONSTR-003 : un 5e argument optionnel porte l'état du bloc
+      // (orientation d'un escalier de toiture, moitié d'une dalle de
+      // faîtage…), posé dans le même tampon que les blocs générés — copié à
+      // la volée (aucun autre contenu de génération n'en a besoin encore).
+      if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id, etat) {
         if (by <= 0 || by >= WH) return;
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+        if (etat) {
+          if (etats === ETATS_VIDE) etats = new Uint8Array(ETATS_VIDE);
+          etats[idx(bx - cx * CX, by, bz - cz * CZ)] = etat;
+        }
       });
       // routes de commerce et de tourisme entre les lieux
       if (routes) routes.appliquer(cx, cz, function (bx, by, bz, id) {
