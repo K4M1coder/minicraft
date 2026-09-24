@@ -78,6 +78,25 @@
     ALGUE_LUMINEUSE: 126,    // algues des abysses
     PLANCTON_LUMINEUX: 127,  // plancton des récifs, simplifié en bloc
   };
+  // ─── L29 mécanismes : circuits et énergie (SPEC-MECA-001 à 008) ───────────
+  // Ids 650..849 réservés à cet agent. Le comportement de chaque bloc est
+  // décrit par le champ `circuit` posé plus bas (lu par src/circuits.js et
+  // par le registre de src/world.js) ; l'id lui-même ne porte aucune logique.
+  Object.assign(B, {
+    FIL_SIGNAL: 650, LEVIER_CIRCUIT: 651, BOUTON_CIRCUIT: 652, PLAQUE_PRESSION: 653,
+    REPETEUR_CIRCUIT: 654,
+    PORTE_NON: 655, PORTE_ET: 656, PORTE_OU: 657, PORTE_XOR: 658,
+    PORTE_NAND: 659, PORTE_NOR: 660, PORTE_XNOR: 661,
+    BASCULE_CIRCUIT: 662, COMPTEUR_CIRCUIT: 663, COMPARATEUR_CIRCUIT: 664,
+    LAMPE_ETEINTE: 665, LAMPE_ALLUMEE: 666,
+    TAPIS_ROULANT: 667, ASCENSEUR: 668, ALARME: 669,
+    DETECTEUR_PRESENCE: 670, DETECTEUR_LUMIERE: 671, DETECTEUR_JOURNUIT: 672,
+    DETECTEUR_METEO: 673, HORLOGE_CIRCUIT: 674, DETECTEUR_EAU: 675,
+    EOLIENNE: 676, ROUE_HYDRAULIQUE: 677, GENERATEUR_THERMIQUE: 678,
+    CABLE_ENERGIE: 679, BATTERIE: 680,
+    DISTRIBUTEUR: 681, PISTON: 682, PISTON_COLLANT: 683, TETE_PISTON: 684,
+    BLOC_COMMANDE: 685,
+  });
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
     RAW_MUTTON: 134, COOKED_MUTTON: 135, ROTTEN_FLESH: 136, EMERALD: 137,
@@ -447,6 +466,58 @@
   defBlock(B.WOOL_GREEN, { name: 'Laine verte', tiles: [123, 123, 123], hardness: 0.8 });
   defBlock(B.LADDER, { name: 'Échelle', tiles: [124, 124, 124], hardness: 0.4, tool: 'axe',
                        transparent: true, plant: true, pass: 'cutout', grimpable: true });
+
+  // ─── L29 mécanismes : circuits et énergie (SPEC-MECA-001 à 008) ───────────
+  // `circuit.type` est le seul champ que src/circuits.js et le registre de
+  // src/world.js lisent pour savoir comment simuler le bloc ; `entree`/
+  // `sortie` valent pour les portes à deux entrées orientées (le mur de face,
+  // comme les portes en bois, encodé dans l'état — voir circuits.js).
+  var TC = { hardness: 1.2, tool: 'pickaxe' };
+  defBlock(B.FIL_SIGNAL, { name: 'Fil de signal', tiles: [768, 768, 768], hardness: 0.2,
+                          transparent: true, plant: true, pass: 'cutout', circuit: { type: 'fil' } });
+  defBlock(B.LEVIER_CIRCUIT, { name: 'Levier', tiles: [769, 769, 769], hardness: 0.4,
+                              transparent: true, plant: true, pass: 'cutout', circuit: { type: 'levier', source: true } });
+  defBlock(B.BOUTON_CIRCUIT, { name: 'Bouton', tiles: [770, 770, 770], hardness: 0.4,
+                              transparent: true, plant: true, pass: 'cutout', circuit: { type: 'bouton', source: true } });
+  defBlock(B.PLAQUE_PRESSION, { name: 'Plaque de pression', tiles: [771, 771, 771], hardness: 0.4,
+                               transparent: true, plant: true, pass: 'cutout', circuit: { type: 'plaque', source: true } });
+  defBlock(B.REPETEUR_CIRCUIT, { name: 'Répéteur', tiles: [772, 772, 772], hardness: 0.4,
+                                transparent: true, plant: true, pass: 'cutout', circuit: { type: 'repeteur' } });
+  defBlock(B.PORTE_NON, Object.assign({ name: 'Porte NON', tiles: [773, 773, 773], circuit: { type: 'non' } }, TC));
+  defBlock(B.PORTE_ET, Object.assign({ name: 'Porte ET', tiles: [774, 774, 774], circuit: { type: 'et' } }, TC));
+  defBlock(B.PORTE_OU, Object.assign({ name: 'Porte OU', tiles: [775, 775, 775], circuit: { type: 'ou' } }, TC));
+  defBlock(B.PORTE_XOR, Object.assign({ name: 'Porte OU exclusif', tiles: [776, 776, 776], circuit: { type: 'xor' } }, TC));
+  defBlock(B.PORTE_NAND, Object.assign({ name: 'Porte NON-ET', tiles: [777, 777, 777], circuit: { type: 'nand' } }, TC));
+  defBlock(B.PORTE_NOR, Object.assign({ name: 'Porte NON-OU', tiles: [778, 778, 778], circuit: { type: 'nor' } }, TC));
+  defBlock(B.PORTE_XNOR, Object.assign({ name: 'Porte NON-OU exclusif', tiles: [779, 779, 779], circuit: { type: 'xnor' } }, TC));
+  defBlock(B.BASCULE_CIRCUIT, Object.assign({ name: 'Bascule (mémoire)', tiles: [780, 780, 780], circuit: { type: 'bascule' } }, TC));
+  defBlock(B.COMPTEUR_CIRCUIT, Object.assign({ name: 'Compteur', tiles: [781, 781, 781], circuit: { type: 'compteur' } }, TC));
+  defBlock(B.COMPARATEUR_CIRCUIT, Object.assign({ name: 'Comparateur', tiles: [782, 782, 782], circuit: { type: 'comparateur' } }, TC));
+  defBlock(B.LAMPE_ETEINTE, Object.assign({ name: 'Lampe (éteinte)', tiles: [783, 783, 783], circuit: { type: 'lampe', allumee: false } }, TC));
+  defBlock(B.LAMPE_ALLUMEE, Object.assign({ name: 'Lampe (allumée)', tiles: [784, 784, 784], light: 14,
+                                           circuit: { type: 'lampe', allumee: true } }, TC));
+  defBlock(B.TAPIS_ROULANT, Object.assign({ name: 'Tapis roulant', tiles: [785, 785, 785], circuit: { type: 'tapis' } }, TC));
+  defBlock(B.ASCENSEUR, Object.assign({ name: 'Ascenseur', tiles: [786, 786, 786], circuit: { type: 'ascenseur' } }, TC));
+  defBlock(B.ALARME, Object.assign({ name: 'Alarme', tiles: [787, 787, 787], circuit: { type: 'alarme' } }, TC));
+  defBlock(B.DETECTEUR_PRESENCE, Object.assign({ name: 'Détecteur de présence', tiles: [788, 788, 788], circuit: { type: 'presence', source: true } }, TC));
+  defBlock(B.DETECTEUR_LUMIERE, Object.assign({ name: 'Détecteur de lumière', tiles: [789, 789, 789], circuit: { type: 'lumiere', source: true } }, TC));
+  defBlock(B.DETECTEUR_JOURNUIT, Object.assign({ name: 'Détecteur jour/nuit', tiles: [790, 790, 790], circuit: { type: 'journuit', source: true } }, TC));
+  defBlock(B.DETECTEUR_METEO, Object.assign({ name: 'Détecteur météo', tiles: [791, 791, 791], circuit: { type: 'meteo', source: true } }, TC));
+  defBlock(B.HORLOGE_CIRCUIT, Object.assign({ name: 'Horloge', tiles: [792, 792, 792], circuit: { type: 'horloge', source: true } }, TC));
+  defBlock(B.DETECTEUR_EAU, Object.assign({ name: "Détecteur de niveau d'eau", tiles: [793, 793, 793], circuit: { type: 'eau', source: true } }, TC));
+  defBlock(B.EOLIENNE, Object.assign({ name: 'Éolienne', tiles: [794, 794, 794], circuit: { type: 'eolienne', generateur: true } }, TC));
+  defBlock(B.ROUE_HYDRAULIQUE, Object.assign({ name: 'Roue hydraulique', tiles: [795, 795, 795], circuit: { type: 'hydraulique', generateur: true } }, TC));
+  defBlock(B.GENERATEUR_THERMIQUE, Object.assign({ name: 'Générateur thermique', tiles: [796, 796, 796], circuit: { type: 'thermique', generateur: true } }, TC));
+  defBlock(B.CABLE_ENERGIE, { name: 'Câble', tiles: [797, 797, 797], hardness: 0.3, transparent: true,
+                              plant: true, pass: 'cutout', circuit: { type: 'cable', energie: true } });
+  defBlock(B.BATTERIE, Object.assign({ name: 'Batterie', tiles: [798, 798, 798], circuit: { type: 'batterie', energie: true } }, TC));
+  defBlock(B.DISTRIBUTEUR, Object.assign({ name: 'Distributeur', tiles: [799, 799, 799], circuit: { type: 'distributeur' }, interactive: 'distributeur' }, TC));
+  defBlock(B.PISTON, Object.assign({ name: 'Piston', tiles: [800, 800, 800], circuit: { type: 'piston' } }, TC));
+  defBlock(B.PISTON_COLLANT, Object.assign({ name: 'Piston collant', tiles: [801, 801, 801], circuit: { type: 'piston', collant: true } }, TC));
+  defBlock(B.TETE_PISTON, { name: 'Tête de piston', tiles: [802, 802, 802], hardness: 1.2, tool: 'pickaxe',
+                            circuit: { type: 'tete-piston' } });
+  defBlock(B.BLOC_COMMANDE, { name: 'Bloc de commande', tiles: [803, 803, 803],
+                              hardness: -1, circuit: { type: 'commande', adminSeul: true } });
 
   // blé : 4 stades, non solides, cassables instantanément
   var WHEAT_STAGES = [B.WHEAT0, B.WHEAT1, B.WHEAT2, B.WHEAT3];

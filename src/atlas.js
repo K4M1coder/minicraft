@@ -1058,6 +1058,56 @@
       g.fillStyle = '#8a8c94'; g.fillRect(o[0] + 2, o[1] + 1, 2, 2); g.fillRect(o[0] + 12, o[1] + 1, 2, 2);
     })();
 
+    // ─── L29 mécanismes : circuits et énergie (tuiles 768..803) ──────────────
+    // Rendu minimal : une couleur par famille, un repère au centre pour
+    // distinguer les portes logiques entre elles, et une variante plus claire
+    // pour tout bloc "allumé" (lampe) — seule différence visuelle exigée par
+    // la spec, le reste (fil, détecteurs, énergie) n'a qu'une teinte propre.
+    (function () {
+      var PALETTE = {
+        768: [120, 120, 40],   // fil de signal
+        769: [150, 110, 70],   // levier
+        770: [150, 90, 90],    // bouton
+        771: [110, 110, 60],   // plaque de pression
+        772: [90, 130, 150],   // répéteur
+        773: [180, 70, 70], 774: [70, 150, 90], 775: [70, 110, 180], 776: [160, 90, 160],
+        777: [150, 60, 60], 778: [60, 90, 150], 779: [130, 70, 130],   // portes logiques
+        780: [180, 150, 60],   // bascule
+        781: [90, 160, 160],   // compteur
+        782: [160, 120, 90],   // comparateur
+        783: [90, 90, 90],     // lampe éteinte
+        785: [80, 80, 100],    // tapis roulant
+        786: [110, 110, 140],  // ascenseur
+        787: [170, 60, 60],    // alarme
+        788: [70, 140, 100], 789: [200, 200, 120], 790: [80, 80, 160], 791: [110, 150, 190],
+        792: [200, 170, 90], 793: [70, 120, 190],                    // détecteurs
+        794: [200, 220, 230],  // éolienne
+        795: [90, 140, 190],   // roue hydraulique
+        796: [190, 90, 50],    // générateur thermique
+        797: [80, 70, 50],     // câble
+        798: [90, 190, 90],    // batterie
+        799: [140, 110, 70],   // distributeur
+        800: [130, 130, 130], 801: [110, 150, 110],                  // pistons
+        802: [160, 160, 160],  // tête de piston
+        803: [40, 40, 40],     // bloc de commande
+      };
+      Object.keys(PALETTE).forEach(function (t) { grain(+t, PALETTE[t], 16); });
+      // lampe allumée : même famille, beaucoup plus claire et un cœur lumineux
+      (function () {
+        var o = grain(784, [235, 225, 150], 10);
+        g.fillStyle = 'rgba(255,250,210,.9)';
+        g.beginPath(); g.arc(o[0] + 8, o[1] + 8, 4, 0, Math.PI * 2); g.fill();
+      })();
+      // un repère central distingue chaque porte logique de la suivante
+      var SIGLES = { 773: 'N', 774: '&', 775: '≥', 776: 'X', 777: '!', 778: '¬', 779: 'Y' };
+      g.font = '10px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+      g.fillStyle = 'rgba(255,255,255,.85)';
+      Object.keys(SIGLES).forEach(function (t) {
+        var o = origin(+t);
+        g.fillText(SIGLES[t], o[0] + 8, o[1] + 9);
+      });
+    })();
+
     // ─── textures raccordables et variantes ──────────────────────────────────
     /* Taches douces TUILABLES : un réseau de 4 × 4 valeurs aléatoires,
        interpolé en bouclant sur les bords. Le motif se raccorde donc avec

@@ -2061,7 +2061,7 @@
         // temps, apparitions, cultures
         g.time += dt;
         g.duree = (g.duree || 0) + dt;
-        world.tick(dt, 14, null, { eau: !net.enLigne(), temps: g.time });
+        world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time });
         spawnT += dt;
         if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
           spawnT = 0;
@@ -2089,7 +2089,7 @@
         else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
-        world.tick(dt, 14, null, { temps: g.time });
+        world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time });
         for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
         render.setHighlight(null);
       } else {

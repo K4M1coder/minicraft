@@ -563,6 +563,11 @@
       // une torche exige un support : sol ou paroi adjacente
       var bdef = C.BLOCKS[id];
       if (bdef && bdef.needsSupport && world.hasSupport && !world.hasSupport(bx, by, bz)) return null;
+      /* SPEC-MECA-007 : bloc de commande — hors ligne, seul le mode créatif
+         y touche (en ligne, le serveur fait de toute façon foi : voir
+         server.js/blocAutorise, qui corrige toute prédiction locale). */
+      if (bdef && bdef.circuit && bdef.circuit.adminSeul && MC.Circuits
+          && !MC.Circuits.commandeAutorisee({ enLigne: false, mode: R.blocsIllimites ? 'creatif' : 'survie' })) return null;
 
       world.setBlock(bx, by, bz, id);
       /* Escalier (SPEC-CONSTR-001) : orienté selon le regard, inversé si le

@@ -37,6 +37,10 @@
        torches les plus proches pour y placer ses lumières ponctuelles ; sans
        registre il faudrait balayer tous les chunks à chaque image. */
     var lights = new Map();
+    /* L29 mécanismes (SPEC-MECA-008) : registre des blocs `circuit` posés,
+       pour que la simulation (tick) n'ait pas à balayer tous les chunks
+       chargés à chaque tic — même idée que `lights` ci-dessus. */
+    var circuits = new Map();
 
     /* Climat, relief et donjons : deux modules purs branchés sur le même bruit,
        donc sur la même graine. heightAt reste la seule source du relief. */
@@ -748,6 +752,12 @@
         crops.delete(k3);
       }
 
+      // registre des mécanismes L29 (SPEC-MECA-008) — les portes et trappes
+      // existantes y entrent aussi : un signal peut les ouvrir (C.bascule).
+      var estMeca = C.BLOCKS[id] && (C.BLOCKS[id].circuit || C.estPorte(id) || C.estTrappe(id));
+      if (estMeca) circuits.set(k3, [wx, wy, wz, id]);
+      else circuits.delete(k3);
+
       // registre des sources de lumière
       if (C.lampeDe(id) > 0) lights.set(k3, { x: wx, y: wy, z: wz, level: C.lampeDe(id) });
       else lights.delete(k3);
@@ -895,8 +905,22 @@
       }
     }
 
+    /* L29 mécanismes (SPEC-MECA-008) : un tic de circuits toutes les 0.2 s
+       (5 Hz — assez pour un répéteur perceptible, peu coûteux), et seulement
+       sur les blocs `circuit` des chunks CHARGÉS (le registre en contient
+       peut-être d'anciens chunks déchargés depuis). En ligne, c'est le
+       serveur qui fait autorité (`opts.circuits === false` côté client, même
+       convention que l'eau). */
+    function tickCircuits(ctx) {
+      var positions = [];
+      circuits.forEach(function (p) { if (estCharge(p[0], p[2])) positions.push(p); });
+      if (!positions.length) return [];
+      var api = { getBlock: getBlock, getEtat: getEtat, setEtat: setEtat, setBlock: setBlock };
+      return MC.Circuits.tick(positions, api, ctx || {});
+    }
+
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
-    var eauT = 0, gelT = 0;
+    var eauT = 0, gelT = 0, circuitsT = 0;
     function tick(dt, stageTime, rand, opts) {
       var st = stageTime || 14;
       var r = rand || Math.random;
@@ -905,6 +929,10 @@
       if (MC.Eau && !(opts && opts.eau === false)) {
         eauT += dt;
         if (eauT >= 0.25) { eauT = 0; coulerEau(96); }
+      }
+      if (MC.Circuits && !(opts && opts.circuits === false)) {
+        circuitsT += dt;
+        if (circuitsT >= 0.2) { circuitsT = 0; tickCircuits(opts && opts.circuitsCtx); }
       }
       var temps = opts && opts.temps;
       var mult = multCroissance(temps);
@@ -934,10 +962,15 @@
        les torches posées avant la sauvegarde n'éclairent plus. */
     function rebuildRegistries() {
       lights.clear();
+      circuits.clear();
       overrides.forEach(function (id, k) {
         if (C.lampeDe(id) > 0) {
           var p = k.split(',');
           lights.set(k, { x: +p[0], y: +p[1], z: +p[2], level: C.lampeDe(id) });
+        }
+        if (C.BLOCKS[id] && C.BLOCKS[id].circuit) {
+          var p2 = k.split(',');
+          circuits.set(k, [+p2[0], +p2[1], +p2[2], id]);
         }
       });
       // les torches générées des chunks déjà en mémoire (donjons)
@@ -1068,7 +1101,8 @@
     return {
       seed: seed, noise: N, chunks: chunks, overrides: overrides, crops: crops,
       etatsOverrides: etatsOverrides, getEtat: getEtat, setEtat: setEtat,
-      lights: lights, rebuildRegistries: rebuildRegistries, reset: reset,
+      lights: lights, circuits: circuits, tickCircuits: tickCircuits,
+      rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,

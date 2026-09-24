@@ -210,7 +210,11 @@
       // ils ont pu s éloigner en errant pendant l hiver : on les rapproche pour
       // isoler l effet du drapeau `hiver`, seul objet de ce test
       a.pos.x = 0.5; a.pos.y = 11; a.pos.z = 0.5; b.pos.x = 1.5; b.pos.y = 11; b.pos.z = 0.5;
-      for (var u = 0; u < 20; u++) naissances += ents.update(0.5, pl, { hiver: false }).naissances || 0;
+      // gardés côte à côte (ils errent sinon) le temps de deux ou trois tours de reproduction
+      for (var u = 0; u < 40 && !naissances; u++) {
+        a.pos.x = 0.5; a.pos.z = 0.5; b.pos.x = 1.5; b.pos.z = 0.5;
+        naissances += ents.update(0.5, pl, { hiver: false }).naissances || 0;
+      }
       A.gt(naissances, 0, 'la reproduction reprend hors de l hiver');
     });
   });

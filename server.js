@@ -27,7 +27,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'commandes', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes'];
 
@@ -98,6 +98,7 @@ const guildes = MC.Guildes.creerEtat();
 let heure = 60;
 let meteoT = null;
 let accEau = 0;
+let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
 
 // ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
 /* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
@@ -589,7 +590,7 @@ function traiter(c, m) {
       monde.getChunk(cx, cz, true);
       const avant = monde.getBlock(m.x, m.y, m.z);
       const js = c.joueurs && c.joueurs[m.j];
-      if (!blocAutorise(js, m, avant)) {
+      if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
         break;
@@ -757,17 +758,28 @@ function creerJoueurServeur(j) {
   return { joueur, entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
 }
 const PORTEE_BLOC = 7;
-function blocAutorise(js, m, avant) {
+function blocAutorise(js, m, avant, c) {
   if (!js || js.joueur.state.dead) return false;
   const st = js.joueur.state;
   const d = Math.hypot(m.x + 0.5 - st.pos.x, m.y + 0.5 - st.pos.y - 1.62, m.z + 0.5 - st.pos.z);
   if (d > PORTEE_BLOC) return false;                      // hors de portée
   if (m.id === 0) {
     const def = C.BLOCKS[avant];
-    return !!def && def.hardness >= 0;                    // ni le socle ni l'eau
+    if (!def || def.hardness < 0) return false;            // ni le socle ni l'eau
+    if (def.circuit && def.circuit.adminSeul) return blocCommandeAutorise(c);
+    return true;
   }
   // on ne pose que dans une case libre (air, eau, plante)
-  return C.isReplaceable(avant);
+  if (!C.isReplaceable(avant)) return false;
+  const posee = C.BLOCKS[m.id];
+  if (posee && posee.circuit && posee.circuit.adminSeul) return blocCommandeAutorise(c);
+  return true;
+}
+/* SPEC-MECA-007 : poser ou casser un bloc de commande — en ligne, réservé à
+   un administrateur (le serveur fait toujours autorité, jamais le mode local
+   du client, qui ne veut rien dire une fois connecté). */
+function blocCommandeAutorise(c) {
+  return !!(MC.Circuits && MC.Circuits.commandeAutorisee({ enLigne: true, role: c && c.role }));
 }
 function tousLesJoueurs() {
   const l = [];
@@ -846,7 +858,8 @@ setInterval(() => {
   const __t0 = MESURES_ACTIVES ? performance.now() : 0;
 
   heure += dt;
-  monde.tick(dt, 14, null, { temps: heure });
+  // circuits : diffusé explicitement plus bas (comme l'eau), donc désactivé ici
+  monde.tick(dt, 14, null, { temps: heure, circuits: false });
 
   /* Le serveur simule les créatures autour des joueurs : il lui faut donc le
      terrain autour d'eux. Sans cela, une créature hors des chunks du point
@@ -869,6 +882,18 @@ setInterval(() => {
   if (accEau >= 0.25) {
     accEau = 0;
     monde.coulerEau(96).forEach(ch => diffuser({ t: NP.MSG.BLOC, x: ch[0], y: ch[1], z: ch[2], id: ch[3] }));
+  }
+  // L29 mécanismes (SPEC-MECA-008) : le serveur fait foi, et diffuse chaque
+  // changement — un bloc dont seul l'état a changé (une lampe, un compteur…)
+  // garde son id, le client applique l'état comme pour tout bloc posé.
+  accCircuits += dt;
+  if (accCircuits >= 0.2) {
+    accCircuits = 0;
+    monde.tickCircuits({ temps: heure }).forEach(ch => diffuser({
+      t: NP.MSG.BLOC, x: ch.x, y: ch.y, z: ch.z,
+      id: ch.setBlock !== undefined ? ch.setBlock : monde.getBlock(ch.x, ch.y, ch.z),
+      etat: ch.setEtat !== undefined ? ch.setEtat : (monde.getEtat(ch.x, ch.y, ch.z) || 0),
+    }));
   }
 
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :
