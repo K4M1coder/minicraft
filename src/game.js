@@ -1798,6 +1798,7 @@
           if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
             entities.trySpawn(player.state, DC.isNight(g.time), null,
                               MC.Modes.plafondsEntites(regles));
+            if (regles.monstres) entities.trySpawnSouterrain(player.state, null, MC.Modes.plafondsEntites(regles));
           }
           if (!DC.isNight(g.time)) entities.burnUndead(false);
         }

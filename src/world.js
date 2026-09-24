@@ -147,7 +147,56 @@
       var or = bio.strates ? 0.0075 : 0.0025;
       if (y < 20 && nc >= 0.010 && nc < 0.010 + or) return B.GOLD_ORE;
       if (y < 11 && nc >= 0.02 && nc < 0.0215) return B.DIAMOND_ORE;
+      /* Nouveaux minerais (SPEC-MINERAI-001) : cuivre et étain, peu profonds et
+         communs ; argent et lapis, un peu plus bas ; gemmes (émeraude, rubis,
+         saphir), rares et profondes, plus fréquentes dans les montagnes et
+         badlands comme l'or ; quartz partout en profondeur moyenne, soufre
+         préféré sous et près des volcans ; sel proche de la surface des
+         déserts et des badlands (les « mers asséchées » de la spec). */
+      if (y < h - 3 && y > 10 && nc >= 0.03 && nc < 0.05) return B.MINERAI_METAUX;
+      if (y < 30 && y > 6 && nc >= 0.06 && nc < 0.072) return B.MINERAI_ARGENT;
+      var gemmes = bio.strates || bio.id === 'montagnes' ? 0.014 : 0.006;
+      if (y < 18 && nc >= 0.09 && nc < 0.09 + gemmes) return B.MINERAI_GEMMES;
+      var estVolcan = bio.id === 'volcan';
+      var cristalPlafond = estVolcan ? h - 1 : 34;
+      var cristalDensite = estVolcan ? 0.05 : 0.012;
+      if (y < cristalPlafond && nc >= 0.12 && nc < 0.12 + cristalDensite) return B.MINERAI_CRISTAL;
+      /* Le sel reste proche de la surface, mais desert et badlands couvrent
+         leurs premiers blocs de grès ou de strates avant même d'appeler
+         filon() (voir generateChunk) : le sel ne peut apparaître qu'une fois
+         cette couche traversée, pas à une hauteur absolue fixe. */
+      if ((bio.id === 'desert' || bio.id === 'badlands') && y > h - 20 &&
+          nc >= 0.2 && nc < 0.208) return B.SEL;
       return B.STONE;
+    }
+
+    /* Contenu d'une cavité (SPEC-SOUTERRAIN-001 et SPEC-LUMIERE-007) : de la
+       lave dans les profondeurs, de l'eau dans les grottes englouties sous la
+       mer, et sinon de l'air — parfois semé d'un décor propre au biome
+       souterrain (cristaux, champignons lumineux, lianes…) quand le bloc du
+       dessous est déjà posé et solide, c'est-à-dire quand cette case est un
+       plancher de cavité. */
+    // en dessous de ce niveau seulement : les cavités les plus profondes
+    // (l'abîme et le bas des géodes/chambres magmatiques/grottes luxuriantes)
+    // reçoivent leur décor propre. Au-dessus, une cavité reste comme avant —
+    // c'est là que se creusent la plupart des donjons et l'aire d'apparition,
+    // qui ne doivent rien voir de nouveau.
+    var PLAFOND_SOUTERRAIN = 16;
+    function caveAt(x, y, z, wx, wz, h, bio, blocks) {
+      if (y <= NIVEAU_LAVE_PROFONDE) return B.LAVA;
+      if (!MC.Souterrain || y > PLAFOND_SOUTERRAIN) return 0;
+      var sId = MC.Souterrain.biomeAt(bio.id, y, !!bio.marin);
+      var r = N.hash3(wx + 401, y - 213, wz + 733);
+      if (sId === 'englouties') {
+        var solM = y > 0 ? blocks[idx(x, y - 1, z)] : 0;
+        return (C.isSolid(solM) && r > 0.92) ? B.ALGUE_LUMINEUSE : B.WATER;
+      }
+      var sol = y > 0 ? blocks[idx(x, y - 1, z)] : 0;
+      if (sol && C.isSolid(sol) && sol !== B.BEDROCK) {
+        var deco = MC.Souterrain.decorSol(sId, r);
+        if (deco) return deco;
+      }
+      return 0;
     }
 
     function generateChunk(cx, cz) {
@@ -188,7 +237,7 @@
           var b;
           if (y === 0) b = B.BEDROCK;
           else if (fondRavin && y > fondRavin) b = 0;     // ravin ouvert vers le ciel
-          else if (isCave(wx, y, wz, h)) b = y <= NIVEAU_LAVE_PROFONDE ? B.LAVA : 0;
+          else if (isCave(wx, y, wz, h)) b = caveAt(x, y, z, wx, wz, h, bio, blocks);
           else if (y === h && ech.climat.coulee) b = B.MAGMA;   // coulée sur le flanc du volcan
           else if (y === h) b = sf[0];
           else if (y > h - 4) b = bioSurf.strates && !beach ? strate(y) : sf[1];

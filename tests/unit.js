@@ -1033,11 +1033,13 @@
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
       var gy = w.groundAt(8, 8, true);
-      A.equal(w.lights.size, 0, 'registre vide au depart');
+      // le registre peut déjà porter les lumières naturelles des profondeurs
+      // (champignons, cristaux — SPEC-LUMIERE-007) : on compare par écart
+      var base = w.lights.size;
       w.setBlock(8, gy + 1, 8, B.TORCH);
-      A.equal(w.lights.size, 1, 'torche enregistree');
+      A.equal(w.lights.size, base + 1, 'torche enregistree');
       w.setBlock(8, gy + 1, 8, 0);
-      A.equal(w.lights.size, 0, 'retiree quand on la casse');
+      A.equal(w.lights.size, base, 'retiree quand on la casse');
     });
 
     it('une torche exige un support', function () {
@@ -1052,6 +1054,7 @@
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
       var gy = w.groundAt(8, 8, true);
+      var base = w.lights.size;
       // un relief voisin en pente pourrait offrir un appui latéral : on isole
       // la colonne pour ne tester que la perte du support du dessous
       [[7, 8], [9, 8], [8, 7], [8, 9]].forEach(function (p) { w.setBlock(p[0], gy + 1, p[1], 0); });
@@ -1060,17 +1063,18 @@
       var tombees = w.dropUnsupported(8, gy, 8);
       A.equal(tombees.length, 1, 'une torche est tombee');
       A.equal(w.getBlock(8, gy + 1, 8), 0, 'la case est vide');
-      A.equal(w.lights.size, 0, 'registre nettoye');
+      A.equal(w.lights.size, base, 'registre nettoye');
     });
 
     it('le registre des lumieres se reconstruit apres un chargement', function () {
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
       var gy = w.groundAt(8, 8, true);
+      var base = w.lights.size;
       w.setBlock(8, gy + 1, 8, B.TORCH);
       w.lights.clear();                              // simule un chargement brut
       A.equal(w.lights.size, 0);
-      A.equal(w.rebuildRegistries(), 1, 'une torche retrouvee dans les overrides');
+      A.equal(w.rebuildRegistries(), base + 1, 'la torche et les lumières naturelles retrouvées');
     });
 
     it('la recette de torche donne 4 torches', function () {

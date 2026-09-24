@@ -619,7 +619,8 @@
       A.equal(T(L.ocean, SEA - 12, 0.5), 'monument', 'grands fonds');
       A.equal(T(L.ocean, SEA - 5, 0.5), 'epave', 'hauts-fonds');
       A.equal(T(L.ocean, SEA - 2, 0.5), null, 'trop peu d eau : rien');
-      A.equal(T(L.plaines, 40, 0.1), 'crypte');
+      A.equal(T(L.plaines, 40, 0.05), 'cite_ancienne', 'un tirage rare : des ruines, sous n importe quel biome');
+      A.equal(T(L.plaines, 40, 0.3), 'crypte');
       A.equal(T(L.plaines, 40, 0.9), 'mine');
       var vus = {};
       monde().donjons.dansZone(-3000, -3000, 3000, 3000).forEach(function (d) { vus[d.type] = true; });
@@ -660,8 +661,12 @@
       }
       A.ok(vides >= total - 5, 'intérieur creux, piliers mis à part');
       A.equal(w.getBlock(d.coffre.x, d.coffre.y, d.coffre.z), B.CHEST, 'un coffre');
+      // seules les torches de la crypte comptent : les grottes profondes ont
+      // leur propre décor lumineux (SPEC-LUMIERE-007), sans rapport avec elle
       var torches = 0;
-      w.lights.forEach(function (l) { if (Math.abs(l.x - d.x) <= 6 && Math.abs(l.z - d.z) <= 6) torches++; });
+      w.lights.forEach(function (l) {
+        if (Math.abs(l.x - d.x) <= 6 && Math.abs(l.z - d.z) <= 6 && w.getBlock(l.x, l.y, l.z) === B.TORCH) torches++;
+      });
       A.equal(torches, 4, 'quatre torches générées, enregistrées comme lumières');
       // l'entrée débouche à l'air libre, juste au-dessus du sol naturel
       var e = d.entree;

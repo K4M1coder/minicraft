@@ -19,7 +19,7 @@ const RACINE = __dirname;
 const PORT = parseInt(process.argv[2], 10) || 8080;
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'noise', 'biomes', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol'];
 
@@ -499,6 +499,7 @@ setInterval(() => {
     if (clients.size > 0) {
       entites.trySpawn(ref, MC.DayCycle.isNight(heure), null,
                        MC.Modes.plafondsEntites(regles));
+      entites.trySpawnSouterrain(ref, null, MC.Modes.plafondsEntites(regles));
       if (!MC.DayCycle.isNight(heure)) entites.burnUndead(false);
     }
   }

@@ -899,6 +899,91 @@
       g.strokeStyle = '#6a4a28'; g.strokeRect(o[0] + 1.5, o[1] + 1.5, 13, 13);
     })();
 
+    // ─── minerais (227-231, SPEC-MINERAI-001) et bioluminescence (232-235, SPEC-LUMIERE-007) ──
+    minerai(227, '#d68a4a');                                          // cuivre + étain, tacheté roux
+    minerai(228, '#c9c9d8');                                          // argent + lapis, tacheté clair
+    minerai(229, '#e04a78');                                          // gemmes, tacheté rose vif
+    minerai(230, '#e8e8c0');                                          // quartz + soufre, tacheté pâle
+    (function () {                                                    // 231 sel : cristaux blancs
+      var o = grain(231, [224, 222, 214], 14);
+      g.fillStyle = '#ffffff';
+      for (var k = 0; k < 9; k++) g.fillRect(o[0] + 1 + ((rnd() * 13) | 0), o[1] + 1 + ((rnd() * 13) | 0), 2, 2);
+    })();
+    (function () {                                                    // 232 champignon lumineux
+      var o = clear(232);
+      g.fillStyle = '#3a6a52'; g.fillRect(o[0] + 7, o[1] + 8, 2, 6);
+      g.fillStyle = '#7ef0c0';
+      g.beginPath(); g.ellipse(o[0] + 8, o[1] + 7, 5, 3, 0, 0, 7); g.fill();
+      g.fillStyle = '#c8fff0'; g.fillRect(o[0] + 6, o[1] + 6, 1, 1); g.fillRect(o[0] + 10, o[1] + 6, 1, 1);
+    })();
+    taches(233, [120, 200, 230], 16, 'rgba(220,255,255,.85)', 6, 3);  // 233 cristal lumineux
+    (function () {                                                    // 234 algue luminescente
+      var o = clear(234);
+      g.fillStyle = '#2a9a7a';
+      for (var i = 0; i < 3; i++) px(o[0], o[1], 5 + i * 3, 3, '#2a9a7a');
+      for (var y = 3; y < 15; y++) for (var i2 = 0; i2 < 3; i2++) px(o[0], o[1], 5 + i2 * 3, y, y % 3 ? '#2a9a7a' : '#8affe0');
+    })();
+    (function () {                                                    // 235 plancton luminescent
+      var o = clear(235);
+      for (var k = 0; k < 10; k++) {
+        g.fillStyle = k % 2 ? '#bfffef' : '#4adfc0';
+        g.fillRect(o[0] + 1 + ((rnd() * 14) | 0), o[1] + 1 + ((rnd() * 14) | 0), 1, 1);
+      }
+    })();
+
+    // ─── matières des minerais, objets (236-252, SPEC-MINERAI-002) ───────────
+    function lingot(i, clair, fonce) {
+      var o = clear(i);
+      g.fillStyle = fonce; g.fillRect(o[0] + 3, o[1] + 7, 10, 5);
+      g.fillStyle = clair; g.fillRect(o[0] + 4, o[1] + 7, 8, 2);
+    }
+    function pepite(i, c1, c2) {
+      var o = clear(i);
+      g.fillStyle = c1;
+      g.beginPath(); g.ellipse(o[0] + 8, o[1] + 8, 5, 4, 0.3, 0, 7); g.fill();
+      g.fillStyle = c2; g.fillRect(o[0] + 6, o[1] + 6, 3, 2);
+    }
+    function gemme(i, c1, c2) {
+      var o = clear(i);
+      g.fillStyle = c1;
+      g.beginPath(); g.moveTo(o[0] + 8, o[1] + 2); g.lineTo(o[0] + 13, o[1] + 8);
+      g.lineTo(o[0] + 8, o[1] + 14); g.lineTo(o[0] + 3, o[1] + 8); g.closePath(); g.fill();
+      g.fillStyle = c2; g.fillRect(o[0] + 7, o[1] + 5, 3, 3);
+    }
+    pepite(236, '#c87a4a', '#e8a878');                                // cuivre brut
+    lingot(237, '#f0a878', '#c8703c');                                // lingot de cuivre
+    pepite(238, '#b8c0c8', '#e0e6ea');                                // étain brut
+    lingot(239, '#e8ecef', '#b0b8bf');                                // lingot d'étain
+    pepite(240, '#c8ccd2', '#eef0f4');                                // argent brut
+    lingot(241, '#f2f4f8', '#c0c4cc');                                // lingot d'argent
+    gemme(242, '#2a5adf', '#7aa0ff');                                 // lapis-lazuli
+    gemme(243, '#d81030', '#ff6a86');                                 // rubis
+    gemme(244, '#1560d8', '#7ec0ff');                                 // saphir
+    gemme(245, '#e8d8c8', '#fff6ea');                                 // quartz
+    (function () {                                                    // soufre : poudre jaune
+      var o = clear(246);
+      g.fillStyle = '#e8d030';
+      for (var k = 0; k < 14; k++) g.fillRect(o[0] + 1 + ((rnd() * 14) | 0), o[1] + 1 + ((rnd() * 14) | 0), 1, 1);
+    })();
+    lingot(247, '#e0a860', '#a86830');                                // lingot de bronze
+    function outilBronze(i, forme) {
+      var o = clear(i);
+      g.fillStyle = '#8a6a3c'; g.fillRect(o[0] + 7, o[1] + 8, 2, 7);   // manche
+      g.fillStyle = '#c88a4a';
+      if (forme === 'pioche') { g.fillRect(o[0] + 3, o[1] + 4, 10, 3); }
+      else if (forme === 'hache') { g.fillRect(o[0] + 8, o[1] + 3, 6, 6); }
+      else if (forme === 'pelle') { g.fillRect(o[0] + 6, o[1] + 3, 4, 5); }
+      else { g.fillRect(o[0] + 7, o[1] + 2, 3, 7); }
+    }
+    outilBronze(248, 'pioche'); outilBronze(249, 'hache'); outilBronze(250, 'pelle'); outilBronze(251, 'epee');
+    (function () {                                                    // bijou
+      var o = clear(252);
+      g.fillStyle = '#e8c860'; g.beginPath(); g.arc(o[0] + 8, o[1] + 9, 5, 0, 7); g.fill();
+      g.fillStyle = '#902050';
+      g.beginPath(); g.moveTo(o[0] + 8, o[1] + 3); g.lineTo(o[0] + 11, o[1] + 8);
+      g.lineTo(o[0] + 8, o[1] + 13); g.lineTo(o[0] + 5, o[1] + 8); g.closePath(); g.fill();
+    })();
+
     // ─── seau (188-189) ─────────────────────────────────────────────────────
     function seau(i, plein) {
       var o = clear(i);
