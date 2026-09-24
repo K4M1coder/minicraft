@@ -16,6 +16,26 @@ respecter (voir PLAN.md, « Commits et versions »).
 ## [Non publié]
 ### Ajouté
 
+- Vague 2 (B1, SPEC-SYNC-007/008 — client, docs/vague-2/B1.md § 6 suite) :
+  `game.js` gagne `j.predInv` (une prédiction `MC.Conteneurs.creerPrediction()`
+  par joueur local, activée par `rejoindreServeur`), `operer(j, op, msgBase)`
+  (applique une opération sur l'état réel puis, en ligne, prévient le serveur
+  avec un `seq`) et le hook réseau `onInvMaj` (`net.js` relaie désormais
+  `INV_MAJ`) qui réconcilie l'inventaire/l'équipement confirmés par le
+  serveur — toujours en place (`inv.load`), jamais par un nouvel objet
+  (piège documenté B1.md § 12) — et rejoue les opérations encore en attente.
+  Le journal de `player.js` (déjà écrit, jusqu'ici jamais activé) est
+  maintenant vidé en fin d'image dans un ou plusieurs `INV_CONSOMMER`
+  (`purgerJournalInv`, ≤ 16 opérations chacun). La touche « lâcher » passe
+  par `INV_LACHER` en ligne (jamais `entities.dropItem` local, qui aurait
+  doublé l'objet avec celui du serveur). `doSave` refuse désormais d'écrire
+  en ligne (le serveur fait autorité) et l'inventaire/équipement solo
+  d'avant connexion est sérialisé puis restauré tel quel à la déconnexion,
+  volontaire ou non. `tests/e2e.js` couvre ce câblage (predInv/journal actifs
+  en ligne, `doSave` neutralisée, inventaire solo intact après déconnexion).
+  Reste à faire : `CRAFT`/`EQUIP`/`MANGER` ne passent pas encore par
+  `operer` (ui.js garde son modèle d'objet réellement tenu en main), le
+  registre des conteneurs posés côté serveur (étape 7) et leur UI (étape 8).
 - Vague 2 (B1, SPEC-SYNC-007 à 017) : raccordement de `MC.ContratsV2` à
   `NP.valider` — les nouveaux types de message (`CRAFT`, `EQUIP`,
   `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le

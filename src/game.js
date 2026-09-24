@@ -253,9 +253,14 @@
       onStatut: function (e, info) {
         if (e === 'en ligne') ui.toast('En ligne');
         else if (e === 'erreur') ui.toast('Reseau : ' + (info || 'erreur'), 'warn');
-        else if (e === 'hors ligne' && info) {
-          ui.toast('Reseau : ' + info + ' — retour en solo', 'warn');
-          chat.systeme('Connexion perdue. La partie continue en solo.');
+        else if (e === 'hors ligne') {
+          if (info) {
+            ui.toast('Reseau : ' + info + ' — retour en solo', 'warn');
+            chat.systeme('Connexion perdue. La partie continue en solo.');
+          }
+          // B1 : l'inventaire/équipement solo d'avant connexion est rendu,
+          // que la coupure soit volontaire ou non (B1.md § 6)
+          restaurerInventaireSolo();
         }
       },
       // panneau admin en jeu (SPEC-ADMIN-006) : la réponse du serveur s'affiche
@@ -274,6 +279,25 @@
         if (m.cours !== undefined) pnj.cours = m.cours;
         if (m.remise !== undefined) pnj.remise = m.remise;
         ui.renderContainer();
+      },
+      /* B1 (SPEC-SYNC-008) : le serveur fait foi sur l'inventaire, l'équipement
+         et la grille de fabrication — un `rev` périmé est ignoré, `ack` purge
+         la file de prédiction de ce joueur local, et l'état affiché repart du
+         confirmé + rejeu des opérations encore en attente. Écrit TOUJOURS en
+         place (`inv.load`) : `ui.js` garde des références (B1.md § 12). */
+      onInvMaj: function (m) {
+        var v = MC.ContratsV2.validerInvMaj(m);
+        if (!v) return;
+        var j = equipe[v.j];
+        if (!j || !j.predInv) return;
+        if (typeof j.revInv === 'number' && v.rev <= j.revInv) return;
+        j.revInv = v.rev;
+        var st = j.player.state, CV = MC.ContratsV2;
+        st.inv.load(v.inv);
+        CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(v.equip[s]); });
+        j.predInv.confirmer(v.ack);
+        j.predInv.rejouer(st, {}, { regles: regles });
+        if (v.gain && j.index === 0) { ui.toast('+' + v.gain.n + ' ' + C.nameOf(v.gain.id)); audio.play('ramasser'); }
       },
     });
 
@@ -581,15 +605,50 @@
       afficherMenu();
     }
 
+    /* B1 (docs/vague-2/B1.md § 6) : l'inventaire/équipement solo ne survivrait
+       pas à `composerEquipe` (qui recrée des joueurs vides pour l'équipe en
+       ligne) — on le sérialise ici, `restaurerInventaireSolo` le rend à la
+       déconnexion. */
+    function serialiserInventaireSolo() {
+      var CV = MC.ContratsV2;
+      return equipe.map(function (j) {
+        var st = j.player.state, equip = {};
+        CV.EQUIP_SLOTS.forEach(function (s) { equip[s] = CV.pileVersCase(st.equip[s]); });
+        return { inv: st.inv.serialize(), equip: equip };
+      });
+    }
+    function restaurerInventaireSolo() {
+      if (!g.inventaireSolo) return;
+      var CV = MC.ContratsV2, snap = g.inventaireSolo;
+      equipe.forEach(function (j, i) {
+        var rec = snap[i];
+        if (!rec) return;
+        var st = j.player.state;
+        st.inv.load(rec.inv);
+        CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(rec.equip[s]); });
+        delete st.journalInv;
+      });
+      g.inventaireSolo = null;
+    }
+
     function rejoindreServeur(opts) {
       g.nomJoueur = opts.pseudo;
+      g.inventaireSolo = serialiserInventaireSolo();
       composerEquipe(opts.joueurs || 1, regles);
-      equipe.forEach(function (j) { j.prediction = MC.Synchro.creerPrediction(); });
+      equipe.forEach(function (j) {
+        j.prediction = MC.Synchro.creerPrediction();
+        // B1 : prédiction inventaire/équipement/grille, une par joueur local ;
+        // le journal de player.js n'est actif qu'en ligne (B1.md § 6)
+        j.predInv = MC.Conteneurs.creerPrediction();
+        j.revInv = 0;
+        j.player.state.journalInv = [];
+      });
       entities.list.length = 0;              // en ligne, les créatures sont celles du serveur
       input.setState('playing');
       net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1,
                     { email: opts.email, invitation: opts.invitation });
     }
+    g.rejoindreServeur = rejoindreServeur;
 
     /* Change de monde. L'ANCIEN est libéré d'abord : ses maillages vivent
        dans la scène, pas dans le monde. On appelait jadis reset() sur le
@@ -2171,6 +2230,39 @@
       input.setState('ui');
     }
 
+    /* B1 (docs/vague-2/B1.md § 6) : traduit une opération de MC.Conteneurs en
+       message réseau — hors ligne, applique directement sur l'état réel ;
+       en ligne, applique de la même façon (état affiché) ET prévient le
+       serveur avec un `seq` de prédiction (rejoué/purgé par `onInvMaj`). Ne
+       consomme un `seq` que si l'opération a réellement pris effet, pour que
+       les compteurs client/serveur restent alignés un-message-un-seq. */
+    function operer(j, op, msgBase) {
+      var ctx = { joueur: j.player.state, conteneur: function () { return null; }, regles: regles };
+      var r = MC.Conteneurs.appliquer(ctx, op);
+      if (r.ok && net.enLigne() && j.predInv) {
+        var seq = j.predInv.suivant(op);
+        var msg = Object.assign({}, msgBase, { j: j.index, seq: seq });
+        net.envoyer(msg);
+      }
+      return r;
+    }
+
+    /* Vide le journal de diminutions prédites de player.js (consommerCase,
+       userCase, transformerCase) dans un ou plusieurs INV_CONSOMMER — au
+       plus OPS_MAX opérations chacun (B1.md § 6, § 10). Le journal a déjà
+       muté `pl.inv` au moment de la consommation : ce n'est ici qu'un envoi
+       groupé, pas une nouvelle application. */
+    function purgerJournalInv(j) {
+      var st = j.player.state, jour = st.journalInv;
+      if (!jour || !jour.length || !j.predInv) return;
+      var OPS_MAX = MC.ContratsV2.BORNES.OPS_MAX;
+      while (jour.length) {
+        var lot = jour.splice(0, OPS_MAX);
+        var seq = j.predInv.suivant({ k: 'consommer', ops: lot });
+        net.envoyer({ t: MC.ContratsV2.MSG.INV_CONSOMMER, j: j.index, seq: seq, ops: lot });
+      }
+    }
+
     function onKey(code) {
       var act = MC.Options.actionDe(g.options.touches, code);
       if (act === 'inventaire') {
@@ -2213,8 +2305,19 @@
         descendreDe(equipe[0]);
       } else if (act === 'jeter') {
         // G et non Q : sur AZERTY, Q est déjà la touche « aller à gauche »
-        var d = player.dropSelected(1);
-        if (d) { ui.toast('Jeté : ' + C.nameOf(d.id)); audio.play('poser'); }
+        if (net.enLigne()) {
+          // B1 : en ligne, jamais entities.dropItem local — l'objet au sol
+          // vient du serveur (lacherAuxPieds), sinon il apparaîtrait deux
+          // fois (B1.md § 6, piège documenté)
+          var j0 = equipe[0], i0 = j0.player.state.selected, stack0 = j0.player.state.inv.slots[i0];
+          if (stack0) {
+            var r0 = operer(j0, { k: 'lacher', i: i0, n: 1 }, { t: MC.ContratsV2.MSG.INV_LACHER, i: i0, n: 1 });
+            if (r0.ok) { ui.toast('Jeté : ' + C.nameOf(r0.effets.lache.id)); audio.play('poser'); }
+          }
+        } else {
+          var d = player.dropSelected(1);
+          if (d) { ui.toast('Jeté : ' + C.nameOf(d.id)); audio.play('poser'); }
+        }
       }
     }
 
@@ -2384,6 +2487,10 @@
     g.perdrePartie = perdrePartie;
 
     function doSave(notify) {
+      // B1 (docs/vague-2/B1.md § 6) : le serveur fait foi en ligne — une
+      // sauvegarde locale écraserait l'inventaire solo par l'inventaire
+      // (souvent vide) de l'équipe en ligne à la prochaine reconnexion.
+      if (net.enLigne()) { if (notify) ui.toast('Sauvegarde désactivée en ligne (le serveur fait autorité)', 'warn'); return false; }
       var st = storage();
       if (!st) { if (notify) ui.toast('Sauvegarde indisponible', 'warn'); return false; }
       // pas d emplacement (partie non nommee) : rien a ecrire
@@ -2631,6 +2738,10 @@
       if (actif) {
         // chaque joueur local est simule, quelle que soit sa source d'entrees
         for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
+        // B1 : envoi groupé, en fin d'image, des diminutions journalisées
+        // pendant la simulation (B1.md § 6) — jamais avant, un INV_MAJ arrivé
+        // entre-temps effacerait un journal vidé trop tôt
+        if (net.enLigne()) for (var qj = 0; qj < equipe.length; qj++) purgerJournalInv(equipe[qj]);
 
         // entites et butin : le butin va au joueur le plus proche
         // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)

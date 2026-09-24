@@ -1475,6 +1475,32 @@
     A.equal(g.render.maillagesDistants.size, 0, 'plus aucun maillage distant');
   });
 
+  e2e('B1 (docs/vague-2/B1.md § 6) : predInv/journal actifs en ligne, doSave neutralisee et inventaire solo restaure a la deconnexion', {
+        "teste": "que rejoindreServeur active la prediction d'inventaire (predInv) et le journal de player.js, que doSave refuse d'ecrire en ligne, et que l'inventaire/equipement solo d'avant connexion revient tel quel a la deconnexion",
+        "pourquoi": "le serveur devient seul maitre de l'inventaire en ligne (SPEC-SYNC-007/008) ; une sauvegarde locale ou un inventaire solo perdu casserait la partie hors ligne",
+        "attendu": "predInv et journalInv presents en ligne, doSave() renvoie false en ligne, inventaire solo (7 cailloux) retrouve intact apres deconnexion"
+  }, async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    var s = g.player.state;
+    s.inv.slots[0] = { id: B.COBBLE, n: 7 };
+    A.notOk(s.journalInv, 'hors ligne : pas de journal actif');
+    g.rejoindreServeur({ pseudo: 'SoloB1_' + Date.now() % 100000, joueurs: 1 });
+    for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
+    A.equal(g.net.etat, 'en ligne', 'connecte');
+    await wait(300);
+    var j = g.equipe[0];
+    A.ok(j.predInv, 'predInv cree pour le joueur local');
+    A.ok(Array.isArray(g.player.state.journalInv), 'journal actif en ligne');
+    A.equal(g.doSave(false), false, 'doSave refuse en ligne');
+    g.net.deconnecter();
+    for (var u = 0; u < 30 && g.net.etat === 'en ligne'; u++) await wait(100);
+    await wait(300);
+    A.equal(g.net.etat, 'hors ligne', 'de nouveau hors ligne');
+    A.notOk(g.player.state.journalInv, 'journal desactive hors ligne');
+    A.equal(g.player.state.inv.count(B.COBBLE), 7, 'inventaire solo restaure apres deconnexion');
+  });
+
   /* ── Menus ───────────────────────────────────────────────────────────── */
 
   function videParties() { MC.Saves.toutEffacer(localStorage); }
