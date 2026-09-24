@@ -400,6 +400,25 @@
        rotation autour de lui, soulèvement — nulle au-delà du rayon d'action
        (un peu plus large que l'entonnoir visible), et affaiblie en altitude. */
     var TORN_PORTEE_ACTION = 2.2, TORN_HAUTEUR_ACTION = 50;
+    /* SPEC-VENT-003 : bancs de brume. Denses au petit matin et par temps
+       humide, ils s'étendent dans les creux — vallées, bords de l'eau — et se
+       lèvent sur les hauteurs ; ils dérivent avec le vent de surface.
+       `lieu` : { ySol, fond (le point bas alentour, ou l'eau), humidite 0..1 }. */
+    function brume(temps, et, lieu) {
+      et = et || etat(temps);
+      var jour = MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 420;
+      var p = ((temps % jour) + jour) % jour / jour;
+      // l'aube (0,92 → 1) et le petit matin (0 → 0,15), le cœur du jour la lève
+      var matin = p >= 0.85 ? smoothstep(0.85, 0.95, p) : 1 - smoothstep(0.05, 0.16, p);
+      var humide = et.precipitation > 0 ? 0.55 : et.couverture > 0.7 ? 0.3 : 0;
+      var base = Math.max(matin * 0.9, humide);
+      var hum = clamp01(lieu && lieu.humidite !== undefined ? lieu.humidite : 0.5);
+      var creux = lieu ? clamp01((lieu.fond + 12 - lieu.ySol) / 12) : 1;
+      return clamp01(base * (0.25 + 0.75 * hum) * creux * (1 - clamp01(et.vent.force - 0.6) * 0.8));
+    }
+    /* La brume dérive avec le vent de surface. */
+    function deriveBrume(temps) { return derive(temps); }
+
     function pousseeTornade(x, y, z, temps) {
       var px = 0, py = 0, pz = 0;
       tornades(temps).forEach(function (t) {
@@ -466,9 +485,12 @@
        Il ne pleut que là où les nuages se sont rassemblés. */
     function precipitation(x, z, temps, tempC, biomeId, et) {
       et = et || etat(temps);
-      if (et.precipitation <= 0 || SECS[biomeId]) return { forme: null, intensite: 0 };
+      if (SECS[biomeId]) return { forme: null, intensite: 0 };
+      // les bandes d'un cyclone pleuvent quel que soit le temps alentour
+      var cy = influenceCyclone(x, z, temps).precipitation;
+      if (et.precipitation <= 0 && cy <= 0.05) return { forme: null, intensite: 0 };
       var local = smoothstep(0.34, 0.5, rassemblement(x, z, temps));
-      var i = et.precipitation * (0.25 + 0.75 * local);
+      var i = Math.max(et.precipitation * (0.25 + 0.75 * local), Math.min(1, cy * 1.6));
       if (i < 0.05) return { forme: null, intensite: 0 };
       return { forme: tempC <= 0.5 ? 'neige' : 'pluie', intensite: Math.round(i * 100) / 100 };
     }
@@ -552,7 +574,7 @@
              eclairs: eclairs, lieuEclair: lieuEclair,
              ventEn: ventEn, ventCouche: ventCouche, deriveCouche: deriveCouche,
              cyclones: cyclones, influenceCyclone: influenceCyclone,
-             tornades: tornades, pousseeTornade: pousseeTornade };
+             tornades: tornades, pousseeTornade: pousseeTornade, brume: brume, deriveBrume: deriveBrume };
   }
 
   /* Ressenti d'une température, pour l'interface et la survie. */

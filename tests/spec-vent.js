@@ -48,5 +48,36 @@
       var pierre = souplesDe(B.STONE, 'opaque');
       A.ok(pierre.raw.souples.every(function (v) { return v === 0; }), 'les blocs pleins ne bougent pas');
     });
+
+    it('SPEC-VENT-003 : la brume se pose au matin et par temps humide dans les creux, et dérive avec le vent de surface', function () {
+      var me = MC.Meteo.creer(20260921), J = MC.DayCycle.DAY_LENGTH;
+      var calme = Object.assign({}, me.etat(0), { precipitation: 0, couverture: 0.2, vent: { x: 0.2, z: 0, force: 0.2, angle: 0 } });
+      var vallee = { ySol: 30, fond: 30, humidite: 0.8 }, crete = { ySol: 70, fond: 30, humidite: 0.8 };
+      var aube = J * 0.96, midi = J * 0.3;
+      A.gt(me.brume(aube, calme, vallee), 0.5, 'dense à l aube dans la vallée');
+      A.lt(me.brume(midi, calme, vallee), 0.05, 'levée en plein jour par beau temps');
+      A.equal(me.brume(aube, calme, crete), 0, 'rien sur les hauteurs');
+      A.gt(me.brume(aube, calme, vallee), me.brume(aube, calme, { ySol: 30, fond: 30, humidite: 0.1 }), 'plus dense quand l air est humide');
+      var pluie = Object.assign({}, calme, { precipitation: 0.6, couverture: 0.9 });
+      A.gt(me.brume(midi, pluie, vallee), 0.3, 'par temps de pluie, même à midi');
+      var bourrasque = Object.assign({}, calme, { vent: { x: 1.4, z: 0, force: 1.4, angle: 0 } });
+      A.lt(me.brume(aube, bourrasque, vallee), me.brume(aube, calme, vallee), 'le vent fort la disperse');
+      // elle dérive avec le vent de surface — celui du sol, pas celui des cirrus
+      var d0 = me.deriveBrume(1000), d1 = me.deriveBrume(1100), v = me.ventEn(1050, 0);
+      var dx = d1.x - d0.x, dz = d1.z - d0.z;
+      A.gt(dx * v.x + dz * v.z, 0, 'dans le sens du vent au sol');
+      A.deep(me.deriveBrume(1000), MC.Meteo.creer(20260921).deriveBrume(1000), 'la même pour tous les postes');
+    });
+
+    it('SPEC-VENT-001 : le ciel d un monde suit son climat et chaque couche dérive avec le vent de son altitude', function () {
+      var w = MC.createWorld(20260921), me = w.meteo;
+      var d0 = me.deriveCouche(0, 3000), d4 = me.deriveCouche(4, 3000);
+      A.gt(Math.hypot(d4.x, d4.z), Math.hypot(d0.x, d0.z), 'les cirrus vont plus loin que les stratus');
+      var a0 = Math.atan2(d0.z, d0.x), a4 = Math.atan2(d4.z, d4.x);
+      A.gt(Math.abs(Math.atan2(Math.sin(a4 - a0), Math.cos(a4 - a0))), 0.05, 'et dans une autre direction');
+      // la pluie et la neige suivent le vent de leur altitude : il tourne en montant
+      var v0 = me.ventEn(3000, 0), v1 = me.ventEn(3000, 90);
+      A.ok(Math.abs(v1.angle - v0.angle) > 0.01 && v1.force > v0.force * 0.9, 'le vent des averses n est pas celui du sol');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

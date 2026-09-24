@@ -1718,7 +1718,8 @@
     var d = l[0];
     A.ok(d, 'un donjon à proximité');
     g.world.donjonsVaincus.delete(d.id);
-    s.pos.x = d.x + 2.5; s.pos.y = d.y + 1; s.pos.z = d.z + 0.5;
+    // la salle du gardien : le vestibule d'un petit donjon, la plus profonde d'un moyen ou d'un grand
+    s.pos.x = d.spawn.x + 1; s.pos.y = d.spawn.y; s.pos.z = d.spawn.z;
     s.vel.x = s.vel.y = s.vel.z = 0;
     // une téléportation n'est pas une chute : sans cela, le joueur encore en
     // l'air au point d'apparition « tombe » de 40 blocs et meurt en arrivant
@@ -1887,6 +1888,50 @@
     A.equal(panneau.style.display, 'none', 'un second K referme le panneau');
   });
 
+  e2e('SPEC-NUAGE-003 : le ciel rend la spirale d un cyclone, l entonnoir d une tornade et ses effets, la brume des creux', async function (g) {
+    await reset(g);
+    var me = g.world.meteo, cyc0 = me.cyclones, tor0 = me.tornades, pou0 = me.pousseeTornade, bru0 = me.brume;
+    var p = g.player.state.pos;
+    try {
+      // chaque couche dérive avec le vent de son altitude (SPEC-VENT-001)
+      g.time = 3000; await frames(2);
+      var dc = g.render.formations.derivesCouches;
+      A.ok(dc[0].value.distanceTo(dc[4].value) > 1, 'stratus et cirrus ne dérivent pas ensemble');
+      // un cyclone tout proche : sa spirale passe au shader
+      me.cyclones = function () { return [{ id: 'c', x: p.x + 300, z: p.z, rayon: 900, oeil: 60, force: 0.9, sens: 1 }]; };
+      await frames(2);
+      A.close(g.render.formations.cyclones.value[0].z, 900, 0.01, 'le rayon');
+      A.close(g.render.formations.forcesCyclones.value.x, 0.9, 0.01, 'la force');
+      // une tornade : l'entonnoir se dresse, pousse le joueur et arrache les plantes (SPEC-NUAGE-004)
+      me.tornades = function () { return [{ id: 't', x: p.x + 6, z: p.z, rayon: 12, force: 1, vie: 20, sens: 1 }]; };
+      // la poussée vient de la vraie liste, interne à Meteo : on l'aligne sur la tornade simulée
+      me.pousseeTornade = function (x, y, z) { return { x: (p.x + 6 - x) * 2, y: 10, z: 0 }; };
+      await frames(3);
+      var tm = g.render.formations.tornades[0];
+      A.ok(tm && tm.visible, 'un entonnoir visible');
+      A.close(tm.position.x, p.x + 6, 0.5, 'à sa place');
+      A.gt(tm.scale.y, 15, 'du sol aux nuages');
+      var x0 = p.x;
+      for (var i = 0; i < 20; i++) await frames(1);
+      A.ok(Math.abs(p.x - x0) > 0.3 || p.y > g.world.heightAt(Math.floor(p.x), Math.floor(p.z)) + 1.5, 'le joueur est emporté');
+      me.tornades = function () { return []; };
+      await frames(2);
+      A.ok(!tm.visible, 'et l entonnoir se dissipe');
+      // brume (SPEC-VENT-003)
+      me.brume = function () { return 0.8; };
+      await frames(3);
+      A.ok(g.render.formations.brume.every(function (m) { return m.visible; }), 'les nappes de brume se posent');
+      A.close(g.brume, 0.8, 0.001);
+      me.brume = function () { return 0; };
+      await frames(2);
+      A.ok(g.render.formations.brume.every(function (m) { return !m.visible; }), 'et se lèvent');
+    } finally {
+      me.cyclones = cyc0; me.tornades = tor0; me.pousseeTornade = pou0; me.brume = bru0;
+      g.time = 60;
+      await reset(g);
+    }
+  });
+
   e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
     await reset(g);
     g.time = MC.DayCycle.DAY_LENGTH * 0.2;
@@ -1978,12 +2023,14 @@
   });
 
   // ─── exécution ─────────────────────────────────────────────────────────────
-  async function runE2E(g, onProgress) {
+  /* `filtre` (facultatif) : ne lance que les tests dont le nom le contient. */
+  async function runE2E(g, onProgress, filtre) {
     initRefs();
     g = g || window.GAME;
     var results = [], passed = 0, failed = 0;
     for (var i = 0; i < tests.length; i++) {
       var t = tests[i];
+      if (filtre && t.name.indexOf(filtre) < 0) continue;
       try {
         await t.fn(g);
         results.push({ ok: true, name: t.name });
@@ -1996,7 +2043,7 @@
     }
     // remise en état propre
     try { g.input.setState('menu'); } catch (e) {}
-    return { results: results, passed: passed, failed: failed, total: tests.length };
+    return { results: results, passed: passed, failed: failed, total: filtre ? results.length : tests.length };
   }
 
   G.runE2E = runE2E;

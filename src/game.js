@@ -350,6 +350,63 @@
     }
     g.abri = abri;
 
+    /* Brume (SPEC-VENT-003) : le point bas alentour dit où elle se pose ;
+       échantillonné toutes les deux secondes, le relief ne change pas si vite. */
+    var brumeT = 99, brumeLieu = null;
+    function majBrume(me, et, p1, dt) {
+      if (!me.brume || !render.majBrume) return;
+      brumeT += dt;
+      if (brumeT > 2 || !brumeLieu) {
+        brumeT = 0;
+        var bas = world.heightAt(Math.floor(p1.x), Math.floor(p1.z)), somme = 0, n = 0;
+        for (var a = 0; a < 12; a++) for (var r = 24; r <= 72; r += 48) {
+          var h = world.heightAt(Math.floor(p1.x + Math.cos(a * 0.5236) * r), Math.floor(p1.z + Math.sin(a * 0.5236) * r));
+          bas = Math.min(bas, h); somme += h; n++;
+        }
+        var eau = bas <= C.SEA_LEVEL + 1;
+        brumeLieu = { ySol: Math.max(bas, C.SEA_LEVEL), fond: eau ? C.SEA_LEVEL : somme / n - 10,
+                      humidite: world.bio.climat(p1.x, p1.z).h };
+      }
+      g.brume = me.brume(g.time, et, brumeLieu);
+      render.majBrume({ force: g.brume, fond: brumeLieu.ySol, derive: me.deriveBrume(g.time) });
+    }
+    /* Tornades (SPEC-NUAGE-004), hors ligne : elles aspirent et soulèvent
+       joueurs et créatures, et arrachent plantes et feuillages sur leur passage. */
+    var arrachageT = 0;
+    function tornadesAuSol(me, dt) {
+      if (!me.tornades) return;
+      var ts = me.tornades(g.time);
+      if (!ts.length) return;
+      function pousser(pos, vel, k) {
+        var sol = world.heightAt(Math.floor(pos.x), Math.floor(pos.z));
+        var f = me.pousseeTornade(pos.x, Math.max(0, pos.y - sol), pos.z, g.time);
+        if (Math.abs(f.x) + Math.abs(f.y) + Math.abs(f.z) < 0.01) return false;
+        vel.x += f.x * dt * 3 * k; vel.z += f.z * dt * 3 * k;
+        vel.y = Math.min(12, vel.y + f.y * dt * 5 * k);
+        return true;
+      }
+      for (var i = 0; i < equipe.length; i++) {
+        var st = equipe[i].player.state;
+        if (!st.dead && !st.flying) pousser(st.pos, st.vel, 1);
+      }
+      entities.list.forEach(function (e) { if (!e.dead) pousser(e.pos, e.vel, 1.3); });
+      arrachageT += dt;
+      if (arrachageT < 0.2) return;
+      arrachageT = 0;
+      var p = player.state.pos;
+      ts.forEach(function (t) {
+        if (Math.hypot(t.x - p.x, t.z - p.z) > 160) return;      // loin de tout chunk chargé
+        for (var k = 0; k < 4; k++) {
+          var a = Math.random() * 6.2832, r = Math.random() * t.rayon;
+          var x = Math.floor(t.x + Math.cos(a) * r), z = Math.floor(t.z + Math.sin(a) * r);
+          var y = Math.min(C.WORLD_H - 1, world.heightAt(x, z) + 12);
+          while (y > 1 && !world.getBlock(x, y, z)) y--;
+          var d = C.BLOCKS[world.getBlock(x, y, z)];
+          if (d && (d.plant || d.leaves) && !d.aquatique) world.setBlock(x, y, z, 0);
+        }
+      });
+    }
+
     /* Météo : même graine, même ciel que le serveur et les autres postes. */
     var meteoT = null;
     function majMeteo(dt) {
@@ -360,14 +417,23 @@
       if (abrisT > 1) { abrisT = 0; abris.clear(); }
       var et = me.etat(g.time);
       g.meteo = et;
-      render.majMeteo(et, me.derive(g.time));
-      // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
       var p1 = player.state.pos, bio = world.biomeAt(Math.floor(p1.x), Math.floor(p1.z));
+      // le vent qu'on sent : celui de son altitude, et la ronde d'un cyclone proche
+      var ventLocal = me.ventEn ? me.ventEn(g.time, p1.y) : et.vent;
+      var cy = me.influenceCyclone ? me.influenceCyclone(p1.x, p1.z, g.time) : null;
+      if (cy && cy.vent.force > 0) ventLocal = { x: ventLocal.x + cy.vent.x, z: ventLocal.z + cy.vent.z,
+                                                 force: Math.hypot(ventLocal.x + cy.vent.x, ventLocal.z + cy.vent.z) };
+      g.ventLocal = ventLocal;
+      render.majMeteo(et, me.derive(g.time), { me: me, temps: g.time, vent: ventLocal, sol: world.heightAt });
+      majBrume(me, et, p1, dt);
+      if (!net.enLigne()) tornadesAuSol(me, dt);
+      // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
       var tj = equipe[0] && equipe[0].temperature;
       var tC = tj ? tj.temperature : me.temperature(world.bio.climat(p1.x, p1.z).t, p1.y, g.time, et, bio.id);
       var prec = me.precipitation(p1.x, p1.z, g.time, tC, bio.id, et);
       g.precipitation = prec;
-      render.majPrecipitations(dt, prec, et.vent, abri);
+      // la pluie et la neige suivent le vent de leur altitude (SPEC-VENT-001)
+      render.majPrecipitations(dt, prec, me.ventEn ? me.ventEn(g.time, p1.y + 20) : et.vent, abri);
       var dehors = abri(Math.floor(p1.x), Math.floor(p1.z)) <= p1.y + 1.8;
       var sousLeau = P.headInWater(world, p1, player.EYE);
       audio.ambiance(prec.forme === 'pluie' ? prec.intensite * (dehors ? 1 : 0.35) * (sousLeau ? 0.2 : 1) : 0,

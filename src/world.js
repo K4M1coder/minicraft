@@ -47,7 +47,17 @@
     // ce que chaque faction pense du joueur
     var reputation = MC.Factions ? MC.Factions.creerReputations() : null;
     // le ciel de ce monde : même graine, même météo, sur tous les postes
-    var meteo = MC.Meteo ? MC.Meteo.creer(seed === undefined ? 20260921 : seed) : null;
+    /* Le ciel connaît le climat du monde : un cyclone naît d'une mer chaude,
+       une tornade de la chaleur et de l'humidité du lieu (SPEC-NUAGE-003/004). */
+    var meteo = MC.Meteo ? MC.Meteo.creer(seed === undefined ? 20260921 : seed, {
+      estMerChaude: function (x, z) {
+        return Bio.hauteur(x, z) < SEA - 4 && Bio.climat(x, z).t > 0.6;
+      },
+      conditionsEn: function (x, z) {
+        var c = Bio.climat(x, z);
+        return { temperature: -12 + c.t * 46, humidite: c.h };
+      },
+    }) : null;
     /* Une colonne vue de loin, pour le relief lointain : hauteur, eau, couleur. */
     function echantillonLointain(wx, wz) {
       var e = Bio.echantillon(wx, wz);

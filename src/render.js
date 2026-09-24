@@ -954,6 +954,8 @@
       zoneRelief: { value: new THREE.Vector4(0, 0, 1, 0) },
       derive: { value: new THREE.Vector2() }, temps: { value: 0 },
       couvertureCiel: { value: 0.3 }, teinte: { value: new THREE.Color(1, 1, 1) }, sombre: { value: 0 },
+      // deux cyclones au plus : (x, z, rayon, œil) et (force, sens) de chacun
+      cyc: { value: [new THREE.Vector4(), new THREE.Vector4()] }, cycF: { value: new THREE.Vector4() },
     };
     // le vecteur caméra → point s'interpole bien, pas sa longueur : on la prend par pixel
     var VS_NUAGE = 'varying vec2 vMonde; varying vec2 vRel;' +
@@ -964,18 +966,33 @@
       'uniform vec2 derive; uniform float temps; uniform float couvertureCiel; uniform vec3 teinte; uniform float sombre;',
       'uniform float motif; uniform float etire; uniform float vent; uniform float couvCouche; uniform float opacite;',
       'uniform float ySlice; uniform float frac; uniform float dome; uniform float taille; uniform float graine;',
+      'uniform vec2 deriveC; uniform vec4 cyc[2]; uniform vec4 cycF;',
       'varying vec2 vMonde; varying vec2 vRel;',
       'void main(){',
       '  float vDist = length(vRel);',
-      '  vec2 p = (vMonde - derive * vent) / motif; p.x /= etire;',
+      // chaque couche dérive avec le vent de son altitude (SPEC-VENT-001)
+      '  vec2 p = (vMonde - deriveC) / motif; p.x /= etire;',
       '  float e = temps / ' + ME.EVOLUTION.toFixed(1) + ';',
       '  float nA = texture2D(carte, p + vec2(e * 0.031, e * 0.017) + graine).a;',
       '  float nB = texture2D(carte, p * 1.37 + vec2(-e * 0.023, e * 0.029) + 0.5 + graine).a;',
       '  float n = mix(nA, nB, 0.5 + 0.5 * sin(e * 1.3 + nA * 6.2832));',
       '  float champ = texture2D(carte, (vMonde - derive) / 9600.0 + vec2(temps / 60000.0, 0.0)).a;',
       '  float couv = clamp(couvCouche + (couvertureCiel - 0.3) * 0.95 + (champ - 0.5) * 0.9, 0.0, 1.0);',
+      // SPEC-NUAGE-003 : la spirale d'un cyclone, même formule que Meteo.influenceCyclone
+      '  float oeilF = 1.0;',
+      '  for (int k = 0; k < 2; k++) {',
+      '    vec4 c = cyc[k]; float f = k == 0 ? cycF.x : cycF.z; float sn = k == 0 ? cycF.y : cycF.w;',
+      '    if (f <= 0.0) continue;',
+      '    vec2 dd = vMonde - c.xy; float dist = length(dd);',
+      '    if (dist >= c.z) continue;',
+      '    float r = dist / c.z, oe = c.w / c.z;',
+      '    float bras = 0.5 + 0.5 * sin(atan(dd.y, dd.x) * 3.0 - r * 10.0 * sn + temps * 0.05 * sn);',
+      '    float bande = smoothstep(oe, oe + 0.15, r) * (1.0 - smoothstep(0.75, 1.0, r));',
+      '    couv = max(couv, clamp(bande * (0.5 + 0.5 * bras), 0.0, 1.0) * f * 0.95);',
+      '    if (dist < c.w) oeilF = 0.15;',
+      '  }',
       '  float seuil = 0.62 - couv * 0.34 + dome * frac * frac * 0.12;',
-      '  float d = clamp((n - seuil) * 5.0, 0.0, 1.0);',
+      '  float d = clamp((n - seuil) * 5.0, 0.0, 1.0) * oeilF;',
       '  if (zoneRelief.w > 0.5) {',
       '    vec2 r = (vMonde - zoneRelief.xy) / zoneRelief.z;',
       '    if (r.x > 0.0 && r.y > 0.0 && r.x < 1.0 && r.y < 1.0) {',
@@ -988,8 +1005,11 @@
       '  gl_FragColor = vec4(teinte * (0.7 + 0.3 * frac) * (1.0 - sombre * (0.3 + 0.45 * d)), a);',
       '}'].join('\n');
     var tranches = [];
+    var derivesCouches = [];
     ME.COUCHES.forEach(function (co, ci) {
       var geo = new THREE.PlaneGeometry(co.taille, co.taille);
+      var dC = { value: new THREE.Vector2() };
+      derivesCouches.push(dC);
       for (var s = 0; s < co.tranches; s++) {
         var frac = co.tranches > 1 ? s / (co.tranches - 1) : 0;
         var y = co.y + frac * co.epaisseur;
@@ -999,7 +1019,7 @@
           // N tranches superposées rendent l'opacité voulue de la couche
           opacite: { value: 1 - Math.pow(1 - co.opacite, 1 / co.tranches) },
           ySlice: { value: y }, frac: { value: frac }, dome: { value: co.dome ? 1 : 0 },
-          taille: { value: co.taille }, graine: { value: ci * 0.137 },
+          taille: { value: co.taille }, graine: { value: ci * 0.137 }, deriveC: dC,
         });
         var mat = new THREE.ShaderMaterial({ transparent: true, depthWrite: false, fog: false,
           side: THREE.DoubleSide, uniforms: u, vertexShader: VS_NUAGE, fragmentShader: FS_NUAGE });
@@ -1227,15 +1247,131 @@
 
     /* Météo transmise par le jeu : état du ciel et dérive des nuages. */
     var meteoCiel = null, flash = 0;
-    function majMeteo(et, derive) {
+    /* `ciel` (facultatif) : { me: l'instance Meteo, temps, vent local (cyclone
+       compris), sol(x, z) }. */
+    function majMeteo(et, derive, ciel) {
       meteoCiel = et;
       if (derive) UN.derive.value.set(derive.x, derive.z);
-      if (et && et.vent) ventEau.value.set(et.vent.x, et.vent.z);
+      if (ciel && ciel.vent) ventEau.value.set(ciel.vent.x, ciel.vent.z);
+      else if (et && et.vent) ventEau.value.set(et.vent.x, et.vent.z);
+      if (ciel && ciel.me) {
+        var me = ciel.me, t = ciel.temps;
+        if (me.deriveCouche) derivesCouches.forEach(function (dC, i) { var d = me.deriveCouche(i, t); dC.value.set(d.x, d.z); });
+        var cys = me.cyclones ? me.cyclones(t) : [];
+        var cam = camera.position;
+        cys = cys.slice().sort(function (a, b) {
+          return Math.hypot(a.x - cam.x, a.z - cam.z) - Math.hypot(b.x - cam.x, b.z - cam.z);
+        });
+        for (var k = 0; k < 2; k++) {
+          var c = cys[k];
+          UN.cyc.value[k].set(c ? c.x : 0, c ? c.z : 0, c ? c.rayon : 1, c ? c.oeil : 0);
+          if (k === 0) { UN.cycF.value.x = c ? c.force : 0; UN.cycF.value.y = c ? c.sens : 1; }
+          else { UN.cycF.value.z = c ? c.force : 0; UN.cycF.value.w = c ? c.sens : 1; }
+        }
+        majTornades(me.tornades ? me.tornades(t) : [], ciel.sol, t);
+      }
       if (et) {
         UN.couvertureCiel.value = et.couverture;
         UN.sombre.value = Math.max(0, (et.couverture - 0.6) / 0.4) * 0.8;
       }
     }
+    /* ── Tornades (SPEC-NUAGE-004) : un entonnoir qui descend de la base des
+       cumulus jusqu'au sol, tourne sur lui-même et s'élargit en montant. */
+    var geoTornade = new THREE.CylinderGeometry(1, 0.14, 1, 28, 14, true);
+    geoTornade.translate(0, 0.5, 0);
+    var VS_TORN = 'varying vec2 vUv; varying float vH;' +
+      'void main(){ vUv = uv; vH = position.y; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }';
+    var FS_TORN = [
+      'uniform sampler2D carte; uniform float temps; uniform float sens; uniform float force; uniform vec3 teinte;',
+      'varying vec2 vUv; varying float vH;',
+      'void main(){',
+      '  vec2 q = vec2(vUv.x * 3.0 + temps * 0.45 * sens + vUv.y * 0.8 * sens, vUv.y * 1.6 - temps * 0.08);',
+      '  float n = texture2D(carte, q).a * 0.65 + texture2D(carte, q * 2.3 + 0.37).a * 0.35;',
+      '  float stries = 0.5 + 0.5 * sin((vUv.x + vUv.y * 0.6 * sens) * 6.2832 * 6.0 + temps * 5.0 * sens);',
+      '  float bords = smoothstep(0.0, 0.08, vH) * (1.0 - smoothstep(0.82, 1.0, vH));',
+      '  float a = force * bords * clamp(0.25 + n * 0.7 + stries * 0.2 - 0.25, 0.0, 1.0) * 0.8;',
+      '  if (a < 0.02) discard;',
+      '  gl_FragColor = vec4(teinte * (0.55 + 0.25 * n), a);',
+      '}'].join('\n');
+    var tornadesM = [];
+    function majTornades(liste, sol, t) {
+      for (var i = 0; i < Math.max(liste.length, tornadesM.length); i++) {
+        var tn = liste[i], m = tornadesM[i];
+        if (!tn) { if (m) m.visible = false; continue; }
+        if (!m) {
+          m = new THREE.Mesh(geoTornade, new THREE.ShaderMaterial({
+            transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+            uniforms: { carte: UN.carte, temps: UN.temps, sens: { value: 1 }, force: { value: 1 },
+                        teinte: { value: new THREE.Color(0.62, 0.62, 0.66) } },
+            vertexShader: VS_TORN, fragmentShader: FS_TORN }));
+          m.renderOrder = 4; m.frustumCulled = false; m.userData.tornade = true;
+          scene.add(m); tornadesM.push(m);
+        }
+        var y0 = sol ? sol(Math.floor(tn.x), Math.floor(tn.z)) : C.SEA_LEVEL;
+        var h = Math.max(20, ME.COUCHES[1].y - y0);
+        m.position.set(tn.x, y0, tn.z);
+        m.scale.set(tn.rayon * 1.6, h, tn.rayon * 1.6);
+        m.material.uniforms.sens.value = tn.sens;
+        // l'entonnoir naît du nuage et y remonte en mourant
+        var age = tn.vie !== undefined ? tn.vie : 10;
+        m.material.uniforms.force.value = Math.max(0, Math.min(1, tn.force)) * Math.min(1, age / 4);
+        m.material.uniforms.teinte.value.copy(scene.fog ? scene.fog.color : new THREE.Color(0.6, 0.6, 0.6)).multiplyScalar(0.8);
+        m.visible = true;
+      }
+    }
+
+    /* ── Brume (SPEC-VENT-003) : des nappes basses, posées dans les creux,
+       qui dérivent avec le vent de surface. Quelques plans empilés suivent le
+       joueur au-dessus du point bas alentour ; le relief (même carte que les
+       nuages) ne laisse la brume qu'à quelques blocs au-dessus du sol. */
+    var UB = { force: { value: 0 }, deriveB: { value: new THREE.Vector2() }, teinteB: { value: new THREE.Color(1, 1, 1) } };
+    var FS_BRUME = [
+      'uniform sampler2D carte; uniform sampler2D relief; uniform vec4 zoneRelief; uniform float temps;',
+      'uniform float force; uniform vec2 deriveB; uniform vec3 teinteB; uniform float ySlice;',
+      'varying vec2 vMonde; varying vec2 vRel;',
+      'void main(){',
+      '  float vDist = length(vRel);',
+      '  vec2 p = (vMonde - deriveB) / 160.0;',
+      '  float n = texture2D(carte, p + vec2(temps / 3000.0, 0.0)).a * 0.6 + texture2D(carte, p * 2.7 + 0.21).a * 0.4;',
+      '  float h = ySlice - 3.0;',
+      '  if (zoneRelief.w > 0.5) {',
+      '    vec2 r = (vMonde - zoneRelief.xy) / zoneRelief.z;',
+      '    if (r.x > 0.0 && r.y > 0.0 && r.x < 1.0 && r.y < 1.0) h = texture2D(relief, r).r * 255.0;',
+      '  }',
+      '  float dessus = ySlice - h;',
+      '  float m = smoothstep(0.0, 1.5, dessus) * (1.0 - smoothstep(3.0, 9.0, dessus));',
+      '  float a = force * smoothstep(0.3, 0.75, n) * m * (1.0 - smoothstep(60.0, 190.0, vDist)) * 0.3;',
+      '  if (a < 0.01) discard;',
+      '  gl_FragColor = vec4(teinteB, a);',
+      '}'].join('\n');
+    var plansBrume = [];
+    for (var kb = 0; kb < 5; kb++) {
+      var mb = new THREE.Mesh(new THREE.PlaneGeometry(400, 400), new THREE.ShaderMaterial({
+        transparent: true, depthWrite: false, side: THREE.DoubleSide, fog: false,
+        uniforms: Object.assign({ carte: UN.carte, relief: UN.relief, zoneRelief: UN.zoneRelief, temps: UN.temps,
+                                  ySlice: { value: 0 } }, UB),
+        vertexShader: VS_NUAGE, fragmentShader: FS_BRUME }));
+      mb.rotation.x = -Math.PI / 2; mb.renderOrder = 4; mb.frustumCulled = false; mb.visible = false;
+      mb.userData.brume = kb;
+      scene.add(mb); plansBrume.push(mb);
+    }
+    /* `b` : { force 0..1, fond (y du point bas), derive {x, z} }. */
+    function majBrume(b) {
+      var f = b ? b.force : 0;
+      UB.force.value = f;
+      if (b && b.derive) UB.deriveB.value.set(b.derive.x, b.derive.z);
+      if (scene.fog) UB.teinteB.value.copy(scene.fog.color).lerp(new THREE.Color(1, 1, 1), 0.45);
+      var cam = camera.position;
+      plansBrume.forEach(function (m, k) {
+        m.visible = f > 0.02;
+        if (!m.visible) return;
+        var y = (b.fond || C.SEA_LEVEL) + 1 + k * 2.2;
+        m.position.set(Math.round(cam.x), y, Math.round(cam.z));
+        m.material.uniforms.ySlice.value = y;
+      });
+      return f;
+    }
+
     /* Un éclair : un trait brisé du nuage au sol, et un flash qui blanchit
        ciel et lumière un instant. */
     function eclair(x, ySol, z, force) {
@@ -1666,7 +1802,8 @@
       forceTorches: forceTorches,
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
-      majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair,
+      majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
+      formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },
       majSilhouettes: majSilhouettes, reglerRealiste: reglerRealiste,
       loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },
               get brouillard() { return scene.fog; } },

@@ -358,7 +358,10 @@
         var n = m.precipitation(i * 300, i * 170, 50, -5, 'taiga', pluie);
         if (n.forme) { A.equal(n.forme, 'neige'); neige = true; }
         A.equal(m.precipitation(i * 300, i * 170, 50, 30, 'desert', pluie).forme, null, 'le désert reste sec');
-        A.equal(m.precipitation(i * 300, i * 170, 50, 12, 'plaines', beau).forme, null, 'rien par beau temps');
+        // hors des bandes d'un cyclone, qui pleuvent quel que soit le temps alentour (SPEC-NUAGE-003)
+        if (m.influenceCyclone(i * 300, i * 170, 50).precipitation <= 0.05) {
+          A.equal(m.precipitation(i * 300, i * 170, 50, 12, 'plaines', beau).forme, null, 'rien par beau temps');
+        }
       }
       A.ok(pleut, 'il pleut en plaine');
       A.ok(neige, 'il neige quand il gèle');
