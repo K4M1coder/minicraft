@@ -56,6 +56,48 @@
     renderer.setSize(sz[0], sz[1]);
     canvasHost.appendChild(renderer.domElement);
 
+    // ── SPEC-RENDU-010/011 : rendu logiciel (SwiftShader, llvmpipe…) ───────
+    // Interrogé une seule fois au démarrage : un rendu logiciel connu abaisse
+    // le palier de qualité de départ (voir game.js, la boucle de qualité).
+    var materiel = { renduLogiciel: false, nom: null };
+    try {
+      var glInfo = renderer.getContext();
+      var dbgInfo = glInfo && glInfo.getExtension('WEBGL_debug_renderer_info');
+      if (dbgInfo) {
+        materiel.nom = glInfo.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL);
+        materiel.renduLogiciel = MC.Qualite ? MC.Qualite.detecterRenduLogiciel(materiel.nom) : false;
+      }
+    } catch (eDbg) { /* extension absente : pas de diagnostic, rendu supposé matériel */ }
+
+    // ── SPEC-RENDU-001/002 : perte et restauration du contexte WebGL ───────
+    // `preventDefault()` empêche la perte définitive (le navigateur retente
+    // une restauration) ; le rendu se suspend pendant la coupure, puis les
+    // ressources qui vivent hors de la mémoire JS (textures, render targets,
+    // matériaux) sont explicitement reconstruites — les géométries de chunk,
+    // elles, restent en JS et sont simplement REMISES EN FILE (marquées
+    // `dirty`) par l'appelant via `onContextRestored`, qui les remaillera au
+    // rythme normal du streaming (game.js).
+    var contextePerdu = false;
+    var cbContextLost = typeof opts.onContextLost === 'function' ? opts.onContextLost : null;
+    var cbContextRestored = typeof opts.onContextRestored === 'function' ? opts.onContextRestored : null;
+    renderer.domElement.addEventListener('webglcontextlost', function (ev) {
+      ev.preventDefault();
+      contextePerdu = true;
+      if (cbContextLost) cbContextLost();
+    }, false);
+    renderer.domElement.addEventListener('webglcontextrestored', function () {
+      contextePerdu = false;
+      // textures et matériaux : on force un ré-upload/relien plutôt que de
+      // supposer que le navigateur les a conservés
+      atlas.texture.needsUpdate = true;
+      [matOpaque, matCutout, matBlend, matLumineux].forEach(function (m) { if (m) m.needsUpdate = true; });
+      // render targets de réfraction : leurs textures GPU sont perdues, on
+      // les force à se redimensionner (donc se recréer) au prochain rendu
+      rtRefraction.setSize(4, 4); rtRefraction.__rempli = false;
+      rtEcran.setSize(4, 4);
+      if (cbContextRestored) cbContextRestored();
+    }, false);
+
     var hemi = new THREE.HemisphereLight(0xdfefff, 0x4a5a44, 0.95);
     scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xfff2d8, 0.55);
@@ -2023,17 +2065,51 @@
       return cam;
     }
 
+    /* SPEC-RENDU-007 : le palier de qualité adaptative (2 → 1,5 → 1, piloté
+       par la boucle de qualité de game.js) ne dépasse jamais le plafond des
+       options d'affichage (résolution voulue / devicePixelRatio, déjà géré
+       par SPEC-OPTION-005) ni ne descend sous 1. Les deux plafonds se
+       combinent ici plutôt que de se marcher dessus à chaque redimensionnement. */
+    var dprPalier = 2;
+    function plafondDPR() {
+      return MC.Options ? MC.Options.rapportPixels(resolutionVoulue, { l: sz[0], h: sz[1] }, devicePixelRatio) : Math.min(devicePixelRatio, 2);
+    }
+    function appliquerDPR() {
+      // Note de coordination : le plancher 800×600 (SPEC-OPTION-008) est porté
+      // par le dimensionnement de l'hôte lui-même (un autre lot le fait dans
+      // hostSize()/resize() — une transformation CSS ramène un hôte plus
+      // petit à une surface interne 800×600). L'adaptatif ne fait donc QUE
+      // respecter le plafond des options (SPEC-RENDU-007) sans reforcer un
+      // plancher ici, pour ne pas fausser une résolution fixe volontairement
+      // plus petite que l'hôte (SPEC-OPTION-005) ni la vue de test (cadre
+      // réduit). `MC.Qualite.ajusterDPR`/`dprPlancher` restent disponibles et
+      // testés pour un usage futur si le dimensionnement change de méthode.
+      var v = MC.Qualite ? MC.Qualite.plafonnerDPR(dprPalier, plafondDPR())
+                          : Math.max(1, Math.min(dprPalier, plafondDPR()));
+      renderer.setPixelRatio(v);
+      return v;
+    }
+    function setDPR(palier) { dprPalier = palier > 0 ? palier : dprPalier; return appliquerDPR(); }
     function resize() {
       var s = hostSize();
       sz = s;
       cameras.forEach(function (c2) { c2.aspect = s[0] / s[1]; c2.updateProjectionMatrix(); });
-      renderer.setPixelRatio(MC.Options ? MC.Options.rapportPixels(resolutionVoulue, { l: s[0], h: s[1] }, devicePixelRatio) : Math.min(devicePixelRatio, 2));
+      appliquerDPR();
       renderer.setSize(s[0], s[1]);
     }
     /* Résolution de rendu (SPEC-OPTION-005) : le tampon prend la taille voulue,
        l'image s'étire sur l'hôte sans se déformer (même rapport largeur/hauteur). */
     var resolutionVoulue = 'native';
     function setResolution(id) { resolutionVoulue = id || 'native'; resize(); return renderer.getPixelRatio(); }
+    // SPEC-RENDU-012 : mipmaps de l'atlas, optionnels (moins de mémoire GPU,
+    // au prix d'un moiré possible de loin quand ils sont coupés). On ne
+    // touche qu'à la texture concernée — aucune reconstruction du renderer.
+    function setMipmaps(actif) {
+      atlas.texture.generateMipmaps = !!actif;
+      atlas.texture.minFilter = actif ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
+      atlas.texture.needsUpdate = true;
+      return !!actif;
+    }
     /* Vue étendue sur plusieurs écrans (SPEC-OPTION-006) : empilés, le champ
        vertical s'ouvre d'autant ; côte à côte, l'aspect de l'hôte suffit. */
     var dispositionVue = { nombre: 1, orientation: 'horizontal' };
@@ -2063,17 +2139,28 @@
       sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
       return { scene: sc, camera: cam, mat: mat };
     })();
-    var sousLEau = false, eauEnVue = 0;
+    var sousLEau = false, eauEnVue = 0, eauDistance = Infinity;
+    // SPEC-RENDU-004 : au-delà de ce seuil, l'eau reste visible mais sans
+    // réfraction en temps réel — inutile de payer la passe pour une surface
+    // qui n'occupe que quelques pixels à l'écran.
+    var SEUIL_DISTANCE_REFRACTION = 40;
     function eauProche(cam) {
-      var n = 0;
+      var n = 0, d2Min = Infinity;
       maillagesEau.forEach(function (m) {
         if (!m.visible) return;
         var dx = m.position.x + 8 - cam.position.x, dz = m.position.z + 8 - cam.position.z;
-        if (dx * dx + dz * dz < 96 * 96) n++;
+        var d2 = dx * dx + dz * dz;
+        if (d2 < 96 * 96) { n++; if (d2 < d2Min) d2Min = d2; }
       });
-      return n;
+      return { n: n, distance: d2Min === Infinity ? Infinity : Math.sqrt(d2Min) };
     }
+    // SPEC-RENDU-003 : compté à part du renderer.info général — le rendu
+    // d'une image « pleine » déclenche déjà d'autres passes internes (carte
+    // d'ombres…) qui appellent aussi setRenderTarget, un simple espionnage de
+    // cette méthode ne distinguerait pas la passe de réfraction du reste.
+    var compteurAppelsRefraction = 0;
     function passeRefraction(cam) {
+      compteurAppelsRefraction++;
       renderer.getDrawingBufferSize(tailleTampon);
       var w = Math.max(4, tailleTampon.x >> 1), h = Math.max(4, tailleTampon.y >> 1);
       if (rtRefraction.width !== w || rtRefraction.height !== h) rtRefraction.setSize(w, h);
@@ -2084,11 +2171,18 @@
       renderer.setRenderTarget(null);
       maillagesEau.forEach(function (m) { m.visible = m.userData.vuAvant; });
       refractionTex.value = rtRefraction.texture;
-      refractionActive.value = 1;
     }
+    // SPEC-RENDU-003 : compteur d'images propre à la passe de réfraction —
+    // sert à sauter une image sur deux quand le FPS (SPEC-RENDU-015, même
+    // source que le panneau F3) est sous un seuil déclaré.
+    var compteurImagesRefraction = 0;
+    var SEUIL_FPS_REFRACTION = 40;
     function rendreVue(cam) {
-      eauEnVue = eauProche(cam);
-      refractionActive.value = 0;
+      var e = eauProche(cam);
+      eauEnVue = e.n; eauDistance = e.distance;
+      var eauProcheAssez = MC.Qualite ? MC.Qualite.eauRefractanteVisible(eauDistance, SEUIL_DISTANCE_REFRACTION) : eauDistance <= SEUIL_DISTANCE_REFRACTION;
+      var refractionApplicable = eauEnVue > 0 && optionsRendu.refraction && eauProcheAssez;
+      refractionActive.value = refractionApplicable ? 1 : 0;
       if (sousLEau) {
         renderer.getDrawingBufferSize(tailleTampon);
         if (rtEcran.width !== tailleTampon.x || rtEcran.height !== tailleTampon.y) rtEcran.setSize(tailleTampon.x, tailleTampon.y);
@@ -2099,12 +2193,22 @@
         renderer.render(calque.scene, calque.camera);
         return;
       }
-      if (eauEnVue > 0 && optionsRendu.refraction) passeRefraction(cam);
+      if (refractionApplicable) {
+        compteurImagesRefraction++;
+        // toujours recalculée au premier appel (pas de texture précédente à réutiliser)
+        var premiereFois = !rtRefraction.__rempli;
+        var ok = premiereFois || !MC.Qualite || MC.Qualite.refractionFrequenceOK(compteurImagesRefraction, optionsRendu.fpsP50, SEUIL_FPS_REFRACTION);
+        if (ok) { passeRefraction(cam); rtRefraction.__rempli = true; }
+      }
       renderer.render(scene, cam);
     }
-    var optionsRendu = { refraction: true };
+    var optionsRendu = { refraction: true, fpsP50: null };
 
     function renderViews(vues) {
+      // SPEC-RENDU-001 : le rendu s'arrête proprement pendant la perte du
+      // contexte GPU — aucun appel `renderer.render` tant qu'il n'est pas
+      // restauré (webglcontextrestored).
+      if (contextePerdu) return 0;
       var taille = hostSize();
       if (!vues || vues.length <= 1) {
         renderer.setScissorTest(false);
@@ -2131,7 +2235,7 @@
       return vues.length;
     }
 
-    function render() { placerCiel(camera); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; placerCiel(camera); renderer.render(scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2145,6 +2249,12 @@
       resize: resize, render: render, renderViews: renderViews,
       cameraDe: cameraDe, cameras: cameras,
       get RENDER_DIST() { return RENDER_DIST; },
+      // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
+      setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps,
+      // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel
+      get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
+      // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte
+      get metriquesDessin() { return { appelsDessin: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
       forceTorches: forceTorches,
       PASSES: PASSES,
@@ -2158,7 +2268,8 @@
       loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },
               get brouillard() { return scene.fog; } },
       eau: { maillages: maillagesEau, refraction: refractionActive, options: optionsRendu, ventEau: ventEau,
-             get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; } },
+             get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; }, get distance() { return eauDistance; },
+             get appelsRefraction() { return compteurAppelsRefraction; } },
       ombres: { soleil: sun, cadre: CADRE_OMBRE, soleilDir: soleilDir, forceNuages: forceOmbreNuages, ombrerLointain: ombrerLointain },
       majPrecipitations: majPrecipitations, precipitations: { pluie: pluie, neige: neige },
       get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },

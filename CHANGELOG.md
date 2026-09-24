@@ -144,6 +144,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   (src/noise.js) perd aussi sa fermeture allouée à chaque appel, pour un
   résultat inchangé au bit près.
 
+### Ajouté (L48 — rendu)
+- Le renderer se remet d'une perte de contexte GPU (`webglcontextlost`) :
+  message à l'écran, rendu suspendu proprement, puis reconstruction des
+  textures/matériaux/render targets et remaillage des chunks visibles à la
+  restauration (SPEC-RENDU-001/002).
+- Qualité adaptative (`src/qualite.js`, logique pure testable sous Node) :
+  réfraction plafonnée en fréquence et limitée à l'eau proche, réfraction/
+  antialias(*)/DPR qui cèdent en cascade sous un FPS p50 bas soutenu, DPR qui
+  ne dépasse jamais le plafond des options d'affichage ni ne descend sous 1
+  (SPEC-RENDU-003 à 008 ; (*) décision exposée mais sans bascule GPU réelle,
+  voir SPECS.md). Le plancher 800×600 du tampon de rendu reste porté par le
+  dimensionnement de l'hôte (SPEC-OPTION-008, autre lot).
+- Détection d'un rendu logiciel (SwiftShader, llvmpipe…) via
+  `WEBGL_debug_renderer_info`, palier de qualité bas au démarrage et
+  avertissement au joueur, une seule fois (SPEC-RENDU-010/011).
+- Mipmaps de l'atlas de textures en option, désactivés par défaut, sans
+  reconstruction du renderer pour les activer (SPEC-RENDU-012).
+- Panneau F3 (métriques : FPS/p50/p95, appels de dessin, triangles, ms
+  génération/maillage, distance de vue) et `g.perf`, calculé en continu
+  indépendamment de son affichage (SPEC-PERF-015/016).
+
 ### Corrigé
 - Les cahiers de test n'affichaient pas les captures d'écran du banc
   navigateur, ni dans le rapport ni dans les exports : les images arrivaient
