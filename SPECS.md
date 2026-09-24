@@ -680,7 +680,7 @@ Prolonge SPEC-FACTION-001 à 005 (camps des créatures et réputation).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-SAVE-017 | Les blocs se stockent sur 16 bits et portent un état (orientation, moitié haute ou basse, forme d'angle, connexions, allumé ou éteint, niveau d'énergie) : de nouveaux blocs peuvent s'ajouter sans limite pratique ; les sauvegardes et les mondes serveur antérieurs (8 bits) se migrent sans perte, objets d'inventaire compris | migration d'une sauvegarde 8 bits, nouveaux identifiants, états conservés | ⏳ |
+| SPEC-SAVE-017 | Les blocs se stockent sur 16 bits et portent un état (orientation, moitié haute ou basse, forme d'angle, connexions, allumé ou éteint, niveau d'énergie) : de nouveaux blocs peuvent s'ajouter sans limite pratique ; les sauvegardes et les mondes serveur antérieurs (8 bits) se migrent sans perte, objets d'inventaire compris | migration d'une sauvegarde 8 bits, nouveaux identifiants, états conservés | ✅ |
 
 ## L24 — construction fine et intérieurs
 

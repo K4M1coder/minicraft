@@ -5,7 +5,10 @@
   var MC = G.MC = G.MC || {};
 
   var KEY = 'minicraft.save.v1';
-  var VERSION = 2;
+  /* v2 : blocs et objets sur un seul octet (128..255 = objets).
+     v3 (SPEC-SAVE-017) : blocs sur 16 bits, objets décalés à MC.Core.FIRST_ITEM,
+     et chaque override de bloc porte en plus son état (orientation, niveau…). */
+  var VERSION = 3;
 
   /* On ne sauvegarde QUE les blocs modifiés par le joueur, pas les chunks :
      le terrain est reproductible depuis la graine, donc le delta suffit et
@@ -16,6 +19,16 @@
       var p = k.split(',');
       over.push([+p[0], +p[1], +p[2], id]);
     });
+    /* États de bloc (SPEC-SAVE-017) : une liste À PART des overrides — poser
+       un état ne pose pas forcément un bloc (le bloc peut avoir été là avant
+       ce lot), donc le coupler à `overrides` en aurait perdu au chargement. */
+    var etats = [];
+    if (state.world.etatsOverrides) {
+      state.world.etatsOverrides.forEach(function (etat, k) {
+        var p = k.split(',');
+        etats.push([+p[0], +p[1], +p[2], etat]);
+      });
+    }
     var crops = [];
     state.world.crops.forEach(function (c) { crops.push([c.x, c.y, c.z, +c.t.toFixed(2)]); });
 
@@ -25,6 +38,7 @@
       seed: state.world.seed,
       time: +state.time.toFixed(1),
       overrides: over,
+      etats: etats,
       crops: crops,
       // donjons : gardiens vaincus et coffres déjà pillés ne reviennent pas
       donjons: state.world.donjonsVaincus ? Array.from(state.world.donjonsVaincus) : [],
@@ -71,9 +85,11 @@
 
   /* Réinjecte un état sauvegardé. Les overrides sont posés AVANT toute
      génération de chunk : generateChunk les applique ensuite tout seul. */
-  /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés pour
-     laisser la place à de nouveaux blocs ; on convertit donc toute pile
-     d'objet des anciennes sauvegardes plutôt que de les déclarer illisibles. */
+  /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés vers
+     128 pour laisser la place à de nouveaux blocs ; on convertit donc toute
+     pile d'objet des anciennes sauvegardes plutôt que de les déclarer
+     illisibles. Étape intermédiaire : produit une sauvegarde v2 (128..255),
+     que migrerV2 convertit ensuite vers le nouvel espace 16 bits. */
   function migrerV1(data) {
     var dec = MC.Core.DECALAGE_OBJETS_V1;
     function id(v) { return v >= 64 ? v + dec : v; }
@@ -81,19 +97,42 @@
     if (data.player && data.player.inv) data.player.inv.forEach(pile);
     (data.chests || []).forEach(function (c) { (c[1] || []).forEach(pile); });
     (data.furnaces || []).forEach(function (f) { [1, 2, 3].forEach(function (i) { pile(f[i]); }); });
-    data.v = VERSION;
+    data.v = 2;
+    return data;
+  }
+
+  /* Version 2 : format 8 bits, objets 128..255 (SPEC-SAVE-017). Les blocs ne
+     bougent pas (1..127, inchangés dans le nouvel espace) ; seuls les objets
+     d'inventaire (piles du joueur, coffres, fours) sont décalés vers
+     MC.Core.FIRST_ITEM. Une sauvegarde de ce format n'a jamais connu d'état
+     de bloc : `etats` est simplement absent (aucun état, comme le défaut). */
+  function migrerV2(data) {
+    var off = MC.Core.FIRST_ITEM - MC.Core.ANCIEN_FIRST_ITEM;
+    function id(v) { return v >= MC.Core.ANCIEN_FIRST_ITEM ? v + off : v; }
+    function pile(p) { if (p && p[0]) p[0] = id(p[0]); return p; }
+    if (data.player && data.player.inv) data.player.inv.forEach(pile);
+    (data.chests || []).forEach(function (c) { (c[1] || []).forEach(pile); });
+    (data.furnaces || []).forEach(function (f) { [1, 2, 3].forEach(function (i) { pile(f[i]); }); });
+    data.v = 3;
     return data;
   }
 
   function apply(data, state) {
     if (data && data.v === 1) data = migrerV1(JSON.parse(JSON.stringify(data)));
-    if (!data || data.v !== VERSION) return false;
+    if (data && data.v === 2) data = migrerV2(data);
+    if (!data || data.v !== VERSION) return false;    // format inconnu : refusé proprement
     var w = state.world;
     w.overrides.clear();
+    if (w.etatsOverrides) w.etatsOverrides.clear();
     w.crops.clear();
     (data.overrides || []).forEach(function (o) {
       w.overrides.set(o[0] + ',' + o[1] + ',' + o[2], o[3]);
     });
+    if (w.etatsOverrides) {
+      (data.etats || []).forEach(function (o) {
+        if (o[3]) w.etatsOverrides.set(o[0] + ',' + o[1] + ',' + o[2], o[3]);
+      });
+    }
     (data.crops || []).forEach(function (c) {
       w.crops.set(c[0] + ',' + c[1] + ',' + c[2], { x: c[0], y: c[1], z: c[2], t: c[3] });
     });
@@ -204,6 +243,7 @@
     try { storage.removeItem(KEY); return true; } catch (e) { return false; }
   }
 
-  MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply, migrerV1: migrerV1,
+  MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply,
+              migrerV1: migrerV1, migrerV2: migrerV2,
               save: save, load: load, hasSave: hasSave, clear: clear };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

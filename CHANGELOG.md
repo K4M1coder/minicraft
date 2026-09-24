@@ -12,6 +12,16 @@ qui rompt la compatibilité (sauvegardes, protocole réseau). La version du jeu
 porte G10 le vérifie.
 
 ## [Non publié]
+### Ajouté
+
+- Les blocs se stockent désormais sur 16 bits (Uint16Array) partout où ils vivent — chunks, mailleur, lumière, sauvegardes, réseau, monde serveur — et l'espace d'ids sépare largement blocs (1..4095) et objets (4096+), levant la limite d'un octet (SPEC-SAVE-017).
+- Un état par bloc (orientation, moitié haute/basse, forme d'angle, connexions, allumé/éteint, niveau d'énergie), stocké à côté des blocs, 0 par défaut : `world.getEtat`/`setEtat`, sauvegardé et transmis par le réseau (préparation de L24/L29, aucun nouveau bloc n'en tire encore parti).
+
+### Modifié
+
+- Format de sauvegarde v3 (`MC.Save.VERSION`) : les objets d'inventaire d'une sauvegarde 8 bits (v1 ou v2) sont convertis vers le nouvel espace d'ids au chargement, sans perte ; un format inconnu est refusé proprement.
+- Format du monde serveur (`--monde`) passé en v2 : une liste `etats` à part des overrides de bloc ; un fichier v1 (blocs seuls) reste lisible.
+- Le protocole réseau accepte des ids de bloc jusqu'à 65535 (au lieu de 255) et transmet l'état d'un bloc posé.
 
 ## [0.0.82] - 2026-09-24
 ### Ajouté

@@ -176,10 +176,13 @@
                  invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null };
       case MSG.BLOC:
         if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
-        if (!estEntier(msg.id) || msg.id < 0 || msg.id > 255) return null;
+        // ids sur 16 bits (SPEC-SAVE-017) : jusqu'à 65535, blocs comme objets.
+        if (!estEntier(msg.id) || msg.id < 0 || msg.id > 65535) return null;
         // `outil` : ce que le joueur tient, pour que le serveur calcule le butin
+        // `etat` : orientation, niveau… — un octet (SPEC-SAVE-017), 0 par défaut
         return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, id: msg.id | 0,
-                 j: joueurLocal(msg.j), outil: estEntier(msg.outil) && msg.outil >= 0 ? msg.outil | 0 : 0 };
+                 j: joueurLocal(msg.j), outil: estEntier(msg.outil) && msg.outil >= 0 ? msg.outil | 0 : 0,
+                 etat: estEntier(msg.etat) && msg.etat >= 0 && msg.etat <= 255 ? msg.etat | 0 : 0 };
       case MSG.ENTREE:
         // une image de simulation : numéro, durée, touches, regard
         if (!estEntier(msg.s) || msg.s < 0) return null;

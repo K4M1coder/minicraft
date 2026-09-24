@@ -58,11 +58,12 @@
           var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
           world.getChunk(cx, cz, true);
           world.setBlock(b[0], b[1], b[2], b[3]);
+          if (b[4]) world.setEtat(b[0], b[1], b[2], b[4]);
         });
         (m.chat || []).forEach(function (c) { chat.recevoir(c); });
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
       },
-      onBloc: function (x, y, z, id) {
+      onBloc: function (x, y, z, id, etat) {
         // autorite serveur : on applique sans discuter, meme si l on avait
         // predit autre chose localement
         /* Chunk absent : on le génère pour y appliquer le bloc. L'ignorer
@@ -71,6 +72,7 @@
         var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
         world.getChunk(cx, cz, true);
         world.setBlock(x, y, z, id);
+        if (etat) world.setEtat(x, y, z, etat);
       },
       onChat: function (m) { chat.recevoir(m); },
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },

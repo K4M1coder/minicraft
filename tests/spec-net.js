@@ -200,7 +200,9 @@
     it('SPEC-NET-007 : une pose de bloc exige des entiers valides', function () {
       A.ok(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 5 }), 'valide');
       A.equal(N.valider({ t: 'bloc', x: 1.5, y: 2, z: 3, id: 5 }), null, 'x non entier');
-      A.equal(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 999 }), null, 'id hors bornes');
+      // SPEC-SAVE-017 : les ids tiennent sur 16 bits (jusqu'à 65535)
+      A.ok(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 999 }), 'un id de bloc > 255 passe désormais');
+      A.equal(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 70000 }), null, 'id hors bornes');
       A.equal(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: -1 }), null, 'id negatif');
       A.equal(N.valider({ t: 'bloc', x: 'a', y: 2, z: 3, id: 5 }), null, 'x non numerique');
     });
@@ -224,7 +226,7 @@
       // un client malveillant ne doit pas pouvoir injecter de champs
       var m = N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 5, admin: true, __proto__: {} });
       // j (joueur local) et outil sont des champs du protocole, bornés par le serveur
-      A.deep(Object.keys(m).sort(), ['id', 'j', 'outil', 't', 'x', 'y', 'z'], 'champs recopies un a un');
+      A.deep(Object.keys(m).sort(), ['etat', 'id', 'j', 'outil', 't', 'x', 'y', 'z'], 'champs recopies un a un');
       A.equal(m.admin, undefined, 'le champ injecte est ignore');
     });
   });

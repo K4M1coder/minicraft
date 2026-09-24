@@ -10,12 +10,26 @@
   function key(a, b) { return a + ',' + b; }
   function key3(x, y, z) { return x + ',' + y + ',' + z; }
 
+  /* États de bloc (SPEC-SAVE-017) : tant qu'aucun état n'a jamais été posé
+     dans un chunk, il partage ce tampon vide (copy-on-write) plutôt que
+     d'allouer 32 Kio pour rien — aujourd'hui, aucun contenu ne pose encore
+     d'état (voir L24/L29), donc ça évite de doubler encore le poids mémoire
+     que le passage des blocs à 16 bits a déjà ajouté. setEtat clone ce
+     tampon partagé en un tampon propre au chunk dès la première écriture. */
+  var ETATS_VIDE = new Uint8Array(CX * WH * CZ);
+
   function createWorld(seed) {
     var N = MC.makeNoise(seed === undefined ? 20260921 : seed);
     var chunks = new Map();
     // toutes les modifications du joueur, pour la sauvegarde et pour que la
     // regénération d'un chunk déchargé ne les efface pas
     var overrides = new Map();
+    /* États de bloc modifiés par le joueur (SPEC-SAVE-017) : orientation,
+       moitié haute/basse, forme d'angle, connexions, allumé/éteint, niveau
+       d'énergie — un entier 0..255 par position, 0 par défaut (aucun état
+       particulier). Même principe que `overrides` : rejoué après une
+       régénération de chunk ou un chargement de sauvegarde. */
+    var etatsOverrides = new Map();
     // cultures en croissance : position -> stade, mises à jour par tick()
     var crops = new Map();
     /* Sources de lumière posées par le joueur. La couche rendu y puise les
@@ -206,7 +220,17 @@
     }
 
     function generateChunk(cx, cz) {
-      var blocks = new Uint8Array(CX * WH * CZ);
+      // 16 bits par bloc (SPEC-SAVE-017) : la génération elle-même ne pose
+      // encore que des ids < 128, mais rien ne plafonne plus la suite.
+      var blocks = new Uint16Array(CX * WH * CZ);
+      /* Un état par bloc, 0 par défaut ; rejoué ci-dessous depuis
+         etatsOverrides. Un octet suffit : aucun bloc ne cumule à la fois
+         orientation (3 bits), moitié (1 bit), forme d'angle (2 bits),
+         connexions (jusqu'à 6 bits) et niveau d'énergie (4 bits) — un même
+         bloc n'utilise qu'un sous-ensemble à la fois (voir L24/L29). Rester
+         sur Uint8Array ici évite de doubler encore le poids mémoire d'un
+         chunk, déjà alourdi par le passage des blocs à 16 bits. */
+      var etats = ETATS_VIDE;
       var trees = [];
       /* L'eau de chaque colonne : sa nature (MC.Eau.TYPES), son sens (courant
          de la rivière, ou direction du rivage pour les vagues, ×127) et sa
@@ -341,9 +365,6 @@
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
 
-      var c = { cx: cx, cz: cz, blocks: blocks, mesh: null, meshT: null, dirty: true,
-                eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
-
       // réapplique les modifications du joueur sur ce chunk
       overrides.forEach(function (id, k) {
         var p = k.split(',');
@@ -352,6 +373,19 @@
           blocks[idx(ox - cx * CX, oy, oz - cz * CZ)] = id;
         }
       });
+      // et les états qui allaient avec (orientation, niveau…) — on ne clone
+      // le tampon partagé que si ce chunk en a effectivement besoin
+      etatsOverrides.forEach(function (etat, k) {
+        var p = k.split(',');
+        var ox = +p[0], oy = +p[1], oz = +p[2];
+        if (Math.floor(ox / CX) === cx && Math.floor(oz / CZ) === cz) {
+          if (etats === ETATS_VIDE) etats = new Uint8Array(ETATS_VIDE);
+          etats[idx(ox - cx * CX, oy, oz - cz * CZ)] = etat;
+        }
+      });
+
+      var c = { cx: cx, cz: cz, blocks: blocks, etats: etats, mesh: null, meshT: null, dirty: true,
+                eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
       enregistrerLumieres(c);
       return c;
     }
@@ -547,6 +581,36 @@
       var c = chunks.get(key(cx, cz));
       if (!c) return 0;
       return c.blocks[idx(wx - cx * CX, wy, wz - cz * CZ)];
+    }
+
+    /* État d'un bloc (SPEC-SAVE-017) : 0 si le chunk n'est pas chargé ou si
+       aucun état particulier n'a été posé. Ne touche ni à `overrides` ni aux
+       registres dérivés (lumières, cultures) : l'id du bloc reste seul
+       responsable de ceux-ci pour l'instant — l'état n'a pas encore de bloc
+       qui s'en serve (voir L24/L29). */
+    function getEtat(wx, wy, wz) {
+      if (wy < 0 || wy >= WH) return 0;
+      wx = Math.floor(wx); wy = Math.floor(wy); wz = Math.floor(wz);
+      var cx = Math.floor(wx / CX), cz = Math.floor(wz / CZ);
+      var c = chunks.get(key(cx, cz));
+      if (!c || !c.etats) return 0;
+      return c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)];
+    }
+    function setEtat(wx, wy, wz, etat) {
+      wx = Math.floor(wx); wy = Math.floor(wy); wz = Math.floor(wz);
+      if (wy < 0 || wy >= WH) return false;
+      var cx = Math.floor(wx / CX), cz = Math.floor(wz / CZ);
+      var c = chunks.get(key(cx, cz));
+      if (!c || !c.etats) return false;
+      var e = Math.max(0, Math.min(255, etat | 0));
+      // le chunk partage peut-être encore ETATS_VIDE (copy-on-write) : la
+      // première écriture lui donne son propre tampon.
+      if (c.etats === ETATS_VIDE) c.etats = new Uint8Array(ETATS_VIDE);
+      c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)] = e;
+      c.dirty = true;
+      var k3 = key3(wx, wy, wz);
+      if (e) etatsOverrides.set(k3, e); else etatsOverrides.delete(k3);
+      return true;
     }
 
     // `record` à false pour les changements internes (croissance) qu'on veut
@@ -813,6 +877,7 @@
       if (onUnload) chunks.forEach(onUnload);
       chunks.clear();
       overrides.clear();
+      etatsOverrides.clear();
       crops.clear();
       lights.clear();
       donjonsVaincus.clear();
@@ -899,6 +964,7 @@
 
     return {
       seed: seed, noise: N, chunks: chunks, overrides: overrides, crops: crops,
+      etatsOverrides: etatsOverrides, getEtat: getEtat, setEtat: setEtat,
       lights: lights, rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
