@@ -65,6 +65,11 @@
       var offresAvant = Eco.offresDe(etat, 'ferme2', 'fermier', 'ferme2#0', 'Bob');
       var offresApres = Eco.offresDe(etat, 'ferme2', 'fermier', 'ferme2#0', 'Alice');
       A.lt(offresApres[0].prix, offresAvant[0].prix, 'la remise abaisse le prix courant pour Alice');
+
+      // metierDeCollecte : la vente de blé fait progresser le fermier, rien d'autre
+      A.equal(Met.metierDeCollecte({ give: [{ id: I.WHEAT, n: 8 }], get: { id: I.EMERALD, n: 1 } }), 'fermier');
+      A.equal(Met.metierDeCollecte({ give: [{ id: I.IRON_INGOT, n: 4 }], get: { id: I.EMERALD, n: 1 } }), 'forgeron');
+      A.equal(Met.metierDeCollecte({ give: [{ id: I.EMERALD, n: 1 }], get: { id: I.BREAD, n: 4 } }), null, 'un achat ne collecte rien');
     });
 
     it('SPEC-METIER-005 : surplus réel transféré au lieu en pénurie par une caravane ; rien sans surplus', function () {

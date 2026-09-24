@@ -59,6 +59,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   au statut (20 ventes), sans aucun `Math.random` (hachage déterministe comme
   `politique.js`). `src/caravanes.js` : `cargaisonDe`, la cargaison pure et
   déterministe d'un départ de caravane.
+- Commerce (SPEC-SYNC-023, L45) : un PNJ de métier commerce désormais via
+  `MC.Economie` (`game.js` `parlerA`, `ui.js` — prix/stock affichés, clic
+  d'échange conforme au contrat), avec un frais de garde de banque quotidien
+  (`game.js` `frame`) ; côté serveur, section « économie » (`server.js`,
+  `avancerEconomie`, `offresPour`) et `case NP.MSG.TROC` écrits contre les
+  helpers promis par B1 (inventaire et conteneurs serveur, L43 — inactifs
+  tant que B1 n'est pas fusionné, voir docs/vague-2/B2.md) ; sauvegarde
+  solo (`save.js`, champ `economie` optionnel) et serveur (`etatMonde`).
 
 ### Modifié
 

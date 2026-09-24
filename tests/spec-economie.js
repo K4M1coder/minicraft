@@ -57,6 +57,26 @@
       });
     });
 
+    it('SPEC-ECO-001 : ressourceDe/estAchat identifient le côté non-émeraude d\'une offre', function () {
+      var achat = o([e(1)], { id: I.IRON_INGOT, n: 3 });
+      var vente = o([{ id: I.WHEAT, n: 8 }], e(1));
+      A.ok(Eco.estAchat(achat), 'give = [émeraude] → achat');
+      A.ok(!Eco.estAchat(vente), 'give = ressource → vente');
+      A.deep(Eco.ressourceDe(achat), { id: I.IRON_INGOT, n: 3 }, 'achat : la ressource est ce qui est reçu');
+      A.deep(Eco.ressourceDe(vente), { id: I.WHEAT, n: 8 }, 'vente : la ressource est ce qui est cédé');
+    });
+
+    it('SPEC-ECO-002 : catégorieDe classe les objets pour le référentiel de prix', function () {
+      A.equal(Eco.categorieDe(I.WHEAT), 'nourriture');
+      A.equal(Eco.categorieDe(I.APPLE), 'nourriture');
+      A.equal(Eco.categorieDe(B.LOG), 'bois');
+      A.equal(Eco.categorieDe(I.IRON_INGOT), 'minerai');
+      A.equal(Eco.categorieDe(I.COAL), 'minerai');
+      A.equal(Eco.categorieDe(I.DIAMOND), 'gemme');
+      A.equal(Eco.categorieDe(I.IRON_SWORD), 'outil');
+      A.equal(Eco.categorieDe(I.EMERALD), null, 'sans catégorie connue : le prix de base par défaut s\'applique');
+    });
+
     it('SPEC-ECO-002 : même graine, deux biomes — prix de base distincts et reproductibles', function () {
       var p1a = Eco.prixBaseRegional(I.IRON_INGOT, { biome: 'plaines' });
       var p1b = Eco.prixBaseRegional(I.IRON_INGOT, { biome: 'plaines' });
