@@ -32,6 +32,9 @@
       onAdminRep: opts.onAdminRep || function () {},
       // L45 : offres d'un PNJ (réponse à 'consulter' ou 'echanger', SPEC-SYNC-023)
       onTroc: opts.onTroc || function () {},
+      // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille —
+      // seule source de vérité en ligne (docs/vague-2/B1.md § 6)
+      onInvMaj: opts.onInvMaj || function () {},
     };
 
     function statut(e, info) {
@@ -122,6 +125,11 @@
 
         case NP.MSG.DONNE:
           hooks.onDonne(m);
+          break;
+
+        // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille
+        case NP.MSG.INV_MAJ:
+          hooks.onInvMaj(m);
           break;
 
         case NP.MSG.REFUS:
