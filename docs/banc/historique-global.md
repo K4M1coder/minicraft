@@ -21,7 +21,13 @@ Granularité : **une ligne = un test dans un run**.
 | rang_commit | entier | `git rev-list --topo-order` sur la branche principale (-1 si hors branche ou réécrit) |
 | branche, preset, origine | énumérations | run |
 | inscrit | booléen | run |
-| test, nom, type, fiche | texte / énumération | test |
+| test, nom | texte | test |
+| categorie | énumération : `type` du catalogue (unitaire, fonctionnel, spec, e2e, perf…) et `groupe` | catalogue |
+| domaines | liste (SYNC, RENDU, ECO…) | catalogue (`domainesDe`) |
+| specs | liste d'ids SPEC-* | catalogue |
+| fonctions | liste de fonctions testées (`MC.Mesher.tileOrigin`…) | fiche déclarée, sinon observée (§3.5) |
+| etiquettes | liste de tags libres | catalogue |
+| fiche | {teste, pourquoi, attendu, source} | **instantané** du catalogue au moment du run |
 | debut_test | horodatage | test |
 | duree_ms | nombre | test |
 | etat | `reussi` \| `echec` \| `ignore` \| `avertissement` | test |
@@ -90,6 +96,23 @@ Précisé par l'utilisateur : à la fin d'une exécution manuelle lancée depuis
 - Le même bouton existe dans l'historique global sur toute ligne ou tout run `inscrit: false` encore présent dans les cahiers locaux, pour promouvoir un run après coup.
 - Cas où le dépôt contient des modifications non commitées : l'entrée cite le commit HEAD et porte `arbre_modifie: true`, affiché en avertissement dans l'historique, puisque le code testé n'est pas exactement ce commit.
 
+### 3.5 Fiche avant résultats, tags, catégories, domaines, specs, fonctions
+
+Précisé par l'utilisateur : pour chaque test, le rapport doit indiquer les données de la fiche AVANT les résultats, et les tests doivent pouvoir être tagués, filtrés, triés et comptés par catégorie, par domaine, par spec et par fonction.
+
+- **Fiche d'abord.** Dans le rapport de campagne (`tools/rapport.js`), le cahier et ses exports (`tools/cahier.js` : html, pdf, docx), le panneau d'un run dans l'historique et la vue par test, chaque test s'affiche dans cet ordre :
+  1. identité (id, nom, catégorie, domaines, specs, fonctions, étiquettes) ;
+  2. fiche : ce qui est testé, pourquoi, résultat attendu, source (déclarée / déduite de la spec) ;
+  3. résultat : état, durée, erreur, puis les vignettes des captures.
+- **Instantané.** La fiche et les tags sont copiés dans l'entrée du run. Une fiche modifiée plus tard ne réécrit pas l'historique : on voit ce que le test prétendait vérifier au moment où il a tourné.
+- **Tags.** `etiquettes` (existant dans le catalogue) est la liste de tags libres, déclarés dans la fiche du test ou de son groupe. Liste de tags recommandés dans le README du registre (`rendu`, `reseau`, `lent`, `instable`, `regression:<date>`…), mais pas d'interdiction de tags nouveaux.
+- **Fonctions.** Deux sources, fusionnées et distinguées à l'affichage :
+  - `fonctions` déclarées dans la fiche : la cible du test ;
+  - fonctions **observées** : en exécution Node (tests/run.js, vm), les fonctions exportées par les modules `MC.*` sont enveloppées pendant chaque test, et celles appelées sont enregistrées (nom qualifié, nombre d'appels). C'est la valeur par défaut pour un test qui n'a rien déclaré, comme la fiche déduite de la spec. Enveloppe désactivable (`--sans-fonctions`) si elle pèse trop sur la durée ; son surcoût est mesuré et affiché, et G12 (budget perf) se mesure sans elle. Pour les e2e, observation facultative (même enveloppe injectée dans la page), sinon fonctions déclarées seulement.
+- **Filtrer, trier, compter.** Catégorie, domaines, specs, fonctions et étiquettes sont des colonnes du tableau (§3.1), avec filtre multi-sélection et effectifs. Pour les colonnes-listes, un test compte dans chacune de ses valeurs. Un panneau **« Répartition »** affiche, pour la vue filtrée courante et la dimension choisie (catégorie, domaine, spec, fonction ou étiquette), un tableau et un graphique en barres : nombre de tests, réussis, échecs, ignorés, avertissements, durée cumulée. Clic sur une barre : filtre sur cette valeur.
+- **Zone de sélection du banc.** Les mêmes dimensions servent à choisir les tests à lancer : l'arbre de sélection se regroupe au choix par catégorie, domaine, spec, fonction ou étiquette, avec les effectifs. On peut ainsi lancer « tous les tests qui touchent `MC.Mesher.tileOrigin` ».
+- **Porte.** G14 est étendue : 100 % des tests ont au moins un domaine et au moins une fonction (déclarée ou observée).
+
 ## 4. Tests (le banc se teste lui-même)
 
 - Node, `tests/spec-banc.js` : filtrage, tri multi-clés, pagination, agrégation des séries, fusion registre + locaux, ordre topologique, ligne sans capture.
@@ -98,6 +121,7 @@ Précisé par l'utilisateur : à la fin d'une exécution manuelle lancée depuis
 
 ## 5. Découpage conseillé
 
+0. Catalogue : champ `fonctions` déclaré, observation des fonctions en Node, instantané fiche+tags dans les cahiers et le registre, fiche affichée avant les résultats dans rapport et cahier (§3.5), G14 étendue.
 1. Routes serveur et index en mémoire, avec tests Node.
 2. Tableau : colonnes, tri, filtres, pagination, export.
 3. Graphiques timeline.
