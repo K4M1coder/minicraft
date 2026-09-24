@@ -557,13 +557,13 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-HABITAT-008 | Les lieux suivent l'habitabilité à des échelles réalistes : villes au bord de l'eau ou en plaine, espacées de plusieurs kilomètres ; villages autour, fermes et hameaux dans les campagnes ; montagnes et déserts presque vides | densités et distances par région | ⏳ |
-| SPEC-HABITAT-009 | Les bâtiments s'adaptent au relief — fondations ou pilotis sur la pente — ou l'évitent quand elle est trop forte ; le terrain n'est plus arasé en bloc | fondations, parcelles sur pente | ⏳ |
-| SPEC-ROUTE-001 | Des routes de commerce relient chaque ville à ses voisines et aux villages alentour | graphe des routes | ⏳ |
-| SPEC-ROUTE-002 | Une route suit le relief sans marche de plus d'un bloc, et contourne ce qui est trop raide | pentes le long des tracés | ⏳ |
-| SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ⏳ |
-| SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ⏳ |
-| SPEC-ROUTE-005 | Aux carrefours, des panneaux indiquent le nom et la distance des lieux ; aux abords des villes, les routes sont éclairées | panneaux, lampadaires | ⏳ |
+| SPEC-HABITAT-008 | Les lieux suivent l'habitabilité à des échelles réalistes : villes au bord de l'eau ou en plaine, espacées de plusieurs kilomètres ; villages autour, fermes et hameaux dans les campagnes ; montagnes et déserts presque vides | densités et distances par région | ✅ |
+| SPEC-HABITAT-009 | Les bâtiments s'adaptent au relief — fondations ou pilotis sur la pente — ou l'évitent quand elle est trop forte ; le terrain n'est plus arasé en bloc | fondations, parcelles sur pente | ✅ |
+| SPEC-ROUTE-001 | Des routes de commerce relient chaque ville à ses voisines et aux villages alentour | graphe des routes | ✅ |
+| SPEC-ROUTE-002 | Une route suit le relief sans marche de plus d'un bloc, et contourne ce qui est trop raide | pentes le long des tracés | ✅ |
+| SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ✅ |
+| SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ✅ |
+| SPEC-ROUTE-005 | Aux carrefours, des panneaux indiquent le nom et la distance des lieux ; aux abords des villes, les routes sont éclairées | panneaux, lampadaires | ✅ |
 | SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme, et des bateaux sur les rivières navigables et le long des côtes, entre les ports | déplacements le long des tracés et des voies d'eau | ⏳ |
 
 ## L19 — identités procédurales
@@ -572,7 +572,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 |---|---|---|---|
 | SPEC-HABITAT-010 | Chaque type de bâtiment a plusieurs plans reconnaissables (trois pour la maison, deux au moins pour les autres), agencés procéduralement, et son gabarit suit la densité : fermes et granges en campagne, maisons de ville mitoyennes en ville, immeubles et tours dans les centres des mégapoles ; deux bâtiments du même type diffèrent | variantes, signatures, gabarit selon la densité | ⏳ |
 | SPEC-HABITAT-011 | Chaque variante, dans chaque style compatible, à chaque densité et à plusieurs endroits, est habitable : porte dégagée, intérieur libre, lumière, habitant à l'intérieur, rien ne flotte ni ne déborde ; les tours ont escaliers ou échelles jusqu'au sommet | vérification de toutes les variantes | ⏳ |
-| SPEC-HABITAT-012 | Les villes ont des quartiers cohérents (centre commerçant, quartiers résidentiels, faubourgs agricoles) et leur taille varie de la petite ville à la grande cité | quartiers et tailles | ⏳ |
+| SPEC-HABITAT-012 | Les villes ont des quartiers cohérents (centre commerçant, quartiers résidentiels, faubourgs agricoles) et leur taille varie de la petite ville à la grande cité | quartiers et tailles | ✅ |
 | SPEC-DONJON-013 | Les donjons moyens et grands comptent plusieurs salles reliées par des couloirs, les grands plusieurs niveaux reliés par des escaliers ; toute salle est atteignable depuis l'entrée, le gardien se tient au plus profond, et des gardes peuplent les autres salles | graphe de salles, niveaux, connexité depuis l'entrée, gardien au plus profond | ✅ |
 | SPEC-DONJON-014 | Chaque type de donjon a son identité (plan, matériaux, décor) et des variantes procédurales : deux donjons du même type diffèrent | signatures par type, variantes | ✅ |
 | SPEC-DONJON-015 | Les donjons ont trois tailles : petits (les donjons actuels, une salle et son accès), moyens (plusieurs salles sur un niveau), grands (plusieurs niveaux et une dizaine de salles ou plus) | taille, nombre de salles et de niveaux par catégorie | ✅ |

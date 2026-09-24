@@ -35,6 +35,10 @@
     var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); }) : null;
+    // routes de commerce et de tourisme entre les lieux (même principe, encore)
+    var routes = MC.Routes && habitats ? MC.Routes.creer(N, function (x, z) {
+      return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
+    }, habitats, Bio) : null;
     // habitants tués : identifiant → heure de la mort (sauvegardé : les morts le restent)
     var pnjsMorts = new Map();
     // le compte en banque du joueur, commun à toutes les banques
@@ -273,6 +277,11 @@
       });
       // villes, villages et maisons : terrain nivelé, rues, bâtiments
       if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id) {
+        if (by <= 0 || by >= WH) return;
+        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+      });
+      // routes de commerce et de tourisme entre les lieux
+      if (routes) routes.appliquer(cx, cz, function (bx, by, bz, id) {
         if (by <= 0 || by >= WH) return;
         blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
       });
@@ -769,7 +778,7 @@
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, pieceDonjon: pieceDonjon, butinCoffre: butinCoffre,
-      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, pnjsMorts: pnjsMorts,
+      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes, pnjsMorts: pnjsMorts,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,

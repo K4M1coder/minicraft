@@ -335,6 +335,36 @@
       return null;
     }
 
+    /* Les volcans et les lacs dont le rayon touche une zone rectangulaire —
+       pour les routes touristiques (SPEC-ROUTE-004), qui doivent les repérer
+       sans parcourir le monde entier colonne par colonne. Même principe que
+       `lieuxDansZone` de habitats.js : une marge couvre le plus grand rayon
+       possible, et le cache des régions (volcanDe/lacDe) fait le reste. */
+    function volcansDansZone(x0, z0, x1, z1) {
+      var res = [], marge = 100;
+      var rx0 = Math.floor((x0 - marge) / REGION_VOLCAN), rx1 = Math.floor((x1 + marge) / REGION_VOLCAN);
+      var rz0 = Math.floor((z0 - marge) / REGION_VOLCAN), rz1 = Math.floor((z1 + marge) / REGION_VOLCAN);
+      for (var rx = rx0; rx <= rx1; rx++) for (var rz = rz0; rz <= rz1; rz++) {
+        var v = volcanDe(rx, rz);
+        if (!v) continue;
+        if (v.x + v.R < x0 || v.x - v.R > x1 || v.z + v.R < z0 || v.z - v.R > z1) continue;
+        res.push(v);
+      }
+      return res;
+    }
+    function lacsDansZone(x0, z0, x1, z1) {
+      var res = [], marge = 40;
+      var rx0 = Math.floor((x0 - marge) / REGION_LAC), rx1 = Math.floor((x1 + marge) / REGION_LAC);
+      var rz0 = Math.floor((z0 - marge) / REGION_LAC), rz1 = Math.floor((z1 + marge) / REGION_LAC);
+      for (var rx = rx0; rx <= rx1; rx++) for (var rz = rz0; rz <= rz1; rz++) {
+        var l = lacDe(rx, rz);
+        if (!l) continue;
+        if (l.x + l.R < x0 || l.x - l.R > x1 || l.z + l.R < z0 || l.z - l.R > z1) continue;
+        res.push(l);
+      }
+      return res;
+    }
+
     function classerTerre(c) {
       if (c.volcan) return 'volcan';
       if (c.glacier) return 'glacier';
@@ -568,7 +598,8 @@
     return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur,
              echantillon: echantillon, colonne: colonne, volcanProche: volcanProche,
              lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe, melange: melange,
-             riviere: riviere, niveauRiviere: niveauRiviere, courantRiviere: courantRiviere, LIT: LIT, RIVE: RIVE };
+             riviere: riviere, niveauRiviere: niveauRiviere, courantRiviere: courantRiviere, LIT: LIT, RIVE: RIVE,
+             volcansDansZone: volcansDansZone, lacsDansZone: lacsDansZone };
   }
 
   /* Tirage pondéré d'un type de mob dans une table { type: poids }. */

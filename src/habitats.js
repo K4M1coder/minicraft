@@ -77,8 +77,12 @@
   }
 
   // ─── échelles de lieux ───────────────────────────────────────────────────
+  /* SPEC-HABITAT-008 : la ville occupe une grande région (plusieurs kilomètres
+     de côté) — une seule par région, donc des villes voisines très espacées ;
+     village et maison restent sur des mailles bien plus fines, ce qui les
+     multiplie autour de chaque ville et dans la campagne alentour. */
   var LIEUX = {
-    ville:   { nom: 'Ville', region: 640, proba: 0.55, lots: 5, pas: 16, lot: 12, marge: 6,
+    ville:   { nom: 'Ville', region: 2400, proba: 0.55, lots: 5, pas: 16, lot: 12, marge: 6,
                biomes: ['plaines', 'foret', 'desert', 'savane', 'taiga', 'jungle', 'badlands'], denivele: 10 },
     village: { nom: 'Village', region: 224, proba: 0.5, lots: 3, pas: 13, lot: 10, marge: 4,
                biomes: ['plaines', 'foret', 'desert', 'savane', 'taiga', 'jungle', 'marais', 'badlands',
@@ -88,6 +92,11 @@
                         'montagnes', 'champignons', 'pics_glaces', 'glacier'], denivele: 6 },
   };
   var ORDRE_LIEUX = ['ville', 'village', 'maison'];
+  /* Densité par biome (SPEC-HABITAT-008) : villages et maisons isolées se font
+     rares en montagne, désert, badlands et glace — la campagne s'y vide,
+     seule la ville (déjà limitée aux biomes vivables) continue d'y apparaître
+     par endroits. 1 = densité normale (pas de filtre supplémentaire). */
+  var DENSITE_CAMPAGNE = { montagnes: 0.3, desert: 0.28, pics_glaces: 0.15, badlands: 0.35, glacier: 0.1, taiga: 0.6 };
 
   /* Bâtiments. `role` : l'habitant qu'on y trouve. */
   var BATIMENTS = {
@@ -178,7 +187,31 @@
       return l;
     }
 
-    var PORTEE = { ville: 50, village: 26, maison: 10 };
+    var PORTEE = { ville: 70, village: 26, maison: 10 };
+    /* SPEC-HABITAT-012 : la taille d'une ville varie — petite (3×3 parcelles),
+       moyenne (5×5, la taille d'origine) ou grande cité (7×7) — tirée une
+       fois par région, indépendamment du reste de sa construction. */
+    function tailleVille(rx, rz) {
+      var r = N.hash2(rx * 1531 + 71, rz * 911 - 37);
+      return r < 0.45 ? 3 : r < 0.82 ? 5 : 7;
+    }
+    /* Position candidate d'une ville, sans construire le lieu : une fonction
+       pure, dupliquant juste le tirage de position de `construire`, qui sert
+       à vérifier l'espacement entre villes voisines SANS jamais construire
+       récursivement une région voisine (ce qui boucierait : la région
+       voisine vérifierait à son tour la nôtre, pas encore en cache). */
+    function candidatVille(rx, rz) {
+      var def = LIEUX.ville, R = def.region, graineK = 7;
+      if (N.hash2(rx * 5381 + graineK, rz * 33391 - graineK) > def.proba) return null;
+      var lotsN = tailleVille(rx, rz);
+      var demi = Math.floor((lotsN * def.pas) / 2) + def.marge;
+      var m = demi + 8;
+      var x = rx * R + m + Math.floor(N.hash2(rx * 131 + graineK, rz * 977) * (R - 2 * m));
+      var z = rz * R + m + Math.floor(N.hash2(rx * 419, rz * 263 + graineK) * (R - 2 * m));
+      return { x: x, z: z, demi: demi };
+    }
+    // SPEC-HABITAT-008 : deux villes restent à plusieurs kilomètres l'une de l'autre
+    var ESPACEMENT_VILLES = 1300;
     // un lieu plus grand passe avant : un village ne s'installe pas dans une ville
     function occupePar(kind, x, z) {
       var rang = ORDRE_LIEUX.indexOf(kind);
@@ -193,29 +226,64 @@
       return false;
     }
 
+    /* SPEC-HABITAT-008 : la répartition des lieux, isolée dans une seule
+       fonction — c'est ici, et seulement ici, qu'une future carte de densité
+       (zones vierge/rurale/urbaine/hyperurbaine, mégapoles — L38) viendrait
+       se brancher pour moduler ou remplacer ces deux règles (espacement des
+       villes, rareté de la campagne) sans toucher au reste de `construire`.
+       `false` refuse le lieu à cet endroit. */
+    function repartitionOk(kind, rx, rz, x, z, bio, graineK) {
+      /* deux villes ne s'installent jamais à moins de plusieurs centaines de
+         blocs l'une de l'autre — on ne construit jamais la région voisine
+         (récursion croisée : elle nous vérifierait à son tour), seulement sa
+         position candidate, pure et sans cache. Le départage est arbitraire
+         mais fixe (rz puis rx) : une région ne cède la place qu'à une
+         voisine « antérieure » dans cet ordre, ce qui reste vrai quel que
+         soit l'ordre réel de génération des chunks. */
+      if (kind === 'ville') {
+        for (var av = -1; av <= 1; av++) for (var bv = -1; bv <= 1; bv++) {
+          if (!av && !bv) continue;
+          var rzV = rz + bv, rxV = rx + av;
+          if (!(rzV < rz || (rzV === rz && rxV < rx))) continue;
+          var cand = candidatVille(rxV, rzV);
+          if (cand && Math.hypot(cand.x - x, cand.z - z) < ESPACEMENT_VILLES) return false;
+        }
+        return true;
+      }
+      // la campagne (village, maison isolée) se raréfie en montagne, désert,
+      // badlands et glace — un tirage propre au biome
+      if (bio && DENSITE_CAMPAGNE[bio.id] !== undefined &&
+          N.hash2(rx * 1013 + 37 + graineK, rz * 2027 - 19) > DENSITE_CAMPAGNE[bio.id]) return false;
+      return true;
+    }
+
     function construire(kind, rx, rz) {
       var def = LIEUX[kind], R = def.region;
       var graineK = kind === 'ville' ? 7 : kind === 'village' ? 13 : 29;
       if (N.hash2(rx * 5381 + graineK, rz * 33391 - graineK) > def.proba) return null;
-      var demi = Math.floor((def.lots * def.pas) / 2) + def.marge;
+      // taille propre à cette ville (SPEC-HABITAT-012) ; village et maison gardent leur taille unique
+      var lotsN = kind === 'ville' ? tailleVille(rx, rz) : def.lots;
+      var demi = Math.floor((lotsN * def.pas) / 2) + def.marge;
       var m = demi + 8;
       var x = rx * R + m + Math.floor(N.hash2(rx * 131 + graineK, rz * 977) * (R - 2 * m));
       var z = rz * R + m + Math.floor(N.hash2(rx * 419, rz * 263 + graineK) * (R - 2 * m));
+      if (!repartitionOk(kind, rx, rz, x, z, null, graineK)) return null;
       var bio = biomeDe ? biomeDe(x, z) : null;
       if (!bio || bio.marin || def.biomes.indexOf(bio.id) < 0) return null;
+      if (!repartitionOk(kind, rx, rz, x, z, bio, graineK)) return null;
       // terrain : pas trop accidenté, au sec
       var hs = [];
       for (var i = -2; i <= 2; i++) for (var j = -2; j <= 2; j++) hs.push(hauteur(x + i * demi / 2, z + j * demi / 2));
       hs.sort(function (a, b) { return a - b; });
-      var h0 = hs[Math.floor(hs.length / 2)];
-      if (hs[hs.length - 1] - hs[0] > def.denivele * 2 || h0 <= SEA + 1 || h0 > WH - 40) return null;
+      var h0 = hs[Math.floor(hs.length / 2)], denivele = hs[hs.length - 1] - hs[0];
+      if (denivele > def.denivele * 2 || h0 <= SEA + 1 || h0 > WH - 40) return null;
       if (occupePar(kind, x, z)) return null;
       var urbain = kind === 'ville';
       var st = stylePour(bio.id, urbain);
       var l = {
         id: kind + ':' + rx + ',' + rz, kind: kind, nom: kind === 'maison' ? 'Maison de ' + PRENOMS[Math.floor(N.hash2(rx, rz * 7) * PRENOMS.length) % PRENOMS.length]
                                                         : nomDe(N.hash2(rx * 3, rz * 5 + graineK), N.hash2(rx * 11 + graineK, rz * 17)),
-        biome: bio.id, style: st.nom, x: x, z: z, demi: demi, h0: h0,
+        biome: bio.id, style: st.nom, x: x, z: z, demi: demi, h0: h0, denivele: denivele, lots: lotsN,
         batiments: [], pnjs: [], lampes: 0,
         blocs: new Map(),                 // clé de chunk → [x, y, z, id, x, y, z, id, …]
         plateforme: { x0: x - demi, z0: z - demi, x1: x + demi, z1: z + demi, h0: h0,
@@ -549,6 +617,16 @@
       }
       return l;
     }
+    /* Le quartier d'une parcelle (SPEC-HABITAT-012), d'après son anneau `d`
+       autour de la place (0 = place elle-même) et le rayon de la ville
+       `milieu` : cœur commerçant, couronne résidentielle (seulement quand la
+       ville est assez grande pour en avoir une), faubourgs agricoles au bord. */
+    function quartierDe(d, milieu) {
+      var dd = Math.round(d);
+      if (dd <= 1) return 'centre';
+      if (dd <= Math.max(1, milieu - 1)) return 'residentiel';
+      return 'faubourgs';
+    }
     /* Grille de parcelles séparées par des rues : la parcelle centrale est la
        place ; les autres reçoivent leur programme, les plus demandés au plus
        près du centre. Chaque façade regarde vers la rue qui mène au centre. */
@@ -573,6 +651,8 @@
         var di = milieu - lot.i, dj = milieu - lot.j, rot;
         if (Math.abs(dj) >= Math.abs(di)) rot = dj > 0 ? 2 : 0; else rot = di > 0 ? 1 : 3;
         BATISSEURS[prog[0]](l, st, o, ox, oz, L, rot, y0, urbain, prog[1]);
+        var bat = l.batiments[l.batiments.length - 1];
+        if (bat) bat.quartier = quartierDe(lot.d, milieu);
       });
       // lampadaires le long des rues, tous les six blocs
       for (var a = 0; a <= n; a++) {
@@ -584,17 +664,35 @@
       }
     }
 
+    /* Programme d'une ville de taille `n` (SPEC-HABITAT-012) : le cœur
+       commerçant (services) occupe toujours les parcelles les plus centrales
+       — `grille` les distribue déjà de la plus proche à la plus excentrée —
+       puis la couronne se remplit de logements et de fermes, en cyclant sur
+       les artisans et loisirs restants pour ne jamais tarir la liste, quelle
+       que soit la taille de la ville (petite : 3×3 : 8 parcelles — grande :
+       7×7 : 48 parcelles). */
+    function programmeVille(n, g, art, loi) {
+      var total = n * n - 1;
+      var coeur = melanger([['point_info'], ['banque'], ['salon'], ['magasin'], ['artisan', art[0]], ['artisan', art[1]],
+                            ['marche'], ['loisirs', loi[0]]], g + 2);
+      // le troisième artisan et les deux autres loisirs n'apparaissent qu'une
+      // fois chacun, même dans une grande cité : au-delà, on ne fait plus que
+      // des logements et des fermes (les faubourgs agricoles)
+      var uneFois = [['artisan', art[2]], ['loisirs', loi[1]], ['loisirs', loi[2]], ['point_info'], ['salon'], ['magasin']];
+      var extra = [];
+      for (var i = 0; i < total - coeur.length; i++) {
+        extra.push(i < uneFois.length ? uneFois[i] : (i % 3 === 0 ? ['ferme'] : ['maison']));
+      }
+      var periph = melanger(extra, g + 3);
+      return coeur.concat(periph).slice(0, total);
+    }
     var PLANS = {
       ville: function (l, st, o, rx, rz) {
-        var g = rx * 7 + rz * 13;
+        var g = rx * 7 + rz * 13, n = l.lots || LIEUX.ville.lots;
         var art = melanger(ARTISANS, g), loi = melanger(LOISIRS, g + 1);
-        // l'anneau central : les services ; l'anneau extérieur : logements, fermes, loisirs
-        var coeur = melanger([['point_info'], ['banque'], ['salon'], ['magasin'], ['artisan', art[0]], ['artisan', art[1]],
-                              ['marche'], ['loisirs', loi[0]]], g + 2);
-        var peripherie = melanger([['maison'], ['maison'], ['maison'], ['maison'], ['maison'], ['maison'], ['maison'],
-                                   ['artisan', art[2]], ['salon'], ['magasin'], ['loisirs', loi[1]], ['loisirs', loi[2]],
-                                   ['ferme'], ['ferme'], ['ferme'], ['point_info']], g + 3);
-        grille(l, st, o, LIEUX.ville, coeur.concat(peripherie), true);
+        var programme = programmeVille(n, g, art, loi);
+        var defTaille = { lots: n, pas: LIEUX.ville.pas, lot: LIEUX.ville.lot, marge: LIEUX.ville.marge };
+        grille(l, st, o, defTaille, programme, true);
       },
       village: function (l, st, o, rx, rz) {
         var g = rx * 11 + rz * 5;
@@ -644,15 +742,22 @@
     }
 
     /* Pose dans un chunk la part des lieux qui le concerne : d'abord la
-       plateforme nivelée (le terrain comblé, le dessus dégagé des arbres et
-       des bosses), puis les bâtiments. */
+       plateforme (le dessus dégagé des arbres et des bosses pour bâtir),
+       puis les bâtiments.
+       SPEC-HABITAT-009 : la plateforme n'est plus arasée à une profondeur
+       fixe — la fondation part du terrain réel jusqu'au niveau de la place,
+       un pilier de soutien qui s'allonge sur la pente (fondation profonde,
+       ou pilotis en creux) plutôt qu'un socle identique partout, qu'il y ait
+       ou non un dénivelé à combler en dessous. */
     function appliquer(cx, cz, put) {
       var x0 = cx * CX, z0 = cz * CZ, x1 = x0 + CX - 1, z1 = z0 + CZ - 1, n = 0;
       lieuxDansZone(x0, z0, x1, z1).forEach(function (l) {
         var p = l.plateforme;
         var ax = Math.max(x0, p.x0), bx = Math.min(x1, p.x1), az = Math.max(z0, p.z0), bz = Math.min(z1, p.z1);
         for (var x = ax; x <= bx; x++) for (var z = az; z <= bz; z++) {
-          for (var y = Math.max(1, p.h0 - 12); y < p.h0; y++) put(x, y, z, y >= p.h0 - 3 ? p.sousSol : B.STONE);
+          var hNat = Math.max(1, Math.min(WH - 14, hauteur(x, z)));
+          var base = Math.max(1, Math.min(hNat, p.h0 - 1) - 2);
+          for (var y = base; y < p.h0; y++) put(x, y, z, y >= p.h0 - 3 ? p.sousSol : B.STONE);
           put(x, p.h0, z, surfaceEn(l, x, z));
           for (var y2 = p.h0 + 1; y2 < Math.min(WH, p.h0 + 32); y2++) put(x, y2, z, 0);
           n++;
