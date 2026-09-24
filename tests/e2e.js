@@ -771,7 +771,8 @@
     var avant = g.render.materiauxLiberes;
     var mobs = [];
     for (var i = 0; i < 5; i++) mobs.push(g.entities.spawn('zombie', s.pos.x + 3 + i, s.pos.y, s.pos.z));
-    await frames(3);
+    // selon ce qu'a laissé le test précédent, la boucle peut mettre quelques images à les mailler
+    for (var k = 0; k < 60 && mobs.some(function (m) { return !g.render.entityMeshes.has(m.eid); }); k++) await frames(1);
     // d'autres créatures peuvent naître entre-temps (habitants, petits) : on suit les nôtres
     A.equal(mobs.filter(function (m) { return g.render.entityMeshes.has(m.eid); }).length, 5, 'cinq maillages crees');
     mobs.forEach(function (m) { g.entities.remove(m); });
