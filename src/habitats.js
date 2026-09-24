@@ -434,6 +434,62 @@
     /* Une maison générique : le gros œuvre (`corpsBrut`), la porte, les
        étages (échelle), une lumière, le toit selon la forme du style.
        Renvoie le bâtiment. */
+    /* ─── Intérieurs (SPEC-INTERIEUR-001) ───────────────────────────────────
+       Chaque bâtiment reçoit le mobilier de sa fonction, étage par étage, sans
+       jamais encombrer l'allée de la porte (colonne du milieu, deux premiers
+       rangs), l'échelle (u=1, v=d-2) ni la lanterne (u=w-2, v=d-2). Les
+       meubles regardent l'intérieur : leur orientation suit celle du bâtiment.
+       Les bâtisseurs posent ensuite leurs pièces propres (comptoirs, coffres) :
+       posées après, elles l'emportent sur un meuble de la même case. */
+    var MOBILIER = {
+      // [u, v, bloc, décalage d'orientation] — u, v : 'g' gauche, 'd' droite, 'c' centre, 'f' fond
+      maison:     [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c+2', 'm', 'CHAISE', 1], ['c', 'm', 'CHAISE', 3],
+                   ['g', 'f', 'ARMOIRE', 2], ['c', 'f', 'FOYER', 2], ['g', 1, 'VASE'], ['c+1', 'm+1', 'TAPIS']],
+      etage:      [['d', 1, 'LIT'], ['g', 'f-1', 'ARMOIRE', 2], ['c+1', 'm', 'TAPIS'], ['g', 1, 'LAMPE']],
+      magasin:    [['g', 'f', 'ETAGERE', 2], ['c+2', 'f', 'ETAGERE', 2], ['d', 1, 'PRESENTOIR'], ['g', 1, 'VASE']],
+      banque:     [['c', 'f', 'SOCLE'], ['g', 1, 'VASE'], ['d', 1, 'VASE'], ['c+1', 'm', 'TAPIS']],
+      salon:      [['g', 'f', 'ETAGERE', 2], ['d', 'f-1', 'FOYER', 2], ['c', 'm+1', 'TAPIS'], ['g', 1, 'LAMPE']],
+      artisan:    [['g', 'f-1', 'ARMOIRE', 2], ['d', 1, 'ETAGERE'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1]],
+      point_info: [['g', 'f', 'BIBLIOTHEQUE', 2], ['c+2', 'f', 'BIBLIOTHEQUE', 2], ['c+1', 'm', 'PRESENTOIR'], ['d', 1, 'LAMPE'],
+                   ['c', 'm+1', 'TAPIS']],
+      tour:       [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1], ['g', 'f-1', 'ARMOIRE', 2], ['g', 1, 'LAMPE']],
+      immeuble:   [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1], ['g', 'f-1', 'ARMOIRE', 2], ['g', 1, 'LAMPE']],
+    };
+    function meubler(o, p, w, d, y0, etages, type, rot, aEtages) {
+      if (!B.LIT) return;                                       // mobilier absent (anciens tests)
+      var pu = Math.floor(w / 2), m = Math.max(2, Math.floor(d / 2));
+      function col(c) {
+        if (c === 'g') return 1;
+        if (c === 'd') return w - 2;
+        var k = parseInt(c.slice(1) || '0', 10) || 0;
+        return pu + k;
+      }
+      function rang(r) {
+        if (typeof r === 'number') return r;
+        if (r[0] === 'f') return d - 2 + (parseInt(r.slice(1) || '0', 10) || 0);
+        return m + (parseInt(r.slice(1) || '0', 10) || 0);
+      }
+      for (var et = 0; et < etages; et++) {
+        var liste = MOBILIER[et === 0 ? type : (MOBILIER[type] && (type === 'tour' || type === 'immeuble') ? type : 'etage')] || [];
+        var y = y0 + et * 4;
+        liste.forEach(function (mb) {
+          var u = col(mb[0]), v = rang(mb[1]), id = B[mb[2]];
+          if (!id || u < 1 || u > w - 2 || v < 1 || v > d - 2) return;
+          if (u === pu && v <= 2) return;                                   // l'allée de la porte
+          if (u === w - 2 && v === d - 2) return;                           // la lanterne
+          if (aEtages && u === 1 && v === d - 2) return;                    // l'échelle
+          var q = p(u, v), orient = (rot + (mb[3] || 0)) & 3;
+          var etat = MC.Formes && MC.Formes.packMeuble && C.BLOCKS[id] && C.BLOCKS[id].forme === 'meuble' ? MC.Formes.packMeuble(orient, false) : 0;
+          o.pose(q[0], y, q[1], id, etat);
+          // le lit occupe deux cases : la tête, derrière le pied
+          if (mb[2] === 'LIT' && v + 1 <= d - 2) {
+            var t = p(u, v + 1);
+            o.pose(t[0], y, t[1], id, MC.Formes.packMeuble(orient, true));
+          }
+        });
+      }
+    }
+
     function corps(l, st, o, p, w, d, y0, etages, type, nom, rot) {
       var H = 4;
       var brut = corpsBrut(l, st, o, p, w, d, y0, etages);
@@ -450,6 +506,8 @@
         o.pose(fx(w - 2, d - 2), y0 + et * H, fz(w - 2, d - 2), B.PLANKS);
         o.pose(fx(w - 2, d - 2), y0 + et * H + 1, fz(w - 2, d - 2), B.LANTERN);
       }
+      // un intérieur meublé selon la fonction du bâtiment (SPEC-INTERIEUR-001)
+      meubler(o, p, w, d, y0, etages, type, rot || 0, etages > 1);
       toit(st, o, p, w, d, haut);
       var c0 = p(0, 0), c1 = p(w - 1, d - 1);
       var bat = { type: type, nom: nom || BATIMENTS[type].nom, lieu: l.id,
@@ -583,10 +641,10 @@
           }
         }
         b.plan = plan;
-        // un lit (laine), une table, un coffre
+        // le mobilier vient de meubler() ; restent l'établi et le coffre de la maisonnée
         var q = function (u, v) { return p(u, v); };
-        var c = q(w - 2, 1); o.pose(c[0], b.y0, c[1], B.WOOL_RED);
-        var t = q(1, 1); o.pose(t[0], b.y0, t[1], B.CRAFTING_TABLE);
+        if (!B.LIT) { var c = q(w - 2, 1); o.pose(c[0], b.y0, c[1], B.WOOL_RED); }
+        var t = q(1, 1); if (B.LIT) t = q(1, 2); o.pose(t[0], b.y0, t[1], B.CRAFTING_TABLE);
         var ch = q(2, d - 2); o.pose(ch[0], b.y0, ch[1], B.CHEST);
         pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
       },

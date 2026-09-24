@@ -305,5 +305,39 @@
       A.equal(H.stylePour('champignons').forme, 'chapeau', 'chapeau des maisons-champignons');
       A.equal(H.stylePour('pics_glaces').forme, 'dome', 'dôme des igloos');
     });
+
+    it('SPEC-INTERIEUR-001 : tout bâtiment généré est meublé selon sa fonction, et aucun n est creux', function () {
+      var w = monde(), B = C.B, MEUBLES = [B.LIT, B.TABLE, B.CHAISE, B.ARMOIRE, B.ETAGERE, B.BIBLIOTHEQUE, B.TAPIS, B.LAMPE, B.VASE, B.PRESENTOIR, B.SOCLE, B.FOYER];
+      var vus = {}, parType = {};
+      lieux(w, 'ville', 6000).concat(lieux(w, 'village', 3000)).slice(0, 12).forEach(function (l) {
+        var acc = accesseurLieu(l);
+        l.batiments.forEach(function (bat) {
+          if (['place', 'marche', 'ferme', 'loisirs', 'port'].indexOf(bat.type) >= 0) return;   // à ciel ouvert : pas d intérieur
+          var n = 0, sortes = {};
+          for (var x = bat.x0 + 1; x < bat.x1; x++) for (var z = bat.z0 + 1; z < bat.z1; z++) for (var y = bat.y0; y < bat.y1; y++) {
+            var id = acc.getBlock(x, y, z);
+            if (MEUBLES.indexOf(id) >= 0) { n++; sortes[id] = 1; }
+          }
+          A.gt(n, 1, bat.type + ' (' + (bat.plan || '') + ') n est pas creux : ' + n + ' meubles');
+          (parType[bat.type] = parType[bat.type] || {});
+          Object.keys(sortes).forEach(function (k) { parType[bat.type][k] = 1; vus[k] = 1; });
+        });
+      });
+      A.ok(parType.maison && parType.maison[B.LIT] && parType.maison[B.TABLE] && parType.maison[B.CHAISE], 'une maison : lit, table, chaises');
+      A.ok(parType.maison[B.ARMOIRE] || parType.maison[B.FOYER], 'et armoire ou cheminée');
+      if (parType.point_info) A.ok(parType.point_info[B.BIBLIOTHEQUE], 'le point d information a sa bibliothèque');
+      if (parType.magasin) A.ok(parType.magasin[B.ETAGERE], 'la boutique ses étagères');
+      A.gt(Object.keys(vus).length, 6, 'un mobilier varié d un bâtiment à l autre');
+      // un lit de maison occupe deux cases : pied et tête, orientés pareil
+      var l0 = lieux(w, 'village', 3000)[0], acc0 = accesseurLieu(l0), lit = null;
+      l0.blocs.forEach(function (arr) { for (var i = 0; i < arr.length && !lit; i += 5) if (arr[i + 3] === B.LIT && !MC.Formes.unpackMeuble(arr[i + 4]).variante) lit = [arr[i], arr[i + 1], arr[i + 2]]; });
+      A.ok(lit, 'un lit dans un village');
+      var o0 = MC.Formes.unpackMeuble(acc0.getEtat(lit[0], lit[1], lit[2])).orientation, tete = 0;
+      [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (dd) { var e = acc0.getEtat(lit[0] + dd[0], lit[1], lit[2] + dd[1]); if (acc0.getBlock(lit[0] + dd[0], lit[1], lit[2] + dd[1]) === B.LIT && MC.Formes.unpackMeuble(e).variante && MC.Formes.unpackMeuble(e).orientation === o0) tete++; });
+      A.equal(tete, 1, 'sa tête est juste à côté, orientée pareil');
+      // les livres du monde garnissent les bibliothèques des lieux
+      var livre = MC.Livres.livreDuMonde(w.seed, l0);
+      A.ok(livre && livre.titre && livre.pages.length > 0 && livre.signe, 'un livre du monde, signé, avec un titre et des pages');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -1709,7 +1709,18 @@
           // le contenu (livres compris, SPEC-INTERIEUR-003) traverse la
           // sauvegarde par le même chemin que n'importe quel coffre.
           var TAILLES = { armoire: 27, etagere: 9, bibliotheque: 18 };
-          if (!chests[k]) chests[k] = Inv.create(TAILLES[kind]);
+          if (!chests[k]) {
+            chests[k] = Inv.create(TAILLES[kind]);
+            // la bibliothèque d'un lieu (générée, jamais posée par un joueur) tient
+            // quelques livres du monde (SPEC-INTERIEUR-001, 003)
+            var cleB = target.x + ',' + target.y + ',' + target.z;
+            if (kind === 'bibliotheque' && !world.overrides.has(cleB) && MC.Livres && world.habitats) {
+              var lieuB = world.habitats.lieuxProches(target.x, target.z, 160)[0];
+              if (lieuB) for (var nb = 0; nb < 3; nb++) {
+                chests[k].addStack(I.LIVRE, 1, MC.Livres.livreDuMonde(world.seed + nb * 7919, lieuB));
+              }
+            }
+          }
           ui.openContainer('chest', player.state.inv, chests[k], k);
           audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
         } else if (kind === 'banque') {

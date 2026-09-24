@@ -102,7 +102,11 @@
   function livreDuMonde(seed, lieu) {
     var nom = (lieu && lieu.nom) || 'ce lieu';
     var kind = (lieu && lieu.kind) || 'defaut';
-    var lieuHash = (lieu && (lieu.id || (lieu.x || 0) * 131 + (lieu.z || 0) * 977)) || 0;
+    // l'identifiant d'un lieu est un texte (« village:3,4 ») : on en tire un nombre stable
+    var brut = lieu && (lieu.id !== undefined ? lieu.id : (lieu.x || 0) * 131 + (lieu.z || 0) * 977);
+    var lieuHash = 0;
+    if (typeof brut === 'number') lieuHash = brut;
+    else if (brut) for (var c = 0; c < String(brut).length; c++) lieuHash = (lieuHash * 31 + String(brut).charCodeAt(c)) % 1000003;
     var gabarits = GABARITS[kind] || GABARITS.defaut;
     var titre = choisir(TITRES, seed, lieuHash, 1).replace('{nom}', nom);
     var nPages = 2 + Math.floor(h2(seed, lieuHash, 2) * 2);   // 2 ou 3

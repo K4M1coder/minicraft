@@ -17,6 +17,8 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 
+- Les livres du monde ont de nouveau un titre et des pages : l'identifiant textuel d'un lieu faussait leur tirage.
+
 - Génération des chunks autour des villes douze fois plus rapide (110 s → 9 s pour 49 chunks) : la densité humaine, demandée à chaque nœud de route pour les bornes de zones, est désormais mise en cache sur une grille de 16 blocs et interpolée ; la suite de tests passe de 543 s à 239 s.
 ### Ajouté
 
