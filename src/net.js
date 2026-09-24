@@ -216,6 +216,13 @@
                        yaw: +e.yaw.toFixed(4), pitch: +e.pitch.toFixed(4), v: e.v });
     }
     function attaquer(eid, degats, j) { return envoyer({ t: NP.MSG.ATTAQUE, eid: eid, degats: degats, j: j || 0 }); }
+    /* SPEC-COMBAT-002 : attaque un autre JOUEUR — `cible` est la clé sous
+       laquelle il figure dans `distants` (son id seul, ou "id/j" en écran
+       partagé) ; le serveur seul décide si le coup porte (PvP autorisé et
+       zones compatibles). */
+    function attaquerJoueur(cible, degats, j) {
+      return envoyer({ t: NP.MSG.ATTAQUE, joueurCible: cible, degats: degats, j: j || 0 });
+    }
     function tirer(dir, vitesse, degats, genre, j) {
       return envoyer({ t: NP.MSG.TIR, dx: dir.x, dy: dir.y, dz: dir.z, vitesse: vitesse, degats: degats,
                        genre: genre || 'fleche', j: j || 0 });
@@ -240,7 +247,7 @@
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
       envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin,
       pousserPosition: pousserPosition, interpoler: interpoler,
-      envoyerEntree: envoyerEntree, attaquer: attaquer, tirer: tirer, manger: manger, renaitre: renaitre,
+      envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,
       get etat() { return etat; },
       get monId() { return monId; },

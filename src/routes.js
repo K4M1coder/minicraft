@@ -61,7 +61,7 @@
      quel que soit le rôle (SPEC-ROUTE-003, déjà testé ainsi). */
   var GABARIT_PAR_ROLE = { axe: { demiLargeur: 1 }, commerce: { demiLargeur: 0 }, rural: { demiLargeur: 0 }, tourisme: { demiLargeur: 0 } };
 
-  function creer(N, hauteur, habitats, Bio) {
+  function creer(N, hauteur, habitats, Bio, zoneEn) {
     if (!habitats) return { appliquer: function () { return 0; }, connexionsDe: function () { return []; }, cheminEntre: function () { return null; } };
 
     // ─── graphe ──────────────────────────────────────────────────────────────
@@ -331,7 +331,7 @@
         var lx = pt.x + cote.x, lz = pt.z + cote.z;
         put(lx, y, lz, B.COBBLE); put(lx, y + 1, lz, B.COBBLE); put(lx, y + 2, lz, B.LANTERN);
       }
-      if (pt.panneau) {
+      if (pt.panneau || pt.borneZone) {
         put(pt.x, y + 1, pt.z, B.PANNEAU_INFO);
       }
     }
@@ -365,6 +365,15 @@
         if (!chemin.panneauPose && dA >= demiA + 4) {
           p.panneau = true; p.panneauInfo = { nom: chemin.b.nom, distance: Math.round(chemin.longueur || dA + dB) };
           chemin.panneauPose = true;
+        }
+        /* SPEC-ZONE-003 : une borne (le même panneau d'information, faute
+           d'identifiant de bloc libre) marque chaque endroit où la route
+           traverse une frontière de zone — sans zoneEn (monde de test), on
+           ne pose jamais rien de plus que les panneaux de ville. */
+        if (zoneEn && i > 0) {
+          var zPrec = zoneEn(nodes[i - 1].x, nodes[i - 1].z).zone;
+          var zIci = zoneEn(p.x, p.z).zone;
+          if (zIci !== zPrec) p.borneZone = true;
         }
       }
     }

@@ -38,6 +38,9 @@
       banque: state.world.banque ? state.world.banque.serialize() : [],
       // les habitants tués, et quand : ils ne ressuscitent pas au chargement
       pnjsMorts: state.world.pnjsMorts ? Array.from(state.world.pnjsMorts.entries()) : [],
+      // les redéfinitions de zone d'un administrateur (SPEC-ZONE-004) : la
+      // politique elle-même reste un réglage de lancement, jamais rechargée
+      zones: state.world.zonesEtat && MC.Zones ? MC.Zones.serialiser(state.world.zonesEtat) : null,
       // l'avancée du récit : chapitre, étape, choix, quêtes — MC.Recits connaît
       // l'archétype ; un état assigné à la main sans champ « archetype » (les
       // anciens tests, ou une manipulation directe de MC.Histoire) reste une
@@ -114,6 +117,7 @@
       w.pnjsMorts.clear();
       (data.pnjsMorts || []).forEach(function (m) { if (m && typeof m[0] === 'string') w.pnjsMorts.set(m[0], +m[1] || 0); });
     }
+    if (w.zonesEtat && MC.Zones && data.zones) MC.Zones.appliquer(w.zonesEtat, data.zones);
     if (MC.Recits) {
       var peutHistoire = function (cat) { return MC.Modes.categoriePermise(state.regles, cat); };
       // une vieille sauvegarde (MC.Histoire.serialiser, sans champ « archetype »)

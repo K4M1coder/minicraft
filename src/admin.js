@@ -118,7 +118,7 @@
      d'administration sans être passé par ici. Centraliser évite qu'une route
      oublie une vérification que les autres appliquent. */
   var ACTIONS_ADMIN_SEUL = ['invitation_creer', 'invitation_revoquer', 'liste_ajouter',
-    'liste_retirer', 'role_nommer', 'reglages'];
+    'liste_retirer', 'role_nommer', 'reglages', 'zone_definir', 'zone_retirer'];
   var ACTIONS_PARTAGEES = ['joueurs', 'sessions', 'journal', 'inventaire', 'sanction', 'listes'];
 
   function peutAgir(roleActeur, action, roleCible) {
