@@ -174,6 +174,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   une fiche déclarée ou déduite d'une spec citée).
 
 ### Performances
+- Greedy meshing du maillage de chunk (lot L47, sous-lot A3 — SPEC-PERF-011 à
+  013, partie maillage de SPEC-PERF-017) : les faces coplanaires d'un même
+  bloc plein non liquide (même tuile/rotation, même occlusion ambiante aux 4
+  coins, même lumière, même ciel, mêmes autres attributs par sommet) se
+  fusionnent en un seul quad plus grand (`src/mesher.js`, `buildGreedy`),
+  fusion ou pas selon un paramètre explicite (`fusion`, 7e argument de
+  `buildChunk` — désactivé par défaut, activé par `src/render.js` pour le
+  rendu réel) pour ne changer ni l'ordre ni le contenu de la géométrie quand
+  la fusion n'est pas demandée. Mesuré sur 40 chunks générés (3 passes
+  chacun, graine 20260924, `tests/bench-maillage.js`) : ~31 % de quads en
+  moins en moyenne (134 873 contre 194 482), jusqu'à 96× sur une zone plate
+  d'un seul bloc sans variante de texture (256 → 6-8 quads, cible ≥ 30×,
+  SPEC-PERF-011), pour un temps de maillage inchangé (~51 ms/chunk, contre
+  ~54 ms sans fusion — pas de régression de vitesse de construction).
+  L'eau (ondes par sommet moyennées par colonne) et les formes non cubiques
+  (plantes, escaliers/dalles/clôtures, panneaux) restent hors fusion, comme
+  prévu par la spec. Les tuiles d'atlas qui se répètent sur un grand quad
+  fusionné sont rendues par un `fract()` par fragment dans le shader
+  (`src/render.js`, `avecAtlasRepete`, nouveaux attributs `uvBase`/`uvRep`)
+  plutôt qu'étirées : sans mipmaps et avec `NearestFilter` (voir `atlas.js`),
+  étirer aurait zoomé/flouté la texture au lieu de la répéter à l'identique.
 - Génération de chunk environ 60 % plus rapide (~98-112 ms/chunk → ~44-45 ms/chunk
   mesurés sur 80 chunks en spirale, même graine) : le bruit 3D des grottes
   (`isCave`, src/world.js), qui pesait à lui seul plus des trois quarts du CPU
@@ -339,6 +360,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   avant, dans la campagne complète). Les vraies API sont désormais coupées
   une fois pour toutes dès le premier verrou simulé : seule `fakeLock` pilote
   `pointerLockElement` pendant les tests.
+- Revue adversariale du greedy meshing (L47, sous-lot A3) : la passe d'ombre
+  (`WebGLShadowMap`, Three r128) ignorait `uvBase`/`uvRep` — elle fabrique un
+  `MeshDepthMaterial` générique qui ne copie jamais `onBeforeCompile` et lit
+  l'attribut `uv` brut, jamais mis à l'échelle par le greedy meshing. Sur un
+  grand quad fusionné (feuillage), l'alphaTest de l'ombre échantillonnait donc
+  une seule tuile étirée au lieu du motif répété, faussant la silhouette de
+  l'ombre (mesuré : jusqu'à 74 des 285 quads d'un cube 8×8×8 de feuilles
+  fusionnés). `src/render.js` assigne désormais un `customDepthMaterial`
+  partagé (`matDepthCutout`, `MeshDepthMaterial` + `RGBADepthPacking`) aux
+  meshes cutout, avec la même répétition `fract()` (`avecAtlasRepete`) que le
+  matériau visible. L'opaque n'a pas d'alphaTest : son ombre reste correcte
+  sans matériau dédié.
 
 ## [0.3.0] - 2026-09-24
 ### Corrigé

@@ -72,6 +72,63 @@
     return [[1, 0, 0], [0, 1, 0]];
   }
 
+  /* ── Greedy meshing (SPEC-PERF-011 à 013) ────────────────────────────────
+     Précalcul, une fois par direction, de deux choses nécessaires pour
+     étendre un quad fusionné :
+     - idxU/idxV/idxN : quel axe (0=x, 1=y, 2=z) est tangent U, tangent V, ou
+       normal à la face — pour reconstruire la position d'un coin étendu.
+     - repTu/repTv : la relation affine entre (compU, compV) — la position du
+       coin en coordonnées tangentielles pures, 0 ou 1 — et (tu, tv), le
+       paramètre de texture réellement utilisé par pushUV pour ce coin
+       (l'ordre/l'inversion diffère selon la face, pour garder les textures
+       "à l'endroit"). Elle permet d'étendre tu/tv à un quad W×H sans changer
+       l'orientation d'un quad non fusionné (W=H=1 restitue exactement tu/tv). */
+  (function () {
+    for (var i = 0; i < FACES.length; i++) {
+      var f = FACES[i], tg = tangents(f.dir), U = tg[0], V = tg[1];
+      var idxU = U[0] ? 0 : (U[1] ? 1 : 2);
+      var idxV = V[0] ? 0 : (V[1] ? 1 : 2);
+      f.idxU = idxU; f.idxV = idxV; f.idxN = 3 - idxU - idxV;
+      var c00 = null, c10 = null, c01 = null;
+      for (var k = 0; k < 4; k++) {
+        var c = f.corners[k];
+        if (c[idxU] === 0 && c[idxV] === 0) c00 = c;
+        else if (c[idxU] === 1 && c[idxV] === 0) c10 = c;
+        else if (c[idxU] === 0 && c[idxV] === 1) c01 = c;
+      }
+      f.repTu = { base: c00[3], cu: c10[3] - c00[3], cv: c01[3] - c00[3] };
+      f.repTv = { base: c00[4], cu: c10[4] - c00[4], cv: c01[4] - c00[4] };
+    }
+  })();
+
+  /* Origine (coin local 0,0 après rotation) d'une tuile dans l'atlas, avec la
+     même marge d'un demi-texel que pushUV. Sert de base à l'échantillonnage
+     répété d'un quad fusionné (voir avecLumiereDesBlocs dans render.js : le
+     shader ajoute fract(uvRep) * tailleTuile à cette origine). */
+  function tileOrigin(tile, rot) {
+    var a = 0, b = 0;
+    if (rot === 1) { a = 0; b = 1; }
+    else if (rot === 2) { a = 1; b = 1; }
+    else if (rot === 3) { a = 1; b = 0; }
+    a = MARGE_UV + a * (1 - 2 * MARGE_UV);
+    b = MARGE_UV + b * (1 - 2 * MARGE_UV);
+    var tx = tile % ATLAS_COLS, ty = (tile / ATLAS_COLS) | 0;
+    return [(tx + a) / ATLAS_COLS, 1 - (ty + 1 - b) / ATLAS_ROWS];
+  }
+  // recul infime pour qu'un coin "au bout" (u=W, v=H) retombe juste avant
+  // l'entier côté shader (fract(1.0) vaudrait 0, ce qui retomberait sur le
+  // mauvais bord de la tuile) — sans effet visible (bien en-deçà du texel).
+  var EPS_REP = 1e-4;
+  function localUV(u, v, rot) {
+    var a = u, b = v;
+    if (rot === 1) { a = v; b = 1 - u; }
+    else if (rot === 2) { a = 1 - u; b = 1 - v; }
+    else if (rot === 3) { a = 1 - v; b = u; }
+    if (a > 0) a -= EPS_REP;
+    if (b > 0) b -= EPS_REP;
+    return [a, b];
+  }
+
   function cornerAO(occupied, bx, by, bz, dir, U, V, su, sv) {
     var nx = bx + dir[0], ny = by + dir[1], nz = bz + dir[2];
     var s1 = occupied(nx + U[0] * su, ny + U[1] * su, nz + U[2] * su) ? 1 : 0;
@@ -95,10 +152,30 @@
      qu'avec les colonnes du chunk. */
   /* `simplifie` : un chunk lointain se passe des petites plantes (herbes,
      fleurs) — autant de faces en moins, invisibles à cette distance. */
-  function buildChunk(chunk, wantPass, sample, lumiere, eauDe, simplifie) {
+  /* `fusion` (facultatif, SPEC-PERF-011 à 013) : active le greedy meshing des
+     blocs pleins non liquides. Par défaut (omis/faux), buildChunk reproduit
+     à l'identique — même géométrie, même ORDRE de sommets — le maillage
+     face-par-bloc d'avant ce lot : plusieurs tests plus anciens (tests/unit.js)
+     lisent des sommets à un index fixe en s'appuyant sur cet ordre, et ce
+     fichier n'a pas le droit d'y toucher. render.js (rendu réel) passe donc
+     explicitement `true` ; l'absence du paramètre reste la référence « même
+     rendu » utilisée par tests/spec-maillage.js et tests/bench-maillage.js. */
+  function buildChunk(chunk, wantPass, sample, lumiere, eauDe, simplifie, fusion) {
     if (wantPass === false) wantPass = 'opaque';
     else if (wantPass === true) wantPass = 'blend';
     var positions = [], normals = [], uvs = [], colors = [], indices = [], lums = [], ciels = [];
+    /* uvBases/uvReps : coordonnées d'atlas « dépliées » pour la répétition de
+       texture d'un quad fusionné (voir tileOrigin/localUV ci-dessus) — même
+       longueur que positions/3, pour tout type de géométrie (cube, plante,
+       panneau…), afin que render.js n'ait qu'un seul format d'attribut à lire. */
+    var uvBases = [], uvReps = [];
+    function pushUVFull(tile, u, v, rot) {
+      pushUV(uvs, tile, u, v, rot || 0);
+      var ob = tileOrigin(tile, rot || 0);
+      uvBases.push(ob[0], ob[1]);
+      var lc = localUV(u, v, rot || 0);
+      uvReps.push(lc[0], lc[1]);
+    }
     /* ondes  : [amplitude, longueur, vitesse, écume] par sommet d'eau ;
        ondes2 : [sens x, sens z, part du courant, drapeaux (1 surface, 2 chute)] ;
        immerge : hauteur d'eau au-dessus d'une face noyée (caustiques, pénombre bleue).
@@ -221,7 +298,7 @@
         [[0, 0, 0, 0], [1, 0, 1, 0], [0, 1, 0, 1], [1, 1, 1, 1]].forEach(function (p) {
           positions.push(x + p[0], y + 0.02, z + p[1]);
           normals.push(0, 1, 0);
-          pushUV(uvs, d.tiles[0], p[2], p[3]);
+          pushUVFull(d.tiles[0], p[2], p[3], 0);
           colors.push(1, 1, 1);
           ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(0); souples.push(0);
           feuillages.push(0);
@@ -259,7 +336,7 @@
               var ppz = pq[2] === 0 ? bx2.z0 : bx2.z1;
               positions.push(x + ppx, y + ppy, z + ppz);
               normals.push(pface.dir[0], pface.dir[1], pface.dir[2]);
-              pushUV(uvs, d.tiles[pface.t], pq[3], pq[4]);
+              pushUVFull(d.tiles[pface.t], pq[3], pq[4], 0);
               var pc2 = pface.shade;
               colors.push(pc2, pc2, pc2);
               ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0);
@@ -281,7 +358,7 @@
             var p = CROSS[q][ci];
             positions.push(x + p[0], y + p[1], z + p[2]);
             normals.push(0, 1, 0);
-            pushUV(uvs, d.tiles[0], p[3], p[4]);
+            pushUVFull(d.tiles[0], p[3], p[4], 0);
             colors.push(1, 1, 1);
             ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(profondeurEau(x, y + 1, z));
             souples.push(plantePliable(d) && p[1] > 0.5 ? 1 : 0);
@@ -293,6 +370,15 @@
         }
         continue;
       }
+
+      /* En mode fusion (`fusion` vrai), les blocs pleins non liquides ne sont
+         PAS dessinés ici : buildGreedy (appelé après cette boucle) s'en
+         charge, en glouton. Sans fusion (par défaut), on continue plus bas
+         exactement comme avant ce lot — même ordre de sommets.
+         L'eau, elle, garde TOUJOURS ce chemin face-par-bloc, fusion ou pas :
+         ses vaguelettes (ondes/ondes2) sont propres à chaque sommet, moyennées
+         par colonne (SPEC-PERF-013 : « eau si ses ondes dépendent du sommet »). */
+      if (fusion && !d.liquid) continue;
 
       // l'eau de ce bloc : hauteur de surface, nature, sens, profondeur
       var estEau = !!d.liquid && C.isWater(b), dropEau = 0.12, pEau = null, surfaceLibre = false, chuteBloc = false;
@@ -341,7 +427,7 @@
           }
           positions.push(x + q2[0], y + q2[1] - (q2[1] === 1 ? drop : 0), z + q2[2]);
           normals.push(f.dir[0], f.dir[1], f.dir[2]);
-          pushUV(uvs, tile, q2[3], q2[4], vt.rot);
+          pushUVFull(tile, q2[3], q2[4], vt.rot);
           var c = s * ao[k];
           colors.push(c, c, c);
           if (estEau && pEau) {
@@ -383,12 +469,141 @@
       }
     }
 
+    /* ── Greedy meshing des blocs pleins non liquides (SPEC-PERF-011/012/013) ──
+       Un descripteur par cellule (bloc, face) porte les 4 AO par coin (vraies,
+       jamais forcées) et une « clé » de fusion : non nulle seulement si tuile,
+       rotation, AO (uniforme aux 4 coins), lumière/ciel (uniformes) et les
+       autres attributs par sommet (immersion, souplesse, classe de feuillage)
+       coïncident — l'angle rentrant d'une marche, non uniforme, n'a jamais de
+       clé et reste donc son propre quad 1×1, comme avant ce lot (préserve le
+       relief, SPEC-PERF-012). La rotation de tuile (variantes de sol) n'est
+       fusionnée que si elle vaut 0 : au-delà d'une cellule, la formule de
+       rotation ne se généralise pas à un repli de texture (voir localUV). */
+    function celluleFace(bx, by, bz, f, fi, U, V) {
+      var b = blocks[idx(bx, by, bz)];
+      if (b === 0) return null;
+      var d = C.BLOCKS[b];
+      if (!d || C.passOf(b) !== wantPass) return null;
+      if (d.plant || d.plat || d.panneau || d.forme || d.liquid) return null;
+      var nx = bx + f.dir[0], ny = by + f.dir[1], nz = bz + f.dir[2];
+      var nb = (nx < 0 || nx >= CX || nz < 0 || nz >= CZ || ny < 0 || ny >= WH)
+        ? sample(baseX + nx, ny, baseZ + nz)
+        : blocks[idx(nx, ny, nz)];
+      if (C.occludes(b, nb)) return null;
+      var dessus = f.dir[1] !== 0;
+      var vt = C.tuileVariante(d.tiles[f.t], hachePos(baseX + bx, by, baseZ + bz, fi), dessus);
+      var tile = vt.tile, rot = vt.rot;
+      var immFace = profondeurEau(nx, ny, nz);
+      var feuillage = C.isLeaves(b);
+      var classeFeuillage = feuillage ? (C.isConifere(b) ? 2 : 1) : (b === C.B.GRASS && f.dir[1] === 1 ? 3 : 0);
+      var souple = feuillage ? 0.2 : 0;
+      var ao = [1, 1, 1, 1], lumv = [0, 0, 0, 0], cielv = [1, 1, 1, 1];
+      for (var k = 0; k < 4; k++) {
+        var q2 = f.corners[k];
+        var su = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
+        var sv = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
+        ao[k] = cornerAO(occupied, bx, by, bz, f.dir, U, V, su, sv);
+        if (niv) lumv[k] = lumCoin(bx, by, bz, f.dir, U, V, su, sv);
+        if (nivC) cielv[k] = lumCoin(bx, by, bz, f.dir, U, V, su, sv, nivC);
+      }
+      var uniforme = ao[0] === ao[1] && ao[1] === ao[2] && ao[2] === ao[3] &&
+        lumv[0] === lumv[1] && lumv[1] === lumv[2] && lumv[2] === lumv[3] &&
+        cielv[0] === cielv[1] && cielv[1] === cielv[2] && cielv[2] === cielv[3];
+      var cle = (uniforme && rot === 0)
+        ? (tile + '|' + ao[0] + '|' + lumv[0] + '|' + cielv[0] + '|' + immFace + '|' + classeFeuillage + '|' + souple)
+        : null;
+      return { tile: tile, rot: rot, ao: ao, lumv: lumv, cielv: cielv, immFace: immFace,
+               classeFeuillage: classeFeuillage, souple: souple, cle: cle };
+    }
+
+    function emettreQuad(f, idxU, idxV, idxN, n, u0, v0, w, h, cell) {
+      var start = positions.length / 3;
+      var ob = tileOrigin(cell.tile, cell.rot);
+      for (var k = 0; k < 4; k++) {
+        var c = f.corners[k], compU = c[idxU], compV = c[idxV];
+        var pos = [0, 0, 0];
+        pos[idxN] = n + c[idxN]; pos[idxU] = u0 + compU * w; pos[idxV] = v0 + compV * h;
+        positions.push(pos[0], pos[1], pos[2]);
+        normals.push(f.dir[0], f.dir[1], f.dir[2]);
+        pushUV(uvs, cell.tile, c[3], c[4], cell.rot);
+        uvBases.push(ob[0], ob[1]);
+        var repTu = f.repTu.base + f.repTu.cu * compU * w + f.repTu.cv * compV * h;
+        var repTv = f.repTv.base + f.repTv.cu * compU * w + f.repTv.cv * compV * h;
+        var lc = localUV(repTu, repTv, cell.rot);
+        uvReps.push(lc[0], lc[1]);
+        var col = f.shade * cell.ao[k];
+        colors.push(col, col, col);
+        ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0);
+        immerges.push(cell.immFace);
+        souples.push(cell.souple);
+        feuillages.push(cell.classeFeuillage);
+        lums.push(cell.lumv[k]);
+        ciels.push(cell.cielv[k]);
+      }
+      var ao = cell.ao;
+      if (ao[0] + ao[3] > ao[1] + ao[2]) {
+        indices.push(start, start + 1, start + 2, start + 2, start + 1, start + 3);
+      } else {
+        indices.push(start + 1, start + 3, start, start, start + 3, start + 2);
+      }
+    }
+
+    // balayage glouton 2D, direction par direction, plan de coupe par plan de coupe
+    function buildGreedy(permettreFusion) {
+      var dims = [CX, WH, CZ];
+      for (var fi = 0; fi < 6; fi++) {
+        var f = FACES[fi], idxU = f.idxU, idxV = f.idxV, idxN = f.idxN;
+        var dimN = dims[idxN], dimU = dims[idxU], dimV = dims[idxV];
+        var tg = tangents(f.dir), U = tg[0], V = tg[1];
+        for (var n = 0; n < dimN; n++) {
+          var grille = new Array(dimU * dimV);
+          var visite = new Uint8Array(dimU * dimV);
+          var pos = [0, 0, 0];
+          pos[idxN] = n;
+          for (var u = 0; u < dimU; u++) {
+            pos[idxU] = u;
+            for (var v = 0; v < dimV; v++) {
+              pos[idxV] = v;
+              grille[u * dimV + v] = celluleFace(pos[0], pos[1], pos[2], f, fi, U, V);
+            }
+          }
+          for (var u2 = 0; u2 < dimU; u2++) for (var v2 = 0; v2 < dimV; v2++) {
+            var i0 = u2 * dimV + v2;
+            if (visite[i0] || !grille[i0]) continue;
+            var cell = grille[i0];
+            var w = 1;
+            if (permettreFusion && cell.cle !== null) {
+              while (u2 + w < dimU) {
+                var ic = (u2 + w) * dimV + v2, cc = grille[ic];
+                if (visite[ic] || !cc || cc.cle !== cell.cle) break;
+                w++;
+              }
+            }
+            var h = 1;
+            if (permettreFusion && cell.cle !== null) {
+              boucleH:
+              while (v2 + h < dimV) {
+                for (var kk = 0; kk < w; kk++) {
+                  var ik = (u2 + kk) * dimV + (v2 + h), ck = grille[ik];
+                  if (visite[ik] || !ck || ck.cle !== cell.cle) break boucleH;
+                }
+                h++;
+              }
+            }
+            for (var du = 0; du < w; du++) for (var dv = 0; dv < h; dv++) visite[(u2 + du) * dimV + (v2 + dv)] = 1;
+            emettreQuad(f, idxU, idxV, idxN, n, u2, v2, w, h, cell);
+          }
+        }
+      }
+    }
+    if (fusion) buildGreedy(true);
+
     if (!indices.length) return null;
-    return { positions: positions, normals: normals, uvs: uvs,
+    return { positions: positions, normals: normals, uvs: uvs, uvBases: uvBases, uvReps: uvReps,
              colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, ondes2: ondes2, immerges: immerges, souples: souples,
              feuillages: feuillages };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,
-                ATLAS_COLS: ATLAS_COLS, ATLAS_ROWS: ATLAS_ROWS };
+                ATLAS_COLS: ATLAS_COLS, ATLAS_ROWS: ATLAS_ROWS, tileOrigin: tileOrigin, localUV: localUV };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

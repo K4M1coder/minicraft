@@ -2409,6 +2409,95 @@
     await reset(g);
   });
 
+  /* SPEC-PERF-011/012 (correction de la revue adversariale, bug bloquant) :
+     Three r128 (WebGLShadowMap) fabrique pour la passe ombre un
+     MeshDepthMaterial générique qui ignore Material.onBeforeCompile — il lit
+     l'attribut `uv` brut (voir mesher.js/pushUV), jamais mis à l'échelle par
+     le greedy meshing. Sur un grand quad fusionné (feuillage), l'alphaTest
+     de l'ombre échantillonnait donc UNE tuile étirée au lieu du motif
+     répété, faussant la silhouette de l'ombre. render.js assigne maintenant
+     un customDepthMaterial (matDepthCutout) qui applique la même répétition
+     fract() (avecAtlasRepete, uvBase/uvRep) que le matériau visible.
+     Ce test compare directement la CARTE D'OMBRE (sun.shadow.map, lue via
+     WebGLRenderer.readRenderTargetPixels — le paquet RGBA de profondeur que
+     l'alphaTest de la passe ombre produit réellement) d'un cube 8×8×8 de
+     feuilles maillé fusionné (chemin réel de syncChunk) à celle du même
+     cube maillé sans fusion (référence face-par-bloc, jamais concernée par
+     le bug — chaque quad y couvre déjà exactement une tuile) : sans la
+     correction, syncChunk n'assigne plus customDepthMaterial et l'écart de
+     paquets de profondeur grandit très au-delà du seuil (mesuré : ~0.007
+     avec la correction contre ~0.12 sans, sur cette même scène). */
+  e2e('SPEC-PERF-012 : l\'ombre d\'un feuillage fusionné suit la répétition d\'atlas, pas une tuile étirée (customDepthMaterial)', async function (g) {
+    await reset(g);
+    var W = g.world;
+    // loin du spawn : un site dédié, sans interférence avec les autres tests.
+    // Le joueur est téléporté AVANT toute image : sinon le streaming (encore
+    // calé sur le spawn) décharge ce chunk avant qu'on ait pu l'éditer.
+    var X = 3008, Z = 3008, Y = 100;
+    var cx = Math.floor(X / C.CHUNK_X), cz = Math.floor(Z / C.CHUNK_Z);
+    var s = g.player.state;
+    s.flying = true; s.vel.x = s.vel.y = s.vel.z = 0;
+    s.pos.x = X + 8; s.pos.y = Y + 34; s.pos.z = Z - 4; s.yaw = 0; s.pitch = -1.1;
+    g.time = MC.DayCycle.DAY_LENGTH * 0.2;   // soleil visible, incliné
+
+    var chunk = W.getChunk(cx, cz, true);
+    A.ok(chunk, 'le chunk du site de test est généré');
+
+    // un socle de pierre (16×16, opaque, reçoit l'ombre) et, dessus, un cube
+    // de 8×8×8 feuilles isolé par de l'air — le scénario exact de la revue.
+    var dx, dz, dy, lx, ly, lz;
+    for (dx = 0; dx < 16; dx++) for (dz = 0; dz < 16; dz++) {
+      for (dy = -1; dy <= 9; dy++) W.setBlock(X + dx, Y + dy, Z + dz, 0);
+      W.setBlock(X + dx, Y, Z + dz, B.STONE);
+    }
+    for (lx = 4; lx < 12; lx++) for (lz = 4; lz < 12; lz++) for (ly = 1; ly <= 8; ly++)
+      W.setBlock(X + lx, Y + ly, Z + lz, B.LEAVES);
+
+    await frames(3);   // laisse le joueur/caméra et le soleil (updateAmbience) se caler
+    chunk = W.chunks.get(W.key(cx, cz));
+
+    var renderer = g.render.renderer, sun = g.render.sun;
+    function carteOmbre() {
+      g.render.render();
+      var rt = sun.shadow.map;
+      var w = rt.width, h = rt.height;
+      var buf = new Uint8Array(w * h * 4);
+      renderer.readRenderTargetPixels(rt, 0, 0, w, h, buf);
+      return buf;
+    }
+    function diffMoyen(a, b) {
+      var somme = 0;
+      for (var p = 0; p < a.length; p++) somme += Math.abs(a[p] - b[p]);
+      return somme / a.length;
+    }
+
+    // référence : le même chunk maillé SANS fusion (chemin face-par-bloc
+    // d'avant ce lot — chaque quad couvre déjà exactement une tuile, jamais
+    // concerné par le bug) ; on force temporairement `fusion` à faux, sans
+    // toucher au code de production.
+    var buildOriginal = MC.Mesher.buildChunk;
+    var carteNaive;
+    try {
+      MC.Mesher.buildChunk = function (ch, pass, sample, lumiere, eauDe, simplifie) {
+        return buildOriginal(ch, pass, sample, lumiere, eauDe, simplifie, false);
+      };
+      g.render.syncChunk(W, chunk);
+      carteNaive = carteOmbre();
+    } finally {
+      MC.Mesher.buildChunk = buildOriginal;
+    }
+
+    // reconstruit la vraie passe fusionnée (chemin réel du jeu, syncChunk)
+    g.render.syncChunk(W, chunk);
+    A.equal(chunk.meshC.customDepthMaterial, g.render.materials.depthCutout,
+      'le mesh cutout réel reçoit le matériau de profondeur à répétition');
+    var carteFusionnee = carteOmbre();
+
+    var diff = diffMoyen(carteFusionnee, carteNaive);
+    A.ok(diff < 0.03, 'carte d\'ombre du feuillage fusionné proche de la référence naïve — écart moyen ' + diff.toFixed(4) +
+      '/255 (sans la correction, le motif étiré fausse la silhouette de l\'ombre et fait grimper cet écart bien au-delà du seuil)');
+  });
+
   /* En dernier : ce test change de partie (mode histoire, autre graine). */
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);
