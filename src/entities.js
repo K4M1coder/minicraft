@@ -236,9 +236,12 @@
       return e;
     }
 
-    function dropItem(x, y, z, id, n, rand) {
+    // `data` : donnée générique optionnelle portée par l'objet au sol (ex.
+    // SPEC-MECA-003, le niveau d'une batterie cassée) — reprise telle quelle
+    // sur la pile d'inventaire au ramassage (voir events.picked plus bas).
+    function dropItem(x, y, z, id, n, rand, data) {
       var r = rand || Math.random;
-      var e = spawn('item', x, y, z, { item: id, n: n || 1, pickup: 0.4 });
+      var e = spawn('item', x, y, z, { item: id, n: n || 1, pickup: 0.4, data: data });
       // petite impulsion pour que les drops ne s'empilent pas exactement
       e.vel.x = (r() - 0.5) * 2.2;
       e.vel.z = (r() - 0.5) * 2.2;
@@ -453,9 +456,15 @@
         e.vel.x += (dx / d) * 5 * k; e.vel.z += (dz / d) * 5 * k; e.vel.y = 4.5 * k;
       }
       if (e.hp <= 0) {
+        // SPEC-OBJET-003 : bijou d'émeraude — chance au butin, aussi sur le
+        // butin des créatures (pas seulement le minage).
+        var bijouT = auteur && auteur.equip && auteur.equip.bijou;
+        var bdT = bijouT && C.def(bijouT.id);
+        var bonusT = (bdT && bdT.effet && bdT.effet.type === 'chance') ? bdT.effet.valeur : 0;
+        var mulT = 1 - Math.max(0, Math.min(0.9, bonusT));
         if (s.drops) {
           for (var i = 0; i < s.drops.length; i++) {
-            if (s.drops[i].chance !== undefined && Math.random() > s.drops[i].chance) continue;
+            if (s.drops[i].chance !== undefined && Math.random() * mulT > s.drops[i].chance) continue;
             dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.drops[i].id, s.drops[i].n);
           }
         }
@@ -862,7 +871,7 @@
             e.vel.z += (dz / d) * pull * dt * 6;
           }
           if (e.pickup <= 0 && d < 0.85) {
-            events.picked.push({ id: e.item, n: e.n, entity: e, joueur: pi });
+            events.picked.push({ id: e.item, n: e.n, entity: e, joueur: pi, data: e.data });
             remove(e);
           }
           if (e.age > 300) remove(e);       // les objets oubliés disparaissent

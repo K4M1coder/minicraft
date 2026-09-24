@@ -37,6 +37,9 @@
     function joueurPrincipal() { return equipe[0].player; }
     var furnaces = Object.create(null);
     var chests = Object.create(null);
+    // SPEC-MECA-001 : petit conteneur (9 cases) d'un distributeur, indexé
+    // comme les coffres — hors ligne uniquement (voir server.js en ligne).
+    var distributeurs = Object.create(null);
     var audio = MC.createAudio();
     var chat = MC.Chat.creer();
 
@@ -126,7 +129,7 @@
 
     var g = {
       world: world, entities: entities, player: player, render: render,
-      time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
+      time: 60, fps: 0, furnaces: furnaces, chests: chests, distributeurs: distributeurs, audio: audio, chat: chat,
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
@@ -335,6 +338,7 @@
       remplacerMonde(meta.graine);
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
+      for (var kd in distributeurs) delete distributeurs[kd];
       g.time = 60;
       composerEquipe(opts.joueurs || 1, regles);
       chat.vider();
@@ -678,6 +682,9 @@
             if (en.kind === 'item' || !en.pos) return;
             if (me.foudroie(lieu, en.pos, abri)) entities.damage(en, 8, null, null);
           });
+          // SPEC-CONSTR-007 : la foudre allume ce qu'elle touche, si c'est inflammable.
+          if (MC.Feu) MC.Feu.allumerParFoudre(world.getBlock, lieu.x, ySol, lieu.z)
+            .forEach(function (a) { world.setBlock(a[0], a[1], a[2], a[3]); });
         }
         if (g.surEclair) g.surEclair(e, lieu, ySol);
       });
@@ -1080,6 +1087,7 @@
       render.libererToutesEntites();           // libere geometries ET materiaux
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
+      for (var kd in distributeurs) delete distributeurs[kd];
       var s = player.state;
       s.inv.load([]);
       s.hp = 20; s.hunger = 20; s.air = 10; s.dead = false;
@@ -1298,6 +1306,23 @@
       }
     }
 
+    /* SPEC-OBJET-003 : les joueurs locaux qui portent un bijou de diamant
+       (effet 'lumiere'), pour la lumière portée du rendu (render.js,
+       updateLumieresPortees) — un point de plus au même endroit que les
+       autres effets de bijou (chanceBijou, vitesseBijou dans player.js). */
+    function joueursLumiereBijou() {
+      var out = [];
+      for (var i = 0; i < equipe.length; i++) {
+        var st = equipe[i].player.state;
+        if (st.dead) continue;
+        var bijou = st.equip && st.equip.bijou, bd = bijou && C.def(bijou.id);
+        if (bd && bd.effet && bd.effet.type === 'lumiere') {
+          out.push({ x: st.pos.x, y: st.pos.y, z: st.pos.z, rayon: bd.effet.valeur });
+        }
+      }
+      return out;
+    }
+
     /* Le gardien le plus proche du joueur 1, pour la barre de vie. */
     function gardienProche() {
       var p = player.state.pos, best = null, bd = 32 * 32;
@@ -1412,10 +1437,38 @@
         });
         delete chests[k];
       }
+      var di = distributeurs[k];
+      if (di) {
+        di.slots.forEach(function (st) {
+          if (st) { entities.dropItem(x + 0.5, y + 0.5, z + 0.5, st.id, st.n, null, st.data); lache += st.n; }
+        });
+        delete distributeurs[k];
+      }
       if (lache) ui.toast(lache + ' objet(s) récupéré(s) du conteneur');
       return lache;
     }
     g.spillContainer = spillContainer;
+
+    /* SPEC-MECA-001 : un distributeur éjecte le premier objet de sa première
+       pile non vide — au sol, sauf une munition (flèche, galet…) qui part en
+       projectile vers le haut (aucune orientation stockée sur ce bloc). */
+    function ejecterDistributeur(x, y, z) {
+      var k = x + ',' + y + ',' + z;
+      var di = distributeurs[k];
+      if (!di) return;
+      var i = MC.Circuits.distributeurChoix(di.slots);
+      if (i < 0) return;
+      var st = di.slots[i];
+      var idef = C.def(st.id);
+      di.consumeAt(i, 1);
+      if (idef && idef.ammo) {
+        entities.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
+                        14, idef.damage || 5, null, idef.ammoType || 'fleche');
+      } else {
+        entities.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
+      }
+    }
+    g.ejecterDistributeur = ejecterDistributeur;
 
     /* SPEC-SUCCES-001 : altitude, distance parcourue et nuit survécue se
        vérifient au fil du temps plutôt qu'à un événement précis. Hors ligne
@@ -1578,6 +1631,13 @@
         } else if (kind === 'coffre_piege' || kind === 'coffre_surprise') {
           ouvrirCoffreSuspect(kind, target, k);
           return;
+        } else if (kind === 'distributeur') {
+          if (!distributeurs[k]) distributeurs[k] = Inv.create(9);
+          ui.openContainer('distributeur', player.state.inv, distributeurs[k], k);
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+        } else if (kind === 'bloc_commande') {
+          ouvrirBlocCommande(target);
+          return;
         } else {
           ui.openContainer('craft', player.state.inv);
           audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
@@ -1585,14 +1645,20 @@
         input.setState('ui');
         return;
       }
-      if (res === 'place') {
-        var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
+      if (res === 'place' || res === 'place-ici') {
+        // 'place-ici' (fusion de dalle en bloc plein, SPEC-CONSTR-002) écrit
+        // sur la case visée elle-même, pas sur la case adjacente habituelle :
+        // il faut annoncer la bonne position au serveur, sinon les autres
+        // joueurs ne voient jamais la fusion (ou une case vide se modifie).
+        var bx, by, bz;
+        if (res === 'place-ici') { bx = target.x; by = target.y; bz = target.z; }
+        else { bx = target.x + target.nx; by = target.y + target.ny; bz = target.z + target.nz; }
         // le serveur fait autorite : on lui annonce la pose, état compris
         // (orientation d'un escalier, moitié d'une dalle — SPEC-CONSTR-001/002)
         if (net.enLigne()) net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0, world.getEtat(bx, by, bz));
         else signalerHistoire({ type: 'poser', bloc: mange, x: bx, y: by, z: bz });
       }
-      if (res === 'place') audio.play('poser');
+      if (res === 'place' || res === 'place-ici') audio.play('poser');
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: mange }); }
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
@@ -1740,6 +1806,14 @@
     }
 
     function forceCloseContainer() {
+      // SPEC-MECA-001 en ligne : le serveur fait foi sur ce qu'un distributeur
+      // éjecte — on lui envoie le contenu dès qu'on ferme l'interface, sinon
+      // son tick de circuits n'aurait jamais rien à distribuer.
+      var cont = ui.container;
+      if (cont && cont.kind === 'distributeur' && cont.pos && net.enLigne() && net.distribuerMaj) {
+        var p = cont.pos.split(',');
+        net.distribuerMaj(+p[0], +p[1], +p[2], cont.distributeur.slots);
+      }
       var rendus = ui.closeContainer();
       dropLeftovers(rendus);
     }
@@ -1775,13 +1849,15 @@
 
     /* SPEC-CMD-001 : toute la logique des commandes vit dans MC.Commandes
        (module pur, testable sous Node) ; ici on ne fait que rassembler le
-       contexte et appliquer les actions qu'il renvoie. */
-    function executerCommande(cmd) {
+       contexte et appliquer les actions qu'il renvoie. Factorisé pour être
+       réutilisé par les blocs de commande (SPEC-MECA-007), qui rejouent le
+       même routage sans passer par le chat. */
+    function contexteCommande() {
       var s = player.state;
       var noms = [];
       if (net.enLigne()) net.distants.forEach(function (d) { noms.push(d.nom); });
       var j0 = equipe[0];
-      var ctx = {
+      return {
         temps: g.time,
         dureeJour: DC.DAY_LENGTH,
         graine: world.seed,
@@ -1795,27 +1871,45 @@
         enLigne: net.enLigne(),
         joueurs: noms,
       };
-      var res = MC.Commandes.executer(cmd, ctx);
+    }
+    function appliquerActionCommande(a) {
+      switch (a.type) {
+        case 'heure': if (!net.enLigne()) g.time = a.valeur; break;
+        case 'vider': chat.vider(); break;
+        case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
+        case 'quitter': net.deconnecter(); break;
+        case 'rendu': render.reglerRealiste(a.realiste); break;
+        // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
+        case 'faction':
+          if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); break; }
+          g.guildes = g.guildes || MC.Guildes.creerEtat();
+          var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
+          chat.systeme(rf.message);
+          break;
+        case 'admin': net.admin(a.action, a.args); break;
+      }
+    }
+    function executerCommande(cmd) {
+      var res = MC.Commandes.executer(cmd, contexteCommande());
       res.messages.forEach(function (m) { chat.systeme(m); });
-      res.actions.forEach(function (a) {
-        switch (a.type) {
-          case 'heure': if (!net.enLigne()) g.time = a.valeur; break;
-          case 'vider': chat.vider(); break;
-          case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
-          case 'quitter': net.deconnecter(); break;
-          case 'rendu': render.reglerRealiste(a.realiste); break;
-          // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
-          case 'faction':
-            if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); break; }
-            g.guildes = g.guildes || MC.Guildes.creerEtat();
-            var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
-            chat.systeme(rf.message);
-            break;
-          case 'admin': net.admin(a.action, a.args); break;
-        }
-      });
+      res.actions.forEach(appliquerActionCommande);
     }
     g.traiterMessage = traiterMessage;
+
+    /* SPEC-MECA-007 : un bloc de commande garde sa commande (texte) sur le
+       monde (world.getCommande/setCommande, sauvegardée comme un état de
+       bloc) et la rejoue au même routage que le chat, sur front montant du
+       signal (circuits.js déclenche onCommande une fois par activation).
+       Aucun message de chat affiché : un mécanisme ne doit pas spammer. */
+    function declencherBlocCommande(x, y, z) {
+      if (!world.getCommande) return;
+      var texte = world.getCommande(x, y, z);
+      if (!texte) return;
+      var cmd = MC.Chat.parseCommande(texte);
+      if (!cmd) return;
+      var res = MC.Commandes.executer(cmd, contexteCommande());
+      res.actions.forEach(appliquerActionCommande);
+    }
 
     /* Le butin revient au joueur le plus proche : en ecran partage, tout
        donner au joueur 1 serait injuste et deroutant. */
@@ -2003,8 +2097,10 @@
         ouvrirConteneur(res.slice(5), target);
         return;
       }
-      if (res === 'place') {
-        var bxp = target.x + target.nx, byp = target.y + target.ny, bzp = target.z + target.nz;
+      if (res === 'place' || res === 'place-ici') {
+        var bxp, byp, bzp;
+        if (res === 'place-ici') { bxp = target.x; byp = target.y; bzp = target.z; }
+        else { bxp = target.x + target.nx; byp = target.y + target.ny; bzp = target.z + target.nz; }
         signalerHistoire({ type: 'poser', bloc: enMain && enMain.id, x: bxp, y: byp, z: bzp });
         audio.play('poser');
       }
@@ -2012,6 +2108,33 @@
       else if (res === 'till' || res === 'plant') audio.play('poser');
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
       else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+    }
+
+    /* SPEC-MECA-007 : petite interface (une invite texte suffit — pas besoin
+       d'un écran dédié pour une seule ligne) pour lire/écrire la commande
+       d'un bloc de commande. Hors ligne, réservé au mode créatif ; en ligne,
+       le serveur revérifie TOUJOURS le rôle avant d'appliquer (voir
+       server.js/blocCommandeAutorise) — ce garde-fou local n'est qu'un
+       confort, jamais la décision. */
+    function ouvrirBlocCommande(target) {
+      var creatif = regles.blocsIllimites;
+      if (!net.enLigne() && !creatif) {
+        ui.toast('Un bloc de commande ne se modifie qu\'en créatif', 'warn');
+        return;
+      }
+      var actuel = (world.getCommande && world.getCommande(target.x, target.y, target.z)) || '';
+      if (typeof window === 'undefined' || !window.prompt) return;
+      var texte = window.prompt('Commande du bloc (ex: /jour) :', actuel);
+      if (texte === null) return;
+      texte = texte.trim().slice(0, 200);
+      if (net.enLigne()) {
+        // panneau admin existant (SPEC-ADMIN-006) : le serveur revérifie le
+        // rôle avant d'appliquer, jamais confiance au mode local.
+        net.admin('bloc_commande', { x: target.x, y: target.y, z: target.z, texte: texte });
+      } else if (world.setCommande) {
+        world.setCommande(target.x, target.y, target.z, texte);
+        ui.toast(texte ? 'Commande enregistrée' : 'Commande effacée');
+      }
     }
 
     function ouvrirConteneur(kind, target) {
@@ -2024,6 +2147,13 @@
         if (!chests[k]) chests[k] = Inv.create(27);
         ui.openContainer('chest', player.state.inv, chests[k], k);
         audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+      } else if (kind === 'distributeur') {
+        if (!distributeurs[k]) distributeurs[k] = Inv.create(9);
+        ui.openContainer('distributeur', player.state.inv, distributeurs[k], k);
+        audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+      } else if (kind === 'bloc_commande') {
+        ouvrirBlocCommande(target);
+        return;
       } else {
         ui.openContainer('craft', player.state.inv);
         audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
@@ -2066,9 +2196,9 @@
         for (var i = 0; i < ev.picked.length; i++) {
           var p2 = ev.picked[i];
           var dest = joueurLePlusProche(p2.entity ? p2.entity.pos : player.state.pos);
-          var reste = dest.pickUp(p2.id, p2.n);
+          var reste = dest.pickUp(p2.id, p2.n, p2.data);
           if (reste > 0) entities.dropItem(dest.state.pos.x, dest.state.pos.y + 0.5,
-                                           dest.state.pos.z, p2.id, reste);
+                                           dest.state.pos.z, p2.id, reste, null, p2.data);
           else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
         }
         entities.mergeItems();
@@ -2078,7 +2208,8 @@
         // temps, apparitions, cultures
         g.time += dt;
         g.duree = (g.duree || 0) + dt;
-        world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time });
+        world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time,
+                                    circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
         spawnT += dt;
         if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
           spawnT = 0;
@@ -2106,7 +2237,8 @@
         else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
-        world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time });
+        world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time,
+                                    circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
         for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
         render.setHighlight(null);
       } else {
@@ -2144,6 +2276,7 @@
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);
+      if (render.updateLumieresPortees) render.updateLumieresPortees(joueursLumiereBijou());
       render.renderViews(vues);
       ui.placerHuds(vues);
 

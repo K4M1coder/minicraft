@@ -238,7 +238,12 @@
         }
         if (r() < (grand ? 0.45 : 0.3)) {
           var cf = { x: sl4.x0 + 1, y: sl4.y0, z: sl4.z1 - 1 };
-          o.pose(cf.x, cf.y, cf.z, B.CHEST);
+          // SPEC-OBJET-005 : les coffres secondaires (le trésor du gardien reste
+          // toujours sûr) risquent parfois d'être piégés, ou promettent un
+          // butin rare/un mimic — proportions faibles pour ne pas décourager.
+          var variante = r();
+          var blocCoffre = variante < 0.15 ? B.COFFRE_PIEGE : (variante < 0.25 ? B.COFFRE_SURPRISE : B.CHEST);
+          o.pose(cf.x, cf.y, cf.z, blocCoffre);
           d.coffres.push(cf);
         }
       });

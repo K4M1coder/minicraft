@@ -1437,7 +1437,8 @@
       var titre = container.kind === 'craft' ? 'Établi'
                 : container.kind === 'furnace' ? 'Fourneau'
                 : container.kind === 'trade' ? ((container.pnj && container.pnj.titre) || 'Villageois')
-                : container.kind === 'chest' ? 'Coffre' : 'Inventaire';
+                : container.kind === 'chest' ? 'Coffre'
+                : container.kind === 'distributeur' ? 'Distributeur' : 'Inventaire';
       box.appendChild(el('h2', null, titre));
 
       // le livre n'a de sens que là où il y a une grille de fabrication
@@ -1502,9 +1503,9 @@
 
       // ── zone haute : coffre, craft ou fourneau
       var top = el('div', 'inv-top');
-      if (container.kind === 'chest') {
+      if (container.kind === 'chest' || container.kind === 'distributeur') {
         var cg = el('div', 'inv-grid');
-        var ci = container.chest;
+        var ci = container.kind === 'chest' ? container.chest : container.distributeur;
         for (var q = 0; q < ci.size; q++) {
           (function (si) {
             cg.appendChild(slotEl('', ci.slots[si],
@@ -1515,8 +1516,9 @@
           })(q);
         }
         top.appendChild(cg);
-        top.appendChild(el('p', 'hint',
-          'Le contenu reste dans le coffre, et retombe au sol si vous le cassez.'));
+        top.appendChild(el('p', 'hint', container.kind === 'chest'
+          ? 'Le contenu reste dans le coffre, et retombe au sol si vous le cassez.'
+          : 'SPEC-MECA-001 : un signal éjecte le premier objet de la première pile non vide.'));
       } else if (container.kind === 'furnace') {
         var f = container.furnace;
         var cols = el('div', 'furnace-cols');
@@ -1638,12 +1640,13 @@
 
     function openContainer(kind, inv, extra, pos) {
       var n = 9;
-      var sansGrille = kind === 'trade' || kind === 'furnace' || kind === 'chest';
+      var sansGrille = kind === 'trade' || kind === 'furnace' || kind === 'chest' || kind === 'distributeur';
       container = { kind: kind, inv: inv,
                     grid: sansGrille ? null : new Array(n).fill(null),
                     result: null,
                     furnace: kind === 'furnace' ? extra : null,
                     chest: kind === 'chest' ? extra : null,
+                    distributeur: kind === 'distributeur' ? extra : null,
                 pnj: kind === 'trade' ? extra : null,
                     // équipement (SPEC-OBJET-001/003) : seul l'inventaire du joueur en a un
                     equip: kind === 'inv' ? extra : null,

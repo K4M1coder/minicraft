@@ -723,6 +723,18 @@
       return true;
     }
 
+    /* SPEC-MECA-007 : la commande (texte) d'un bloc de commande — un registre
+       à part, même principe que `etatsOverrides` (rejoué après régénération
+       ou chargement), un octet ne suffisant pas à porter du texte. */
+    var commandesBloc = new Map();
+    function getCommande(wx, wy, wz) { return commandesBloc.get(key3(Math.floor(wx), Math.floor(wy), Math.floor(wz))) || ''; }
+    function setCommande(wx, wy, wz, texte) {
+      var k3 = key3(Math.floor(wx), Math.floor(wy), Math.floor(wz));
+      var t = String(texte || '').slice(0, 200);
+      if (t) commandesBloc.set(k3, t); else commandesBloc.delete(k3);
+      return t;
+    }
+
     // `record` à false pour les changements internes (croissance) qu'on veut
     // quand même persister ; à true pour une action du joueur. Dans les deux cas
     // on enregistre : la distinction sert au cas où l'on voudrait les traiter à part.
@@ -1079,6 +1091,7 @@
       chunks.clear();
       overrides.clear();
       etatsOverrides.clear();
+      commandesBloc.clear();
       crops.clear();
       lights.clear();
       donjonsVaincus.clear();
@@ -1166,6 +1179,7 @@
     return {
       seed: seed, noise: N, chunks: chunks, overrides: overrides, crops: crops,
       etatsOverrides: etatsOverrides, getEtat: getEtat, setEtat: setEtat,
+      commandesBloc: commandesBloc, getCommande: getCommande, setCommande: setCommande,
       lights: lights, circuits: circuits, tickCircuits: tickCircuits,
       rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,

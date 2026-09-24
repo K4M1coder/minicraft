@@ -160,6 +160,9 @@
     // l'action porte le détail — le serveur vérifie toujours le rôle qu'IL a
     // attribué à la connexion, jamais un rôle déclaré par le client
     ADMIN: 'admin', ADMIN_REP: 'admin_rep',
+    // SPEC-MECA-001 : contenu d'un distributeur (le serveur fait foi sur ce
+    // qu'il éjecte sur signal — voir circuits.js/onDistribuer côté serveur).
+    DISTRIB: 'distrib',
   };
 
   /* Valide un message entrant. Un message sans `t` connu est rejeté : il ne
@@ -231,7 +234,7 @@
         // liste est un message qui ne peut rien faire, jamais planter
         var ACTIONS = ['auth', 'joueurs', 'inventaire', 'sessions', 'listes', 'journal',
           'liste_ajouter', 'liste_retirer', 'invitation_creer', 'invitation_revoquer',
-          'role_nommer', 'sanction', 'zone_definir', 'zone_retirer'];
+          'role_nommer', 'sanction', 'zone_definir', 'zone_retirer', 'bloc_commande'];
         if (typeof msg.action !== 'string' || ACTIONS.indexOf(msg.action) < 0) return null;
         // charge bornee : un panneau admin n'a jamais besoin de gros volumes
         var args = msg.args && typeof msg.args === 'object' ? msg.args : {};
@@ -239,6 +242,16 @@
         return { t: msg.t, action: msg.action, args: args };
       }
 
+      case MSG.DISTRIB: {
+        if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
+        if (!Array.isArray(msg.slots)) return null;
+        var slots = msg.slots.slice(0, 9).map(function (s) {
+          if (!s || !estEntier(s.id) || s.id <= 0 || !estEntier(s.n) || s.n <= 0) return null;
+          return { id: s.id | 0, n: Math.max(1, Math.min(999, s.n | 0)) };
+        });
+        while (slots.length < 9) slots.push(null);
+        return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, j: joueurLocal(msg.j), slots: slots };
+      }
       case MSG.CHAT:
         var txt = String(msg.texte === undefined ? '' : msg.texte).trim();
         if (!txt) return null;

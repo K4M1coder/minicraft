@@ -293,6 +293,9 @@
       if (pl.mining.t < bt.seconds) return null;
 
       var id = target.block;
+      // SPEC-MECA-003 : une batterie cassée garde son niveau d'énergie —
+      // il faut le lire avant de vider le bloc, l'état ne survit pas seul.
+      var niveauBatterie = (id === B.BATTERIE) ? (world.getEtat(target.x, target.y, target.z) & 15) : null;
       var drops;
       /* Casser une moitié de porte casse l'autre (même id, cherché juste
          au-dessus ou en dessous) et rend une seule porte, jamais deux. */
@@ -305,7 +308,7 @@
         drops = bt.harvests ? [{ id: I.TRAPPE, n: 1 }] : [];
         world.setBlock(target.x, target.y, target.z, 0);
       } else {
-        drops = C.dropsOf(id, bt.harvests, rand);
+        drops = C.dropsOf(id, bt.harvests, rand, chanceBijou());
         world.setBlock(target.x, target.y, target.z, 0);
         // un escalier cassé peut changer l'angle de ses voisins
         if (C.BLOCKS[id] && C.BLOCKS[id].forme === 'escalier') {
@@ -336,9 +339,11 @@
         for (var u = 0; u < td.length; u++) drops.push(td[u]);
       }
 
-      for (var d = 0; d < drops.length; d++)
+      for (var d = 0; d < drops.length; d++) {
+        var dataDrop = (niveauBatterie !== null && drops[d].id === B.BATTERIE) ? { niveau: niveauBatterie } : undefined;
         entities.dropItem(target.x + 0.5, target.y + 0.5, target.z + 0.5,
-                          drops[d].id, drops[d].n, rand);
+                          drops[d].id, drops[d].n, rand, dataDrop);
+      }
       return { broken: true, id: id, drops: drops, toolBroke: casse };
     }
 
@@ -465,7 +470,10 @@
           world.setBlock(target.x, target.y, target.z, tdef.mat);
           world.setEtat(target.x, target.y, target.z, 0);
           if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
-          return 'place';
+          // la case modifiée est celle visée (target), pas la case adjacente
+          // où un bloc se pose d'ordinaire — SPEC-CONSTR-002 : à distinguer
+          // pour que la synchronisation réseau annonce la bonne position.
+          return 'place-ici';
         }
       }
       if (idef && idef.forme === 'dalle') {
@@ -593,6 +601,12 @@
         world.setEtat(bx, by, bz, MC.Formes.orientationPose(lookDir(), sousPlafond));
         MC.Formes.actualiserZoneEscalier(world, bx, by, bz);
       }
+      // SPEC-MECA-003 : une batterie reposée retrouve le niveau qu'elle
+      // portait sur sa pile (0 si elle n'en portait pas — batterie neuve).
+      if (bdef && bdef.circuit && bdef.circuit.type === 'batterie') {
+        var stPose = held();
+        world.setEtat(bx, by, bz, (stPose && stPose.data && stPose.data.niveau) || 0);
+      }
       if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
       return 'place';
     }
@@ -657,7 +671,7 @@
       return { entity: e, munition: d.sansMunition ? 0 : munId, toolBroke: casse };
     }
 
-    function pickUp(id, n) { return pl.inv.add(id, n); }
+    function pickUp(id, n, data) { return data !== undefined ? pl.inv.addStack(id, n, data) : pl.inv.add(id, n); }
 
     /* Jette `n` exemplaires de la case selectionnee, devant le joueur.
        Sans ca, un inventaire plein condamne a perdre tout nouveau butin. */

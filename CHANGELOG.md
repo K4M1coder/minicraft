@@ -14,6 +14,21 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+
+- Distributeurs (SPEC-MECA-001) : branchés jusqu'à l'effet réel — sur front montant du signal, ils éjectent le premier objet de leur contenu (petit conteneur à 9 cases, ouvert d'un clic droit), en projectile pour une munition (flèche, galet…) ou en objet au sol sinon ; hors ligne (`game.js`) comme en ligne, où le serveur fait autorité sur le contenu (`NP.MSG.DISTRIB`) et l'éjection.
+- Batteries (SPEC-MECA-003) : une batterie cassée garde son niveau d'énergie sur sa pile d'inventaire (nouveau champ générique `data` sur une pile, `MC.Inventory`) et le retrouve telle quelle une fois reposée ; conservé à la sauvegarde.
+- Blocs de commande (SPEC-MECA-007) : stockent une commande (texte, `world.getCommande`/`setCommande`, sauvegardée), éditable via une petite invite — en créatif hors ligne, ou par un administrateur en ligne (panneau admin existant, action `bloc_commande`) — et l'exécutent sur front montant du signal via `MC.Commandes.executer` et le même routage d'actions que le chat (`/heure` seul routé côté serveur pour l'instant, sans joueur qui tape).
+- Coffres piégés et surprises (SPEC-OBJET-005) : désormais semés dans les donjons et ruines générés (`src/donjons.js`, y compris la cité ancienne) — les coffres secondaires des donjons moyens/grands ont une chance d'être un coffre piégé ou un coffre surprise plutôt qu'un coffre ordinaire ; le trésor principal du gardien reste toujours garanti.
+- Bijoux (SPEC-OBJET-003) : l'émeraude porte vraiment chance au butin (minage `C.dropsOf` et butin des créatures tuées, resserre le tirage aléatoire sans jamais toucher un drop déjà garanti) ; le diamant donne une vraie lumière portée qui suit chaque joueur local qui le porte (lumière ponctuelle dynamique dans `render.js`, moins coûteuse qu'une source posée sur le monde qui exigerait de remailler les chunks en continu).
+- Foudre et feu (SPEC-CONSTR-007) : un éclair tombé près d'un joueur allume ce qu'il touche s'il est inflammable (le bloc frappé, sinon celui juste au-dessus), hors ligne et côté serveur — `MC.Feu.allumerParFoudre`.
+- En ligne, la fusion de deux dalles en bloc plein (SPEC-CONSTR-002) est synchronisée aux autres joueurs : `player.js/useOn` distingue désormais la fusion (qui modifie la case VISÉE) de la pose ordinaire (case adjacente) par un résultat `'place-ici'`, et le serveur l'autorise explicitement (`blocAutorise`).
+
+### Limites connues
+
+- Coffres piégés/surprises : semés dans les donjons (dont la cité ancienne) ; les camps de bandits n'existent pas encore comme structure générée dans le code (seulement des factions politiques sans bâti propre), donc rien à y semer pour l'instant.
+- Le contenu d'un distributeur en ligne (`NP.MSG.DISTRIB`) est envoyé au serveur à la fermeture de son interface, sans confirmation immédiate aux autres joueurs déjà en train de le regarder — même limite que les coffres et fourneaux, dont le contenu n'est pas du tout synchronisé entre joueurs en ligne (hors sujet de ce lot).
+- Un bloc de commande en ligne ne routent que l'action `/heure` (avancer l'heure du monde) ; les autres actions du chat (`/faction`, `/rejoindre`…) n'ont pas de sens sans joueur qui tape et sont ignorées plutôt que mal simulées.
 
 ## [0.2.0] - 2026-09-24
 ### Ajouté

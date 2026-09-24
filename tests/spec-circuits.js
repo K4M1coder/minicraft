@@ -178,6 +178,30 @@
       var r4 = K.tickBatterie(10, 15, 0, 3, 4);
       A.equal(r4.fourni, 3); A.equal(r4.niveau, 7);
     });
+
+    it('SPEC-MECA-003 : une batterie cassée garde son niveau sur sa pile, et le retrouve reposée', function () {
+      var Inv = MC.Inventory;
+      var w = MC.createWorld(85);
+      w.getChunk(0, 0, true);
+      w.setBlock(4, 40, 4, B.BATTERIE);
+      w.setEtat(4, 40, 4, 9);
+      // cassée : le niveau (lu avant de vider le bloc) voyage sur la pile —
+      // exactement ce que player.js fait dans mineTick (voir dataDrop).
+      var niveau = w.getEtat(4, 40, 4) & 15;
+      A.equal(niveau, 9);
+      var inv = Inv.create(9);
+      inv.setAt(0, { id: B.BATTERIE, n: 1, data: { niveau: niveau } });
+      // la pile porte son niveau, y compris après un aller-retour de sauvegarde
+      var serial = inv.serialize();
+      var inv2 = Inv.create(9);
+      inv2.load(serial);
+      A.equal(inv2.stackAt(0).data.niveau, 9, 'le niveau survit à la sauvegarde/chargement (SPEC-SAVE-017)');
+      // reposée : le niveau stocké sur la pile redevient l’état du bloc (même
+      // logique que player.js useOn, sans dépendre du rendu/joueur ici).
+      w.setBlock(5, 40, 5, B.BATTERIE);
+      w.setEtat(5, 40, 5, inv2.stackAt(0).data.niveau);
+      A.equal(w.getEtat(5, 40, 5), 9, 'reposée, la batterie retrouve son niveau');
+    });
   });
 
   describe('SPEC-MECA-006 : appareils', function () {
@@ -273,6 +297,30 @@
       w.setBlock(1, 40, 0, B.BEDROCK);
       A.equal(K.traction(w.getBlock, 1, 40, 0, { x: 1, y: 0, z: 0 }), null, 'le socle ne se tire pas');
     });
+
+    it('SPEC-MECA-001 : un distributeur éjecte sur front montant du signal (une fois par activation)', function () {
+      var w = MC.createWorld(86);
+      w.getChunk(0, 0, true);
+      w.setBlock(0, 40, 0, B.DISTRIBUTEUR);
+      w.setBlock(1, 40, 0, B.BOUTON_CIRCUIT); w.setEtat(1, 40, 0, 0);
+      var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+      var pos = [[0, 40, 0, B.DISTRIBUTEUR], [1, 40, 0, B.BOUTON_CIRCUIT]];
+      var appels = [];
+      var ctx = { onDistribuer: function (x, y, z) { appels.push([x, y, z]); } };
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 0, 'signal encore bas : rien');
+      w.setEtat(1, 40, 0, 1);
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 1, 'front montant : une éjection');
+      A.deep(appels[0], [0, 40, 0]);
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 1, 'signal resté haut : pas de deuxième éjection');
+      w.setEtat(1, 40, 0, 0);
+      K.tick(pos, api, ctx);
+      w.setEtat(1, 40, 0, 1);
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 2, 'un nouveau front montant en déclenche une autre');
+    });
   });
 
   describe('SPEC-MECA-007 : blocs de commande', function () {
@@ -285,6 +333,34 @@
       A.ok(K.commandeDeclenche(1, 0), 'front montant : déclenche');
       A.notOk(K.commandeDeclenche(1, 1), 'signal déjà haut : pas de nouveau déclenchement');
       A.notOk(K.commandeDeclenche(0, 1), 'front descendant : rien');
+    });
+
+    it('SPEC-MECA-007 : un bloc de commande exécute sur front montant, une fois par activation', function () {
+      var w = MC.createWorld(87);
+      w.getChunk(0, 0, true);
+      w.setBlock(0, 40, 0, B.BLOC_COMMANDE);
+      w.setBlock(1, 40, 0, B.LEVIER_CIRCUIT); w.setEtat(1, 40, 0, 0);
+      var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+      var pos = [[0, 40, 0, B.BLOC_COMMANDE], [1, 40, 0, B.LEVIER_CIRCUIT]];
+      var appels = [];
+      var ctx = { onCommande: function (x, y, z) { appels.push([x, y, z]); } };
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 0);
+      w.setEtat(1, 40, 0, 1);
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 1, 'front montant : exécution');
+      K.tick(pos, api, ctx);
+      A.equal(appels.length, 1, 'signal resté haut : pas de ré-exécution');
+    });
+
+    it('SPEC-MECA-007 : la commande d’un bloc se stocke sur le monde et se relit telle quelle (world.getCommande/setCommande)', function () {
+      var w = MC.createWorld(88);
+      w.getChunk(0, 0, true);
+      A.equal(w.getCommande(2, 40, 2), '', 'aucune commande par défaut');
+      w.setCommande(2, 40, 2, '/jour');
+      A.equal(w.getCommande(2, 40, 2), '/jour');
+      w.setCommande(2, 40, 2, '');
+      A.equal(w.getCommande(2, 40, 2), '', 'une commande vide efface');
     });
   });
 

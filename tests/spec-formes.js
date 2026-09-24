@@ -217,8 +217,26 @@
       A.equal(g.w.getEtat(5, 10, 5), F.packDalle(false));
 
       // on revise la même case, par le dessus (moitié haute encore libre) : fusion en pierre pleine
-      A.equal(g.pl.useOn({ x: 5, y: 10, z: 5, block: B.DALLE_STONE, nx: 0, ny: 1, nz: 0, t: 1 }), 'place');
+      // 'place-ici' (et non 'place') : la case modifiée est celle visée elle-même,
+      // pas la case adjacente habituelle — SPEC-CONSTR-002, distinguée pour que
+      // la synchronisation réseau (game.js/onUse) annonce la bonne position.
+      A.equal(g.pl.useOn({ x: 5, y: 10, z: 5, block: B.DALLE_STONE, nx: 0, ny: 1, nz: 0, t: 1 }), 'place-ici');
       A.equal(g.w.getBlock(5, 10, 5), B.STONE, 'les deux moitiés font un bloc plein');
+    });
+
+    it('SPEC-CONSTR-002 : la fusion (place-ici) écrit sur la case visée, ce qu\'il faut annoncer au serveur en ligne', function () {
+      // reproduit ce que fait game.js/onUse : la position à envoyer au serveur
+      // dépend du résultat ('place' -> case adjacente, 'place-ici' -> visée).
+      var g = partie();
+      g.s.inv.add(B.DALLE_STONE, 2); g.s.selected = 0;
+      g.pl.useOn({ x: 5, y: 9, z: 5, block: B.STONE, nx: 0, ny: 1, nz: 0, t: 1 });
+      var target = { x: 5, y: 10, z: 5, block: B.DALLE_STONE, nx: 0, ny: 1, nz: 0, t: 1 };
+      var res = g.pl.useOn(target);
+      var bx, by, bz;
+      if (res === 'place-ici') { bx = target.x; by = target.y; bz = target.z; }
+      else { bx = target.x + target.nx; by = target.y + target.ny; bz = target.z + target.nz; }
+      A.deep([bx, by, bz], [5, 10, 5], 'la case réellement modifiée, pas la case adjacente vide (6,11,5)');
+      A.equal(g.w.getBlock(bx, by, bz), B.STONE);
     });
 
     it('SPEC-CONSTR-002 : à mi-hauteur, une dalle basse laisse passer par-dessus mais bloque en dessous', function () {

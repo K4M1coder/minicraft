@@ -113,10 +113,22 @@
     return { x: x + w.x * age, y: y + h, z: z + w.z * age };
   }
 
+  /* Allumage par la foudre (SPEC-CONSTR-007) : un éclair tombé près d'un
+     joueur (MC.Meteo.eclairs/lieuEclair) allume ce qu'il touche — le bloc
+     frappé au sol, ou sinon celui juste au-dessus (un arbre, une charpente),
+     le premier des deux qui est inflammable. `y` : le sol au point de
+     l'éclair (ySol dans game.js/server.js). */
+  function allumerParFoudre(lire, x, y, z) {
+    if (inflammable(lire(x, y, z))) return [[x, y, z, B.FEU, 0]];
+    if (inflammable(lire(x, y + 1, z))) return [[x, y + 1, z, B.FEU, 0]];
+    return [];
+  }
+
   MC.Feu = {
     inflammable: inflammable, aDuCombustibleAutour: aDuCombustibleAutour,
     surAppuiSolide: surAppuiSolide, presDeLave: presDeLave, estMouille: estMouille,
     peutAllumer: peutAllumer, etapeFeu: etapeFeu, allumerParLave: allumerParLave,
+    allumerParFoudre: allumerParFoudre,
     deriveeFumee: deriveeFumee, AGE_MAX: AGE_MAX, AGE_SANS_COMBUSTIBLE: AGE_SANS_COMBUSTIBLE,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
