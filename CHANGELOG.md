@@ -145,6 +145,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   résultat inchangé au bit près.
 
 ### Corrigé
+- Les cahiers de test n'affichaient pas les captures d'écran du banc
+  navigateur, ni dans le rapport ni dans les exports : les images arrivaient
+  sous forme d'URL de données (`data:image/jpeg;base64,…`) et le serveur
+  décodait le préfixe avec, écrivant des JPEG corrompus ; et chaque capture
+  était rattachée à son test par son seul libellé d'étape (« début », « fin »),
+  si bien que tous les tests pointaient vers les images du premier. Le préfixe
+  est désormais retiré, et l'index envoyé par le banc fait foi (SPEC-BANC-011,
+  SPEC-BANC-014) ; les exports web, PDF et Word intègrent ainsi chaque capture.
 - Revue adversariale du transport réseau (L44, sous-lot A1) : un budget
   anti-flood unique par connexion (30 msg/s) pouvait expulser à tort un
   joueur légitime — creuser en créatif avec casse instantanée envoie jusqu'à

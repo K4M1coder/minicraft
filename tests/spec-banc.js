@@ -241,6 +241,40 @@
       } finally { nettoyer(dossier); }
     });
 
+    it('SPEC-BANC-011 / SPEC-BANC-014 : chaque test garde SES captures, lisibles, jusque dans les exports', function () {
+      var dossier = tmpDir('captures');
+      try {
+        // deux JPEG minuscules différents (en-tête FF D8 FF, puis un octet distinctif)
+        var jpegA = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x0A]), jpegB = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x0B]);
+        var test = function (id, index) {
+          return { id: id, nom: id, type: 'e2e', groupe: 'G', domaines: [], specs: [], fiche: null, etat: 'ok', duree_ms: 1,
+                   etapes: [], assertions: { ok: 1, ko: 0 }, captures: [{ libelle: 'début', fichier: index }] };
+        };
+        var resultats = { schema: 1, campagne: { preset: 'captures', debut: '', fin: '', duree_ms: 1, interrompue: false,
+          totaux: { total: 2, passes: 2, echecs: 0, ignores: 0, parType: {}, parDomaine: {} } }, tests: [test('A', 0), test('B', 1)] };
+        RT.ecrireCahier(resultats, { racine: dossier, nom: 'c', captures: [
+          // comme le banc navigateur : une URL de données complète, et un libellé d'étape répété
+          { libelle: 'début', type: 'image/jpeg', base64: 'data:image/jpeg;base64,' + jpegA.toString('base64') },
+          { libelle: 'début', type: 'image/jpeg', base64: jpegB.toString('base64') },
+        ] });
+        var relu = JSON.parse(fs.readFileSync(path.join(dossier, 'c', 'resultats.json'), 'utf8'));
+        var fA = relu.tests[0].captures[0].fichier, fB = relu.tests[1].captures[0].fichier;
+        A.ok(typeof fA === 'string' && typeof fB === 'string', 'chaque capture a reçu son fichier');
+        A.notEqual(fA, fB, 'deux tests au même libellé d\'étape gardent chacun leur image');
+        var oA = fs.readFileSync(path.join(dossier, 'c', 'captures', fA)), oB = fs.readFileSync(path.join(dossier, 'c', 'captures', fB));
+        A.ok(oA.equals(jpegA), 'le préfixe data: est retiré : l\'image écrite est exactement le JPEG envoyé');
+        A.ok(oB.equals(jpegB), 'une capture en base64 brut reste intacte');
+        A.ok(fs.readFileSync(path.join(dossier, 'c', 'rapport.html'), 'utf8').indexOf('captures/' + fB) >= 0, 'le rapport affiche la capture du second test');
+        // les exports intègrent les images
+        var CAHIER = require(path.join(RACINE, 'tools', 'cahier.js'));
+        var web = CAHIER.exporterHTML(dossier, 'c').toString('utf8');
+        A.ok(web.indexOf('data:image/jpeg;base64,' + jpegA.toString('base64')) >= 0 &&
+             web.indexOf('data:image/jpeg;base64,' + jpegB.toString('base64')) >= 0, 'la page web autonome intègre les deux captures');
+        var docx = CAHIER.exporterDocx(dossier, 'c');
+        A.ok(docx.indexOf(jpegA) >= 0 && docx.indexOf(jpegB) >= 0, 'le document Word embarque les deux images');
+      } finally { nettoyer(dossier); }
+    });
+
     it('SPEC-BANC-015 : le serveur de test refuse une adresse distante, un envoi trop gros, et fabrique lui-même les noms de fichiers', function () {
       A.ok(RT.estAdresseLocale('127.0.0.1'));
       A.ok(RT.estAdresseLocale('::1'));

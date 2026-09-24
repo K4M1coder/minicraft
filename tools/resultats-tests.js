@@ -100,9 +100,13 @@ function assainirCampagne(campagne) {
 /* Écrit resultats.json + rapport.html + captures/. `resultats` suit le
    schéma de tests/rapport.js. `captures` (facultatif) : [{ libelle, type,
    base64 }] — le fichier fabriqué pour chacune est reporté dans
-   resultats.tests[*].captures[*].fichier en appariant par LIBELLÉ EXACT
-   (les libellés d'une même campagne doivent donc être uniques ; c'est ce
-   qu'utilise le banc navigateur : "<nom du test> · <libellé de l'étape>").
+   resultats.tests[*].captures[*].fichier : si la référence porte un INDEX
+   numérique (`fichier` = position dans `captures`, ce qu'envoie le banc
+   navigateur), c'est lui qui fait foi ; sinon, repli sur le LIBELLÉ exact.
+   Les libellés d'étape (« début », « fin »…) se répètent d'un test à l'autre :
+   apparier par libellé seul donnait à tous les tests les images du premier.
+   `base64` peut aussi être une URL de données complète (`toDataURL()`) :
+   son préfixe `data:…;base64,` est retiré, sinon l'image écrite est corrompue.
    `options.racine` (tests) et `options.nom` (tests) permettent de rediriger
    l'écriture — utilisé par tests/spec-banc.js pour ne pas polluer le vrai
    dossier de résultats pendant ses propres tests. */
@@ -114,14 +118,18 @@ function ecrireCahier(resultats, options) {
   fs.mkdirSync(dossier, { recursive: true });
 
   const captures = opts.captures || [];
-  const fichierParLibelle = new Map();
+  const fichierParLibelle = new Map(), fichierParIndex = [];
   if (captures.length) {
     const capturesDir = path.join(dossier, 'captures');
     fs.mkdirSync(capturesDir, { recursive: true });
     captures.forEach((c, i) => {
-      const ext = EXT_PAR_TYPE[c.type] || 'jpg';
+      let donnees = String(c.base64 || ''), type = c.type;
+      const url = /^data:([^;,]*)(;base64)?,/.exec(donnees);
+      if (url) { donnees = donnees.slice(url[0].length); type = type || url[1]; }
+      const ext = EXT_PAR_TYPE[type] || 'jpg';
       const fichier = String(i + 1).padStart(4, '0') + '-' + slug(c.libelle) + '.' + ext;
-      fs.writeFileSync(path.join(capturesDir, fichier), Buffer.from(c.base64 || '', 'base64'));
+      fs.writeFileSync(path.join(capturesDir, fichier), Buffer.from(donnees, 'base64'));
+      fichierParIndex[i] = fichier;
       if (!fichierParLibelle.has(c.libelle)) fichierParLibelle.set(c.libelle, fichier);
     });
   }
@@ -131,8 +139,10 @@ function ecrireCahier(resultats, options) {
   if (resultatsFinaux.campagne) assainirCampagne(resultatsFinaux.campagne);
   (resultatsFinaux.tests || []).forEach((t) => {
     (t.captures || []).forEach((c) => {
-      const f = fichierParLibelle.get(c.libelle);
+      const parIndex = typeof c.fichier === 'number' ? fichierParIndex[c.fichier] : undefined;
+      const f = parIndex || fichierParLibelle.get(c.libelle);
       if (f) c.fichier = f;
+      else if (typeof c.fichier === 'number') delete c.fichier;   // référence sans image : pas de lien cassé
     });
   });
 
