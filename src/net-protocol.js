@@ -152,6 +152,14 @@
     // serveur autoritaire : le client envoie ses entrées et ses intentions,
     // le serveur décide et répond
     ENTREE: 'e', ATTAQUE: 'attaque', MANGER: 'manger', RENAITRE: 'renaitre', DONNE: 'donne', TIR: 'tir',
+    // une connexion refusée (liste noire, liste blanche, bannissement, e-mail
+    // manquant…) : le serveur le dit avant de fermer, plutôt qu'une coupure
+    // muette qui laisse deviner (SPEC-ADMIN-004)
+    REFUS: 'refus',
+    // panneau admin en jeu (SPEC-ADMIN-006) : une seule paire de messages,
+    // l'action porte le détail — le serveur vérifie toujours le rôle qu'IL a
+    // attribué à la connexion, jamais un rôle déclaré par le client
+    ADMIN: 'admin', ADMIN_REP: 'admin_rep',
   };
 
   /* Valide un message entrant. Un message sans `t` connu est rejeté : il ne
@@ -161,8 +169,11 @@
     if (typeof msg.t !== 'string') return null;
     switch (msg.t) {
       case MSG.REJOINDRE:
+        // e-mail et jeton d'invitation : facultatifs, lus par SPEC-ADMIN-004/005
         return { t: msg.t, nom: String(msg.nom || 'Joueur').slice(0, 24),
-                 locaux: Math.max(1, Math.min(4, (msg.locaux | 0) || 1)) };
+                 locaux: Math.max(1, Math.min(4, (msg.locaux | 0) || 1)),
+                 email: msg.email ? String(msg.email).trim().slice(0, 120) : null,
+                 invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null };
       case MSG.BLOC:
         if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
         if (!estEntier(msg.id) || msg.id < 0 || msg.id > 255) return null;
@@ -203,6 +214,19 @@
         return { t: msg.t, i: (msg.i | 0), x: +msg.x, y: +msg.y, z: +msg.z,
                  yaw: estFini(msg.yaw) ? +msg.yaw : 0,
                  pitch: estFini(msg.pitch) ? +msg.pitch : 0 };
+      case MSG.ADMIN: {
+        // les actions valides sont une liste fermée : un nom hors de cette
+        // liste est un message qui ne peut rien faire, jamais planter
+        var ACTIONS = ['auth', 'joueurs', 'inventaire', 'sessions', 'listes', 'journal',
+          'liste_ajouter', 'liste_retirer', 'invitation_creer', 'invitation_revoquer',
+          'role_nommer', 'sanction'];
+        if (typeof msg.action !== 'string' || ACTIONS.indexOf(msg.action) < 0) return null;
+        // charge bornee : un panneau admin n'a jamais besoin de gros volumes
+        var args = msg.args && typeof msg.args === 'object' ? msg.args : {};
+        try { if (JSON.stringify(args).length > 4000) return null; } catch (e) { return null; }
+        return { t: msg.t, action: msg.action, args: args };
+      }
+
       case MSG.CHAT:
         var txt = String(msg.texte === undefined ? '' : msg.texte).trim();
         if (!txt) return null;

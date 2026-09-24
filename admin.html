@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>MiniCraft — administration</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: #12151a; color: #e8ecf1; }
+  header { padding: 12px 20px; background: #1c2129; border-bottom: 1px solid #2a303c; display: flex; gap: 12px; align-items: center; }
+  header h1 { font-size: 16px; margin: 0; flex: 1; }
+  main { padding: 20px; max-width: 1000px; margin: 0 auto; display: grid; gap: 20px; grid-template-columns: 1fr 1fr; }
+  section { background: #1a1e25; border: 1px solid #2a303c; border-radius: 8px; padding: 14px; }
+  section h2 { font-size: 14px; margin: 0 0 10px; color: #9fb3c8; text-transform: uppercase; letter-spacing: .04em; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 4px 6px; border-bottom: 1px solid #262b33; }
+  input, select, button { background: #12151a; color: #e8ecf1; border: 1px solid #2a303c; border-radius: 4px; padding: 6px 8px; font: inherit; }
+  button { cursor: pointer; }
+  button:hover { border-color: #4a90d9; }
+  .row { display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
+  .row input, .row select { flex: 1; min-width: 80px; }
+  pre { white-space: pre-wrap; word-break: break-all; max-height: 200px; overflow: auto; background: #12151a; padding: 8px; border-radius: 4px; font-size: 12px; }
+  .msg { font-size: 12px; color: #f0a860; min-height: 1.4em; }
+  .role { font-size: 11px; padding: 2px 6px; border-radius: 10px; background: #2a303c; }
+</style>
+</head>
+<body>
+<header>
+  <h1>MiniCraft — console d'administration</h1>
+  <input id="jeton" type="password" placeholder="jeton d'administration" style="width:260px">
+  <button id="connecter">Se connecter</button>
+  <span id="role" class="role"></span>
+</header>
+<main id="main" style="display:none">
+  <section>
+    <h2>Joueurs connectés</h2>
+    <table id="tbl-joueurs"><thead><tr><th>Nom</th><th>Position</th><th>IP</th><th>Rôle</th></tr></thead><tbody></tbody></table>
+    <p class="msg" id="msg-joueurs"></p>
+  </section>
+
+  <section>
+    <h2>Sanction</h2>
+    <div class="row">
+      <input id="s-nom" placeholder="nom du joueur">
+      <select id="s-type">
+        <option value="avertir">avertir</option>
+        <option value="sourdine">sourdine</option>
+        <option value="expulser">expulser</option>
+        <option value="bannir">bannir</option>
+        <option value="liste_noire">liste noire</option>
+      </select>
+      <input id="s-duree" placeholder="durée (min)" style="max-width:110px">
+      <button id="s-go">Appliquer</button>
+    </div>
+    <p class="msg" id="msg-sanction"></p>
+  </section>
+
+  <section>
+    <h2>Listes blanche / noire</h2>
+    <div class="row">
+      <select id="l-liste"><option value="blanche">blanche</option><option value="noire">noire</option></select>
+      <select id="l-cat"><option value="nom">nom</option><option value="email">e-mail</option></select>
+      <input id="l-valeur" placeholder="valeur">
+      <button id="l-ajouter">Ajouter</button>
+      <button id="l-retirer">Retirer</button>
+    </div>
+    <pre id="out-listes"></pre>
+  </section>
+
+  <section>
+    <h2>Invitations</h2>
+    <div class="row">
+      <input id="i-usages" placeholder="usages max" value="1" style="max-width:90px">
+      <input id="i-expire" placeholder="expire (min)" value="1440" style="max-width:110px">
+      <input id="i-email" placeholder="e-mail (facultatif)">
+      <button id="i-creer">Créer</button>
+    </div>
+    <div class="row"><input id="i-token" placeholder="jeton à révoquer"><button id="i-revoquer">Révoquer</button></div>
+    <pre id="out-invitations"></pre>
+  </section>
+
+  <section>
+    <h2>Rôle de modérateur</h2>
+    <div class="row">
+      <input id="r-nom" placeholder="nom du joueur">
+      <button id="r-nommer">Nommer modérateur</button>
+      <button id="r-retirer">Retirer le rôle</button>
+    </div>
+    <pre id="out-role"></pre>
+  </section>
+
+  <section>
+    <h2>Sessions</h2>
+    <div class="row"><input id="ss-nom" placeholder="nom (vide = toutes)"><button id="ss-go">Voir</button></div>
+    <table id="tbl-sessions"><thead><tr><th>Nom</th><th>IP</th><th>Connexion</th><th>Déconnexion</th></tr></thead><tbody></tbody></table>
+  </section>
+
+  <section style="grid-column: 1 / -1">
+    <h2>Journal d'administration</h2>
+    <button id="j-rafraichir">Rafraîchir</button>
+    <table id="tbl-journal"><thead><tr><th>Auteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead><tbody></tbody></table>
+  </section>
+</main>
+
+<script>
+/* admin.html — console web d'administration (SPEC-ADMIN-001 à 008).
+   Vanille, sans dépendance : le jeton n'est JAMAIS mis dans l'URL — seulement
+   dans l'en-tête Authorization — et ne vit que dans sessionStorage (effacé à
+   la fermeture de l'onglet), jamais dans localStorage. */
+(function () {
+  'use strict';
+  var jeton = null;
+  try { jeton = sessionStorage.getItem('mc-admin-jeton'); } catch (e) {}
+  if (jeton) document.getElementById('jeton').value = jeton;
+
+  function api(methode, action, corps) {
+    return fetch('/admin/api/' + action, {
+      method: methode,
+      headers: Object.assign({ Authorization: 'Bearer ' + jeton },
+        corps ? { 'Content-Type': 'application/json' } : {}),
+      body: corps ? JSON.stringify(corps) : undefined,
+    }).then(function (r) { return r.json().then(function (j) { return { code: r.status, json: j }; }); });
+  }
+
+  function connecter() {
+    jeton = document.getElementById('jeton').value.trim();
+    if (!jeton) return;
+    api('GET', 'joueurs').then(function (r) {
+      if (r.code !== 200) {
+        document.getElementById('role').textContent = 'refusé';
+        return;
+      }
+      try { sessionStorage.setItem('mc-admin-jeton', jeton); } catch (e) {}
+      document.getElementById('main').style.display = 'grid';
+      document.getElementById('role').textContent = 'connecté';
+      rafraichirTout();
+    });
+  }
+  document.getElementById('connecter').onclick = connecter;
+  if (jeton) connecter();
+
+  function rafraichirJoueurs() {
+    api('GET', 'joueurs').then(function (r) {
+      var tb = document.querySelector('#tbl-joueurs tbody');
+      tb.innerHTML = '';
+      (r.json.data || []).forEach(function (j) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + j.nom + '</td><td>' + j.x + ',' + j.y + ',' + j.z + '</td>' +
+          '<td>' + (j.ip || '—') + '</td><td>' + (j.role || '') + '</td>';
+        tb.appendChild(tr);
+      });
+      document.getElementById('msg-joueurs').textContent = (r.json.data || []).length + ' joueur(s) en ligne';
+    });
+  }
+  function rafraichirListes() {
+    api('GET', 'listes').then(function (r) { document.getElementById('out-listes').textContent = JSON.stringify(r.json.data, null, 1); });
+  }
+  function rafraichirJournal() {
+    api('GET', 'journal').then(function (r) {
+      var tb = document.querySelector('#tbl-journal tbody');
+      tb.innerHTML = '';
+      (r.json.data || []).slice().reverse().forEach(function (e) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + (e.auteur || '') + '</td><td>' + e.action + '</td><td>' +
+          (e.cible === null ? '' : e.cible) + '</td><td>' + (e.details === null ? '' : e.details) + '</td>';
+        tb.appendChild(tr);
+      });
+    });
+  }
+  function rafraichirTout() { rafraichirJoueurs(); rafraichirListes(); rafraichirJournal(); }
+
+  document.getElementById('j-rafraichir').onclick = rafraichirJournal;
+
+  document.getElementById('s-go').onclick = function () {
+    api('POST', 'sanction', {
+      nom: document.getElementById('s-nom').value.trim(),
+      type: document.getElementById('s-type').value,
+      dureeMs: (parseInt(document.getElementById('s-duree').value, 10) || 0) * 60000,
+    }).then(function (r) {
+      document.getElementById('msg-sanction').textContent = r.json.ok ? 'appliqué' : ('refusé : ' + (r.json.motif || ''));
+      rafraichirJoueurs(); rafraichirJournal();
+    });
+  };
+
+  document.getElementById('l-ajouter').onclick = function () {
+    api('POST', 'liste_ajouter', {
+      liste: document.getElementById('l-liste').value, categorie: document.getElementById('l-cat').value,
+      valeur: document.getElementById('l-valeur').value,
+    }).then(function () { rafraichirListes(); rafraichirJournal(); });
+  };
+  document.getElementById('l-retirer').onclick = function () {
+    api('POST', 'liste_retirer', {
+      liste: document.getElementById('l-liste').value, categorie: document.getElementById('l-cat').value,
+      valeur: document.getElementById('l-valeur').value,
+    }).then(function () { rafraichirListes(); rafraichirJournal(); });
+  };
+
+  document.getElementById('i-creer').onclick = function () {
+    api('POST', 'invitation_creer', {
+      usagesMax: parseInt(document.getElementById('i-usages').value, 10) || 1,
+      expireDansMs: (parseInt(document.getElementById('i-expire').value, 10) || 1440) * 60000,
+      email: document.getElementById('i-email').value.trim() || null,
+    }).then(function (r) { document.getElementById('out-invitations').textContent = JSON.stringify(r.json.data); rafraichirListes(); });
+  };
+  document.getElementById('i-revoquer').onclick = function () {
+    api('POST', 'invitation_revoquer', { token: document.getElementById('i-token').value.trim() })
+      .then(function (r) { document.getElementById('out-invitations').textContent = JSON.stringify(r.json.data); rafraichirListes(); });
+  };
+
+  document.getElementById('r-nommer').onclick = function () {
+    api('POST', 'role_nommer', { nom: document.getElementById('r-nom').value.trim(), role: 'moderateur' })
+      .then(function (r) { document.getElementById('out-role').textContent = JSON.stringify(r.json.data); });
+  };
+  document.getElementById('r-retirer').onclick = function () {
+    api('POST', 'role_nommer', { nom: document.getElementById('r-nom').value.trim(), role: null })
+      .then(function (r) { document.getElementById('out-role').textContent = JSON.stringify(r.json.data); });
+  };
+
+  document.getElementById('ss-go').onclick = function () {
+    api('GET', 'sessions' + (document.getElementById('ss-nom').value.trim()
+      ? '?nom=' + encodeURIComponent(document.getElementById('ss-nom').value.trim()) : '')).then(function (r) {
+      var tb = document.querySelector('#tbl-sessions tbody');
+      tb.innerHTML = '';
+      (r.json.data || []).forEach(function (s) {
+        var tr = document.createElement('tr');
+        tr.innerHTML = '<td>' + s.nom + '</td><td>' + (s.ip || '—') + '</td><td>' + (s.connecteLe || '') +
+          '</td><td>' + (s.deconnecteLe || 'en ligne') + '</td>';
+        tb.appendChild(tr);
+      });
+    });
+  };
+})();
+</script>
+</body>
+</html>

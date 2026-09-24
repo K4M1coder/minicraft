@@ -948,6 +948,10 @@
         ech(defaut.hote || '') + '"></label>' +
         '<label>Pseudo<input id="f-pseudo" type="text" maxlength="24" value="' +
         ech(defaut.pseudo || 'Joueur') + '"></label>' +
+        '<label>E-mail <span class="aide">exigé par certains serveurs</span>' +
+        '<input id="f-email" type="email" maxlength="120" value="' + ech(defaut.email || '') + '"></label>' +
+        '<label>Jeton d\'invitation <span class="aide">facultatif</span>' +
+        '<input id="f-invitation" type="text" maxlength="80" value="' + ech(defaut.invitation || '') + '"></label>' +
         '<label>Joueurs locaux' +
         boutonsRadio('joueurs', [{ id: '1', nom: '1' }, { id: '2', nom: '2' },
                                  { id: '3', nom: '3' }, { id: '4', nom: '4' }], '1') + '</label>' +
@@ -965,6 +969,8 @@
         hooks.onRejoindre && hooks.onRejoindre({
           hote: overlay.querySelector('#f-hote').value.trim(),
           pseudo: overlay.querySelector('#f-pseudo').value.trim() || 'Joueur',
+          email: overlay.querySelector('#f-email').value.trim() || null,
+          invitation: overlay.querySelector('#f-invitation').value.trim() || null,
           joueurs: parseInt(valeurChoix('joueurs') || '1', 10),
         });
       };

@@ -102,6 +102,12 @@
           chat.systeme('Connexion perdue. La partie continue en solo.');
         }
       },
+      // panneau admin en jeu (SPEC-ADMIN-006) : la réponse du serveur s'affiche
+      // dans le chat, seule surface déjà présente pour du texte libre
+      onAdminRep: function (m) {
+        if (!m.ok) { chat.systeme('/admin ' + m.action + ' — refusé' + (m.erreur ? ' (' + m.erreur + ')' : '')); return; }
+        chat.systeme('/admin ' + m.action + ' → ' + JSON.stringify(m.data).slice(0, 400));
+      },
     });
 
     // registre d'affichage du HUD (SPEC-HUD-001) : conservé d'une partie à
@@ -334,7 +340,8 @@
       equipe.forEach(function (j) { j.prediction = MC.Synchro.creerPrediction(); });
       entities.list.length = 0;              // en ligne, les créatures sont celles du serveur
       input.setState('playing');
-      net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1);
+      net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1,
+                    { email: opts.email, invitation: opts.invitation });
     }
 
     /* Change de monde. L'ANCIEN est libéré d'abord : ses maillages vivent
@@ -1526,6 +1533,7 @@
           case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
           case 'quitter': net.deconnecter(); break;
           case 'rendu': render.reglerRealiste(a.realiste); break;
+          case 'admin': net.admin(a.action, a.args); break;
         }
       });
     }
