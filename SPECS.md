@@ -658,6 +658,27 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-AUDIO-005 | Les événements s'entendent : tonnerre, éruption, cyclone et tornade, succès, chapitres et fins d'histoire, réveil d'un gardien | sons d'événement | ✅ |
 | SPEC-AUDIO-006 | Les sons sont spatialisés : leur volume et leur panoramique suivent leur position par rapport à l'auditeur, étouffés sous l'eau et derrière la roche ; chaque catégorie a son volume dans les options | spatialisation, étouffement, volumes par catégorie | ✅ |
 
+## L39 — factions autonomes et factions de joueurs
+
+Prolonge SPEC-FACTION-001 à 005 (camps des créatures et réputation).
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-FACTION-006 | Des factions PNJ autonomes naissent du monde de façon déterministe (royaumes des villes, guildes marchandes, ordres, bandits, cultes…) : chacune a un siège, un territoire, des ressources, un caractère et ses propres objectifs (s'étendre, commercer, piller, défendre, explorer, convertir), qui évoluent avec ce qui lui arrive | factions par région, objectifs, évolution | ⏳ |
+| SPEC-FACTION-007 | Les factions PNJ agissent d'elles-mêmes selon leurs objectifs : caravanes, patrouilles, raids sur leurs ennemis, fondation d'avant-postes ; leurs territoires changent ; la simulation tourne hors ligne comme en ligne (le serveur fait foi) et se poursuit, à gros grain, loin des joueurs | actions, changements de territoire, simulation hors de vue | ⏳ |
+| SPEC-FACTION-008 | Les factions PNJ entretiennent entre elles des relations (alliance, neutralité, rivalité, guerre) qui évoluent et s'annoncent ; elles jugent les joueurs et les factions de joueurs par leur réputation et leur confient des quêtes selon leurs objectifs | relations, annonces, quêtes de faction | ⏳ |
+| SPEC-FACTION-009 | Un joueur crée une faction de joueurs (nom unique, couleur, emblème, devise) et en devient le chef ; le chef nomme les membres à des rangs (chef, officier, membre, recrue), les promeut, les rétrograde, les exclut, et peut transmettre la direction ; une faction sans membre disparaît | création, rangs, nominations, transmission, dissolution | ⏳ |
+| SPEC-FACTION-010 | Un joueur postule à une faction ; le chef ou un officier accepte ou refuse la candidature ; une faction peut aussi inviter un joueur ; un joueur quitte une faction quand il le veut | candidature, acceptation, refus, invitation, départ | ⏳ |
+| SPEC-FACTION-011 | Un joueur a au plus une faction principale — la sienne s'affiche avec son nom et compte pour la diplomatie — et zéro, une ou plusieurs factions secondaires ; il peut changer de faction principale parmi les siennes | une seule principale, secondaires multiples, changement | ⏳ |
+| SPEC-FACTION-012 | Une faction de joueurs a son canal de discussion, voit ses membres sur la carte, et déclare ses relations (alliée, neutre, ennemie) envers les autres factions, de joueurs comme PNJ ; les membres d'une même faction ne se blessent pas | canal, carte, diplomatie, pas de dégâts entre membres | ⏳ |
+| SPEC-FACTION-013 | Les factions de joueurs, leurs membres, rangs, candidatures et relations sont conservés par le serveur (et par la sauvegarde hors ligne pour les joueurs locaux) ; un administrateur ou un modérateur peut renommer ou dissoudre une faction (SPEC-ADMIN-008) | persistance, modération | ⏳ |
+
+## L40 — technique
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-SAVE-017 | Les blocs se stockent sur 16 bits : de nouveaux blocs peuvent s'ajouter sans limite pratique ; les sauvegardes et les mondes serveur antérieurs (8 bits) se migrent sans perte, objets d'inventaire compris | migration d'une sauvegarde 8 bits, nouveaux identifiants | ⏳ |
+
 ## L38 — densité, mégapoles et zones de jeu
 
 Les specs HABITAT-008, 009, 012 et ROUTE-001 à 005 (en cours) posent la
