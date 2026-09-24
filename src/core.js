@@ -60,6 +60,21 @@
     PORTE_FERMEE_N: 109, PORTE_FERMEE_E: 110, PORTE_FERMEE_S: 111, PORTE_FERMEE_O: 112,
     PORTE_OUVERTE_N: 113, PORTE_OUVERTE_E: 114, PORTE_OUVERTE_S: 115, PORTE_OUVERTE_O: 116,
     TRAPPE_FERMEE: 117, TRAPPE_OUVERTE: 118,
+    // minerais (SPEC-MINERAI-001) : le dernier bloc libre est 127 (128 = premier
+    // objet). Neuf identifiants pour dix matières : cuivre et étain partagent un
+    // même filon commun, de même que rubis et saphir avec l'émeraude, et que le
+    // quartz avec le soufre — chaque bloc lâche l'une ou l'autre matière au
+    // hasard plutôt que de dépenser un identifiant par matière.
+    MINERAI_METAUX: 119,     // cuivre + étain
+    MINERAI_ARGENT: 120,     // argent + lapis
+    MINERAI_GEMMES: 121,     // émeraude + rubis + saphir
+    MINERAI_CRISTAL: 122,    // quartz + soufre (près des volcans)
+    SEL: 123,                // sel (déserts, badlands)
+    // bioluminescence des profondeurs (SPEC-LUMIERE-007)
+    CHAMPI_LUMINEUX: 124,    // champignons et lichens des grottes humides
+    CRISTAL_LUMINEUX: 125,   // cristaux des géodes
+    ALGUE_LUMINEUSE: 126,    // algues des abysses
+    PLANCTON_LUMINEUX: 127,  // plancton des récifs, simplifié en bloc
   };
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
@@ -95,6 +110,12 @@
     SEAU: 201, SEAU_EAU: 202,
     // porte et trappe : l'objet posable ; le bloc réel encode orientation et état
     PORTE: 203, TRAPPE: 204,
+    // matières des minerais (SPEC-MINERAI-001 / SPEC-MINERAI-002)
+    CUIVRE_BRUT: 205, CUIVRE_LINGOT: 206, ETAIN_BRUT: 207, ETAIN_LINGOT: 208,
+    ARGENT_BRUT: 209, ARGENT_LINGOT: 210, LAPIS: 211, RUBIS: 212, SAPHIR: 213,
+    QUARTZ: 214, SOUFRE: 215, BRONZE_LINGOT: 216,
+    BRONZE_PIOCHE: 217, BRONZE_HACHE: 218, BRONZE_PELLE: 219, BRONZE_EPEE: 220,
+    BIJOU: 221,
   };
 
   var FIRST_ITEM = 128;
@@ -348,6 +369,37 @@
                              interactive: 'info' });
   defBlock(B.OBSIDIAN, { name: 'Obsidienne', tiles: [115, 115, 115], hardness: 12, tool: 'pickaxe',
                          needsTool: true, minTier: 4 });
+
+  // ─── minerais (SPEC-MINERAI-001) ───────────────────────────────────────────
+  /* Faute d'identifiants de bloc libres (127 au plus, voir B), plusieurs
+     matières partagent un même filon : casser le bloc lâche l'une ou l'autre
+     au hasard (parfois les deux), plutôt que de réserver un identifiant par
+     matière. Chaque matière garde son propre outil minimal et sa propre
+     profondeur de génération (voir world.js:filon). */
+  defBlock(B.MINERAI_METAUX, { name: 'Minerai de cuivre et étain', tiles: [227, 227, 227],
+                               hardness: 3.0, tool: 'pickaxe', needsTool: true, minTier: 1,
+                               drops: [{ id: I.CUIVRE_BRUT, n: 1 }, { id: I.ETAIN_BRUT, n: 1 }] });
+  defBlock(B.MINERAI_ARGENT, { name: "Minerai d'argent et de lapis", tiles: [228, 228, 228],
+                               hardness: 3.2, tool: 'pickaxe', needsTool: true, minTier: 2,
+                               drops: [{ id: I.ARGENT_BRUT, n: 1 }, { id: I.LAPIS, n: 1 }] });
+  defBlock(B.MINERAI_GEMMES, { name: 'Filon de gemmes', tiles: [229, 229, 229],
+                               hardness: 3.5, tool: 'pickaxe', needsTool: true, minTier: 3,
+                               drops: [{ id: I.EMERALD, n: 1 }, { id: I.RUBIS, n: 1, chance: 0.4 },
+                                       { id: I.SAPHIR, n: 1, chance: 0.4 }] });
+  defBlock(B.MINERAI_CRISTAL, { name: 'Minerai de quartz et de soufre', tiles: [230, 230, 230],
+                                hardness: 2.5, tool: 'pickaxe', needsTool: true, minTier: 1,
+                                drops: [{ id: I.QUARTZ, n: 1 }, { id: I.SOUFRE, n: 1, chance: 0.4 }] });
+  // le sel se ramasse comme le sable : il est lui-même l'objet d'inventaire
+  defBlock(B.SEL, { name: 'Sel', tiles: [231, 231, 231], hardness: 0.6, tool: 'shovel' });
+
+  // ─── bioluminescence des profondeurs (SPEC-LUMIERE-007) ────────────────────
+  defBlock(B.CHAMPI_LUMINEUX, { name: 'Champignon lumineux', tiles: [232, 232, 232], hardness: 0,
+                                transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol',
+                                light: 9 });
+  defBlock(B.CRISTAL_LUMINEUX, { name: 'Cristal lumineux', tiles: [233, 233, 233], hardness: 1.2,
+                                 tool: 'pickaxe', light: 11, pass: 'lumineux', sansLampe: false });
+  planteMarine(B.ALGUE_LUMINEUSE, 'Algue luminescente', 234, { light: 8 });
+  planteMarine(B.PLANCTON_LUMINEUX, 'Plancton luminescent', 235, { light: 6 });
   // la toile se traverse, mais on s'y englue (voir player.updateMovement)
   defBlock(B.COBWEB, { name: "Toile d'araignée", tiles: [116, 116, 116], hardness: 1.0, tool: 'sword',
                        transparent: true, plant: true, pass: 'cutout', ralentit: 0.25,
@@ -492,6 +544,31 @@
   // porte/trappe : l'objet posé occupe un ou deux blocs (voir player.useOn)
   defItem(I.PORTE, { name: 'Porte en bois', tile: 190, porte: true, maxStack: 16 });
   defItem(I.TRAPPE, { name: 'Trappe', tile: 191, trappe: true, maxStack: 16 });
+
+  // ─── matières des minerais (SPEC-MINERAI-002) ─────────────────────────────
+  defItem(I.CUIVRE_BRUT, { name: 'Cuivre brut', tile: 236 });
+  defItem(I.CUIVRE_LINGOT, { name: 'Lingot de cuivre', tile: 237 });
+  defItem(I.ETAIN_BRUT, { name: 'Étain brut', tile: 238 });
+  defItem(I.ETAIN_LINGOT, { name: "Lingot d'étain", tile: 239 });
+  defItem(I.ARGENT_BRUT, { name: 'Argent brut', tile: 240 });
+  defItem(I.ARGENT_LINGOT, { name: "Lingot d'argent", tile: 241 });
+  defItem(I.LAPIS, { name: 'Lapis-lazuli', tile: 242 });
+  defItem(I.RUBIS, { name: 'Rubis', tile: 243 });
+  defItem(I.SAPHIR, { name: 'Saphir', tile: 244 });
+  defItem(I.QUARTZ, { name: 'Quartz', tile: 245 });
+  defItem(I.SOUFRE, { name: 'Soufre', tile: 246, fuel: 3 });
+  // le bronze : alliage de cuivre et d'étain, un cran au-dessus de la pierre
+  defItem(I.BRONZE_LINGOT, { name: 'Lingot de bronze', tile: 247 });
+  defItem(I.BRONZE_PIOCHE, { name: 'Pioche en bronze', tile: 248, tool: 'pickaxe', tier: 2,
+                             damage: 4, durability: 190, maxStack: 1 });
+  defItem(I.BRONZE_HACHE, { name: 'Hache en bronze', tile: 249, tool: 'axe', tier: 2,
+                            damage: 4, durability: 190, maxStack: 1 });
+  defItem(I.BRONZE_PELLE, { name: 'Pelle en bronze', tile: 250, tool: 'shovel', tier: 2,
+                            damage: 4, durability: 190, maxStack: 1 });
+  defItem(I.BRONZE_EPEE, { name: 'Épée en bronze', tile: 251, tool: 'sword', tier: 2,
+                           damage: 6, durability: 190, maxStack: 1 });
+  // bijou : parure de luxe, sans usage d'outil — un objet de commerce
+  defItem(I.BIJOU, { name: 'Bijou', tile: 252 });
 
   /* ─── variantes de tuiles ──────────────────────────────────────────────────
      Une même tuile répétée sur un grand sol dessine un quadrillage. Les tuiles

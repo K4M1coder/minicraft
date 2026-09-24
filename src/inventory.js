@@ -216,6 +216,26 @@
   shaped(I.ARC, 1, [' SF', 'B F', ' SF'], { S: I.STICK, B: I.STICK, F: I.FICELLE });
   shaped(I.FLECHE, 4, ['S', 'F'], { S: I.STICK, F: I.FICELLE });
 
+  // ─── minerais (SPEC-MINERAI-002) : lingots, alliage, outils et objets ─────
+  shapeless(I.BRONZE_LINGOT, 1, [I.CUIVRE_LINGOT, I.ETAIN_LINGOT]);
+  var MAT_BRONZE = I.BRONZE_LINGOT;
+  shaped(I.BRONZE_PIOCHE, 1, ['MMM', ' S ', ' S '], { M: MAT_BRONZE, S: I.STICK });
+  shaped(I.BRONZE_HACHE, 1, ['MM', 'MS', ' S'], { M: MAT_BRONZE, S: I.STICK });
+  shaped(I.BRONZE_PELLE, 1, ['M', 'S', 'S'], { M: MAT_BRONZE, S: I.STICK });
+  shaped(I.BRONZE_EPEE, 1, ['M', 'M', 'S'], { M: MAT_BRONZE, S: I.STICK });
+  // le lapis se broie en teinture bleue, comme un colorant minéral
+  shapeless(I.DYE_BLUE, 4, [I.LAPIS]);
+  // le sel, mêlé au sable, donne un enduit à la chaux plus résistant
+  shapeless(B.CHAUX, 4, [B.SAND, B.SAND, B.SEL]);
+  // arbalète légère, sans fer : la pointe de quartz remplace la mécanique
+  shaped(I.ARBALETE, 1, ['SQS', 'F F', ' S '], { S: I.STICK, Q: I.QUARTZ, F: I.FICELLE });
+  // le soufre brûle : une torche qui n'a pas besoin de charbon
+  shaped(B.TORCH, 4, ['U', 'S'], { U: I.SOUFRE, S: I.STICK });
+  // bijou : une gemme sertie dans l'argent, un objet de commerce et de prestige
+  shapeless(I.BIJOU, 1, [I.ARGENT_LINGOT, I.RUBIS]);
+  shapeless(I.BIJOU, 1, [I.ARGENT_LINGOT, I.SAPHIR]);
+  shapeless(I.BIJOU, 1, [I.ARGENT_LINGOT, I.EMERALD]);
+
   // outils : 3 matériaux × 5 familles
   var MATS = [[B.PLANKS, 1], [B.COBBLE, 2], [I.IRON_INGOT, 3], [I.DIAMOND, 4]];
   var TOOLSETS = {
@@ -300,6 +320,10 @@
   SMELT[B.CACTUS] = I.DYE_GREEN;
   SMELT[B.CLAY] = B.TERRACOTTA;
   SMELT[B.RED_SAND] = B.GLASS;
+  // minerais (SPEC-MINERAI-002) : le brut fond en lingot, comme le fer et l'or
+  SMELT[I.CUIVRE_BRUT] = I.CUIVRE_LINGOT;
+  SMELT[I.ETAIN_BRUT] = I.ETAIN_LINGOT;
+  SMELT[I.ARGENT_BRUT] = I.ARGENT_LINGOT;
 
   function smeltResult(id) { return SMELT[id] || 0; }
   function fuelValue(id) {
@@ -359,6 +383,15 @@
     { give: [{ id: I.EMERALD, n: 1 }], get: { id: I.BREAD, n: 4 } },
     { give: [{ id: I.EMERALD, n: 2 }], get: { id: I.IRON_INGOT, n: 3 } },
     { give: [{ id: I.EMERALD, n: 3 }], get: { id: I.IRON_PICKAXE, n: 1 } },
+    // minerais (SPEC-MINERAI-002) : le villageois achète les matières brutes et vend les rares
+    { give: [{ id: I.CUIVRE_LINGOT, n: 4 }], get: { id: I.EMERALD, n: 1 } },
+    { give: [{ id: I.ETAIN_LINGOT, n: 4 }], get: { id: I.EMERALD, n: 1 } },
+    { give: [{ id: I.QUARTZ, n: 3 }], get: { id: I.EMERALD, n: 1 } },
+    { give: [{ id: I.EMERALD, n: 2 }], get: { id: I.ARGENT_LINGOT, n: 2 } },
+    { give: [{ id: I.EMERALD, n: 4 }], get: { id: I.RUBIS, n: 1 } },
+    { give: [{ id: I.EMERALD, n: 4 }], get: { id: I.SAPHIR, n: 1 } },
+    { give: [{ id: I.EMERALD, n: 6 }], get: { id: I.BIJOU, n: 1 } },
+    { give: [{ id: I.BIJOU, n: 1 }], get: { id: I.EMERALD, n: 8 } },
   ];
 
   function canTrade(inv, trade) {

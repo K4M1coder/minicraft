@@ -118,6 +118,20 @@
                       nom: 'Capitaine noyé', vue: 24, lest: true, arme: I.SABRE_CAPITAINE,
                       tresor: I.SABRE_CAPITAINE,
                       invoque: { type: 'drowned', n: 2, max: 3, cadence: 10 } },
+
+    // ── créatures souterraines (SPEC-SOUTERRAIN-002) : une par biome profond ──
+    chauve_souris:     { w: 0.4, h: 0.35, hp: 6,  speed: 4.2, damage: 0, volant: true, altitude: [1, 5],
+                         hostile: false, drops: [{ id: I.FEATHER, n: 1, chance: 0.4 }] },
+    araignee_caverne:  { w: 0.85, h: 0.7, hp: 12, speed: 3.6, damage: 3, hostile: true, bond: true,
+                         drops: [{ id: I.FICELLE, n: 2 }] },
+    elementaire_magma: { w: 0.8, h: 1.0, hp: 22, speed: 1.8, damage: 4, hostile: true,
+                         drops: [{ id: I.SOUFRE, n: 2 }, { id: B.MAGMA, n: 1, chance: 0.5 }] },
+    golem_cristal:     { w: 1.1, h: 1.9, hp: 40, speed: 1.4, damage: 5, hostile: true, neutral: true,
+                         drops: [{ id: I.QUARTZ, n: 2 }, { id: B.CRISTAL_LUMINEUX, n: 1, chance: 0.4 }] },
+    rodeur_abysse:     { w: 0.7, h: 1.7, hp: 20, speed: 2.8, damage: 5, hostile: true,
+                         drops: [{ id: I.ROTTEN_FLESH, n: 1 }, { id: I.LAPIS, n: 1, chance: 0.3 }] },
+    creature_aveugle:  { w: 0.6, h: 1.0, hp: 14, speed: 2.0, damage: 2, hostile: true, nageur: true, lest: true,
+                         drops: [{ id: I.RAW_FISH, n: 1 }, { id: B.ALGUE_LUMINEUSE, n: 1, chance: 0.3 }] },
   };
   /* Butin de gardien : un trésor propre à chacun — que rien d'autre ne donne —
      et une part commune. L'épée runique reste le trésor des gardiens de crypte. */
@@ -1074,6 +1088,34 @@
       return naitreAuSol(type, bx, bz, lim, r);
     }
 
+    /* Apparition souterraine (SPEC-SOUTERRAIN-002) : ne se déclenche que si le
+       joueur est déjà sous terre (bien en dessous de la surface naturelle),
+       et choisit sa créature dans la table du biome souterrain — géode,
+       chambre magmatique, grotte luxuriante, grotte engloutie ou abîme —
+       d'après MC.Souterrain, qui lit lui-même le biome de surface. */
+    function trySpawnSouterrain(player, rand, limits) {
+      var r = rand || Math.random;
+      if (!MC.Souterrain || !world.heightAt || !world.getBlock) return null;
+      var px = Math.round(player.pos.x), pz = Math.round(player.pos.z), py = Math.floor(player.pos.y);
+      var surf = world.heightAt(px, pz);
+      if (py >= surf - 4) return null;                    // le joueur n'est pas sous terre
+      var ang = r() * Math.PI * 2, dd = 8 + r() * 16;
+      var bx = Math.round(player.pos.x + Math.cos(ang) * dd);
+      var bz = Math.round(player.pos.z + Math.sin(ang) * dd);
+      var by = py + Math.floor((r() - 0.5) * 10);
+      if (by < 2 || by >= C.WORLD_H - 2) return null;
+      if (C.isSolid(world.getBlock(bx, by, bz))) return null;          // il faut un vide
+      if (!C.isSolid(world.getBlock(bx, by - 1, bz))) return null;     // un sol sous les pieds
+      var bio = world.biomeAt ? world.biomeAt(bx, bz) : null;
+      var sId = MC.Souterrain.biomeAt(bio ? bio.id : 'plaines', by, !!(bio && bio.marin));
+      var type = MC.Biomes ? MC.Biomes.tirerMob(MC.Souterrain.mobsPour(sId), r()) : null;
+      if (!type) return null;
+      var s = SPECS[type];
+      if (!s || !sousPlafond(type, s, limits || {})) return null;
+      if (P.collides(world, bx + 0.5, by, bz + 0.5, s.w, s.h)) return null;
+      return spawn(type, bx + 0.5, by, bz + 0.5, { arme: tirerArme(type, r) || undefined });
+    }
+
     var SOLS_VALIDES = [B.GRASS, B.SAND, B.DIRT, B.SNOW, B.RED_SAND, B.MYCELIUM, B.GRAVEL, B.STONE];
     function naitreAuSol(type, bx, bz, lim, r) {
       var s = SPECS[type];
@@ -1150,7 +1192,7 @@
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, ecarter: ecarter,
-      countOf: countOf, trySpawn: trySpawn, burnUndead: burnUndead, stepBody: stepBody,
+      countOf: countOf, trySpawn: trySpawn, trySpawnSouterrain: trySpawnSouterrain, burnUndead: burnUndead, stepBody: stepBody,
       stepAI: stepAI, evenements: evenements, choisirCible: choisirCible, voitCible: voitCible, viser: viser,
       sbires: sbires, sousPlafond: sousPlafond, zoneChargee: zoneChargee, stepFaune: stepFaune,
       tirerArme: tirerArme, degatsAvecArme: degatsAvecArme, tirDe: tirDe,

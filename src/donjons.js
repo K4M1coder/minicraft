@@ -28,6 +28,8 @@
     citadelle:        { nom: 'Citadelle des cimes', boss: ['boss_wyverne'] },
     monument:         { nom: 'Monument sous-marin', boss: ['boss_gardien_ancien'], marin: true },
     epave:            { nom: 'Épave', boss: ['boss_capitaine'], marin: true },
+    // ruines d'une cité oubliée, enfouies sous n'importe quel biome (SPEC-SOUTERRAIN-003)
+    cite_ancienne:    { nom: 'Cité ancienne', boss: ['boss_squelette'] },
   };
   // tous les gardiens, sans doublon
   var BOSS = [];
@@ -57,7 +59,9 @@
     if (id === 'marais') return 'hutte';
     if (id === 'montagnes' && surf >= 44) return 'citadelle';
     if (id === 'badlands' || id === 'montagnes') return 'mine';
-    return tirage < 0.55 ? 'crypte' : 'mine';
+    // ruines d'une cité ancienne : enfouies sous n'importe quel biome ordinaire
+    if (tirage < 0.12) return 'cite_ancienne';
+    return tirage < 0.6 ? 'crypte' : 'mine';
   }
 
   function creer(N, hauteur, biomeDe) {
@@ -122,6 +126,7 @@
       temple:           { mur: B.MOSSY_COBBLE, sol: B.MOSSY_COBBLE, pilier: B.JUNGLE_LOG, deco: [B.VINES, B.JUNGLE_LEAVES], lumiere: B.TORCH, gardes: ['spider', 'skeleton'] },
       hutte:            { mur: B.PLANKS, sol: B.PLANKS, pilier: B.LOG, deco: [B.MUSHROOM, B.COBWEB], lumiere: B.LANTERN, gardes: ['slime', 'zombie'] },
       citadelle:        { mur: B.STONE_BRICK, sol: B.OBSIDIAN, pilier: B.OBSIDIAN, deco: [B.GOLD_BLOCK, B.LANTERN], lumiere: B.LANTERN, gardes: ['skeleton', 'pillager'] },
+      cite_ancienne:    { mur: 'mousse', sol: B.STONE_BRICK, pilier: B.STONE_BRICK, deco: [B.CRISTAL_LUMINEUX, B.MINERAI_ARGENT], lumiere: B.CRISTAL_LUMINEUX, gardes: ['golem_cristal', 'araignee_caverne'] },
     };
     var CELLULE = 15, ETAGE = 10;
     function complexe(d, o, rx, rz) {
@@ -314,6 +319,24 @@
         [[-3, -3], [3, -3], [-3, 3], [3, 3]].forEach(function (p) {
           for (var py = 1; py < HAUT; py++) o.pose(x + p[0], y0 + py, z + p[1], B.STONE_BRICK);
           o.pose(x + p[0] + (p[0] > 0 ? 1 : -1), y0 + 1, z + p[1], B.TORCH);
+        });
+        salle(d, x - DEMI + 1, y0 + 1, z - DEMI + 1, x + DEMI - 1, y0 + HAUT - 1, z + DEMI - 1);
+        coffre(d, o, x, y0 + 1, z + DEMI - 2);
+        d.spawn = { x: x + 0.5, y: y0 + 1, z: z + 0.5 };
+        escalierVersSurface(d, o, rx, rz, DEMI);
+      },
+
+      /* Cité ancienne : des ruines de brique de pierre moussue, un décor de
+         cristaux lumineux plutôt que de torches — la même forme que la
+         crypte, un autre matériau et une autre lumière (SPEC-SOUTERRAIN-003). */
+      cite_ancienne: function (d, o, rx, rz) {
+        var x = d.x, z = d.z;
+        var y0 = Math.max(4, Math.min(d.surface - PROFONDEUR, SEA - 6));
+        d.y = y0;
+        o.coque(x - DEMI, y0, z - DEMI, x + DEMI, y0 + HAUT, z + DEMI, o.mousse, 0);
+        [[-3, -3], [3, -3], [-3, 3], [3, 3]].forEach(function (p) {
+          for (var py = 1; py < HAUT; py++) o.pose(x + p[0], y0 + py, z + p[1], B.STONE_BRICK);
+          o.pose(x + p[0] + (p[0] > 0 ? 1 : -1), y0 + 1, z + p[1], B.CRISTAL_LUMINEUX);
         });
         salle(d, x - DEMI + 1, y0 + 1, z - DEMI + 1, x + DEMI - 1, y0 + HAUT - 1, z + DEMI - 1);
         coffre(d, o, x, y0 + 1, z + DEMI - 2);
@@ -678,8 +701,8 @@
        même contenu, en solo comme sur une autre machine. Chaque type de donjon
        ajoute ses richesses propres à une base commune. */
     var BUTIN_TYPE = {
-      crypte:           [[I.EMERALD, 1, 3, 0.6], [I.ARC, 1, 1, 0.35], [I.IRON_SWORD, 1, 1, 0.25], [I.BONE, 2, 6, 0.8]],
-      mine:             [[I.DIAMOND, 1, 2, 0.4], [B.RAIL, 4, 12, 0.8], [I.GOLD_INGOT, 1, 4, 0.5], [B.TORCH, 4, 10, 0.9]],
+      crypte:           [[I.EMERALD, 1, 3, 0.6], [I.ARC, 1, 1, 0.35], [I.IRON_SWORD, 1, 1, 0.25], [I.BONE, 2, 6, 0.8], [I.ARGENT_LINGOT, 1, 3, 0.4]],
+      mine:             [[I.DIAMOND, 1, 2, 0.4], [B.RAIL, 4, 12, 0.8], [I.GOLD_INGOT, 1, 4, 0.5], [B.TORCH, 4, 10, 0.9], [I.CUIVRE_LINGOT, 2, 5, 0.6], [I.ETAIN_LINGOT, 2, 5, 0.6]],
       pyramide:         [[I.GOLD_INGOT, 3, 8, 1], [I.EMERALD, 2, 5, 0.8], [I.DIAMOND, 1, 2, 0.35], [I.BONE, 2, 5, 0.7]],
       forteresse_glace: [[B.PACKED_ICE, 4, 12, 0.9], [I.DIAMOND, 1, 2, 0.45], [I.IRON_PICKAXE, 1, 1, 0.4]],
       temple:           [[I.EMERALD, 2, 6, 0.9], [I.ARBALETE, 1, 1, 0.3], [I.GOLDEN_APPLE, 1, 1, 0.35], [B.VINES, 2, 6, 0.6]],
@@ -687,6 +710,8 @@
       citadelle:        [[I.DIAMOND, 2, 4, 0.8], [B.OBSIDIAN, 2, 6, 0.7], [I.GOLDEN_APPLE, 1, 2, 0.6], [I.FEATHER, 4, 10, 0.8]],
       monument:         [[I.PRISMARINE_SHARD, 6, 16, 1], [B.SPONGE, 1, 4, 0.8], [B.SEA_LANTERN, 2, 5, 0.7], [I.GOLD_INGOT, 2, 6, 0.7]],
       epave:            [[I.EMERALD, 2, 5, 0.9], [I.COOKED_FISH, 2, 6, 0.8], [I.GOLD_INGOT, 1, 3, 0.6], [I.ARBALETE, 1, 1, 0.2]],
+      cite_ancienne:    [[I.LAPIS, 2, 6, 0.7], [I.QUARTZ, 2, 6, 0.7], [I.RUBIS, 1, 2, 0.3],
+                         [I.SAPHIR, 1, 2, 0.3], [I.ARGENT_LINGOT, 2, 5, 0.6], [I.BIJOU, 1, 1, 0.15]],
     };
     var RICHESSE = { petit: 1, moyen: 1.6, grand: 2.6 };
     function butin(d, indice) {
