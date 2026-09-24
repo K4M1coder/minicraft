@@ -79,9 +79,21 @@
         selected: p.selected, flying: !!p.flying,
         inv: p.inv.serialize(),
       },
+      // le 3e champ (taille) n'existait pas avant l'armoire/étagère/bibliothèque
+      // (SPEC-INTERIEUR-002, tailles différentes d'un coffre) : absent, une
+      // vieille sauvegarde recharge comme avant (27, la taille d'un coffre).
       chests: state.chests ? Object.keys(state.chests).map(function (k) {
-        return [k, state.chests[k].serialize()];
+        return [k, state.chests[k].serialize(), state.chests[k].size];
       }) : [],
+      // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles.
+      expositions: state.expositions ? Object.keys(state.expositions).map(function (k) {
+        var s = state.expositions[k];
+        return [k, s.id, s.n, s.data || null];
+      }) : [],
+      // SPEC-INTERIEUR-002 : la réapparition se fixe sur le dernier lit où
+      // l'on a dormi — absente tant qu'on n'a jamais dormi (comportement
+      // d'avant cette spec : la réapparition suit alors le point d'arrivée).
+      spawnPoint: state.spawnPoint || null,
       furnaces: state.furnaces ? Object.keys(state.furnaces).map(function (k) {
         var f = state.furnaces[k];
         return [k, f.input ? [f.input.id, f.input.n] : 0,
@@ -219,11 +231,25 @@
     if (state.chests) {
       for (var ck in state.chests) delete state.chests[ck];
       (data.chests || []).forEach(function (c) {
-        var inv = MC.Inventory.create(27);
+        var inv = MC.Inventory.create(c[2] || 27);
         inv.load(c[1]);
         state.chests[c[0]] = inv;
       });
     }
+
+    // SPEC-INTERIEUR-002 : présentoirs et socles ; absent des vieilles
+    // sauvegardes (d'avant cette spec), donc juste vidé dans ce cas.
+    if (state.expositions) {
+      for (var ek in state.expositions) delete state.expositions[ek];
+      (data.expositions || []).forEach(function (e) {
+        if (!e || !e[1]) return;
+        state.expositions[e[0]] = { id: e[1], n: e[2], data: e[3] || undefined };
+      });
+    }
+    // le point de réapparition ne se fixe que si l'on a dormi au moins une
+    // fois ; sinon on laisse game.js retomber sur son comportement d'avant
+    // (réapparition au point d'arrivée du joueur).
+    state.spawnPoint = data.spawnPoint || state.spawnPoint || null;
 
     if (state.furnaces && data.furnaces) {
       for (var k in state.furnaces) delete state.furnaces[k];

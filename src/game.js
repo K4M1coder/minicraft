@@ -37,6 +37,9 @@
     function joueurPrincipal() { return equipe[0].player; }
     var furnaces = Object.create(null);
     var chests = Object.create(null);
+    // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles, par
+    // position (« x,y,z » -> pile { id, n, data } ou undefined si vide).
+    var expositions = Object.create(null);
     var audio = MC.createAudio();
     var chat = MC.Chat.creer();
 
@@ -126,7 +129,8 @@
 
     var g = {
       world: world, entities: entities, player: player, render: render,
-      time: 60, fps: 0, furnaces: furnaces, chests: chests, audio: audio, chat: chat,
+      time: 60, fps: 0, furnaces: furnaces, chests: chests, expositions: expositions,
+      audio: audio, chat: chat,
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
@@ -335,6 +339,7 @@
       remplacerMonde(meta.graine);
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
+      for (var ke in expositions) delete expositions[ke];
       g.time = 60;
       composerEquipe(opts.joueurs || 1, regles);
       chat.vider();
@@ -1080,6 +1085,7 @@
       render.libererToutesEntites();           // libere geometries ET materiaux
       for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
+      for (var ke in expositions) delete expositions[ke];
       var s = player.state;
       s.inv.load([]);
       s.hp = 20; s.hunger = 20; s.air = 10; s.dead = false;
@@ -1328,6 +1334,86 @@
     }
     g.coffreDe = coffreDe;
 
+    // ─── mobilier : lit, présentoir, socle (SPEC-INTERIEUR-002) ────────────
+    // Joueurs locaux actuellement endormis, par index d'équipe (écran
+    // partagé) — vidé dès que tout le monde a dormi une fois.
+    var dormeurs = new Set();
+    /* Dormir dans un lit fixe la réapparition dessus, puis fait passer la
+       nuit — en solo ou en écran partagé, dès que tous les joueurs locaux
+       dorment. En ligne, faute d'un canal pour connaître le sommeil des
+       AUTRES clients connectés au serveur, la règle retenue est plus
+       modeste et documentée ici plutôt que masquée : la réapparition se
+       fixe immédiatement, mais la nuit n'avance que si ce client est seul
+       sur le serveur (`net.distants` vide) ; sinon un message invite juste
+       à attendre — pas de triche silencieuse qui sauterait la nuit pour
+       tout le monde. */
+    function dormir(target) {
+      if (DC && !DC.isNight(g.time)) { ui.toast('On ne dort que la nuit', 'warn'); return; }
+      g.spawnPoint = { x: target.x + 0.5, y: target.y + 0.05, z: target.z + 0.5 };
+      audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      if (net.enLigne() && net.distants && net.distants.size > 0) {
+        ui.toast('Réapparition fixée ici — en attente que tout le monde dorme.');
+        return;
+      }
+      dormeurs.add(equipe[0].index);
+      var tousDorment = equipe.every(function (j) { return dormeurs.has(j.index); });
+      if (!tousDorment) { ui.toast('Réapparition fixée ici — les autres joueurs doivent dormir aussi.'); return; }
+      dormeurs.clear();
+      if (DC) g.time = DC.avancerJourApresDormir(g.time);
+      ui.toast('Vous dormez... le jour se lève.');
+    }
+    g.dormir = dormir;
+
+    /* Présentoir/socle : posent ou retirent UN objet exposé (et non toute
+       une grille — ce n'est pas un conteneur). Poser remplace un objet déjà
+       exposé plutôt que de le refuser : on vise en général pour remplacer,
+       et l'ancien objet retombe au sol pour ne rien perdre. */
+    function interagirExposition(action, target) {
+      var k = target.x + ',' + target.y + ',' + target.z;
+      var st = player.state;
+      if (action === 'retirer') {
+        var expose = expositions[k];
+        if (!expose) { ui.toast('Rien à reprendre ici', 'warn'); return; }
+        delete expositions[k];
+        var reste = st.inv.add(expose.id, expose.n);
+        if (reste && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, expose.id, reste);
+        audio.play('poser');
+        return;
+      }
+      var main = st.inv.stackAt(st.selected);
+      if (!main) return;
+      var ancien = expositions[k];
+      expositions[k] = { id: main.id, n: 1, data: main.data };
+      st.inv.consumeAt(st.selected, 1);
+      if (ancien) {
+        var resteA = st.inv.add(ancien.id, ancien.n);
+        if (resteA && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, ancien.id, resteA);
+      }
+      audio.play('poser');
+    }
+    g.interagirExposition = interagirExposition;
+
+    /* Livre/note en main (SPEC-INTERIEUR-003) : la pile porte son contenu
+       dans `data` (vierge tant qu'on n'a rien écrit) ; l'écran d'écriture ou
+       de lecture (ui.js) le modifie via `surChange`, qui réécrit la pile —
+       c'est ainsi que le texte survit à la sauvegarde et au passage dans un
+       coffre/bibliothèque (même sérialisation que n'importe quelle pile,
+       voir inventory.js). */
+    function ouvrirLivreEnMain() {
+      var st = player.state, i = st.selected, stack = st.inv.stackAt(i);
+      if (!stack || !MC.Livres) return;
+      if (!stack.data) stack.data = stack.id === I.NOTE ? MC.Livres.creerNote() : MC.Livres.creerLivre();
+      ui.ouvrirLivre(stack.data, {
+        auteur: (equipe[0] && equipe[0].nom) || 'Joueur',
+        surChange: function (nouveau) {
+          var courant = st.inv.stackAt(i);
+          if (courant) courant.data = nouveau;
+        },
+      });
+      input.setState('ui');
+    }
+    g.ouvrirLivreEnMain = ouvrirLivreEnMain;
+
     // ─── carte ──────────────────────────────────────────────────────────────
     function aUneCarte(pl) { return regles.blocsIllimites || pl.state.inv.count(I.CARTE) > 0; }
     function ouvrirCarte() {
@@ -1564,6 +1650,15 @@
           if (!coffreDe(target.x, target.y, target.z)) chests[k] = Inv.create(27);
           ui.openContainer('chest', player.state.inv, chests[k], k);
           audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+        } else if (kind === 'armoire' || kind === 'etagere' || kind === 'bibliotheque') {
+          // SPEC-INTERIEUR-002 : armoire, étagère, bibliothèque — de simples
+          // conteneurs comme un coffre, juste posés/rendus différemment ;
+          // le contenu (livres compris, SPEC-INTERIEUR-003) traverse la
+          // sauvegarde par le même chemin que n'importe quel coffre.
+          var TAILLES = { armoire: 27, etagere: 9, bibliotheque: 18 };
+          if (!chests[k]) chests[k] = Inv.create(TAILLES[kind]);
+          ui.openContainer('chest', player.state.inv, chests[k], k);
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
         } else if (kind === 'banque') {
           // un coffre-fort ouvre le compte, le même dans toutes les banques
           ouvrirBanque();
@@ -1585,6 +1680,9 @@
         input.setState('ui');
         return;
       }
+      if (res === 'dormir') { dormir(target); return; }
+      if (res === 'exposer' || res === 'retirer') { interagirExposition(res, target); return; }
+      if (res === 'livre') { ouvrirLivreEnMain(); return; }
       if (res === 'place') {
         var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
         // le serveur fait autorite : on lui annonce la pose, état compris
@@ -1730,7 +1828,11 @@
       else if (act === 'factions' && ui.factionsOuvertes()) closeUI();
       else if (act === 'journal' && ui.journalOuvert()) closeUI();
       else if (act === 'succes' && ui.succesOuverts()) closeUI();
-      else if (act === 'livre') ui.toggleLivre();
+      // le livre (SPEC-INTERIEUR-003) se ferme par Échap (onEscape -> closeUI,
+      // qui appelle déjà ui.fermerLivreEcran) : pas de raccourci dédié ici,
+      // sans quoi taper une lettre liée à une autre action fermerait le
+      // panneau en pleine écriture.
+      else if (act === 'livre' && !(ui.livreEcranOuvert && ui.livreEcranOuvert())) ui.toggleLivre();
     }
 
     function onEscape() {
@@ -1755,6 +1857,7 @@
       ui.fermerCarte();
       ui.fermerFactions();
       ui.fermerSucces();
+      if (ui.fermerLivreEcran) ui.fermerLivreEcran();
       if (ui.fermerJournal) ui.fermerJournal();
       forceCloseContainer();
       // une réplique du récit attend sa réponse : on garde la main sur l'interface

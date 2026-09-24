@@ -29,7 +29,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'commandes', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes'];
+                 'chat', 'commandes', 'split', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,

@@ -189,6 +189,56 @@
     return boxes;
   }
 
+  // ─── SPEC-INTERIEUR-002 : mobilier orienté ─────────────────────────────────
+  // Même octet d'état qu'un escalier, mais bien plus simple : un meuble ne
+  // connaît ni angle ni inversion, juste l'orientation (2 bits, posée comme
+  // une porte — Core.orientDeRegard) et, pour le lit, une variante (1 bit :
+  // pied/tête, pour distinguer l'oreiller sans dupliquer l'id).
+  function packMeuble(orientation, variante) { return (orientation & 3) | ((variante ? 1 : 0) << 2); }
+  function unpackMeuble(etat) { return { orientation: etat & 3, variante: !!(etat & 4) }; }
+
+  // rotation d'une boîte du cube unité de `n` quarts de tour (sens direct de
+  // l'orientation 0=N,1=E,2=S,3=O) autour du centre (0.5, 0.5), dans le plan
+  // XZ — une boîte dessinée pour l'orientation N tourne d'un cran par pas.
+  function rotPoint(x, z) { return [0.5 - (z - 0.5), 0.5 + (x - 0.5)]; }
+  function rotBoxOnce(b) {
+    var p0 = rotPoint(b.x0, b.z0), p1 = rotPoint(b.x1, b.z1);
+    return { x0: Math.min(p0[0], p1[0]), x1: Math.max(p0[0], p1[0]), y0: b.y0, y1: b.y1,
+             z0: Math.min(p0[1], p1[1]), z1: Math.max(p0[1], p1[1]) };
+  }
+  function rotBox(b, n) {
+    var r = b, k = ((n % 4) + 4) % 4;
+    for (var i = 0; i < k; i++) r = rotBoxOnce(r);
+    return r;
+  }
+
+  /* Boîtes de base (orientation N, dos contre le mur nord — même convention
+     que boiteMur(0) pour les portes) par type de meuble ; voir `meuble` dans
+     les définitions de bloc (core.js). Une seule boîte suffit pour la
+     plupart : ce sont des meubles, pas des modèles détaillés — le mailleur
+     (mesher.js) et la physique (physics.js) partagent cette même géométrie
+     approchée, comme pour les escaliers. */
+  var MEUBLE_BOXES = {
+    lit:          [{ x0: 0.05, y0: 0,    z0: 0.05, x1: 0.95, y1: 0.5625, z1: 0.95 }],
+    table:        [{ x0: 0.1,  y0: 0,    z0: 0.1,  x1: 0.9,  y1: 0.875,  z1: 0.9 }],
+    chaise:       [{ x0: 0.15, y0: 0,    z0: 0.15, x1: 0.85, y1: 0.5,    z1: 0.85 },
+                    { x0: 0.15, y0: 0.5,  z0: 0,    x1: 0.85, y1: 1,      z1: 0.15 }],
+    armoire:      [{ x0: 0.05, y0: 0,    z0: 0.05, x1: 0.95, y1: 1,      z1: 0.95 }],
+    etagere:      [{ x0: 0.05, y0: 0,    z0: 0.05, x1: 0.95, y1: 1,      z1: 0.3 }],
+    bibliotheque: [{ x0: 0.02, y0: 0,    z0: 0.02, x1: 0.98, y1: 1,      z1: 0.98 }],
+    tapis:        [{ x0: 0,    y0: 0,    z0: 0,    x1: 1,    y1: 0.0625, z1: 1 }],
+    lampe:        [{ x0: 0.4,  y0: 0,    z0: 0.4,  x1: 0.6,  y1: 0.9,    z1: 0.6 }],
+    vase:         [{ x0: 0.3,  y0: 0,    z0: 0.3,  x1: 0.7,  y1: 0.5,    z1: 0.7 }],
+    presentoir:   [{ x0: 0.1,  y0: 0.3,  z0: 0,    x1: 0.9,  y1: 0.8,    z1: 0.15 }],
+    socle:        [{ x0: 0.25, y0: 0,    z0: 0.25, x1: 0.75, y1: 0.7,    z1: 0.75 }],
+  };
+  function boitesMeuble(def, etat) {
+    var base = MEUBLE_BOXES[def.meuble];
+    if (!base) return [];
+    var e = unpackMeuble(etat || 0);
+    return base.map(function (b) { return rotBox(b, e.orientation); });
+  }
+
   // ─── dispatch générique (appelé par core.boiteDe et par mesher.js) ─────────
   /* Boîtes d'un bloc de forme : `def` = la définition du bloc (BLOCKS[id]),
      `etat` = son octet d'état, `voisinFn(dx, dz)` = accesseur optionnel
@@ -198,6 +248,7 @@
     if (!def) return [];
     if (def.forme === 'escalier') return boitesEscalier(etat || 0);
     if (def.forme === 'dalle') return boitesDalle(etat || 0);
+    if (def.forme === 'meuble') return boitesMeuble(def, etat || 0);
     if (!voisinFn) return [];
     var voisins = { n: voisinFn(0, -1), e: voisinFn(1, 0), s: voisinFn(0, 1), o: voisinFn(-1, 0) };
     return boitesConnect(def.forme, connexions(voisins));
@@ -205,6 +256,7 @@
 
   MC.Formes = {
     DROIT: DROIT, INT_G: INT_G, INT_D: INT_D, EXT_G: EXT_G, EXT_D: EXT_D,
+    DIRS: DIRS,
     packEscalier: packEscalier, unpackEscalier: unpackEscalier,
     orientationPose: orientationPose, boitesEscalier: boitesEscalier,
     formeDepuisVoisins: formeDepuisVoisins,
@@ -213,5 +265,8 @@
     packDalle: packDalle, boitesDalle: boitesDalle, decisionDalle: decisionDalle,
     connexions: connexions, boitesConnect: boitesConnect, boitesBloc: boitesBloc,
     CONNECT_DIMS: CONNECT_DIMS,
+    // SPEC-INTERIEUR-002 : mobilier orienté
+    packMeuble: packMeuble, unpackMeuble: unpackMeuble, rotBox: rotBox,
+    boitesMeuble: boitesMeuble, MEUBLE_BOXES: MEUBLE_BOXES,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

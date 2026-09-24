@@ -14,6 +14,18 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+- Mobilier d'intérieur (SPEC-INTERIEUR-002) : lit (on y dort, la nuit passe, la
+  réapparition s'y fixe), table, chaise, armoire, étagère, bibliothèque
+  (conteneurs), tapis, lampe (source de lumière), vase, présentoir et socle
+  (exposent un objet) — recettes, pose orientée selon le regard (comme les
+  portes), boîtes de collision/maillage dédiées (`MC.Formes.boitesMeuble`).
+- Livres et notes (SPEC-INTERIEUR-003, `src/livres.js`) : écriture (titre,
+  pages), signature (auteur, devient définitif), lecture, et une fonction pure
+  `livreDuMonde(graine, lieu)` pour générer les livres des bibliothèques de
+  lieux. Le contenu d'une pile porte désormais des données arbitraires
+  (`stack.data`, comme `dmg`) qui survivent à la sauvegarde et au passage dans
+  un coffre/une bibliothèque.
 
 ## [0.2.0] - 2026-09-24
 ### Ajouté
