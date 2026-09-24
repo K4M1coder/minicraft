@@ -96,7 +96,7 @@
       // textures et matériaux : on force un ré-upload/relien plutôt que de
       // supposer que le navigateur les a conservés
       atlas.texture.needsUpdate = true;
-      [matOpaque, matCutout, matBlend, matLumineux].forEach(function (m) { if (m) m.needsUpdate = true; });
+      [matOpaque, matCutout, matBlend, matLumineux, matDepthCutout].forEach(function (m) { if (m) m.needsUpdate = true; });
       // render targets de réfraction : on ABANDONNE les anciennes instances
       // plutôt que de les redimensionner (`.setSize()` déclenchait leur
       // dispose() interne, qui retombe sur l'ancien contexte GL capturé par
@@ -201,6 +201,36 @@
           '  diffuseColor *= sampledDiffuseColor;',
           '#endif'].join('\n'));
     }
+    /* customDepthMaterial (correction revue adversariale, bug bloquant de
+       SPEC-PERF-011/012 : ombre fausse sur feuillage fusionné) : Three r128
+       (WebGLShadowMap._getDepthMaterial) ignore `Material.onBeforeCompile`
+       du matériau de la scène pour la passe ombre — il fabrique un
+       MeshDepthMaterial générique qui lit l'attribut `uv` brut, jamais mis à
+       l'échelle par le greedy meshing (mesher.js/emettreQuad : pushUV garde
+       les coordonnées 0..1 d'un seul quad, voir uvBase/uvRep ci-dessus pour
+       la vraie répétition). Sur un grand quad fusionné, l'alphaTest de
+       l'ombre échantillonnerait alors UNE tuile étirée au lieu du motif
+       répété : silhouette d'ombre fausse. On fournit donc notre propre
+       matériau de profondeur — même alphaTest que matCutout, même
+       répétition fract() via avecAtlasRepete à partir de uvBase/uvRep — et
+       on l'assigne explicitement (mesh.customDepthMaterial) dans syncChunk.
+       L'opaque n'a pas d'alphaTest : son ombre est une silhouette pleine,
+       correcte même avec un UV étiré, donc pas besoin d'un second matériau.
+       Aucune lumière ponctuelle (PointLight des torches) ne projette
+       d'ombre ici (castShadow jamais mis à true sur pl2/pl3) : pas de
+       customDistanceMaterial nécessaire pour l'instant.
+       Perte/restauration de contexte WebGL (SPEC-RENDU-001/002, lot rendu
+       A4) : les matériaux de la scène ne sont pas recréés, seulement
+       marqués `needsUpdate` (voir l'écouteur `webglcontextrestored` plus
+       haut, qui inclut désormais matDepthCutout) — les meshes cutout gardent
+       donc la même référence `customDepthMaterial` d'une génération de
+       contexte à l'autre, rien à réassigner ici. */
+    var matDepthCutout = new THREE.MeshDepthMaterial({
+      depthPacking: THREE.RGBADepthPacking,
+      map: atlas.texture,
+      alphaTest: matCutout.alphaTest,
+    });
+    matDepthCutout.onBeforeCompile = function (sh) { avecAtlasRepete(sh); };
     function avecLumiereDesBlocs(mat, eau) {
       mat.onBeforeCompile = function (sh) {
         sh.uniforms.tempsEau = UN.temps; sh.uniforms.ventEau = ventEau;
@@ -426,6 +456,9 @@
           m.renderOrder = passes[i][3];
           m.castShadow = pass !== 'blend';
           m.receiveShadow = true;
+          // ombre correcte sur les grands quads fusionnés (feuillage,
+          // cultures) — voir matDepthCutout ci-dessus
+          if (pass === 'cutout') m.customDepthMaterial = matDepthCutout;
           if (pass === 'blend') maillagesEau.add(m);
           scene.add(m);
           chunk[key] = m;
@@ -2371,7 +2404,7 @@
       get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
       // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte
       get metriquesDessin() { return { appelsDessin: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
-      materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
+      materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux, depthCutout: matDepthCutout },
       forceTorches: forceTorches,
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,

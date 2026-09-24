@@ -238,6 +238,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   bas, sans moyen de les atteindre : les écrans et l'inventaire défilent
   désormais verticalement et horizontalement, le haut restant toujours
   accessible (SPEC-OPTION-007).
+- Revue adversariale du greedy meshing (L47, sous-lot A3) : la passe d'ombre
+  (`WebGLShadowMap`, Three r128) ignorait `uvBase`/`uvRep` — elle fabrique un
+  `MeshDepthMaterial` générique qui ne copie jamais `onBeforeCompile` et lit
+  l'attribut `uv` brut, jamais mis à l'échelle par le greedy meshing. Sur un
+  grand quad fusionné (feuillage), l'alphaTest de l'ombre échantillonnait donc
+  une seule tuile étirée au lieu du motif répété, faussant la silhouette de
+  l'ombre (mesuré : jusqu'à 74 des 285 quads d'un cube 8×8×8 de feuilles
+  fusionnés). `src/render.js` assigne désormais un `customDepthMaterial`
+  partagé (`matDepthCutout`, `MeshDepthMaterial` + `RGBADepthPacking`) aux
+  meshes cutout, avec la même répétition `fract()` (`avecAtlasRepete`) que le
+  matériau visible. L'opaque n'a pas d'alphaTest : son ombre reste correcte
+  sans matériau dédié.
 
 ## [0.3.0] - 2026-09-24
 ### Corrigé
