@@ -83,6 +83,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L22** | Couverture : portes, trappes, échelles, lianes, combat (PvE, PvP), physique, véhicules, recettes, butins, succès, options, commandes | `PORTE` `COMBAT` `PHYS` `RECETTE` `DROP` `SUCCES` `OPTION` `CMD` | à faire |
 | **L35** | Profondeurs : flore et récifs sous-marins, biomes souterrains (créatures, donjons, ruines, mines), bioluminescence, tous les minerais | `MER` `SOUTERRAIN` `LUMIERE` `MINERAI` | à faire |
 | **L36** | Ambiance sonore complète et spatialisée : environnement, créatures, actions, interactions, événements (absorbe la proposition L30) | `AUDIO` | à faire |
+| **L23** | Saisons (validé) : journée de 20 minutes, année de 3 heures en quatre saisons, durée du jour, températures, neige, feuillages, gel des lacs, cultures en saison | `SAISON` | à faire |
 | **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
@@ -140,7 +141,7 @@ série de specs ⏳ dans `SPECS.md`, puis suit le cycle S1→S7.
 
 | Lot | Proposition | Specs pressenties |
 |---|---|---|
-| **L23** | **Saisons** : printemps, été, automne, hiver sur une année de jeu — feuillages qui roussissent puis tombent, neige saisonnière, lacs gelés l'hiver, durée du jour qui varie, cultures qui ne poussent qu'en saison | `SAISON` |
+| **L23** | *(validé, voir la table des lots)* **Saisons** : printemps, été, automne, hiver sur une année de jeu — feuillages qui roussissent puis tombent, neige saisonnière, lacs gelés l'hiver, durée du jour qui varie, cultures qui ne poussent qu'en saison | `SAISON` |
 | **L24** | **Construction fine** : escaliers, dalles, clôtures et portillons, vitres, lits (dormir fait passer la nuit et fixe le point de réapparition), panneaux où l'on écrit | `BLOC` `LIT` |
 | **L25** | **Armures et équipement** : casque, plastron, jambières, bottes en cuir, fer, diamant ; réduction des dégâts, usure, visibles sur l'avatar | `ARMURE` |
 | **L26** | **Agriculture et élevage** : plusieurs cultures (carottes, pommes de terre, citrouilles, canne), arrosage par proximité de l'eau, nourrir les animaux pour les faire se reproduire, enclos | `CULTURE` `ELEVAGE` |
