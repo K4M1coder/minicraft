@@ -165,11 +165,33 @@ node tests/integration-paquet.js        # tests d'intégration de l'empaquetage
 node tests/integration-pvp.js           # PvP, zones et factions sur un vrai serveur
 node tests/integration-charge.js        # banc de charge, à petite échelle (vérifie qu'il fonctionne)
 node tests/charge.js                    # banc de charge complet (1 à 100 joueurs) — voir docs/charge.md
+node tests/integration-cdp-fake.js      # client CDP (tools/cdp.js) contre un faux serveur WebSocket, sans navigateur
+node tests/integration-e2e-headless.js  # une vraie petite campagne e2e sans fenêtre (voir plus bas)
+node tests/run.js --preset e2e-fumee    # quelques e2e représentatifs (< 2 min), sans fenêtre — greffé sur pre-push
 ```
 
 `tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~117 tests
 end-to-end qui pilotent une vraie partie ; `window.runE2E(ensureGame(), null, 'SPEC-XXX')`
 n'en lance qu'une partie, filtrée par nom.
+
+**e2e sans fenêtre, en ligne de commande** (SPEC-BANC-023/024/025) : `node
+tests/run.js --type e2e` (et tout préréglage qui en contient, dont `e2e` et
+`e2e-fumee`) exécute les e2e sans navigateur visible — un Edge ou Chrome
+installé, détecté automatiquement (`tools/navigateur.js`, mêmes chemins que
+l'export PDF), lancé en `--headless=new` avec un profil et un port de
+débogage distant TEMPORAIRES et DÉDIÉS à la campagne (deux campagnes
+lancées en même temps ne se gênent jamais), piloté de l'extérieur par CDP
+(`tools/cdp.js`, client minimal sans dépendance npm, réutilise l'encodage
+WebSocket de `src/net-protocol.js`) — voir `tools/e2e-headless.js`. Le
+rendu utilise l'accélération matérielle quand elle existe (sinon
+`accelerationMaterielle: false` dans le cahier), sur une surface d'au
+moins 1280×800. Navigateur et serveur de test sont TOUJOURS fermés à la
+fin, y compris sur un échec ou une interruption (Ctrl+C). Sans aucun
+Edge/Chrome installé, les e2e sont ignorés avec un avertissement plutôt
+que de faire échouer la campagne — c'est ce qui permet au préréglage
+`e2e-fumee` (quelques e2e rapides et représentatifs, < 2 min, ajouté à
+`pr` donc au crochet pre-push) de ne jamais bloquer un poste ou un agent
+CI sans navigateur.
 
 Chaque campagne — navigateur ou ligne de commande, même interrompue par
 `--delai` — écrit son **cahier de test** dans `tests/resultats/<date>_<préréglage>/`

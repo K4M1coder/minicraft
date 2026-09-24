@@ -102,6 +102,21 @@ respecter (voir PLAN.md, « Commits et versions »).
   (navigateur headless détecté automatiquement, repli sur l'impression sinon)
   — les quatre rendus (page serveur, HTML autonome, PDF, Word) partagent le
   même modèle de document (`tests/rapport.js`, `MC_RAPPORT.modele()`).
+- Campagnes end-to-end sans fenêtre, en ligne de commande (SPEC-BANC-023/024/025) :
+  `node tests/run.js --type e2e` (et tout préréglage qui contient des e2e)
+  démarre désormais son propre serveur de test et son propre Edge/Chrome
+  installé en mode sans interface (`--headless=new`, profil et port de
+  débogage temporaires, dédiés à la campagne — deux campagnes lancées en
+  même temps ne se gênent jamais), pilote `tests/index.html` de l'extérieur
+  par CDP (`tools/cdp.js`, client minimal sans dépendance, réutilise le
+  protocole WebSocket de `src/net-protocol.js`), récupère résultats,
+  captures et journal de console, écrit le cahier de test comme les autres
+  types, puis ferme navigateur et serveur — même en cas d'échec ou
+  d'interruption (`tools/navigateur.js`, `tools/e2e-headless.js`). Le rendu
+  utilise l'accélération matérielle quand elle existe (sinon signalée dans
+  le cahier), sur une surface d'au moins 1280×800. Préréglage `e2e-fumee`
+  (quelques e2e représentatifs, < 2 min), ajouté à `pr` donc à pre-push :
+  ignoré avec un avertissement, sans échec, sur un poste sans navigateur.
 
 ### Corrigé
 - Outillage de test (L42) : `tests/cahiers.html` échappe désormais tout
