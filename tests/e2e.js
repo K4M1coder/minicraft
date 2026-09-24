@@ -379,6 +379,11 @@
     var s = await reset(g);
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z) + 2;
     var by = g.world.groundAt(bx, bz, true) + 1;
+    // un appui maîtrisé : ce qui se trouve là (établi d'une maison…) ne doit pas intercepter la pose
+    [0, 1].forEach(function (dz) {
+      g.world.setBlock(bx, by - 1, bz + dz, B.STONE);
+      for (var yy = by; yy < by + 3; yy++) g.world.setBlock(bx, yy, bz + dz, 0);
+    });
     s.inv.add(B.ESCALIER_STONE, 2); s.selected = 0;
     s.yaw = 0;
     var res = g.player.useOn({ x: bx, y: by - 1, z: bz, block: g.world.getBlock(bx, by - 1, bz),
