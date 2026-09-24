@@ -375,6 +375,34 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
+  e2e('SPEC-CONSTR-001 : deux escaliers posés s\'orientent et s\'ajustent en angle, dans la vraie boucle', async function (g) {
+    var s = await reset(g);
+    var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z) + 2;
+    var by = g.world.groundAt(bx, bz, true) + 1;
+    s.inv.add(B.ESCALIER_STONE, 2); s.selected = 0;
+    s.yaw = 0;
+    var res = g.player.useOn({ x: bx, y: by - 1, z: bz, block: g.world.getBlock(bx, by - 1, bz),
+                               nx: 0, ny: 1, nz: 0, t: 1 });
+    A.equal(res, 'place', 'l\'escalier se pose');
+    A.equal(g.world.getBlock(bx, by, bz), B.ESCALIER_STONE, 'le bon bloc est posé');
+    var etat = MC.Formes.unpackEscalier(g.world.getEtat(bx, by, bz));
+    A.equal(etat.orientation, C.orientDeRegard(g.player.lookDir()), 'orienté selon le regard');
+    // laisse le mailleur reconstruire le chunk (une géométrie non cubique de
+    // plus) sans lever d'exception dans la vraie boucle de rendu
+    await frames(5);
+
+    // un second, perpendiculaire et adjacent : l'angle s'ajuste tout seul
+    s.yaw = Math.PI / 2;
+    var res2 = g.player.useOn({ x: bx, y: by - 1, z: bz + 1, block: g.world.getBlock(bx, by - 1, bz + 1),
+                                nx: 0, ny: 1, nz: 0, t: 1 });
+    A.equal(res2, 'place', 'le second escalier se pose');
+    await frames(5);
+    var e0 = MC.Formes.unpackEscalier(g.world.getEtat(bx, by, bz));
+    var e1 = MC.Formes.unpackEscalier(g.world.getEtat(bx, by, bz + 1));
+    A.ok(e0.forme !== MC.Formes.DROIT || e1.forme !== MC.Formes.DROIT,
+         'au moins un des deux a pris un angle intérieur ou extérieur');
+  });
+
   // ══════════════════════════════════════════════════════════════════════════
   // Miner, poser, ramasser — dans la boucle réelle
   // ══════════════════════════════════════════════════════════════════════════

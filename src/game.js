@@ -1564,8 +1564,9 @@
       }
       if (res === 'place') {
         var bx = target.x + target.nx, by = target.y + target.ny, bz = target.z + target.nz;
-        // le serveur fait autorite : on lui annonce la pose
-        if (net.enLigne()) net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0);
+        // le serveur fait autorite : on lui annonce la pose, état compris
+        // (orientation d'un escalier, moitié d'une dalle — SPEC-CONSTR-001/002)
+        if (net.enLigne()) net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0, world.getEtat(bx, by, bz));
         else signalerHistoire({ type: 'poser', bloc: mange, x: bx, y: by, z: bz });
       }
       if (res === 'place') audio.play('poser');

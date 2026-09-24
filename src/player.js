@@ -103,7 +103,10 @@
       } else pl.fallFrom = null;
 
       var before = pl.pos.y;
-      var hit = P.move(world, pl, dt, PW, PH);
+      // 0,5 bloc franchissable en marchant (SPEC-CONSTR-001) : une marche
+      // d'escalier ou une dalle, jamais un bloc plein entier.
+      var PAS_AUTO = (!pl.flying && pl.onGround) ? 0.55 : 0;
+      var hit = P.move(world, pl, dt, PW, PH, PAS_AUTO);
       /* Se hisser hors de l'eau. La poussée de nage cesse dès que la poitrine
          émerge : trop tôt pour franchir un rebord, si bien qu'on restait
          prisonnier de la mer, même face à une plage au ras de l'eau. Nageant
@@ -250,6 +253,10 @@
       } else {
         drops = C.dropsOf(id, bt.harvests, rand);
         world.setBlock(target.x, target.y, target.z, 0);
+        // un escalier cassé peut changer l'angle de ses voisins
+        if (C.BLOCKS[id] && C.BLOCKS[id].forme === 'escalier') {
+          MC.Formes.actualiserZoneEscalier(world, target.x, target.y, target.z);
+        }
       }
       // une plante posée sur un bloc cassé tombe aussi
       var above = world.getBlock(target.x, target.y + 1, target.z);
@@ -374,6 +381,49 @@
         return 'place';
       }
 
+      /* Dalle (SPEC-CONSTR-002) : moitié basse ou haute selon l'endroit
+         visé (hauteur du point cliqué sur la face du bloc), et deux dalles
+         du même matériau font un bloc plein — MC.Formes.decisionDalle
+         centralise la règle, ici on ne fait que lire la visée et écrire. */
+      if (idef && tdef && tdef.forme === 'dalle') {
+        var eDalle = eyePos(), dDalle = lookDir();
+        var fracY = Math.max(0, Math.min(1, (eDalle.y + dDalle.y * target.t) - target.y));
+        var decision = MC.Formes.decisionDalle({
+          memeMateriau: tb === id, moitieVisee: world.getEtat(target.x, target.y, target.z) ? 'haut' : 'bas',
+          normaleY: target.ny, fracY: fracY,
+        });
+        if (decision.action === 'fusion') {
+          world.setBlock(target.x, target.y, target.z, tdef.mat);
+          world.setEtat(target.x, target.y, target.z, 0);
+          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          return 'place';
+        }
+      }
+      if (idef && idef.forme === 'dalle') {
+        var bxd = target.x + target.nx, byd = target.y + target.ny, bzd = target.z + target.nz;
+        if (byd < 0 || byd >= C.WORLD_H) return null;
+        var eDalle2 = eyePos(), dDalle2 = lookDir();
+        var fracY2 = Math.max(0, Math.min(1, (eDalle2.y + dDalle2.y * target.t) - target.y));
+        var dec2 = MC.Formes.decisionDalle({ memeMateriau: false, normaleY: target.ny, fracY: fracY2 });
+        var cible = world.getBlock(bxd, byd, bzd);
+        // même dalle déjà en place (moitié opposée) dans la case adjacente : fusion là aussi
+        if (cible === id) {
+          var moitieCible = world.getEtat(bxd, byd, bzd) ? 'haut' : 'bas';
+          if (moitieCible !== dec2.moitie) {
+            world.setBlock(bxd, byd, bzd, idef.mat);
+            world.setEtat(bxd, byd, bzd, 0);
+            if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+            return 'place';
+          }
+          return null;
+        }
+        if (!C.isReplaceable(cible)) return null;
+        world.setBlock(bxd, byd, bzd, id);
+        world.setEtat(bxd, byd, bzd, MC.Formes.packDalle(dec2.moitie === 'haut'));
+        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        return 'place';
+      }
+
       /* Engrais : une culture mûrit d'un coup ; sur l'herbe, il fait pousser
          herbes hautes et fleurs alentour. */
       if (idef && idef.engrais) {
@@ -457,6 +507,14 @@
       if (bdef && bdef.needsSupport && world.hasSupport && !world.hasSupport(bx, by, bz)) return null;
 
       world.setBlock(bx, by, bz, id);
+      /* Escalier (SPEC-CONSTR-001) : orienté selon le regard, inversé si le
+         plafond est plein juste au-dessus, puis les angles s'ajustent
+         d'eux-mêmes à lui et à ses 4 voisins horizontaux. */
+      if (bdef && bdef.forme === 'escalier') {
+        var sousPlafond = C.isSolid(world.getBlock(bx, by + 1, bz));
+        world.setEtat(bx, by, bz, MC.Formes.orientationPose(lookDir(), sousPlafond));
+        MC.Formes.actualiserZoneEscalier(world, bx, by, bz);
+      }
       if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
       return 'place';
     }

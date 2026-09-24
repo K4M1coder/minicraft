@@ -254,6 +254,19 @@
     if (TOOLSETS.hoe[i])     shaped(TOOLSETS.hoe[i], 1,     ['MM', ' S', ' S'], { M: mat, S: I.STICK });
   });
 
+  // ─── L24 formes : escaliers, dalles, clôtures, murets, vitres, rambardes ───
+  // (SPEC-CONSTR-001/002/004) — une recette par matériau, sur le gabarit
+  // classique (6 → 4 escaliers, 3 → 6 dalles) réutilisé par toutes les formes.
+  C.BLOCKS.forEach(function (base) {
+    if (!base) return;
+    if (base.escalier) shaped(base.escalier, 4, ['M  ', 'MM ', 'MMM'], { M: base.id });
+    if (base.dalle) shaped(base.dalle, 6, ['MMM'], { M: base.id });
+  });
+  shaped(B.CLOTURE, 3, ['PSP', 'PSP'], { P: B.PLANKS, S: I.STICK });
+  shaped(B.MURET, 6, ['CCC', 'CCC'], { C: B.COBBLE });
+  shaped(B.VITRE, 16, ['GGG', 'GGG'], { G: B.GLASS });
+  shaped(B.RAMBARDE, 6, ['SBS', 'SBS'], { S: B.STONE_BRICK, B: I.STICK });
+
   /* Réduit une grille w×h à sa boîte englobante non vide.
      Sans ça, une recette posée en bas à droite d'une grille 3×3 ne serait pas
      reconnue alors qu'elle est valide. */

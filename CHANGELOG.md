@@ -19,12 +19,18 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 - Flore sous-marine diversifiée selon la profondeur, la température et la lumière : anémones, algues rouges et brunes, posidonies, gorgones pourpres, éponges, laminaires (MER-010).
 - Récifs : frangeants au ras des côtes chaudes, barrières au large, atolls et lagons autour des îles volcaniques éteintes, sur un squelette de corail blanc (MER-011).
-
 - Les commandes /faction s'appliquent : hors ligne à l'état de la partie (sauvegardé), en ligne sur le serveur qui fait foi ; « dire » ne parvient qu'aux membres de la faction principale ; deux membres d'une même faction ne se blessent pas en PvP.
+- Escaliers, dalles, clôtures, murets, vitres et rambardes (L24, `src/formes.js`, `MC.Formes`) : un escalier existe pour chaque essence de planche, la pierre, le pavé, la brique, la brique de pierre, le grès et le grès taillé (et pour les matériaux de toiture tuiles/ardoise/chaume/feuilles tropicales/terre cuite ocre) ; posé, il s'oriente selon le regard, s'inverse sous un plafond, et ses angles intérieurs/extérieurs s'ajustent d'eux-mêmes à ses voisins, y compris à la casse (SPEC-CONSTR-001). Une dalle existe pour chaque matériau porteur d'escalier hors toiture ; elle se pose en moitié basse ou haute selon la face et la hauteur visées, et deux dalles complémentaires du même matériau fusionnent en bloc plein (SPEC-CONSTR-002). Clôtures (bois), murets (pavé), vitres (verre) et rambardes (brique de pierre) se raccordent d'eux-mêmes aux blocs pleins et à leur propre sorte, en angle comme en T (SPEC-CONSTR-004). On monte un escalier ou une dalle en marchant, sans sauter (marche franchissable de 0,5 bloc, `MC.Physics.move`).
+
 
 ### Modifié
 
 - L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.
+
+### Limites connues
+
+- SPEC-CONSTR-003 (toitures en pente auto-ajustées) reste ⏳ : le mécanisme d'angle des escaliers s'y prêterait, mais les bâtiments générés (`habitats.js`) ne posent pas encore de toit à partir de ces nouvelles formes.
+- En ligne, la fusion de deux dalles en bloc plein (SPEC-CONSTR-002) n'est pas encore synchronisée aux autres joueurs : le protocole de pose de bloc ne porte qu'une seule case par message, or la fusion modifie la case VISÉE plutôt que la case adjacente que ce message décrit. Fonctionne en solo et en écran partagé ; en ligne, seul l'auteur de la fusion la voit tant qu'il ne recharge pas le chunk.
 
 ## [0.1.0] - 2026-09-24
 ### Ajouté

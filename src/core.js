@@ -461,6 +461,70 @@
     });
   });
 
+  // ─── L24 formes : escaliers, dalles, clôtures/murets/vitres/rambardes ──────
+  /* SPEC-CONSTR-001 à 004. Plage réservée à cet agent : identifiants de bloc
+     200-399, tuiles d'atlas 384-511 (voir atlas.js) — ici on réutilise les
+     tuiles [dessus, côté, dessous] du matériau de base : aucune tuile neuve
+     n'est nécessaire, l'escalier ou la dalle a juste la forme en moins.
+     `mat` porte l'id du bloc plein d'origine (fusion des dalles, drops).
+     `forme` marque le bloc pour core.isSolid/boiteDe et pour mesher.js —
+     la géométrie et l'état vivent dans src/formes.js (MC.Formes),
+     chargé après core.js mais référencé seulement à l'appel (pas au chargement). */
+  var PROCHAIN_ID_FORME = 200;
+  function idForme(nom) { var id = PROCHAIN_ID_FORME++; B[nom] = id; return id; }
+  function escalierDe(nom, baseId) {
+    var base = BLOCKS[baseId];
+    var escId = idForme(nom);
+    defBlock(escId, {
+      name: 'Escalier (' + base.name.toLowerCase() + ')', tiles: base.tiles.slice(),
+      hardness: base.hardness, tool: base.tool, needsTool: base.needsTool,
+      transparent: true, pass: 'cutout', forme: 'escalier', mat: baseId,
+    });
+    base.escalier = escId;       // le bloc plein connaît son escalier (habitats.js, recettes)
+  }
+  function dalleDe(nom, baseId) {
+    var base = BLOCKS[baseId];
+    var dalleId = idForme(nom);
+    defBlock(dalleId, {
+      name: 'Dalle (' + base.name.toLowerCase() + ')', tiles: base.tiles.slice(),
+      hardness: base.hardness, tool: base.tool, needsTool: base.needsTool,
+      transparent: true, pass: 'cutout', forme: 'dalle', mat: baseId,
+    });
+    base.dalle = dalleId;        // le bloc plein connaît sa dalle (recette inverse, tests)
+  }
+  [['ESCALIER_PLANKS', B.PLANKS], ['ESCALIER_SAPIN', B.PLANCHES_SAPIN],
+   ['ESCALIER_BOULEAU', B.PLANCHES_BOULEAU], ['ESCALIER_ACACIA', B.PLANCHES_ACACIA],
+   ['ESCALIER_JUNGLE', B.PLANCHES_JUNGLE], ['ESCALIER_STONE', B.STONE],
+   ['ESCALIER_COBBLE', B.COBBLE], ['ESCALIER_STONE_BRICK', B.STONE_BRICK],
+   ['ESCALIER_SANDSTONE', B.SANDSTONE], ['ESCALIER_BRICK', B.BRICK],
+   ['ESCALIER_TUILES', B.TUILES], ['ESCALIER_ARDOISE', B.ARDOISE], ['ESCALIER_HAY', B.HAY],
+   // matériaux de toiture supplémentaires (SPEC-CONSTR-003 : pans en pente
+   // des bâtiments générés, voir habitats.js `toit`)
+   ['ESCALIER_JUNGLE_LEAVES', B.JUNGLE_LEAVES], ['ESCALIER_SANDSTONE_BRICK', B.SANDSTONE_BRICK],
+   ['ESCALIER_TERRACOTTA_YELLOW', B.TERRACOTTA_YELLOW],
+  ].forEach(function (p) { escalierDe(p[0], p[1]); });
+  [['DALLE_PLANKS', B.PLANKS], ['DALLE_SAPIN', B.PLANCHES_SAPIN],
+   ['DALLE_BOULEAU', B.PLANCHES_BOULEAU], ['DALLE_ACACIA', B.PLANCHES_ACACIA],
+   ['DALLE_JUNGLE', B.PLANCHES_JUNGLE], ['DALLE_STONE', B.STONE],
+   ['DALLE_COBBLE', B.COBBLE], ['DALLE_STONE_BRICK', B.STONE_BRICK],
+   ['DALLE_SANDSTONE', B.SANDSTONE], ['DALLE_BRICK', B.BRICK],
+  ].forEach(function (p) { dalleDe(p[0], p[1]); });
+
+  // clôture (bois), muret (pavé), vitre (panneau de verre), rambarde (pierre) :
+  // se raccordent d'eux-mêmes aux voisins pleins ou de même sorte (SPEC-CONSTR-004).
+  defBlock(idForme('CLOTURE'), { name: 'Clôture', tiles: BLOCKS[B.PLANKS].tiles.slice(),
+                                 hardness: 2.0, tool: 'axe', transparent: true, pass: 'cutout',
+                                 forme: 'cloture', mat: B.PLANKS });
+  defBlock(idForme('MURET'), { name: 'Muret', tiles: BLOCKS[B.COBBLE].tiles.slice(),
+                               hardness: 2.0, tool: 'pickaxe', needsTool: true,
+                               transparent: true, pass: 'cutout', forme: 'muret', mat: B.COBBLE });
+  defBlock(idForme('VITRE'), { name: 'Vitre', tiles: BLOCKS[B.GLASS].tiles.slice(),
+                               hardness: 0.4, transparent: true, pass: 'blend',
+                               forme: 'vitre', mat: B.GLASS });
+  defBlock(idForme('RAMBARDE'), { name: 'Rambarde', tiles: BLOCKS[B.STONE_BRICK].tiles.slice(),
+                                  hardness: 2.0, tool: 'pickaxe', needsTool: true,
+                                  transparent: true, pass: 'cutout', forme: 'rambarde', mat: B.STONE_BRICK });
+
   // ─── définitions des objets ────────────────────────────────────────────────
   // tool : classe, tier : 1 bois, 2 pierre, 3 fer. food : points de faim rendus.
   var ITEMS = [];
@@ -676,16 +740,23 @@
 
   function isSolid(id) {
     var d = BLOCKS[id];
-    return !!d && !d.liquid && !d.plant && !d.panneau;
+    return !!d && !d.liquid && !d.plant && !d.panneau && !d.forme;
   }
   /* Boîte(s) de collision LOCALE(s) (dans le cube unité) d'un bloc qui n'est
-     ni plein ni vide : aujourd'hui seules les portes et les trappes en ont.
+     ni plein ni vide : portes/trappes (`panneau`) et, depuis L24, escaliers,
+     dalles, clôtures, murets, vitres, rambardes (`forme`, voir formes.js).
      `null` pour tout le reste, ce qui laisse `isSolid` décider seule — la
      physique doit d'abord tester isSolid (bloc plein, comme avant) et
-     n'appeler boiteDe que sinon, pour ne rien changer aux blocs existants. */
-  function boiteDe(id) {
+     n'appeler boiteDe que sinon, pour ne rien changer aux blocs existants.
+     `etat` (octet du bloc) et `voisinFn` (accesseur de voisin, voir
+     MC.Formes.boitesBloc) ne sont utiles qu'aux blocs `forme` ; les autres
+     appelants (portes, trappes) peuvent les omettre. */
+  function boiteDe(id, etat, voisinFn) {
     var d = BLOCKS[id];
-    return (d && d.panneau) ? [d.panneau] : null;
+    if (!d) return null;
+    if (d.panneau) return [d.panneau];
+    if (d.forme && MC.Formes) return MC.Formes.boitesBloc(d, etat, voisinFn);
+    return null;
   }
   function estPorte(id) { var d = BLOCKS[id]; return !!d && !!d.porte; }
   function estTrappe(id) { var d = BLOCKS[id]; return !!d && !!d.trappe; }

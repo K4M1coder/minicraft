@@ -686,8 +686,9 @@
     /* État d'un bloc (SPEC-SAVE-017) : 0 si le chunk n'est pas chargé ou si
        aucun état particulier n'a été posé. Ne touche ni à `overrides` ni aux
        registres dérivés (lumières, cultures) : l'id du bloc reste seul
-       responsable de ceux-ci pour l'instant — l'état n'a pas encore de bloc
-       qui s'en serve (voir L24/L29). */
+       responsable de ceux-ci. Depuis L24 (SPEC-CONSTR-001/002), les
+       escaliers et les dalles y rangent orientation, inversion, forme
+       d'angle ou moitié — voir formes.js (MC.Formes). */
     function getEtat(wx, wy, wz) {
       if (wy < 0 || wy >= WH) return 0;
       wx = Math.floor(wx); wy = Math.floor(wy); wz = Math.floor(wz);
@@ -726,6 +727,8 @@
       var avant = c.blocks[idx(lx, wy, lz)];
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
+      // un bloc qui disparaît perd son état (orientation, moitié, forme d'angle…)
+      if (id === 0 && avant !== 0) setEtat(wx, wy, wz, 0);
       /* Lumière : les sources du chunk ont peut-être changé, et les chunks à
          portée d'une source concernée doivent recalculer leur éclairage. */
       c.emetteurs = null;
