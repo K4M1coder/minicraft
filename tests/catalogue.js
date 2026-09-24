@@ -114,9 +114,19 @@
   }
 
   // ── SPEC-BANC-002 : fiche déclarée, sinon déduite de la 1re spec citée ──
+  /* `delai` (SPEC-BANC-010, e2e seulement) DOIT survivre au passage par le
+     catalogue : c'est l'entrée DU CATALOGUE (celle-ci, pas la fiche brute de
+     tests/e2e.js) que le banc navigateur réinjecte dans le test avant de
+     l'exécuter (tests/banc-ui.js, executerE2E) — l'oublier ici a longtemps
+     fait tourner un test délibérément bloqué (delai:1, pour vérifier le
+     mécanisme) à son délai par défaut (60 s), jusqu'à ce que le tueur
+     externe, bien plus dur (45 s, tools/e2e-headless.js), l'arrête en
+     échec « brut » au lieu du 'delai' propre attendu. */
   function ficheDe(ids, specsIndex, ficheDeclaree, ficheGroupe) {
     if (ficheDeclaree && (ficheDeclaree.teste || ficheDeclaree.attendu)) {
-      return { teste: ficheDeclaree.teste, pourquoi: ficheDeclaree.pourquoi, attendu: ficheDeclaree.attendu, source: 'declaree' };
+      var f = { teste: ficheDeclaree.teste, pourquoi: ficheDeclaree.pourquoi, attendu: ficheDeclaree.attendu, source: 'declaree' };
+      if (ficheDeclaree.delai !== undefined) f.delai = ficheDeclaree.delai;
+      return f;
     }
     if (ids.length && specsIndex && specsIndex[ids[0]]) {
       var s = specsIndex[ids[0]];

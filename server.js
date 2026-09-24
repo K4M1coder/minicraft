@@ -55,6 +55,15 @@ if (!analyse.ok) {
 const PARAMS = analyse.config;
 const PORT = PARAMS.port;
 
+/* Commit courant (SPEC-BANC-012) : calculé UNE FOIS au démarrage, jamais par
+   requête — `git rev-parse` par appel serait un coût inutile pour une valeur
+   qui ne change pas tant que le serveur tourne. `null` hors dépôt git (par
+   exemple une installation empaquetée sans .git), plutôt qu'une erreur. */
+let COMMIT_GIT = null;
+try {
+  COMMIT_GIT = require('child_process').execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: RACINE, encoding: 'utf8' }).trim();
+} catch (e) { COMMIT_GIT = null; }
+
 // ── état du monde, autoritatif ───────────────────────────────────────────────
 const CONF = {
   graine: PARAMS.graine !== null ? PARAMS.graine : (parseInt(process.env.MC_GRAINE, 10) || 20260921),
@@ -567,9 +576,25 @@ function traiterCahiers(req, res) {
   return true;
 }
 
+// ── /tests/version (SPEC-BANC-012) ──────────────────────────────────────────
+/* L'environnement d'un cahier navigateur doit porter le commit (comme le
+   fait déjà l'environnement d'un cahier Node, calculé directement sur
+   disque par tests/run.js) : le navigateur n'a pas accès à git, donc le
+   noyau le lui sert. Même garde que /tests/cahiers (machine locale
+   uniquement) ; GET seulement, pas d'écriture donc pas de risque CSRF. */
+function traiterVersion(req, res) {
+  if (req.url.split('?')[0] !== '/tests/version') return false;
+  const RT = require('./tools/resultats-tests.js');
+  if (!RT.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return true; }
+  if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  repondreJSON(res, 200, { commit: COMMIT_GIT, versionJeu: C.VERSION_JEU });
+  return true;
+}
+
 function servir(req, res) {
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
+  if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
   if (req.url.indexOf('/tests/cahiers') === 0 && traiterCahiers(req, res)) return;
   const chemin = cheminSur(req.url);
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }

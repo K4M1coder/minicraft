@@ -624,6 +624,16 @@
         if (dbg) gpu = gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL);
       } catch (e) { /* rien */ }
 
+      // le commit n'est connu que du noyau (le navigateur n'a pas git) —
+      // SPEC-BANC-012 : l'environnement d'un cahier navigateur le porte
+      // comme celui d'un cahier Node ; sans serveur de résultats joignable,
+      // on se contente de le laisser absent plutôt que d'échouer l'envoi.
+      var commit = null;
+      try {
+        var repVersion = await fetch('/tests/version');
+        if (repVersion.ok) commit = (await repVersion.json()).commit;
+      } catch (e) { /* pas de serveur de résultats : repli local, commit absent */ }
+
       // les captures gardent leur URL de données complète (c.base64) tant
       // qu'elles restent affichées en vignettes dans la page (voir
       // afficherFini/agrandir) ; on ne retire le préfixe data:…;base64,
@@ -654,7 +664,7 @@
           environnement: {
             source: 'navigateur', navigateur: navigator.userAgent, gpu: gpu,
             resolution: window.innerWidth + 'x' + window.innerHeight,
-            versionJeu: MC.Core.VERSION_JEU, graine: game.world && game.world.seed,
+            versionJeu: MC.Core.VERSION_JEU, commit: commit, graine: game.world && game.world.seed,
           },
           totaux: { total: etat.resultats.length, passes: passes, echecs: echecs, ignores: 0,
                     parType: totauxPar(etat.resultats, 'parType'), parDomaine: totauxPar(etat.resultats, 'parDomaine') },

@@ -100,6 +100,18 @@ async function attendrePret(port) {
     ok(comp.ok && comp.apparus.length === 0 && comp.disparus.length === 0 && comp.versEchec.length === 0,
        'SPEC-BANC-018 : comparer un cahier à lui-même ne signale aucun écart');
 
+    // ── SPEC-BANC-012 : GET /tests/version sert le commit et la version du jeu ──
+    const rVersion = await requete(PORT, 'GET', '/tests/version', null);
+    ok(rVersion.code === 200, 'GET /tests/version répond 200');
+    let corpsVersion = {};
+    try { corpsVersion = JSON.parse(rVersion.corps.toString()); } catch (e) { /* laissé vide, le test suivant échouera proprement */ }
+    ok(Object.prototype.hasOwnProperty.call(corpsVersion, 'commit'), 'la réponse porte un champ commit (même absent d\'un dépôt git, il vaut null)');
+    ok(typeof corpsVersion.versionJeu === 'string' && corpsVersion.versionJeu.length > 0, 'la réponse porte versionJeu (' + corpsVersion.versionJeu + ')');
+    // ce dépôt EST un dépôt git : le commit doit être un court hash, pas null
+    ok(typeof corpsVersion.commit === 'string' && /^[0-9a-f]{4,40}$/.test(corpsVersion.commit), 'dans ce dépôt git, commit est un hash court (' + corpsVersion.commit + ')');
+    const rVersionPost = await requete(PORT, 'POST', '/tests/version', {}, { 'Content-Type': 'application/json' });
+    eq(rVersionPost.code, 405, 'POST /tests/version est refusé (GET seulement)');
+
     // adresse non locale refusée (en-tête X-Forwarded-For n'est pas utilisé par le serveur :
     // c'est req.socket.remoteAddress qui compte, toujours local ici — donc on vérifie
     // directement la fonction, déjà couverte sous Node dans spec-banc.js)

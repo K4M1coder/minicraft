@@ -2891,6 +2891,7 @@
     A.ok(carteApres !== carteAvant, 'c’est une NOUVELLE carte, pas l’ancienne réutilisée après un contexte périmé');
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
   // Outillage de test — banc navigateur (L42)
   // ══════════════════════════════════════════════════════════════════════════
   /* SPEC-BANC-009/011 : un test à deux étapes déclarées doit produire au
@@ -2953,14 +2954,43 @@
 
   /* SPEC-BANC-010 : un test qui ne se termine jamais est coupé à son délai,
      avec l'étape où il s'est arrêté, et n'empêche pas la suite. `fiche.delai`
-     (en secondes) le fait attendre bien moins longtemps qu'un vrai test. */
-  e2e('SPEC-BANC-010 : un test bloqué est coupé à son délai', { delai: 1,
-      teste: 'le délai par test', pourquoi: 'un test qui ne rend jamais la main ne doit pas geler la campagne',
-      attendu: 'état "delai" après ~1 s, étape rapportée' },
+     (en secondes) le fait attendre bien moins longtemps qu'un vrai test.
+
+     Ce test-ci vérifie le mécanisme EN INTERNE, sur un FAUX test qui ne se
+     termine jamais, appelé directement via runUnE2E() — il ne bloque plus
+     lui-même. Avant cette réécriture, il se bloquait réellement (comme
+     n'importe quel test réel) : dans une vraie campagne, il ressortait donc
+     TOUJOURS à l'état 'delai', ce qui compte comme un échec de campagne —
+     un test dont le rôle est de VÉRIFIER le mécanisme de délai n'a pas à
+     dépendre de ce même mécanisme pour son propre verdict. Cette réécriture
+     a aussi mis au jour un vrai bug ailleurs : `fiche.delai` ne survivait
+     pas au passage par le catalogue (tests/catalogue.js, ficheDe()) — le
+     test bloqué tournait donc à son délai PAR DÉFAUT (60 s) plutôt qu'à
+     celui de sa fiche, jusqu'à être arrêté plus brutalement par le tueur
+     externe, plus dur (45 s, tools/e2e-headless.js) — corrigé séparément. */
+  e2e('SPEC-BANC-010 : un test bloqué est coupé à son délai',
+    { teste: 'le délai par test (fiche.delai, en secondes)',
+      pourquoi: 'un test qui ne rend jamais la main ne doit pas geler la campagne ; son délai propre doit être lu depuis la fiche telle qu\'elle arrive par le catalogue, pas seulement depuis sa déclaration dans tests/e2e.js',
+      attendu: 'le faux test bloqué ressort à l\'état "delai", coupé à SON délai (pas le délai par défaut), avec son étape rapportée ; ce test-ci, lui, reste vert' },
     async function (g) {
       await reset(g);
-      etape('bloqué ici volontairement');
-      await new Promise(function () { /* ne se résout jamais : le délai doit couper */ });
+      var enComptePrecedent = enCours; // restauré après l'appel imbriqué (voir plus bas)
+      var bloque = {
+        id: 'demo-delai-interne', name: 'faux test bloqué (interne, jamais listé dans une vraie campagne)',
+        fiche: { delai: 0.3 },
+        fn: async function () {
+          etape('bloqué ici volontairement');
+          await new Promise(function () { /* ne se résout jamais : le délai doit couper */ });
+        },
+      };
+      var t0 = ahora();
+      var res = await runUnE2E(g, bloque, { delaiDefaut: 30 });
+      enCours = enComptePrecedent;
+      A.equal(res.etat, 'delai', 'l\'état rapporté par le faux test est "delai"');
+      A.lt(ahora() - t0, 5000, 'coupé à SON délai (0,3 s) et non au délai par défaut (30 s) : ' + (ahora() - t0) + ' ms');
+      A.ok(res.etapes.length > 0 && res.etapes[res.etapes.length - 1].libelle === 'bloqué ici volontairement',
+        'l\'étape en cours au moment de la coupure est rapportée');
+      A.ok(/délai dépassé/.test(res.message || ''), 'le message dit « délai dépassé » : ' + res.message);
     });
 
   /* SPEC-BANC-017 : MC_DEBUG pilote le rendu intégré, à la main comme par un

@@ -128,26 +128,43 @@ ctx.T.fichierCourant = null;
 
 // ── e2e (texte seulement : jamais évalué sous Node) ─────────────────────────
 /* On lit tests/e2e.js comme du TEXTE pour en tirer les noms des tests
-   e2e(...) et une approximation de leur groupe (le commentaire de section le
-   plus proche au-dessus) — sans jamais évaluer le fichier, qui référence
-   `window`/`document` dans ses fonctions. C'est délibérément découplé de la
-   forme interne de tests/e2e.js (propriété de l'agent qui construit le banc
-   navigateur) : seuls les littéraux passés à e2e(nom, fn) comptent. */
+   e2e(...) et une approximation de leur groupe — sans jamais évaluer le
+   fichier, qui référence `window`/`document` dans ses fonctions. C'est
+   délibérément découplé de la forme interne de tests/e2e.js (propriété de
+   l'agent qui construit le banc navigateur) : seuls les littéraux passés à
+   e2e(nom, fn) comptent.
+
+   Un GROUPE (section) est un bandeau à TROIS lignes : une ligne de bordure
+   `// ══…══`, un TITRE, puis une nouvelle bordure — voir les sections de
+   tests/e2e.js. N'importe quel autre commentaire `//` NE marque PAS de
+   groupe : un simple commentaire d'explication laissé au-dessus d'un
+   e2e(...) (fréquent dans ce fichier, souvent une phrase entière se
+   terminant par un point ou une virgule) ne doit jamais être pris pour un
+   nom de section — sinon le catalogue affiche des groupes absurdes comme
+   « et le rapport d'aspect de la caméra doit suivre, sinon l'image est
+   étirée », qui est la fin d'un commentaire explicatif, pas un titre. */
 function e2eListeDepuisTexte() {
   const fichier = path.join(root, 'tests', 'e2e.js');
   if (!fs.existsSync(fichier)) return [];
   const texte = fs.readFileSync(fichier, 'utf8');
   const lignes = texte.split('\n');
   const out = [];
-  let dernierCommentaire = null;
-  const reCommentaire = /^\s*\/\/\s*([^─═\s].{2,80})$/;
+  let dernierGroupe = null;
+  const reBordure = /^\s*\/\/\s*[─═]{5,}\s*$/;
+  const reTitre = /^\s*\/\/\s*([^─═\s].{0,80}?)\s*$/;
   const reAppel = /^\s*e2e\(\s*(['"`])((?:\\.|(?!\1).)*)\1/;
-  lignes.forEach((ligne) => {
-    const mc = reCommentaire.exec(ligne);
-    if (mc && !/^[-─═]+$/.test(mc[1])) dernierCommentaire = mc[1].trim();
-    const ma = reAppel.exec(ligne);
-    if (ma) out.push({ nom: ma[2].replace(/\\(.)/g, '$1'), groupe: dernierCommentaire || 'e2e', fichier: 'tests/e2e.js' });
-  });
+  for (let i = 0; i < lignes.length; i++) {
+    if (reBordure.test(lignes[i]) && i + 2 < lignes.length) {
+      const mt = reTitre.exec(lignes[i + 1]);
+      if (mt && reBordure.test(lignes[i + 2])) {
+        dernierGroupe = mt[1].trim();
+        i += 2; // saute le titre et la bordure de fermeture : ni l'un ni l'autre n'est un appel e2e()
+        continue;
+      }
+    }
+    const ma = reAppel.exec(lignes[i]);
+    if (ma) out.push({ nom: ma[2].replace(/\\(.)/g, '$1'), groupe: dernierGroupe || 'e2e', fichier: 'tests/e2e.js' });
+  }
   return out;
 }
 

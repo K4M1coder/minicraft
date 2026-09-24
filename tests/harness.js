@@ -225,7 +225,18 @@
         pileAssertions.push(contexte.assertions);
         enCours = contexte;
         try {
-          t.fn();
+          var retour = t.fn();
+          /* Garde anti-faux-positif (SPEC-BANC-013) : `T.run` est SYNCHRONE —
+             une fonction de test qui REND une Promise (ou tout thenable) est
+             comptée réussie ici avant que quoi que ce soit n'ait été vérifié ;
+             une assertion qui échouerait plus tard, dans un .then(), ne
+             serait alors JAMAIS rapportée. On refuse explicitement ce cas
+             plutôt que de laisser passer un test qui n'a rien prouvé — voir
+             tests/integration-*.js pour les tests qui ont réellement besoin
+             d'async/await. */
+          if (retour && (typeof retour === 'object' || typeof retour === 'function') && typeof retour.then === 'function') {
+            fail('test asynchrone non supporté sous le harness synchrone : déplacer dans tests/integration-*.js');
+          }
           T.passed++; sp++;
           lines.push({ ok: true, name: t.name, etapes: contexte.etapes, assertions: contexte.assertions });
         } catch (e) {

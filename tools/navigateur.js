@@ -73,6 +73,20 @@ async function lancer(opts) {
     '--disable-extensions',
     '--disable-popup-blocking',
     '--disable-sync',
+    /* Un test e2e mesure de vraies images/s (SPEC-SPLIT-005, en écran
+       partagé) : sans fenêtre visible, Chrome peut plafonner artificiellement
+       requestAnimationFrame (vsync simulé, limiteur de fréquence) au lieu de
+       rendre aussi vite que la carte le permet — ce que ces deux options
+       désactivent. Sans elles, une campagne assez longue et chargée pouvait
+       faire chuter la cadence mesurée sous le seuil bien que le rendu
+       lui-même n'ait rien de plus lent (revue adversariale). */
+    '--disable-frame-rate-limit',
+    '--disable-gpu-vsync',
+    /* Une page sans fenêtre au premier plan peut être considérée « en
+       arrière-plan » par Chrome et voir son minuteur ralenti — exactement le
+       contraire de ce qu'une mesure de cadence doit observer. */
+    '--disable-backgrounding-occluded-windows',
+    '--disable-renderer-backgrounding',
     'about:blank',
   ];
   const processus = spawn(chemin, args, { stdio: 'ignore', detached: process.platform !== 'win32' });

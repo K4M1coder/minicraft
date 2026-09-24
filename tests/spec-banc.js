@@ -52,6 +52,18 @@
       A.ok(lent.etiquettes.indexOf('lent') >= 0, 'l\'étiquette @lent est extraite du nom : ' + JSON.stringify(lent.etiquettes));
     });
 
+    it('SPEC-BANC-001 : le groupe e2e déduit du texte de tests/e2e.js est un vrai titre de section (bandeau ═), jamais un commentaire d\'explication pris au passage', function () {
+      var out = cp.execFileSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--lister', '--type', 'e2e'],
+        { encoding: 'utf8', cwd: RACINE });
+      // groupe historiquement mal lu (un commentaire d'explication en fin de test,
+      // pas un titre de section) — la correction du lot doit l'avoir fait disparaître
+      A.notOk(/et le rapport d'aspect de la caméra doit suivre/.test(out),
+        'un commentaire ordinaire (pas un bandeau ═) n\'est plus pris pour un nom de groupe');
+      A.ok(/^\[e2e\] Démarrage et états ::/m.test(out), 'le vrai titre de section reste correctement reconnu');
+      A.ok(/^\[e2e\] Outillage de test — banc navigateur \(L42\) ::/m.test(out),
+        'une section dont le bandeau d\'ouverture manquait (corrigé dans tests/e2e.js) est désormais bien groupée');
+    });
+
     it('SPEC-BANC-002 : chaque test a une fiche, déclarée ou déduite de sa spec, sinon celle de son groupe', function () {
       var specsIndex = MC_TESTS.indexSpecs(fs.readFileSync(path.join(RACINE, 'SPECS.md'), 'utf8'));
       var cat = MC_TESTS.construire(T, [], specsIndex);
@@ -179,6 +191,29 @@
       A.ok(journal[0].delai, 'marqué comme délai dépassé');
       A.ok(/boucle/.test(journal[0].message), 'l\'étape en cours (boucle) est rapportée dans le message : ' + journal[0].message);
       A.ok(journal[1].ok, 'le test suivant s\'exécute normalement');
+    });
+
+    it('SPEC-BANC-013 : un test Node dont la fonction REND une Promise échoue explicitement, au lieu d\'être compté réussi avant vérification (garde anti-faux-positif)', function () {
+      var script = "const vm=require('vm'),fs=require('fs');" +
+        "const ctx=vm.createContext({console,Math,JSON,Date,Error,Number,String,Array,Object,Boolean,Map,Set,isNaN,isFinite,parseInt,parseFloat,performance:{now:()=>Date.now()}});" +
+        "ctx.globalThis=ctx;" +
+        "vm.runInContext(fs.readFileSync('tests/harness.js','utf8'),ctx);" +
+        "vm.runInContext(\"describe('Async',function(){" +
+        "it('rend une vraie Promise',function(){return new Promise(function(res){res();});});" +
+        "it('rend un thenable maison',function(){return {then:function(){}};});" +
+        "it('reste synchrone',function(){assert.ok(true);});" +
+        "});\",ctx);" +
+        "const journal=[];" +
+        "ctx.T.run(null,{finTest:(g,n,ok,ms,d)=>journal.push({n,ok,message:d&&d.message})});" +
+        "console.log(JSON.stringify(journal));";
+      var out = cp.execFileSync(process.execPath, ['-e', script], { encoding: 'utf8', cwd: RACINE });
+      var journal = JSON.parse(out.trim().split('\n').pop());
+      A.equal(journal.length, 3, 'les trois tests du groupe sont passés');
+      A.notOk(journal[0].ok, 'une vraie Promise rendue par le test : échec, pas un succès prématuré');
+      A.ok(/asynchrone non supporté sous le harness synchrone/.test(journal[0].message), 'message explicite : ' + journal[0].message);
+      A.ok(/tests\/integration-/.test(journal[0].message), 'le message oriente vers tests/integration-*.js : ' + journal[0].message);
+      A.notOk(journal[1].ok, 'un thenable maison (sans être une vraie Promise) est refusé pareillement');
+      A.ok(journal[2].ok, 'un test synchrone normal, lui, passe toujours');
     });
 
     it('SPEC-BANC-013 : un échec porte fiche, étapes, assertions, attendu/obtenu, message et pile', function () {
