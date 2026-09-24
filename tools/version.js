@@ -90,7 +90,8 @@ function ecrire(avant, apres) {
   fs.writeFileSync(JOURNAL, j);
 }
 function installer() {
-  git('config core.hooksPath .githooks');
+  // chemin absolu : les worktrees (agents) partagent ces crochets même quand leur branche est antérieure
+  git('config core.hooksPath "' + path.join(RACINE, '.githooks').split(path.sep).join('/') + '"');
   return git('config --get core.hooksPath').trim();
 }
 

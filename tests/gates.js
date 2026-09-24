@@ -213,7 +213,8 @@ porte('G11', 'Les crochets git encadrent commits et versions', () => {
   const { execSync } = require('child_process');
   let chemin = '';
   try { chemin = execSync('git config --get core.hooksPath', { encoding: 'utf8' }).trim(); } catch (e) { /* absent */ }
-  if (chemin !== '.githooks') return { ok: false, detail: 'crochets non branchés : node tools/version.js --installer' };
+  // relatif (.githooks) ou absolu vers les crochets du dépôt principal — l'absolu sert aussi les worktrees
+  if (chemin !== '.githooks' && path.resolve(root, chemin) !== path.resolve(root, '.githooks')) return { ok: false, detail: 'crochets non branchés (' + (chemin || 'aucun') + ') : node tools/version.js --installer' };
   const manquants = ['commit-msg', 'pre-commit'].filter(h => !fs.existsSync(path.join(root, '.githooks', h)));
   if (manquants.length) return { ok: false, detail: 'crochets absents : ' + manquants.join(', ') };
   // la règle du cran, sur des cas connus
