@@ -57,6 +57,14 @@
   // ─── état ────────────────────────────────────────────────────────────────
   var REF_STOCK = 64;         // stock de référence par défaut d'une ressource
   var TRESOR_MIN = 200, TRESOR_ETENDUE = 300;   // trésor cible d'un lieu, déterministe
+  /* SPEC-METIER-002 (SPECS.md) : le minerai du forgeron est « alimenté par le
+     commerce (ECO-004) ou une mine à proximité ». passageCaravane ne
+     transporte que des ressources de `stocks` (le blé, le bois… jamais un
+     village ne « fait passer » du minerai par charrette dans ce plan) : on
+     retient donc l'autre moitié de la phrase — une mine à proximité — comme
+     source par défaut, symétrique à `stocks` : un stock initial, qui repousse
+     vers sa référence dans tickJour (voir plus bas). */
+  var MINERAI_REF = 24;
 
   function creerEtat(graine) {
     return { v: 1, graine: graine || 1, jour: 0, lieux: new Map(), joueurs: new Map(), departs: new Map() };
@@ -70,8 +78,10 @@
     var biome = ctx.biome || (lieu && lieu.biome) || 'plaines';
     var x = (lieu && lieu.x) || 0, z = (lieu && lieu.z) || 0;
     var tresorCible = TRESOR_MIN + Math.floor(hache(etat.graine, 'tresor', id) * TRESOR_ETENDUE);
+    var minerai = {};
+    minerai[I.IRON_INGOT] = MINERAI_REF;   // « une mine à proximité » (METIER-002)
     var L = { id: id, biome: biome, x: x, z: z, tresor: tresorCible, tresorCible: tresorCible,
-              stocks: {}, minerai: {}, pnjs: {} };
+              stocks: {}, minerai: minerai, pnjs: {} };
     etat.lieux.set(id, L);
     return L;
   }
@@ -286,6 +296,13 @@
           if (s.stock < s.ref) s.stock = Math.min(s.ref, s.stock + delta);
           else if (s.stock > s.ref) s.stock = Math.max(s.ref, s.stock - delta);
         });
+      }
+      /* METIER-002 : la « mine à proximité » repousse vers MINERAI_REF, SANS
+         dépendre de la saison (on mine toute l'année, contrairement à la
+         pousse des cultures) — symétrique à la régénération des stocks. */
+      if (L.minerai[I.IRON_INGOT] === undefined) L.minerai[I.IRON_INGOT] = 0;
+      if (L.minerai[I.IRON_INGOT] < MINERAI_REF) {
+        L.minerai[I.IRON_INGOT] = Math.min(MINERAI_REF, L.minerai[I.IRON_INGOT] + Math.max(1, Math.round(MINERAI_REF * 0.08)));
       }
       L.tresor += Math.round((L.tresorCible - L.tresor) * 0.05);
     });

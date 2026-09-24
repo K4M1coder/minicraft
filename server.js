@@ -1176,6 +1176,10 @@ function traiter(c, m) {
       const st = js.joueur.state;
       const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
       if (d > MC.ContratsV2.BORNES.PORTEE_TROC) break;
+      // un village hostile ferme le commerce, comme en solo (game.js parlerA) —
+      // piège signalé par docs/vague-2/B2.md § 13 : garder ce contrôle AVANT
+      // executerTroc, côté serveur comme côté client.
+      if (monde.reputation && !MC.Factions.commerceOuvert(monde.reputation)) break;
 
       if (m.action === 'consulter') {
         envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });

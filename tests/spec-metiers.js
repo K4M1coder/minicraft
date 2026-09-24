@@ -29,17 +29,29 @@
       A.equal(Met.mineraiRequis({ get: { id: I.DIAMOND_PICKAXE, n: 1 } }), 3);
       A.equal(Met.mineraiRequis({ get: { id: I.WHEAT, n: 1 } }), 0, 'pas de minerai pour un objet quelconque');
 
+      // METIER-002 : le minerai est « alimenté par une mine à proximité »
+      // (choix documenté dans economie.js, MINERAI_REF) — un stock initial à
+      // la création du lieu, jamais écrit à la main ici : on l'épuise par de
+      // VRAIS achats (le seul chemin de jeu réel), puis on vérifie le refus
+      // à sec et la reprise après régénération (tickJour).
       var etat = Eco.creerEtat(2);
       var L = Eco.lieuDe(etat, { id: 'forge1', biome: 'plaines', x: 0, z: 0 });
-      L.minerai[I.IRON_INGOT] = 0;
+      A.gt(L.minerai[I.IRON_INGOT], 0, 'un lieu est alimenté en minerai dès sa création (mine à proximité)');
       var i = inv();
-      i.add(I.EMERALD, 20);
+      i.add(I.EMERALD, 500);
+      var achats = 0;
+      while (L.minerai[I.IRON_INGOT] >= 2 && achats < 100) {
+        var ra = Eco.executerTroc(etat, i, { lieuId: 'forge1', role: 'forgeron', pnjId: 'forge1#0', indice: 1, fois: 1 });
+        A.ok(ra.ok, 'achat ' + achats + ' : ' + JSON.stringify(ra));
+        achats++;
+      }
+      A.ok(achats > 0 && achats < 100, 'le minerai a bien été épuisé par de vrais achats (' + achats + ')');
       var r1 = Eco.executerTroc(etat, i, { lieuId: 'forge1', role: 'forgeron', pnjId: 'forge1#0', indice: 1, fois: 1 });
       A.ok(!r1.ok && r1.motif === 'stock', 'refusé à sec : ' + JSON.stringify(r1));
-      L.minerai[I.IRON_INGOT] = 10;
+      for (var jour = 1; jour <= 20; jour++) Eco.tickJour(etat, jour, 'ete');
+      A.gt(L.minerai[I.IRON_INGOT], 0, 'la mine à proximité reconstitue le stock avec le temps');
       var r2 = Eco.executerTroc(etat, i, { lieuId: 'forge1', role: 'forgeron', pnjId: 'forge1#0', indice: 1, fois: 1 });
       A.ok(r2.ok, 'réussit une fois réapprovisionné : ' + JSON.stringify(r2));
-      A.equal(L.minerai[I.IRON_INGOT], 8, 'le minerai a été consommé (épée : 2)');
     });
 
     it('SPEC-METIER-003 : offres à 14 ≠ 15 échanges ; 40 = 100 échanges', function () {

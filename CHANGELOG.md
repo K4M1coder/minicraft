@@ -100,6 +100,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   le groupe affiché par `--lister` pour les tests qui suivaient.
 - Bandeau manquant au-dessus d'un groupe de tests dans `tests/e2e.js`,
   faisant hériter ces tests du groupe précédent dans `--lister`.
+- Économie (SPEC-METIER-002, L45) : le minerai du forgeron (`L.minerai`)
+  n'était jamais alimenté (créé vide, jamais crédité) — toute offre forgée
+  (épée/hache/pioche de fer, pioche de diamant) restait `dispo:false` pour
+  toujours. Un lieu naît désormais avec un stock de minerai (« une mine à
+  proximité », `MINERAI_REF`), reconstitué chaque jour par `tickJour`
+  (indépendamment de la saison, à la différence des récoltes) —
+  `tests/spec-metiers.js` épuise et reconstitue ce stock par de vrais
+  échanges plutôt que de l'écrire à la main.
+- Commerce en ligne (SPEC-FACTION, L45) : le `case NP.MSG.TROC` de
+  `server.js` n'appliquait pas le contrôle « village hostile ferme le
+  commerce » (`MC.Factions.commerceOuvert`) que `game.js` applique en solo
+  avant `executerTroc` — ajouté, comme prévu par docs/vague-2/B2.md § 13.
 - Captures des cahiers de test (SPEC-BANC-011/012) : les vignettes affichées
   dans la page utilisent l'URL de données complète (comme avant), et seul
   l'envoi au serveur en retire le préfixe pour transmettre du base64 pur ;
