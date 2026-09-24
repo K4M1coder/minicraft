@@ -249,6 +249,13 @@ async function attendrePret(port) {
     echecs++;
     details.push(`  ${C.r}✗ exception : ${e.message}${C.x}\n${logs1.join('')}`);
   } finally {
+    // la sauvegarde périodique doit avoir pris le bloc avant l'arrêt : sous Windows, tuer le
+    // processus ne déclenche pas la sauvegarde de sortie, et un serveur occupé à générer du
+    // terrain peut prendre du retard sur son intervalle — on l'attend (8 s au plus)
+    for (let essai = 0; essai < 80; essai++) {
+      try { if ((JSON.parse(fs.readFileSync(fichierMonde, 'utf8')).overrides || []).length) break; } catch (e) { /* en cours d'écriture */ }
+      await dodo(100);
+    }
     try { s1.kill(); } catch (e) {}
   }
 
