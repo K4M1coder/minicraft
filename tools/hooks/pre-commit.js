@@ -22,6 +22,21 @@ indexes.filter(f => f.endsWith('.js') && fs.existsSync(f)).forEach(f => {
 indexes.filter(f => /\.(js|html|md|css|json)$/.test(f) && fs.existsSync(f)).forEach(f => {
   if (/^(<{7}|>{7}) /m.test(fs.readFileSync(f, 'utf8'))) erreurs.push('marqueur de conflit oublié : ' + f);
 });
+// G1/G2 en rapide : toute spec non-⏳ citée par un test, tout identifiant cité existe
+try {
+  const path = require('path'), racine = path.join(__dirname, '..', '..');
+  const specs = fs.readFileSync(path.join(racine, 'SPECS.md'), 'utf8').split('\n')
+    .map(l => l.match(/^\| (SPEC-[A-Z0-9]+-\d+) \|.*\| *(⏳|✅) *\|\s*$/)).filter(Boolean);
+  const declarees = new Set(specs.map(m => m[1]));
+  const cites = new Set();
+  fs.readdirSync(path.join(racine, 'tests')).filter(f => f.endsWith('.js')).forEach(f => {
+    (fs.readFileSync(path.join(racine, 'tests', f), 'utf8').match(/SPEC-[A-Z0-9]+-\d+/g) || []).forEach(id => cites.add(id));
+  });
+  const orphelines = specs.filter(m => m[2] === '✅' && !cites.has(m[1])).map(m => m[1]);
+  if (orphelines.length) erreurs.push('spec(s) ✅ sans test qui les cite : ' + orphelines.join(', '));
+  const fantomes = [...cites].filter(id => !declarees.has(id));
+  if (fantomes.length) erreurs.push('identifiant(s) cité(s) par un test mais absent(s) de SPECS.md : ' + fantomes.slice(0, 5).join(', '));
+} catch (e) { erreurs.push('couverture des specs : ' + e.message); }
 try {
   const v = require('../version.js').verifier();
   v.erreurs.forEach(e => erreurs.push('version : ' + e));

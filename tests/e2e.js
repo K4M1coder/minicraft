@@ -2165,6 +2165,26 @@
     } finally { g.world.routes = routes0; }
   });
 
+  e2e('SPEC-ZONE-003 : la zone courante s affiche, l entrée dans une autre zone s annonce, le composant se masque', async function (g) {
+    await reset(g);
+    var ind = document.querySelector('.zone-indicateur');
+    await frames(3);
+    A.ok(ind && ind.style.display !== 'none' && ind.textContent.length > 0, 'la zone courante au HUD : ' + (ind && ind.textContent));
+    var z0 = g.world.zoneEn;
+    try {
+      g.world.zoneEn = function () { return { zone: 'pvp' }; };
+      for (var i = 0; i < 40 && !/PvP/.test(document.body.textContent); i++) await frames(1);
+      A.ok(/Vous entrez en zone PvP/.test(document.body.textContent), 'l entrée est annoncée');
+      A.ok(/zone-pvp/.test(ind.className), 'l indicateur change');
+      g.hud.regler('zone', false); g.ui.appliquerHud(); await frames(1);
+      A.ok(getComputedStyle(ind).display === 'none', 'masquable comme les autres composants');
+      g.hud.regler('zone', true); g.ui.appliquerHud();
+    } finally {
+      g.world.zoneEn = z0;
+      await frames(3);
+    }
+  });
+
   e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
     await reset(g);
     g.time = MC.DayCycle.DAY_LENGTH * 0.2;
