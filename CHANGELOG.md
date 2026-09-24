@@ -79,6 +79,32 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 
+- Workers de chunk (L47, B3, revue adversariale) : le message `init` était
+  envoyé via `pool.envoyer()`, qui ne distribue qu'à UN SEUL worker libre —
+  correct pour `genere`/`maille`, faux pour `init` qui doit atteindre CHAQUE
+  worker (chacun garde sa propre `epoqueCourante` en portée de module). Sur
+  un pool de maillage à plusieurs workers (le cas normal, jusqu'à 4), seul
+  celui choisi par `envoyer()` recevait son `init` ; les autres restaient
+  bloqués sur une époque périmée et ignoraient silencieusement toute tâche
+  reçue par la suite (aucune réponse, donc jamais libérés) — sous charge de
+  maillage suffisante pour occuper tous les workers, le nombre de chunks
+  maillés se figeait définitivement, certains restant `dirty` pour
+  toujours. `src/workers.js` expose désormais `pool.diffuser(msg)` (envoie
+  à TOUS les workers du pool, sans jamais marquer un worker occupé),
+  utilisée par `src/game.js` pour `init` (démarrage et
+  `remplacerMonde`/`newWorld`/`perdrePartie`) à la place d'`envoyer()`.
+  Reproduit et vérifié corrigé en conditions réelles (Playwright/Chrome,
+  pool de 4 workers de maillage, ~200 chunks demandés d'un coup : tous les
+  chunks dont le voisinage est chargé finissent maillés, plus aucun blocage).
+- Chunk : `chunk.version` repartait toujours de `1` à chaque régénération
+  (déchargement puis rechargement de la même position) — un résultat de
+  maillage périmé, envoyé avant un déchargement puis oublié par
+  `MC.FileChunks`, pouvait par coïncidence numérique passer pour courant si
+  la position redevenait voulue avant l'arrivée de cette réponse tardive
+  (cas rare). `world.js` retient désormais, par position de chunk et pour
+  toute la durée de vie du monde, le dernier numéro de version employé
+  (persistant au-delà d'un déchargement) : deux générations successives à la
+  même position ne partagent plus jamais de numéro.
 - Catalogue de tests (`tests/catalogue.js`, `ficheDe()`) : `fiche.delai` ne
   survivait pas au passage du test brut à l'entrée du catalogue — un test
   e2e voulant un délai plus court que le défaut tournait donc à son délai

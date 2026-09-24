@@ -70,6 +70,18 @@
         workers[i].postMessage(msg, transferables || []);
         return true;
       },
+      /* `init` (et tout message qui doit atteindre TOUT le pool, jamais un
+         seul worker) : CHAQUE worker a son propre `epoqueCourante` en
+         portée de module (worker-monde.js/worker-maillage.js) — un `init`
+         envoyé via `envoyer()` (un seul worker libre) laisse les autres
+         bloqués sur une époque périmée pour toujours : leurs tâches
+         suivantes sont silencieusement ignorées (`m.epoque !==
+         epoqueCourante`), sans réponse, donc sans jamais libérer leur slot
+         `occupe` — un chunk reste indéfiniment `dirty`. `diffuser` ne
+         touche JAMAIS `occupe` (un `init` ne consomme aucun worker). */
+      diffuser: function (msg) {
+        workers.forEach(function (w) { w.postMessage(msg, []); });
+      },
       fermer: function () {
         workers.forEach(function (w) { try { w.terminate(); } catch (e) { /* rien */ } });
       },

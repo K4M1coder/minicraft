@@ -31,6 +31,26 @@
        particulier). Même principe que `overrides` : rejoué après une
        régénération de chunk ou un chargement de sauvegarde. */
     var etatsOverrides = new Map();
+    /* SPEC-PERF-009 : dernière `version` employée pour chaque position de
+       chunk, PERSISTANTE au-delà d'un déchargement (world.unloadLoin ne la
+       purge jamais) — contrairement à `chunk.version` lui-même, qui vit et
+       meurt avec l'objet chunk. Un chunk qui redémarrerait toujours à
+       `version: 1` après un rechargement pourrait, par coïncidence,
+       recevoir un résultat de maillage PÉRIMÉ (envoyé avant le
+       déchargement, pour l'ancien chunk à la même version 1) comme s'il
+       était courant : la tâche en vol a été oubliée par `MC.FileChunks`
+       (oublier()) au déchargement, mais si la position redevient voulue
+       avant que la réponse tardive arrive, une NOUVELLE tâche la remarque
+       « en vol » et la vieille réponse, une fois arrivée, passe alors le
+       test de version par pure coïncidence numérique. En repartant d'un
+       cran au-dessus du dernier numéro jamais vu à cette position, deux
+       générations successives ne peuvent plus jamais partager un numéro. */
+    var derniereVersion = new Map();
+    function prochaineVersion(cx, cz) {
+      var k = key(cx, cz), v = (derniereVersion.get(k) || 0) + 1;
+      derniereVersion.set(k, v);
+      return v;
+    }
     // cultures en croissance : position -> stade, mises à jour par tick()
     var crops = new Map();
     /* Sources de lumière posées par le joueur. La couche rendu y puise les
@@ -518,7 +538,7 @@
       var brut = genererBrutInterne(cx, cz);
       var applied = appliquerOverridesSur(cx, cz, brut.blocks, brut.etats);
       var c = { cx: cx, cz: cz, blocks: applied.blocks, etats: applied.etats, mesh: null, meshT: null, dirty: true,
-                eau: brut.eau, version: 1 };
+                eau: brut.eau, version: prochaineVersion(cx, cz) };
       enregistrerLumieres(c);
       return c;
     }
@@ -535,7 +555,7 @@
       var etats = donnees.etats || ETATS_VIDE;
       var applied = appliquerOverridesSur(cx, cz, donnees.blocks, etats);
       var c = { cx: cx, cz: cz, blocks: applied.blocks, etats: applied.etats, mesh: null, meshT: null, dirty: true,
-                eau: donnees.eau, version: 1 };
+                eau: donnees.eau, version: prochaineVersion(cx, cz) };
       chunks.set(k, c);
       enregistrerLumieres(c);
       return c;
@@ -813,7 +833,7 @@
       if (c.etats === ETATS_VIDE) c.etats = new Uint8Array(ETATS_VIDE);
       c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)] = e;
       c.dirty = true;
-      c.version = (c.version || 1) + 1;
+      c.version = prochaineVersion(cx, cz);
       var k3 = key3(wx, wy, wz);
       if (e) etatsOverrides.set(k3, e); else etatsOverrides.delete(k3);
       return true;
@@ -844,7 +864,7 @@
       var avant = c.blocks[idx(lx, wy, lz)];
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
-      c.version = (c.version || 1) + 1;
+      c.version = prochaineVersion(cx, cz);
       // un bloc qui disparaît perd son état (orientation, moitié, forme d'angle…)
       if (id === 0 && avant !== 0) setEtat(wx, wy, wz, 0);
       /* Lumière : les sources du chunk ont peut-être changé, et les chunks à
@@ -902,7 +922,7 @@
     }
     function touch(cx, cz) {
       var n = chunks.get(key(cx, cz));
-      if (n) { n.dirty = true; n.version = (n.version || 1) + 1; }
+      if (n) { n.dirty = true; n.version = prochaineVersion(cx, cz); }
     }
 
     /* ─── écoulement de l'eau ───────────────────────────────────────────────

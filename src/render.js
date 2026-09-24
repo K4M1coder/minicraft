@@ -444,6 +444,13 @@
       g.index.array.set(raw.indices);
       g.index.needsUpdate = true;
       g.setDrawRange(0, raw.indices.length);
+      /* computeBoundingSphere() parcourt le tampon `position` à sa pleine
+         CAPACITÉ (les positions au-delà de `nv`, restées à leur ancienne
+         valeur ou à zéro sur une géométrie neuve), pas seulement les
+         sommets utiles couverts par setDrawRange — une enveloppe un peu
+         trop large plutôt que fausse, sans coût pratique : un chunk vit
+         de toute façon dans une boîte fixe (16×WH×16), le frustum culling
+         n'en tire donc aucune économie mesurable à affiner ici. */
       g.computeBoundingSphere();
     }
     /* SPEC-PERF-014 : applique un maillage déjà calculé (passes typées,

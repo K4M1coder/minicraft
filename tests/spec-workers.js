@@ -254,5 +254,54 @@
       // un résultat de l'ancienne époque est désormais périmé
       A.equal(f.recu({ type: 'chunk', epoque: e0, cx: 1, cz: 1 }, function () { return 1; }), 'perime');
     });
+
+    /* Revue adversariale (voir docs/vague-2/B3.md) : `init` diffusé via
+       `pool.envoyer()` n'atteignait qu'UN SEUL worker libre — chaque worker
+       a sa propre `epoqueCourante` en portée de module (worker-monde.js/
+       worker-maillage.js) ; les autres restaient bloqués sur une époque
+       périmée pour toujours, ignoraient silencieusement toute tâche reçue
+       (aucune réponse, donc jamais libérés), un chunk restant alors
+       indéfiniment `dirty`. `src/workers.js` n'est chargé nulle part sous
+       Node (navigateur seulement, `typeof Worker`) : on le charge ici dans
+       un bac à sable dédié, avec un faux `Worker` qui enregistre juste ce
+       qu'il reçoit — suffisant pour vérifier la DIFFUSION elle-même, sans
+       navigateur ni round-trip asynchrone (le harnais Node est synchrone). */
+    it('SPEC-PERF-009 : MC.Workers.creerPool().diffuser() envoie à TOUS les workers du pool — envoyer() n\'en consomme qu\'un seul', function () {
+      var vm = require('vm');
+      var fs = require('fs');
+      var path = require('path');
+      var recus = [];
+      function FakeWorker(script) {
+        this.script = script; this.onmessage = null; this.onerror = null;
+        this._i = recus.length; recus.push([]);
+      }
+      FakeWorker.prototype.postMessage = function (msg) { recus[this._i].push(msg); };
+      FakeWorker.prototype.terminate = function () {};
+      var sandbox = { Worker: FakeWorker };
+      sandbox.globalThis = sandbox;
+      vm.createContext(sandbox);
+      var code = fs.readFileSync(path.join(__dirname, '..', 'src', 'workers.js'), 'utf8');
+      vm.runInContext(code, sandbox, { filename: 'workers.js' });
+
+      var pool = sandbox.MC.Workers.creerPool({
+        script: 'worker-maillage.js', taille: 4, onMessage: function () {}, onErreur: function () {},
+      });
+      A.ok(pool, 'pool créé (faux Worker en place)');
+      A.equal(recus.length, 4, '4 workers réellement construits (un par slot de taille)');
+
+      pool.diffuser({ type: 'init', epoque: 1, v: 1 });
+      recus.forEach(function (msgs, i) {
+        A.equal(msgs.length, 1, 'worker #' + i + ' a bien reçu le message diffusé');
+        A.equal(msgs[0].type, 'init');
+      });
+
+      // par contraste : envoyer() (utilisé pour genere/maille) ne consomme
+      // volontairement qu'UN SEUL worker libre à la fois
+      var libresAvant = pool.libres();
+      A.ok(pool.envoyer({ type: 'maille', epoque: 1, cx: 0, cz: 0 }, []), 'envoyer() trouve un worker libre');
+      A.equal(pool.libres(), libresAvant - 1, 'envoyer() ne marque qu\'un seul worker occupé');
+      var total = recus.reduce(function (n, m) { return n + m.length; }, 0);
+      A.equal(total, 4 + 1, 'un seul message de plus (pas 4) après un envoyer()');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

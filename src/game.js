@@ -145,8 +145,11 @@
         onErreur: function () { onMessagePool('maille', { type: 'erreur' }); },
       });
       var initMsg = { type: 'init', epoque: fileChunks.epoque, graine: SEED, options: { zonePolitique: null }, v: MC.ContratsV2.VERSION };
-      if (poolGeneration) poolGeneration.envoyer(initMsg, []);
-      if (poolMaillage) poolMaillage.envoyer(initMsg, []);
+      // `diffuser`, jamais `envoyer` : un `init` doit atteindre TOUT le pool
+      // (chaque worker a sa propre `epoqueCourante`), pas un seul worker
+      // libre — voir la note de src/workers.js `diffuser`.
+      if (poolGeneration) poolGeneration.diffuser(initMsg);
+      if (poolMaillage) poolMaillage.diffuser(initMsg);
     }
     demarrerPools();
     /* SPEC-PERF-009 : nouvelle époque + réinitialisation des workers déjà
@@ -156,8 +159,8 @@
       var epoque = fileChunks.nouvelleEpoque();
       var initMsg = { type: 'init', epoque: epoque, graine: world.seed,
                        options: { zonePolitique: zonePolitique || null }, v: MC.ContratsV2.VERSION };
-      if (poolGeneration) poolGeneration.envoyer(initMsg, []);
-      if (poolMaillage) poolMaillage.envoyer(initMsg, []);
+      if (poolGeneration) poolGeneration.diffuser(initMsg);
+      if (poolMaillage) poolMaillage.diffuser(initMsg);
     }
 
     var entities = MC.createEntities(world);
