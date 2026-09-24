@@ -105,7 +105,7 @@
   G.etatMinimal = etatMinimal;
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Core — définitions de blocs et d\'objets', function () {
+  describe('Core — définitions de blocs et d\'objets', { teste: 'Les tables de définition de blocs et d\'objets (MC.Core.B/I) sont complètes et cohérentes.', pourquoi: 'Une définition incomplète (nom, tuile, solidité) ferait planter le rendu ou le craft bien plus tard, loin de sa cause.', attendu: 'chaque bloc et objet défini a un nom, ses tuiles, et les règles de solidité/remplaçabilité attendues.' }, function () {
     it('l\'espace d\'ids sépare bien blocs et objets', function () {
       A.ok(C.isBlock(B.STONE), 'la pierre est un bloc');
       A.notOk(C.isItem(B.STONE), 'la pierre n\'est pas un objet');
@@ -157,7 +157,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Core — minage', function () {
+  describe('Core — minage', { teste: 'Le temps et le produit du minage selon l\'outil et le bloc.', pourquoi: 'Le minage est le geste le plus répété du jeu : une règle fausse (temps, drop) se remarque à chaque bloc cassé.', attendu: 'le bon outil accélère, le mauvais non ; les drops (aléatoires compris) et les blocs incassables se comportent comme prévu.' }, function () {
     it('le bon outil accélère, le mauvais non', function () {
       var main = C.breakTime(B.STONE, 0).seconds;
       var bois = C.breakTime(B.STONE, I.WOOD_PICKAXE).seconds;
@@ -214,7 +214,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Bruit — déterminisme', function () {
+  describe('Bruit — déterminisme', { teste: 'Le bruit procédural utilisé par la génération est déterministe.', pourquoi: 'Toute la génération du monde (terrain, biomes, donjons) repose sur un bruit reproductible ; sans déterminisme, deux mondes de même graine divergeraient.', attendu: 'la même graine et les mêmes coordonnées redonnent toujours la même valeur de bruit.' }, function () {
     it('deux instances de même graine donnent la même valeur', function () {
       var a = MC.makeNoise(1234), b = MC.makeNoise(1234);
       for (var i = 0; i < 20; i++) {
@@ -243,7 +243,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Monde — génération', function () {
+  describe('Monde — génération', { teste: 'La génération de chunks produit un terrain, des ressources et une végétation cohérents.', pourquoi: 'C\'est la fondation de tout le jeu : un chunk mal généré (trou, arbre flottant) se voit immédiatement en jeu.', attendu: 'les chunks générés respectent les règles de relief, de ressources et de végétation attendues.' }, function () {
     var w = MC.createWorld(20260921);
 
     it('le relief traverse le niveau de la mer', function () {
@@ -312,7 +312,7 @@
       A.ok(charbon > fer, 'le charbon est plus courant que le fer');
     });
 
-    it('des arbres sont générés et reposent sur le sol', function () {
+    it('des arbres sont générés et reposent sur le sol @lent', function () {
       var w4 = MC.createWorld(20260921);
       var troncs = 0;
       // les régions climatiques étant désormais vastes (SPEC-BIOME-006/007), les environs
@@ -409,7 +409,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Monde — lecture et écriture', function () {
+  describe('Monde — lecture et écriture', { teste: 'Lire et écrire un bloc dans le monde, en chunk et hors chunk.', pourquoi: 'Poser et casser des blocs est l\'action de base du jeu ; une lecture/écriture fausse casse tout le reste.', attendu: 'getBlock/setBlock renvoient et modifient exactement le bloc attendu, y compris aux limites de chunk.' }, function () {
     it('setBlock puis getBlock rendent la même valeur', function () {
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
@@ -464,7 +464,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Monde — croissance des cultures', function () {
+  describe('Monde — croissance des cultures', { teste: 'La croissance des cultures plantées au fil du temps.', pourquoi: 'L\'agriculture dépend d\'une progression de stades correcte et bornée.', attendu: 'une culture avance de stade avec le temps et s\'arrête à son stade final.' }, function () {
     function champ() {
       var w = MC.createWorld(5);
       w.getChunk(0, 0, true);
@@ -517,7 +517,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Physique — orientation des déplacements (régression)', function () {
+  describe('Physique — orientation des déplacements (régression)', { teste: 'L\'orientation du déplacement du joueur selon les touches et le regard.', pourquoi: 'Un bug déjà corrigé une fois, sur le sens du déplacement relatif au regard : un test de non-régression.', attendu: 'avancer va bien dans la direction regardée, quel que soit le yaw.' }, function () {
     /* Le vecteur avant de la caméra, par définition de la convention Three.js :
        la caméra regarde -Z, tourné de `yaw` autour de Y. */
     function camForward(yaw) { return { x: -Math.sin(yaw), z: -Math.cos(yaw) }; }
@@ -589,7 +589,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Physique — collisions', function () {
+  describe('Physique — collisions', { teste: 'Les collisions du joueur avec les blocs solides.', pourquoi: 'Sans collisions justes, le joueur traverse les murs ou reste bloqué sur des arêtes.', attendu: 'le joueur ne traverse aucun bloc solide et se déplace librement ailleurs.' }, function () {
     it('un corps dans la pierre collisionne, dans l\'air non', function () {
       var w = flatWorld(10);
       A.ok(P.collides(w, 0.5, 5, 0.5, 0.6, 1.8), 'enfoui');
@@ -662,7 +662,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Physique — raycast DDA', function () {
+  describe('Physique — raycast DDA', { teste: 'L\'algorithme de lancer de rayon (DDA) qui trouve le bloc visé.', pourquoi: 'Miner et poser dépendent entièrement de viser le bon bloc, y compris aux arêtes.', attendu: 'le rayon trouve le premier bloc solide traversé et sa face de contact.' }, function () {
     it('vise le bloc sous soi en regardant vers le bas', function () {
       var w = flatWorld(10);
       var hit = P.raycast(w, { x: 0.5, y: 12, z: 0.5 }, { x: 0, y: -1, z: 0 }, 6);
@@ -710,7 +710,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Inventaire — piles', function () {
+  describe('Inventaire — piles', { teste: 'La gestion des piles d\'objets dans l\'inventaire.', pourquoi: 'Ajouter, retirer, fusionner des piles est utilisé partout (craft, coffres, échanges) ; une erreur s\'y propage.', attendu: 'les piles s\'empilent, se limitent et se déplacent sans perte ni duplication.' }, function () {
     it('ajouter remplit une case vide', function () {
       var inv = Inv.create(9);
       A.equal(inv.add(B.STONE, 10), 0, 'aucun reliquat');
@@ -782,7 +782,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Craft — reconnaissance des recettes', function () {
+  describe('Craft — reconnaissance des recettes', { teste: 'La reconnaissance des motifs de recette dans la grille de craft.', pourquoi: 'Une recette mal reconnue (faux positif ou négatif) frustre ou casse la progression.', attendu: 'chaque motif de recette reconnu redonne exactement le bon objet en bonne quantité.' }, function () {
     function grid3(cells) { var g = new Array(9).fill(0); cells.forEach(function (c) { g[c[0]] = c[1]; }); return g; }
 
     it('recette informe : 1 tronc -> 4 planches', function () {
@@ -876,7 +876,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fourneau', function () {
+  describe('Fourneau', { teste: 'La cuisson au fourneau (combustible, temps, résultat).', pourquoi: 'La cuisson est une boucle de jeu à part entière ; un combustible ou un temps faux la rend impraticable.', attendu: 'le fourneau consomme le bon combustible, cuit dans le bon temps et produit le bon résultat.' }, function () {
     it('sans combustible, rien ne cuit', function () {
       var f = Inv.newFurnace();
       f.input = { id: B.IRON_ORE, n: 1 };
@@ -936,7 +936,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Echanges avec les villageois', function () {
+  describe('Echanges avec les villageois', { teste: 'Les échanges (troc) avec les villageois.', pourquoi: 'Le commerce est une source d\'objets et de monnaie ; un échange qui triche léserait le joueur ou le jeu.', attendu: 'un échange prélève et donne exactement les quantités annoncées.' }, function () {
     it('toutes les offres sont bien formees', function () {
       Inv.TRADES.forEach(function (t, i) {
         A.ok(t.give && t.give.length > 0, 'offre ' + i + ' a une contrepartie');
@@ -989,7 +989,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Usure des outils', function () {
+  describe('Usure des outils', { teste: 'L\'usure des outils à l\'usage et leur casse.', pourquoi: 'Sans usure correcte, les outils seraient éternels ou casseraient trop tôt.', attendu: 'la durabilité baisse à chaque usage et l\'outil disparaît à zéro.' }, function () {
     it('un outil s use a chaque bloc casse et finit par se briser', function () {
       var inv = Inv.create(9);
       inv.add(I.WOOD_PICKAXE, 1);
@@ -1033,7 +1033,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Torches et supports', function () {
+  describe('Torches et supports', { teste: 'La pose des torches et la règle de support (un bloc solide adjacent).', pourquoi: 'Une torche sans support devrait tomber ; en rater la règle laisse des torches fantômes.', attendu: 'une torche posée sans support tombe ou refuse de se poser, selon le mode.' }, function () {
     it('la torche emet de la lumiere, pas la pierre', function () {
       A.ok(C.lightOf(B.TORCH) > 0, 'la torche eclaire');
       A.equal(C.lightOf(B.STONE), 0, 'la pierre non');
@@ -1096,7 +1096,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Coffres', function () {
+  describe('Coffres', { teste: 'Le stockage dans les coffres, indépendant de l\'inventaire du joueur.', pourquoi: 'Les coffres sont la mémoire persistante du monde ; une fuite ou un mélange avec l\'inventaire serait grave.', attendu: 'un coffre garde son contenu propre, distinct de l\'inventaire, à travers l\'ouverture et la fermeture.' }, function () {
     it('la recette du coffre est un anneau de planches', function () {
       var g = new Array(9).fill(B.PLANKS); g[4] = 0;
       var r = Inv.matchRecipe(g, 3, 3);
@@ -1120,7 +1120,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Cycle jour/nuit', function () {
+  describe('Cycle jour/nuit', { teste: 'La progression de l\'heure du jeu et ses seuils (jour, nuit, aube, crépuscule).', pourquoi: 'L\'heure pilote l\'apparition des monstres, la lumière et l\'ambiance ; une dérive s\'y répercute partout.', attendu: 'l\'heure avance à la vitesse attendue et franchit ses seuils aux bons moments.' }, function () {
     var DL = DC.DAY_LENGTH;
     it('la phase reste dans [0,1)', function () {
       [0, 10, DL - 1, DL, DL * 3.7].forEach(function (t) {
@@ -1159,7 +1159,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Mailleur', function () {
+  describe('Mailleur', { teste: 'La génération du maillage 3D d\'un chunk à partir de ses blocs.', pourquoi: 'Le mailleur est le pont entre la logique pure et le rendu ; une face manquante ou en trop s\'y voit directement.', attendu: 'seules les faces visibles (non occluses) sont émises, avec la bonne géométrie et le bon matériau.' }, function () {
     function chunkPlein(id) {
       var c = { cx: 0, cz: 0, blocks: new Uint8Array(C.CHUNK_X * C.WORLD_H * C.CHUNK_Z) };
       for (var y = 0; y < 3; y++) for (var z = 0; z < C.CHUNK_Z; z++) for (var x = 0; x < C.CHUNK_X; x++)
@@ -1407,7 +1407,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Entités', function () {
+  describe('Entités', { teste: 'La création, la mise à jour et la suppression des entités (mobs, objets au sol, projectiles).', pourquoi: 'Les entités sont le socle de tout comportement vivant du monde ; une fuite ou un état incohérent s\'y propage.', attendu: 'une entité créée existe, se met à jour, et disparaît proprement quand retirée.' }, function () {
     function setup() {
       var w = flatWorld(10);
       var ents = MC.createEntities(w);
@@ -1610,7 +1610,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Audio', function () {
+  describe('Audio', { teste: 'La sélection et le déclenchement des sons selon le contexte de jeu.', pourquoi: 'Le son est un module à part dont la logique de sélection (quel son, quand) doit rester correcte sans dépendre du moteur audio réel.', attendu: 'le bon identifiant de son est choisi pour chaque situation testée.' }, function () {
     /* WebAudio peut etre absent (Node, navigateur ancien) ou suspendu
        (politique d autoplay). Le contrat est le meme dans les deux cas :
        aucune exception, et une valeur de retour honnete. Le test s adapte a
@@ -1652,7 +1652,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Sauvegarde', function () {
+  describe('Sauvegarde', { teste: 'La sérialisation et la relecture de l\'état du jeu.', pourquoi: 'Une sauvegarde qui perd ou déforme des données abîme la partie du joueur, souvent bien après coup.', attendu: 'un aller-retour de sauvegarde restitue exactement l\'état sauvegardé.' }, function () {
     function mockStorage() {
       var m = {};
       return {

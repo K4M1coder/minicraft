@@ -607,7 +607,7 @@
       A.ok(marins > 0 && terrestres > 0, 'les deux familles existent (' + marins + ' / ' + terrestres + ')');
     });
 
-    it('SPEC-DONJON-011 : le type de donjon depend du biome, de l altitude et de la profondeur', function () {
+    it('SPEC-DONJON-011 : le type de donjon depend du biome, de l altitude et de la profondeur @lent', function () {
       var L = MC.Biomes.LISTE, T = MC.Donjons.typePour;
       A.equal(T(L.desert, 40, 0.5), 'pyramide');
       A.equal(T(L.taiga, 40, 0.5), 'forteresse_glace');

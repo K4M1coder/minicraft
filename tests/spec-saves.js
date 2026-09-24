@@ -9,7 +9,7 @@
   var mockStorage = G.mockStorage, etatMinimal = G.etatMinimal, flatWorld = G.flatWorld;
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — parties multiples', function () {
+  describe('Specs — parties multiples', { teste: 'La gestion de plusieurs parties sauvegardées : index, identifiants, effacement complet.', pourquoi: 'Couvre les specs SPEC-SAVE-* de ce fichier, ainsi que les fonctions internes (identifiants, effacement) dont dépendent ces specs.', attendu: 'chaque fonction interne se comporte comme documenté, en plus des specs SPEC-SAVE-* couvertes une à une.' }, function () {
 
     it('SPEC-SAVE-001 : plusieurs parties coexistent', function () {
       var st = mockStorage();
@@ -144,7 +144,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — graine de génération', function () {
+  describe('Specs — graine de génération', { teste: 'La graine de génération : conversion depuis un texte, tirage aléatoire, déterminisme du monde produit.', pourquoi: 'Couvre les specs SPEC-SAVE-* liées à la graine, ainsi que le tirage aléatoire dont elles dépendent quand la graine est vide.', attendu: 'la graine, qu\'elle soit saisie ou tirée, reste dans les bornes attendues et détermine le monde, en plus des specs SPEC-SAVE-* couvertes une à une.' }, function () {
 
     it('SPEC-SAVE-009 : une graine numerique est conservee telle quelle', function () {
       A.equal(M.graineDepuisTexte('42'), 42);
@@ -220,7 +220,7 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Couverture des fonctions publiques que la porte G6 signalait
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Couverture — fonctions publiques restantes', function () {
+  describe('Couverture — fonctions publiques restantes', { teste: 'Des fonctions publiques diverses (inventaire, physique, entités, cycle jour/nuit) non couvertes par une spec dédiée.', pourquoi: 'La porte G6 exige que toute fonction exportée d\'un module pur soit citée par un test ; ce groupe rassemble celles qui ne rentrent dans aucune spec existante.', attendu: 'chaque fonction listée ici se comporte selon sa description, indépendamment de toute spec.' }, function () {
 
     it('maxStack distingue les outils des blocs', function () {
       A.equal(C.maxStack(B.COBBLE), 64, 'un bloc s empile a 64');

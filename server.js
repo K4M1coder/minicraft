@@ -440,8 +440,96 @@ function traiterApiAdmin(req, res) {
   return true;
 }
 
+// ── réception du cahier de test (SPEC-BANC-015) ─────────────────────────────
+/* La logique (adresse locale, taille, écriture, élagage) vit ENTIÈREMENT dans
+   tools/resultats-tests.js, testable sous Node sans lancer de serveur — ici,
+   on ne fait que lire la requête et lui transmettre ce qu'elle seule connaît :
+   l'adresse distante et la taille reçue. */
+function traiterResultatsTest(req, res) {
+  if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const RT = require('./tools/resultats-tests.js');
+  const LIMITE = RT.LIMITE_OCTETS_DEFAUT;
+  let brut = '';
+  let trop = false;
+  req.on('data', (d) => {
+    if (trop) return;
+    brut += d;
+    if (Buffer.byteLength(brut) > LIMITE) { trop = true; repondreJSON(res, 413, { ok: false, motif: 'corps trop volumineux' }); req.destroy(); }
+  });
+  req.on('end', () => {
+    if (trop) return;
+    let corps;
+    try { corps = JSON.parse(brut); } catch (e) { repondreJSON(res, 400, { ok: false, motif: 'JSON invalide' }); return; }
+    const r = RT.traiterEnvoi(corps, {
+      adresse: req.socket.remoteAddress, params: PARAMS, tailleOctets: Buffer.byteLength(brut), limiteOctets: LIMITE,
+    });
+    // `dossierAbsolu` est un détail d'implémentation (chemin disque local) :
+    // utile aux appelants Node (tests/run.js), jamais renvoyé par le réseau
+    repondreJSON(res, r.code, { ok: r.ok, code: r.code, dossier: r.dossier, rapport: r.rapport, motif: r.motif });
+  });
+  return true;
+}
+
+// ── bibliothèque des cahiers de test (SPEC-BANC-018 à 022) ─────────────────
+/* Mêmes protections que /tests/resultats (SPEC-BANC-015) : machine locale
+   uniquement. Tout `dossier` de l'URL est vérifié contre la liste RÉELLE des
+   cahiers (tools/cahier.js, estCahierValide) avant tout accès disque —
+   jamais un chemin construit directement depuis l'URL, ce qui élimine la
+   traversée de répertoire par construction plutôt que par filtrage. */
+const RE_CAHIER_DOSSIER = /^\/tests\/cahiers\/([^\/?]+)(?:\/(export|comparer|conserver))?\/?$/;
+function traiterCahiers(req, res) {
+  const url = req.url.split('?')[0];
+  if (!(url === '/tests/cahiers' || url === '/tests/cahiers/' || url === '/tests/cahiers/api' || RE_CAHIER_DOSSIER.test(url))) return false;
+  const RT = require('./tools/resultats-tests.js');
+  if (!RT.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return true; }
+  const cahier = require('./tools/cahier.js');
+  const racine = RT.DOSSIER_RESULTATS;
+  const q = {};
+  new URL(req.url, 'http://localhost').searchParams.forEach((v, k) => { q[k] = v; });
+
+  if (url === '/tests/cahiers' || url === '/tests/cahiers/') {
+    const p = cheminSur('/tests/cahiers.html');
+    fs.readFile(p, (err, data) => {
+      if (err) { res.writeHead(404); res.end('404'); return; }
+      res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+      res.end(data);
+    });
+    return true;
+  }
+  if (url === '/tests/cahiers/api') { repondreJSON(res, 200, { cahiers: cahier.listerCahiers(racine) }); return true; }
+
+  const mm = RE_CAHIER_DOSSIER.exec(url);
+  const dossier = mm[1], action = mm[2];
+  if (!cahier.estCahierValide(racine, dossier)) { repondreJSON(res, 404, { ok: false, motif: 'cahier introuvable' }); return true; }
+
+  if (action === 'export' && req.method === 'GET') {
+    const format = q.format || 'html';
+    try {
+      if (format === 'html') { const buf = cahier.exporterHTML(racine, dossier); res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Disposition': 'attachment; filename="' + dossier + '.html"' }); res.end(buf); return true; }
+      if (format === 'docx') { const buf = cahier.exporterDocx(racine, dossier); res.writeHead(200, { 'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 'Content-Disposition': 'attachment; filename="' + dossier + '.docx"' }); res.end(buf); return true; }
+      if (format === 'pdf') {
+        const r = cahier.exporterPDF(racine, dossier);
+        if (!r.ok) { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'X-Cahier-Repli': 'impression-navigateur' }); res.end(r.page); return true; }
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': 'attachment; filename="' + dossier + '.pdf"' }); res.end(r.pdf); return true;
+      }
+      repondreJSON(res, 400, { ok: false, motif: 'format inconnu' });
+    } catch (e) { repondreJSON(res, 500, { ok: false, motif: e.message }); }
+    return true;
+  }
+  if (action === 'comparer' && req.method === 'GET') { repondreJSON(res, 200, cahier.compareCahiers(racine, dossier, q.avec)); return true; }
+  if (action === 'conserver' && req.method === 'POST') {
+    lireCorpsJSON(req, (args) => { repondreJSON(res, 200, cahier.marquerConserve(racine, dossier, args.valeur !== false)); });
+    return true;
+  }
+  if (!action && req.method === 'DELETE') { repondreJSON(res, 200, cahier.supprimerCahier(racine, dossier)); return true; }
+  repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' });
+  return true;
+}
+
 function servir(req, res) {
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
+  if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
+  if (req.url.indexOf('/tests/cahiers') === 0 && traiterCahiers(req, res)) return;
   const chemin = cheminSur(req.url);
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
   fs.stat(chemin, (err, st) => {

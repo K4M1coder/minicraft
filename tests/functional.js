@@ -22,7 +22,7 @@
   function keys(o) { return Object.assign({}, NOKEY, o || {}); }
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — déplacement du joueur', function () {
+  describe('Fonctionnel — déplacement du joueur', { teste: 'Le déplacement du joueur combine entrées, physique et monde sur plusieurs images.', pourquoi: 'Un test unitaire isolé peut passer alors que l\'enchaînement réel (plusieurs images, plusieurs systèmes) échoue ; ce scénario le vérifie bout en bout.', attendu: 'le joueur se déplace, saute et retombe comme attendu au fil d\'une séquence d\'images.' }, function () {
     it('avancer déplace bien dans la direction du regard', function () {
       for (var deg = 0; deg < 360; deg += 45) {
         var g = partie();
@@ -119,7 +119,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — survie', function () {
+  describe('Fonctionnel — survie', { teste: 'Les mécaniques de survie (faim, vie, régénération, mort) combinées sur la durée.', pourquoi: 'La survie mélange plusieurs règles (faim, dégâts, régén) dont les interactions ne se voient qu\'en situation.', attendu: 'faim, vie et régénération évoluent ensemble comme les règles du mode l\'exigent.' }, function () {
     it('une chute de plus de 3 blocs blesse', function () {
       var g = partie();
       g.s.pos.y = 30; g.s.onGround = false;
@@ -212,7 +212,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — miner et ramasser', function () {
+  describe('Fonctionnel — miner et ramasser', { teste: 'La chaîne complète miner un bloc puis ramasser son butin en inventaire.', pourquoi: 'Le minage et l\'inventaire sont testés séparément ailleurs ; ici on vérifie qu\'ils se raccordent correctement.', attendu: 'miner un bloc fait apparaître le bon butin, ramassable, et l\'ajoute à l\'inventaire.' }, function () {
     function viseLeSol(g) {
       g.s.pitch = -Math.PI / 2 + 0.01;
       return g.pl.aim();
@@ -316,7 +316,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — poser et utiliser', function () {
+  describe('Fonctionnel — poser et utiliser', { teste: 'Poser un bloc et utiliser un objet depuis l\'inventaire, en situation.', pourquoi: 'Poser dépend à la fois de l\'inventaire, de la visée et du monde ; un scénario complet révèle les défauts de raccordement.', attendu: 'poser consomme l\'objet attendu et place le bon bloc au bon endroit.' }, function () {
     it('poser un bloc le place sur la face visée et consomme la pile', function () {
       var g = partie();
       g.s.inv.add(B.BRICK, 5); g.s.selected = 0;
@@ -409,7 +409,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — torches, usure, jeter', function () {
+  describe('Fonctionnel — torches, usure, jeter', { teste: 'Poser une torche, user un outil et jeter un objet, en situation de jeu.', pourquoi: 'Ces trois actions touchent l\'inventaire et le monde ensemble ; ce scénario vérifie leur combinaison réelle.', attendu: 'chaque action produit l\'effet attendu sur l\'inventaire et sur le monde.' }, function () {
     it('une torche se pose sur un sol et pas en plein ciel', function () {
       var g = partie();
       g.s.inv.add(B.TORCH, 4); g.s.selected = 0;
@@ -505,7 +505,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — agriculture', function () {
+  describe('Fonctionnel — agriculture', { teste: 'Planter, laisser pousser et récolter une culture, en situation.', pourquoi: 'L\'agriculture combine le monde (sol, temps) et l\'inventaire (graines, récolte) ; le scénario complet les vérifie ensemble.', attendu: 'une culture plantée pousse puis se récolte pour le bon produit.' }, function () {
     it('la houe transforme l\'herbe en terre labourée', function () {
       var g = partie(B.GRASS);
       g.s.inv.add(I.WOOD_HOE, 1); g.s.selected = 0;
@@ -571,7 +571,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — combat', function () {
+  describe('Fonctionnel — combat', { teste: 'Le combat entre joueur et créature, en situation (frappe, dégâts, mort, butin).', pourquoi: 'Le combat enchaîne plusieurs systèmes (dégâts, vie, entités, butin) dont l\'ordre d\'exécution compte.', attendu: 'frapper inflige les bons dégâts et une créature vaincue disparaît en laissant son butin.' }, function () {
     it('frapper un mouton le blesse', function () {
       var g = partie();
       var m = g.ents.spawn('sheep', 1.0, 11, 0.5);
@@ -636,7 +636,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — progression complète', function () {
+  describe('Fonctionnel — progression complète', { teste: 'Une progression de jeu de bout en bout (miner, fabriquer, équiper, avancer).', pourquoi: 'C\'est le meilleur indicateur qu\'une partie réelle reste jouable après une modification, plutôt qu\'un seul module isolé.', attendu: 'la séquence complète de progression se déroule sans blocage ni incohérence.' }, function () {
     /* La boucle de jeu canonique : bois -> planches -> établi -> outils ->
        pierre -> pioche en pierre. On vérifie que la chaîne entière tient. */
     it('du tronc à la pioche en pierre', function () {
@@ -744,7 +744,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Fonctionnel — sauvegarde en situation', function () {
+  describe('Fonctionnel — sauvegarde en situation', { teste: 'Sauvegarder puis recharger une partie ayant réellement évolué (blocs, inventaire, entités).', pourquoi: 'La sauvegarde est testée unitairement ailleurs ; ici on vérifie qu\'un état de jeu complet et réaliste survit à l\'aller-retour.', attendu: 'après rechargement, l\'état de la partie correspond exactement à ce qui a été sauvegardé.' }, function () {
     function mockStorage() {
       var m = {};
       return { getItem: function (k) { return k in m ? m[k] : null; },

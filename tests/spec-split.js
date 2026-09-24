@@ -24,7 +24,7 @@
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — découpage des vues', function () {
+  describe('Specs — découpage des vues', { teste: 'Le découpage de l\'écran en 1 à 4 vues et la répartition des pixels.', pourquoi: 'Couvre les specs SPEC-SPLIT-* de ce fichier, ainsi que le cas des dimensions impaires que ces specs ne détaillent pas explicitement.', attendu: 'les vues couvrent tout le cadre sans perdre ni dupliquer de pixel, en plus des specs SPEC-SPLIT-* couvertes une à une.' }, function () {
 
     it('SPEC-SPLIT-001 : de 1 a 4 joueurs sont acceptes', function () {
       [1, 2, 3, 4].forEach(function (n) {
@@ -97,7 +97,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — joueurs locaux', function () {
+  describe('Specs — joueurs locaux', { teste: 'L\'état des joueurs locaux en écran partagé (vie, équipe, victoire/défaite).', pourquoi: 'Couvre les specs SPEC-SPLIT-* de ce fichier, ainsi que les fonctions d\'état d\'équipe dont elles dépendent.', attendu: 'l\'état de chaque joueur local et de son équipe reste cohérent, en plus des specs SPEC-SPLIT-* couvertes une à une.' }, function () {
 
     function monde() {
       var w = G.flatWorld(10, C.B.STONE);
@@ -211,7 +211,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — manettes', function () {
+  describe('Specs — manettes', { teste: 'La lecture des manettes : sticks, zone morte, boutons, appui unique.', pourquoi: 'Couvre les specs SPEC-SPLIT-* liées aux manettes, ainsi que la conversion des boutons en actions dont elles dépendent.', attendu: 'les entrées de manette produisent les bonnes actions, sans répétition ni bruit, en plus des specs SPEC-SPLIT-* couvertes une à une.' }, function () {
 
     it('SPEC-SPLIT-011 : le stick gauche deplace', function () {
       var src = manettes([{ axes: [0, -1, 0, 0] }]);       // vers l avant

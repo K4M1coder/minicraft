@@ -24,6 +24,8 @@
       aide: 'politique des zones de jeu (SPEC-ZONE-004) : generee, tout_pve, tout_sur ou tout_pvp' },
     { nom: 'liste-blanche', cle: 'listeBlanche', valeur: false, aide: 'seuls les joueurs inscrits entrent' },
     { nom: 'admin', cle: 'admin', attend: 'texte', defaut: null, aide: 'mot de passe ou jeton d\'administration' },
+    // SPEC-BANC-015 : un serveur --serveur (dédié) refuse les résultats de test SAUF avec --tests
+    { nom: 'tests', cle: 'tests', valeur: false, aide: 'autorise la réception de résultats de test (POST /tests/resultats) même en --serveur dédié' },
     { nom: 'aide', cle: 'aide', valeur: false, aide: 'affiche cette liste et s\'arrête' },
   ];
 

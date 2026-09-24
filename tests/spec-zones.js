@@ -17,7 +17,7 @@
     return mondes[cle];
   }
 
-  describe('SPEC-ZONE — zones de jeu (PvP/PvE, PvP seul, PvE seul, sûre)', function () {
+  describe('SPEC-ZONE — zones de jeu (PvP/PvE, PvP seul, PvE seul, sûre)', { teste: 'Les zones de jeu (PvP/PvE) et leurs fonctions de regroupement et de résolution des règles.', pourquoi: 'Une zone mal résolue changerait silencieusement les règles de combat d\'un joueur (PvP alors qu\'il croit être protégé).', attendu: 'les régions et leurs règles combinées correspondent à la carte de zones, en plus des specs SPEC-ZONE-* couvertes une à une.' }, function () {
 
     it('SPEC-ZONE-001 : quatre zones, et des règles cohérentes pour chacune', function () {
       A.equal(Z.TYPES.length, 4, 'quatre zones définies');
@@ -50,7 +50,7 @@
       });
     });
 
-    it('SPEC-ZONE-001 : le point d\'apparition est toujours sûr, et la carte suit la densité', function () {
+    it('SPEC-ZONE-001 : le point d\'apparition est toujours sûr, et la carte suit la densité @lent', function () {
       var w = monde(20260921);
       var col = w.findSpawnColumn();
       A.equal(w.zoneEn(col[0], col[1]).zone, 'sure', 'le point d\'apparition du monde est sûr');

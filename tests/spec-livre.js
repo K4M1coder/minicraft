@@ -13,7 +13,7 @@
     return null;
   }
 
-  describe('Specs — livre des recettes', function () {
+  describe('Specs — livre des recettes', { teste: 'Le livre des recettes : liste, faisabilité, remplissage de la grille.', pourquoi: 'Couvre les specs SPEC-LIVRE-* de ce fichier, ainsi que les recettes informes qui n\'ont pas de motif fixe.', attendu: 'chaque recette du livre se pose et produit bien son objet, en plus des specs SPEC-LIVRE-* couvertes une à une.' }, function () {
 
     it('SPEC-LIVRE-001 : le livre liste toutes les recettes', function () {
       var inv = Inv.create(36);

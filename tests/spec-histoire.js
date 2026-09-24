@@ -111,7 +111,7 @@
       A.equal(pl.useOn(cible), 'place', 'mais une torche, oui');
     });
 
-    it('SPEC-HISTOIRE-003 : l histoire se lie aux lieux réels du monde', function () {
+    it('SPEC-HISTOIRE-003 : l histoire se lie aux lieux réels du monde @lent', function () {
       var w = MC.createWorld(20260921);
       var l = H.lier(w, 0, 0);
       A.ok(l.depart && /^(village|ville):/.test(l.depart.id), 'un village de départ : ' + (l.depart && l.depart.nom));

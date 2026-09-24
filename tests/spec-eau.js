@@ -34,7 +34,7 @@
   }
 
   describe('Specs — eau', function () {
-    it('SPEC-EAU-001 : l eau se classe en écoulement, chute, rivière, lac, mer et océan', function () {
+    it('SPEC-EAU-001 : l eau se classe en écoulement, chute, rivière, lac, mer et océan @lent', function () {
       A.deep(E.NOMS.slice(1), ['lac', 'mer', 'ocean', 'riviere', 'ecoulement', 'chute'], 'six natures');
       A.equal(E.natureColonne({ h: 20, eau: 26, climat: { lac: true } }), E.TYPES.lac);
       A.equal(E.natureColonne({ h: 20, eau: 26, climat: { riviere: true } }), E.TYPES.riviere);
@@ -117,7 +117,7 @@
       A.equal(Bi.niveauRiviere(C.SEA_LEVEL - 5), C.SEA_LEVEL, 'au pied du relief, la rivière rejoint la mer');
     });
 
-    it('SPEC-EAU-005 : l eau s écoule, s étale sur sept blocs, tombe, et se retire sans sa source', function () {
+    it('SPEC-EAU-005 : l eau s écoule, s étale sur sept blocs, tombe, et se retire sans sa source @lent', function () {
       // un plateau de pierre en plein ciel : y = 100
       var w = MC.createWorld(5), y = 100;
       for (var cx = -2; cx <= 2; cx++) for (var cz = -2; cz <= 2; cz++) w.getChunk(cx, cz, true);
@@ -156,7 +156,7 @@
       A.ok(MC.Inventory.RECIPES.some(function (r) { return r.out === C.I.SEAU; }), 'le seau se fabrique');
     });
 
-    it('SPEC-EAU-006 : près du rivage, les vagues se dressent, déferlent et courent vers la plage', function () {
+    it('SPEC-EAU-006 : près du rivage, les vagues se dressent, déferlent et courent vers la plage @lent', function () {
       // fond qui remonte vers x = 15 : profondeur 12 au large, 1 au bord
       var c = chunkEau(function (x) { return C.SEA_LEVEL - 12 + Math.floor(x * 0.75); }, E.TYPES.mer);
       for (var x = 0; x < CX; x++) for (var z = 0; z < CZ; z++) {

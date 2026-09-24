@@ -6,7 +6,7 @@
   var CV = MC.Caravanes;
 
   describe('Specs — convois', function () {
-    it('SPEC-ROUTE-006 : caravanes et voyageurs circulent sur les routes, des bateaux entre les ports, les mêmes pour tous', function () {
+    it('SPEC-ROUTE-006 : caravanes et voyageurs circulent sur les routes, des bateaux entre les ports, les mêmes pour tous @lent', function () {
       // la géométrie d'un tracé
       var ligne = [{ x: 0, y: 30, z: 0 }, { x: 10, y: 30, z: 0 }, { x: 10, y: 32, z: 10 }];
       var cum = CV.longueurs(ligne);

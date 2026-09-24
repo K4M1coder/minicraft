@@ -96,7 +96,7 @@
       A.equal(ermite.pnjs[0].role, 'ermite', 'une maison isolée abrite un ermite');
     });
 
-    it('SPEC-HABITAT-004 : un lieu se pose dans ses chunks : terrain nivelé, rues, bâtiments, lampadaires', function () {
+    it('SPEC-HABITAT-004 : un lieu se pose dans ses chunks : terrain nivelé, rues, bâtiments, lampadaires @lent', function () {
       var w = monde(), v = grandeVille(w);
       var r = v.plateforme.rues;
       // on génère les chunks de la ville
@@ -218,7 +218,7 @@
       }
     });
 
-    it('SPEC-HABITAT-009 : les bâtiments s\'adaptent au relief — fondation qui suit le terrain réel, sans trou flottant à profondeur fixe', function () {
+    it('SPEC-HABITAT-009 : les bâtiments s\'adaptent au relief — fondation qui suit le terrain réel, sans trou flottant à profondeur fixe @lent', function () {
       var w = monde();
       var lieuxTous = lieux(w, 'ville', 12000).concat(lieux(w, 'village', 6000));
       // un lieu avec du dénivelé sous sa plateforme : la fondation doit relier

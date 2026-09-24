@@ -22,7 +22,7 @@
   function pt(l) { return { x: l.x, z: l.z, id: l.id, nom: l.nom, demi: l.demi || 0 }; }
 
   describe('Specs — densité de population, mégapoles et hiérarchie des routes (L38)', function () {
-    it('SPEC-DENSITE-001 : une carte de densité, déterministe, classe chaque région en vierge/rurale/urbaine/hyperurbaine', function () {
+    it('SPEC-DENSITE-001 : une carte de densité, déterministe, classe chaque région en vierge/rurale/urbaine/hyperurbaine @lent', function () {
       var w = monde();
       A.ok(w.densite && typeof w.densite.classeEn === 'function', 'MC.Densite est branché dans le monde');
       // les quatre classes existent bien, sur un échantillonnage assez large
@@ -57,7 +57,7 @@
       A.equal(marinsHyper, 0, 'jamais hyperurbain en pleine mer (' + marinsHyper + '/' + testes + ')');
     });
 
-    it('SPEC-DENSITE-002 : les lieux naissent de la carte de densité — campagne en rurale, villes en urbaine, presque rien en vierge', function () {
+    it('SPEC-DENSITE-002 : les lieux naissent de la carte de densité — campagne en rurale, villes en urbaine, presque rien en vierge @lent', function () {
       var w = monde();
       var maisons = lieux(w, 'maison', 4000), villages = lieux(w, 'village', 6000), villes = lieux(w, 'ville', 14000);
       A.gt(maisons.length + villages.length, 10, 'assez de campagne pour juger de sa répartition');
@@ -102,7 +102,7 @@
       A.ok(boites.every(function (bb) { return bb.y1 > bb.y0; }), 'des boîtes bien formées');
     });
 
-    it('SPEC-ROUTE-007 : la hiérarchie des tracés — grands axes, commerce, chemins ruraux, tourisme — avec leur propre largeur et matériau', function () {
+    it('SPEC-ROUTE-007 : la hiérarchie des tracés — grands axes, commerce, chemins ruraux, tourisme — avec leur propre largeur et matériau @lent', function () {
       var w = monde(), megs = lieux(w, 'megapole', 400000);
       A.gt(megs.length, 0, 'une mégapole pour tester le grand axe');
       var m = megs[0], conns = w.routes.connexionsDe(m);
@@ -149,7 +149,7 @@
       }
     });
 
-    it('SPEC-ROUTE-008 : les grands fleuves font partie du réseau — ports dans les lieux qu\'ils traversent, franchis par des ponts', function () {
+    it('SPEC-ROUTE-008 : les grands fleuves font partie du réseau — ports dans les lieux qu\'ils traversent, franchis par des ponts @lent', function () {
       var w = monde(), villes = lieux(w, 'ville', 16000), villages = lieux(w, 'village', 8000);
       var avecPort = villes.concat(villages).filter(function (l) { return l.batiments.some(function (b) { return b.type === 'port'; }); });
       A.gt(avecPort.length, 0, 'au moins un lieu avec un port/quai');

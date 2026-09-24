@@ -127,7 +127,7 @@
   }
 
   describe('Specs — plans de bâtiments, habitabilité, toitures en escaliers', function () {
-    it('SPEC-HABITAT-010 : chaque type de bâtiment a plusieurs plans reconnaissables, et le gabarit suit la densité', function () {
+    it('SPEC-HABITAT-010 : chaque type de bâtiment a plusieurs plans reconnaissables, et le gabarit suit la densité @lent', function () {
       var w = monde();
       var villages = lieux(w, 'village', 6000), villes = lieux(w, 'ville', 12000);
       var maisonsIsolees = lieux(w, 'maison', 2000);

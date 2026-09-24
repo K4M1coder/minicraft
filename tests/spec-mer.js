@@ -201,7 +201,7 @@
       A.ok(o.capCd >= 2, 'un nouveau cap tiré, pour quelques secondes');
     });
 
-    it('SPEC-FAUNE-003 : chaque creature nait dans son milieu', function () {
+    it('SPEC-FAUNE-003 : chaque creature nait dans son milieu @lent', function () {
       var w = monde(42);
       var p = chercher(w, function (x, z, e) {
         return e.h > SEA + 3 && !e.biome.marin && w.biomeAt(x + 26, z).marin && w.heightAt(x + 26, z) < SEA - 6;

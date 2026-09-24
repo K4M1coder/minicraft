@@ -1,10 +1,28 @@
 #!/usr/bin/env node
-/* Crochet pre-commit — contrôles rapides (quelques secondes) avant chaque
-   commit ; la suite complète reste `node tests/gates.js`.
+/* Crochet pre-commit — contrôles rapides avant chaque commit ; la suite
+   complète reste `node tests/gates.js`.
    - syntaxe de chaque fichier .js indexé ;
    - accord entre VERSION_JEU et CHANGELOG.md, section « Non publié » présente
      (tools/version.js --verifier, la même règle que la porte G10) ;
-   - aucun marqueur de conflit de fusion oublié dans les fichiers indexés. */
+   - aucun marqueur de conflit de fusion oublié dans les fichiers indexés ;
+   - le préréglage `commit` du catalogue de tests (SPEC-BANC-004/006) :
+     specs, unitaires et fonctionnels, sans navigateur ni intégration, sans
+     les tests étiquetés @lent.
+
+   Mesuré sur ce dépôt (~950 tests même hors @lent), le préréglage `commit`
+   complet dépasse largement les 60 s visées par SPEC-BANC-004 — la suite a
+   grossi bien au-delà de ce qu'un crochet peut se permettre à chaque commit.
+   Faute de temps pour optimiser la suite elle-même (lot performance,
+   L47/G12), ce crochet applique le repli que documente la consigne du lot :
+   quand les fichiers indexés touchent clairement UN OU PLUSIEURS domaines de
+   src/ (et rien de plus large — pas tools/, server.js, ou un fichier de
+   tests lui-même, qui peuvent affecter n'importe quel domaine), il restreint
+   `--preset commit` à `--domaine <ces domaines>` — quelques secondes plutôt
+   que plusieurs minutes. Dès qu'il ne peut pas conclure avec confiance
+   (aucun fichier src/ touché, ou un fichier hors src/ modifié), il retombe
+   sur le préréglage `commit` complet, plus lent mais complet. `--delai 240`
+   reste un filet de sécurité dans les deux cas : un crochet qui ne finit
+   jamais serait pire qu'un crochet lent. */
 'use strict';
 const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
@@ -41,6 +59,33 @@ try {
   const v = require('../version.js').verifier();
   v.erreurs.forEach(e => erreurs.push('version : ' + e));
 } catch (e) { erreurs.push('version : ' + e.message); }
+
+// SPEC-BANC-004/006 : le préréglage `commit`, limité aux domaines touchés quand c'est sûr
+try {
+  const path = require('path'), racine = path.join(__dirname, '..', '..');
+  const args = ['--preset', 'commit'];
+  const domaines = domainesTouches(indexes, racine);
+  if (domaines) { args.push('--domaine', domaines.join(',')); }
+  args.push('--delai', '240');
+  const r = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), ...args], { encoding: 'utf8', cwd: racine });
+  if (r.status !== 0) erreurs.push('préréglage `commit` en échec (node tests/run.js ' + args.join(' ') + ') :\n' + (r.stdout || '').split('\n').slice(-25).join('\n'));
+} catch (e) { erreurs.push('préréglage `commit` : ' + e.message); }
+
+/* Domaines touchés avec CONFIANCE : seulement si TOUS les fichiers indexés
+   sont dans src/ (rien dans tools/, server.js ou tests/, dont la portée peut
+   dépasser un seul domaine) et qu'on reconnaît le domaine d'au moins un
+   fichier src/ touché. Sinon, null (repli sur `commit` complet). */
+function domainesTouches(fichiers, racine) {
+  const path = require('path');
+  if (!fichiers.length || fichiers.some(f => !/^src\//.test(f))) return null;
+  let specsTexte;
+  try { specsTexte = fs.readFileSync(path.join(racine, 'SPECS.md'), 'utf8'); } catch (e) { return null; }
+  const domainesConnus = Array.from(new Set((specsTexte.match(/SPEC-([A-Z0-9]+)-\d+/g) || [])
+    .map(id => id.replace(/^SPEC-/, '').replace(/-\d+$/, ''))));
+  const bases = fichiers.map(f => path.basename(f, '.js').toUpperCase().replace(/[^A-Z0-9]/g, ''));
+  const trouves = domainesConnus.filter(d => bases.some(b => b.indexOf(d) >= 0 || d.indexOf(b) >= 0));
+  return trouves.length ? trouves : null;
+}
 
 if (erreurs.length) {
   console.error('\n✗ commit refusé (tools/hooks/pre-commit.js) :');

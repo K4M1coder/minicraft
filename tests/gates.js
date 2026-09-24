@@ -213,9 +213,21 @@ porte('G11', 'Les crochets git encadrent commits et versions', () => {
   const { execSync } = require('child_process');
   let chemin = '';
   try { chemin = execSync('git config --get core.hooksPath', { encoding: 'utf8' }).trim(); } catch (e) { /* absent */ }
-  // relatif (.githooks) ou absolu vers les crochets du dépôt principal — l'absolu sert aussi les worktrees
-  if (chemin !== '.githooks' && path.resolve(root, chemin) !== path.resolve(root, '.githooks')) return { ok: false, detail: 'crochets non branchés (' + (chemin || 'aucun') + ') : node tools/version.js --installer' };
-  const manquants = ['commit-msg', 'pre-commit'].filter(h => !fs.existsSync(path.join(root, '.githooks', h)));
+  /* Chemins acceptés : relatif (.githooks) DEPUIS le dépôt courant, ou absolu
+     vers le .githooks du dépôt PRINCIPAL — c'est ce que pose
+     tools/version.js --installer, y compris depuis un worktree (les agents,
+     dans leur worktree, partagent les crochets du dépôt principal ; le
+     worktree lui-même disparaît, ses propres .githooks ne sont pas la
+     référence). `git rev-parse --git-common-dir` donne ce dépôt principal
+     depuis N'IMPORTE QUEL worktree, exactement comme le fait l'installeur. */
+  let principal = root;
+  try { principal = path.dirname(path.resolve(root, execSync('git rev-parse --git-common-dir', { cwd: root, encoding: 'utf8' }).trim())); } catch (e) { /* hors dépôt git */ }
+  const acceptes = [path.resolve(root, '.githooks'), path.resolve(principal, '.githooks')];
+  if (chemin !== '.githooks' && !acceptes.includes(path.resolve(root, chemin))) {
+    return { ok: false, detail: 'crochets non branchés (' + (chemin || 'aucun') + ') : node tools/version.js --installer' };
+  }
+  const dossierCrochets = path.resolve(principal, '.githooks');
+  const manquants = ['commit-msg', 'pre-commit'].filter(h => !fs.existsSync(path.join(dossierCrochets, h)));
   if (manquants.length) return { ok: false, detail: 'crochets absents : ' + manquants.join(', ') };
   // la règle du cran, sur des cas connus
   const V = require('../tools/version.js');
@@ -236,6 +248,61 @@ porte('G12', 'La génération de chunk reste sous le budget de tests/budget-perf
     const out = (e.stdout || '') + (e.stderr || '');
     return { ok: false, detail: out.split('\n').filter(l => l.includes('✗')).join(' ; ') || 'bench-generation.js en échec' };
   }
+});
+
+// ── G13 : crochets ↔ préréglages (SPEC-BANC-006) ────────────────────────────
+/* Numérotée G13 (et non G12, pris entre-temps par un autre lot pour son
+   propre budget de performance) : chaque crochet cite un préréglage du
+   catalogue de tests (tests/presets.js), et ce préréglage sélectionne au
+   moins un test — un préréglage renommé ou vidé ferait un crochet muet sans
+   que rien ne le signale. */
+porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BANC-006)', () => {
+  const CROCHETS = { 'pre-commit': 'commit', 'pre-push': 'pr' };
+  const manquants = [];
+  Object.keys(CROCHETS).forEach((h) => {
+    const p = path.join(root, 'tools', 'hooks', h + '.js');
+    if (!existe('tools/hooks/' + h + '.js')) { manquants.push(h + '.js absent'); return; }
+    const txt = lire('tools/hooks/' + h + '.js');
+    if (!new RegExp('--preset\\s+' + CROCHETS[h] + '\\b').test(txt)) manquants.push(h + '.js ne cite pas --preset ' + CROCHETS[h]);
+  });
+  if (manquants.length) return { ok: false, detail: manquants.join(' · ') };
+  const vides = [];
+  Object.keys(CROCHETS).forEach((h) => {
+    const nom = CROCHETS[h];
+    try {
+      const out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', nom, '--lister'], { encoding: 'utf8' });
+      const m = /(\d+) test\(s\) sélectionné/.exec(out);
+      if (!m || Number(m[1]) === 0) vides.push('préréglage ' + nom + ' vide');
+    } catch (e) { vides.push('préréglage ' + nom + ' introuvable ou --lister en erreur : ' + e.message); }
+  });
+  return vides.length ? { ok: false, detail: vides.join(' · ') } : { ok: true, detail: 'pre-commit→commit, pre-push→pr, tous deux non vides' };
+});
+
+// ── G14 : fiches à 100 % (SPEC-BANC-002) ────────────────────────────────────
+/* Numérotée G14 (G13 était prise entre-temps, voir G13 ci-dessus). Portée :
+   les tests EXÉCUTABLES SOUS NODE (unitaire, fonctionnel, spec, intégration,
+   charge) — les tests end-to-end (tests/e2e.js) sont du ressort du banc
+   navigateur, qui n'est pas construit par ce lot (voir tests/catalogue.js,
+   en-tête, et le rapport de ce lot) ; ils rejoindront cette porte quand
+   e2e() portera lui aussi une fiche. */
+porte('G14', '100 % des tests Node ont une fiche déclarée ou déduite d\'une spec citée (SPEC-BANC-002)', () => {
+  let out;
+  try {
+    out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8' });
+  } catch (e) { return { ok: false, detail: '--lister en erreur : ' + e.message }; }
+  const lignes = out.split('\n');
+  const sansFiche = [];
+  let typeCourant = null;
+  lignes.forEach((l, i) => {
+    const mt = /^\[(\w+)\]/.exec(l);
+    if (mt) typeCourant = mt[1];
+    if (l.trim() === '(aucune fiche)' && typeCourant && typeCourant !== 'e2e') {
+      sansFiche.push((lignes[i - 1] || '').trim());
+    }
+  });
+  return sansFiche.length
+    ? { ok: false, detail: sansFiche.length + ' test(s) Node sans fiche ni spec citée : ' + sansFiche.slice(0, 5).join(' | ') }
+    : { ok: true, detail: '100 % des tests Node ont une fiche' };
 });
 
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────

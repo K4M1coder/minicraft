@@ -20,7 +20,7 @@
     return { w: w, ents: ents, pl: pl, s: pl.state };
   }
 
-  describe('Specs — L24 : escaliers, dalles, clôtures/murets/vitres/rambardes', function () {
+  describe('Specs — L24 : escaliers, dalles, clôtures/murets/vitres/rambardes', { teste: 'Les blocs à forme (escaliers, dalles…) : leur boîte de collision, leur solidité et leur maillage.', pourquoi: 'Un bloc à forme qui reprend la boîte ou l\'occlusion d\'un bloc plein casserait la collision ou l\'affichage de tous les blocs fins.', attendu: 'les blocs à forme délèguent correctement à MC.Formes et se maillent avec les bonnes tuiles, en plus des specs SPEC-CONSTR-*/SPEC-BLOC-* couvertes une à une.' }, function () {
 
     // ── SPEC-CONSTR-001 : escaliers ────────────────────────────────────────
     it('SPEC-CONSTR-001 : un escalier existe pour chaque matériau attendu', function () {

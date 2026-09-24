@@ -5,7 +5,7 @@
   var describe = T.describe, it = T.it, A = T.assert;
   var GU = MC.Guildes;
 
-  describe('Specs — guildes (factions de joueurs)', function () {
+  describe('Specs — guildes (factions de joueurs)', { teste: 'Les guildes (factions de joueurs) : création, rangs, candidatures, diplomatie.', pourquoi: 'Couvre les specs SPEC-FACTION-* de ce fichier.', attendu: 'chaque comportement de guilde suit sa spec, vérifiée test par test.' }, function () {
     it('SPEC-FACTION-009 : création (nom unique, couleur, emblème, devise), chef, rangs, nominations, promotion, rétrogradation, exclusion, transmission, dissolution', function () {
       var e = GU.creerEtat();
       var r1 = GU.creerFaction(e, 'Alice', { nom: 'Les Loups', couleur: '#ff0000', emblem: 'loup', devise: 'Toujours en meute' });

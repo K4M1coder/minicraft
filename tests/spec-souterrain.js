@@ -56,7 +56,7 @@
 
   // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — minerais (SPEC-MINERAI-001, SPEC-MINERAI-002)', function () {
-    it('SPEC-MINERAI-001 : chaque minerai existe, avec son outil et sa profondeur propres', function () {
+    it('SPEC-MINERAI-001 : chaque minerai existe, avec son outil et sa profondeur propres @lent', function () {
       var w = monde();
       var champs = [B.MINERAI_METAUX, B.MINERAI_ARGENT, B.MINERAI_GEMMES, B.MINERAI_CRISTAL, B.SEL];
       champs.forEach(function (id) {
@@ -148,7 +148,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Specs — biomes souterrains (SPEC-SOUTERRAIN-001)', function () {
+  describe('Specs — biomes souterrains (SPEC-SOUTERRAIN-001)', { teste: 'Les biomes souterrains et leur décor (sol, lumière) selon la profondeur.', pourquoi: 'Couvre SPEC-SOUTERRAIN-001 et le placement du décor qui distingue visuellement chaque biome souterrain.', attendu: 'chaque biome souterrain a son décor propre, cohérent avec sa profondeur, en plus de SPEC-SOUTERRAIN-001.' }, function () {
     it('SPEC-SOUTERRAIN-001 : le biome souterrain suit la surface, l’abîme l’emporte au plus profond', function () {
       A.equal(Souterrain.biomeAt('montagnes', 40, false), 'geode');
       A.equal(Souterrain.biomeAt('pics_glaces', 30, false), 'geode');

@@ -7,7 +7,7 @@
   var describe = T.describe, it = T.it, A = T.assert;
   var Adm = MC.Admin;
 
-  describe('SPEC-ADMIN — administration du serveur', function () {
+  describe('SPEC-ADMIN — administration du serveur', { teste: 'L\'administration du serveur (rôles, jetons, actions, journal) et ses briques internes.', pourquoi: 'Un défaut ici (comparaison de jetons, unicité, normalisation des noms) ouvrirait une faille de sécurité, pas juste un bug de confort.', attendu: 'les fonctions internes de sécurité se comportent comme documenté, en plus des specs SPEC-ADMIN-* couvertes une à une.' }, function () {
 
     it('égalité à temps constant : compare tout, ne court-circuite pas', function () {
       A.ok(Adm.egaliteConstante('secret123', 'secret123'), 'identiques');

@@ -75,6 +75,33 @@ respecter (voir PLAN.md, « Commits et versions »).
 - Banc de non-régression `tests/bench-generation.js` et budget déclaratif
   `tests/budget-perf.json`, vérifiés par une nouvelle porte G12
   (SPEC-PERF-017/018).
+- Outillage de test (L42, noyau côté Node) : un catalogue unique classe tous
+  les tests (type, domaine, groupe, étiquettes) et leur donne une fiche
+  (quoi/pourquoi/attendu), déclarée ou déduite de la spec citée
+  (SPEC-BANC-001/002) ; sélection combinable par domaine, type, groupe, liste
+  ou échecs précédents (SPEC-BANC-003) ; préréglages partagés `commit`, `pr`,
+  `regression`, `bugs`, `en-cours`, `e2e`, `integration`, `rapide`, `visuel`,
+  `limites` (SPEC-BANC-004) ; `node tests/run.js --preset|--domaine|--type|
+  --groupe|--test|--liste|--echecs|--sauf|--lister` (SPEC-BANC-005) ; les
+  crochets `pre-commit`/`pre-push` lancent désormais les préréglages
+  `commit`/`pr` (SPEC-BANC-006) ; un test qui dépasse un délai coopératif est
+  marqué « délai dépassé » avec son étape, la campagne continue
+  (SPEC-BANC-010, volet Node) ; chaque échec porte fiche, étapes, assertions,
+  attendu/obtenu, message et pile (SPEC-BANC-013, volet Node) ; chaque
+  campagne écrit son cahier de test (`resultats.json` + `rapport.html` +
+  captures) dans `tests/resultats/`, y compris interrompue, avec élagage aux
+  20 derniers dossiers (SPEC-BANC-014) ; le serveur reçoit ce cahier du banc
+  navigateur sur `POST /tests/resultats`, réservé à la machine locale, taille
+  bornée, noms de fichiers fabriqués côté serveur (SPEC-BANC-015). Portes
+  G13 (crochets ↔ préréglages) et G14 (100 % des tests Node ont une fiche).
+- Bibliothèque des cahiers de test (SPEC-BANC-018 à 022) : page `/tests/cahiers`
+  qui liste, trie, filtre, compare deux cahiers (tests apparus/disparus,
+  passés en échec ou redevenus ok, écarts de durée), conserve ou supprime ;
+  un cahier s'exporte en page web autonome (captures en data URI), en .docx
+  réel (ZIP + WordprocessingML écrits à la main, sans dépendance) et en PDF
+  (navigateur headless détecté automatiquement, repli sur l'impression sinon)
+  — les quatre rendus (page serveur, HTML autonome, PDF, Word) partagent le
+  même modèle de document (`tests/rapport.js`, `MC_RAPPORT.modele()`).
 
 ### Performances
 - Génération de chunk environ 60 % plus rapide (~98-112 ms/chunk → ~44-45 ms/chunk

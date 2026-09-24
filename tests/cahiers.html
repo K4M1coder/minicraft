@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<title>MiniCraft — bibliothèque des cahiers de test</title>
+<link rel="icon" href="data:,">
+<style>
+  :root { color-scheme: dark; }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body { background:#0b0e13; color:#e8eaed; font:13px/1.6 ui-monospace, Menlo, Consolas, monospace; padding:24px; }
+  h1 { font-size:20px; margin-bottom:4px; }
+  .sub { opacity:.6; margin-bottom:16px; font-size:12px; }
+  .bar { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; align-items:center; }
+  input, select, button { font:inherit; padding:6px 10px; border-radius:6px; border:1px solid rgba(255,255,255,.15); background:#1a212c; color:#e8eaed; }
+  button { cursor:pointer; }
+  button:hover { background:#232c3a; }
+  button.primary { border-color:rgba(126,224,138,.4); background:rgba(126,224,138,.1); color:#7ee08a; }
+  button.danger { border-color:rgba(224,69,63,.4); background:rgba(224,69,63,.1); color:#ff8a86; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  th, td { padding:6px 8px; text-align:left; border-bottom:1px solid rgba(255,255,255,.08); }
+  th { cursor:pointer; opacity:.7; user-select:none; }
+  tr.selectionne { background:rgba(126,224,138,.08); }
+  .badge { display:inline-block; font-size:10.5px; padding:1px 7px; border-radius:10px; margin-left:4px; }
+  .badge.interrompue { background:rgba(242,196,109,.2); color:#f2c46d; }
+  .badge.conserve { background:rgba(126,224,138,.2); color:#7ee08a; }
+  .lien { color:#7fb2ff; text-decoration:none; margin-right:6px; }
+  .lien:hover { text-decoration:underline; }
+  #comparaison { margin-top:18px; padding:12px; border:1px solid rgba(255,255,255,.12); border-radius:8px; display:none; white-space:pre-wrap; }
+  .vide { opacity:.6; padding:20px; text-align:center; }
+</style>
+</head>
+<body>
+
+<h1>Bibliothèque des cahiers de test</h1>
+<p class="sub">Cahiers enregistrés dans tests/resultats/ (SPEC-BANC-018). Cochez deux lignes pour les comparer.</p>
+
+<div class="bar">
+  <input id="filtre" placeholder="filtrer (préréglage, source…)" oninput="rafraichir()">
+  <select id="tri" onchange="rafraichir()">
+    <option value="debut">date (récent d'abord)</option>
+    <option value="preset">préréglage</option>
+    <option value="duree">durée</option>
+  </select>
+  <button onclick="comparerSelection()">Comparer la sélection</button>
+  <button onclick="charger()">Rafraîchir</button>
+</div>
+
+<table>
+  <thead><tr><th></th><th>date</th><th>préréglage</th><th>source</th><th>totaux</th><th>durée</th><th>version</th><th>commit</th><th></th><th>actions</th></tr></thead>
+  <tbody id="corps"></tbody>
+</table>
+<div id="vide" class="vide" style="display:none">aucun cahier enregistré</div>
+
+<div id="comparaison"></div>
+
+<script>
+var TOUS = [];
+var SELECTION = [];
+
+function charger() {
+  fetch('/tests/cahiers/api').then(function (r) { return r.json(); }).then(function (j) {
+    TOUS = j.cahiers || [];
+    rafraichir();
+  });
+}
+
+function rafraichir() {
+  var f = document.getElementById('filtre').value.toLowerCase();
+  var tri = document.getElementById('tri').value;
+  var liste = TOUS.filter(function (c) {
+    return !f || (c.preset || '').toLowerCase().indexOf(f) >= 0 || (c.source || '').toLowerCase().indexOf(f) >= 0 || c.dossier.toLowerCase().indexOf(f) >= 0;
+  });
+  liste.sort(function (a, b) {
+    if (tri === 'preset') return (a.preset || '').localeCompare(b.preset || '');
+    if (tri === 'duree') return (b.duree_ms || 0) - (a.duree_ms || 0);
+    return String(b.debut).localeCompare(String(a.debut));
+  });
+  var corps = document.getElementById('corps');
+  corps.innerHTML = '';
+  document.getElementById('vide').style.display = liste.length ? 'none' : 'block';
+  liste.forEach(function (c) {
+    var tr = document.createElement('tr');
+    if (SELECTION.indexOf(c.dossier) >= 0) tr.className = 'selectionne';
+    var totaux = c.totaux ? (c.totaux.passes + '/' + c.totaux.total) : '?';
+    tr.innerHTML =
+      '<td><input type="checkbox" ' + (SELECTION.indexOf(c.dossier) >= 0 ? 'checked' : '') + ' onchange="basculerSelection(\'' + c.dossier + '\', this.checked)"></td>' +
+      '<td>' + (c.debut ? new Date(c.debut).toLocaleString('fr-FR') : '—') + '</td>' +
+      '<td>' + (c.preset || '—') + '</td>' +
+      '<td>' + (c.source || '—') + '</td>' +
+      '<td>' + totaux + '</td>' +
+      '<td>' + (c.duree_ms ? Math.round(c.duree_ms / 1000) + ' s' : '—') + '</td>' +
+      '<td>' + (c.versionJeu || '—') + '</td>' +
+      '<td>' + (c.commit || '—') + '</td>' +
+      '<td>' + (c.interrompue ? '<span class="badge interrompue">interrompue</span>' : '') + (c.conserve ? '<span class="badge conserve">conservé</span>' : '') + '</td>' +
+      '<td>' +
+        '<a class="lien" href="/tests/resultats/' + c.dossier + '/rapport.html" target="_blank">ouvrir</a>' +
+        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=html" target="_blank">.html</a>' +
+        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=docx">.docx</a>' +
+        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=pdf">.pdf</a>' +
+        '<button onclick="conserver(\'' + c.dossier + '\', ' + (!c.conserve) + ')">' + (c.conserve ? 'libérer' : 'conserver') + '</button> ' +
+        '<button class="danger" onclick="supprimer(\'' + c.dossier + '\')">supprimer</button>' +
+      '</td>';
+    corps.appendChild(tr);
+  });
+}
+
+function basculerSelection(dossier, coche) {
+  var i = SELECTION.indexOf(dossier);
+  if (coche && i < 0) SELECTION.push(dossier);
+  if (!coche && i >= 0) SELECTION.splice(i, 1);
+  if (SELECTION.length > 2) SELECTION.shift();
+}
+
+function comparerSelection() {
+  if (SELECTION.length !== 2) { alert('Cochez exactement deux cahiers à comparer.'); return; }
+  fetch('/tests/cahiers/' + SELECTION[0] + '/comparer?avec=' + SELECTION[1]).then(function (r) { return r.json(); }).then(function (j) {
+    var d = document.getElementById('comparaison');
+    d.style.display = 'block';
+    if (!j.ok) { d.textContent = 'Comparaison impossible : ' + j.motif; return; }
+    d.textContent =
+      'Apparus (' + j.apparus.length + ') : ' + j.apparus.join(', ') + '\n\n' +
+      'Disparus (' + j.disparus.length + ') : ' + j.disparus.join(', ') + '\n\n' +
+      'Passés en échec (' + j.versEchec.length + ') : ' + j.versEchec.join(', ') + '\n\n' +
+      'Redevenus ok (' + j.versOk.length + ') : ' + j.versOk.join(', ') + '\n\n' +
+      'Écarts de durée notables : ' + j.ecartsDuree.map(function (e) { return e.nom + ' (' + e.avant + ' → ' + e.apres + ' ms)'; }).join(', ');
+  });
+}
+
+function conserver(dossier, valeur) {
+  fetch('/tests/cahiers/' + dossier + '/conserver', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valeur: valeur }) })
+    .then(function () { charger(); });
+}
+function supprimer(dossier) {
+  if (!confirm('Supprimer le cahier ' + dossier + ' ?')) return;
+  fetch('/tests/cahiers/' + dossier, { method: 'DELETE' }).then(function (r) { return r.json(); }).then(function (j) {
+    if (!j.ok) alert('Suppression refusée : ' + j.motif);
+    charger();
+  });
+}
+
+charger();
+</script>
+</body>
+</html>

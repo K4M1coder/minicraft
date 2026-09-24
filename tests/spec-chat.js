@@ -7,7 +7,7 @@
   var describe = T.describe, it = T.it, A = T.assert;
   var Chat = MC.Chat;
 
-  describe('Specs — chat', function () {
+  describe('Specs — chat', { teste: 'La messagerie du jeu (historique, commandes, neutralisation) et sa réception réseau.', pourquoi: 'Le chat affiche du texte reçu d\'autrui : une neutralisation ou une troncature ratée est un risque, pas un détail.', attendu: 'les messages reçus du réseau suivent les mêmes règles que ceux tapés localement, en plus des specs SPEC-CHAT-* couvertes une à une.' }, function () {
 
     it('SPEC-CHAT-001 : un message envoye apparait dans l historique', function () {
       var c = Chat.creer();

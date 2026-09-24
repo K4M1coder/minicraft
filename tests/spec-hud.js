@@ -20,7 +20,7 @@
     };
   }
 
-  describe('Specs — HUD', function () {
+  describe('Specs — HUD', { teste: 'Le HUD et son registre de préférences (affichage, stockage tolérant aux erreurs).', pourquoi: 'Un stockage qui lève (quota dépassé, navigation privée) ne doit jamais faire planter l\'affichage du HUD.', attendu: 'le registre absorbe les erreurs de stockage et reste cohérent (état, sérialisation, rechargement), en plus des specs SPEC-HUD-* couvertes une à une.' }, function () {
 
     it('SPEC-HUD-001 : une bascule générale masque et rétablit tous les composants, la préférence de chacun est conservée', function () {
       var stockage = fauxStockage();
