@@ -23,7 +23,7 @@ window.MC_VERSION = String(Date.now());
 (function () {
   var SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules', 'entities',
              'player', 'synchro', 'daycycle', 'save', 'saves', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'net', 'ambiance', 'audio', 'atlas', 'render',
-             'ui', 'input', 'game'];
+             'ui', 'input', 'game', 'debug'];
   var boot = document.getElementById('boot');
   function load(i) {
     if (i >= SRC.length) return start();
@@ -44,6 +44,8 @@ window.MC_VERSION = String(Date.now());
     }
     try {
       window.GAME = MC.createGame(document.getElementById('host'));
+      // SPEC-BANC-017 : même pilotage manuel qu'en test, à la console.
+      window.MC_DEBUG = MC.Debug.creer(window.GAME);
       boot.style.display = 'none';
     } catch (e) {
       fatal('<b>Erreur au d&eacute;marrage.</b><br><code style="font-size:12px">' +

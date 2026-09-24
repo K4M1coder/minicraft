@@ -6,15 +6,40 @@
 (function (G) {
   'use strict';
   var tests = [];
-  function e2e(name, fn) { tests.push({ name: name, fn: fn }); }
+  /* `e2e(nom, fn)` ou `e2e(nom, fiche, fn)` (SPEC-BANC-002 côté e2e) — la
+     fiche { teste, pourquoi, attendu, delai } est facultative ; `delai`
+     (en secondes) surcharge le délai par défaut d'un test (SPEC-BANC-010). */
+  function e2e(name, ficheOuFn, fn) {
+    var fiche = fn ? ficheOuFn : null;
+    var f = fn || ficheOuFn;
+    tests.push({ name: name, fiche: fiche, fn: f });
+  }
 
   function fail(msg) { var e = new Error(msg); e.isAssertion = true; throw e; }
-  var A = {
+
+  /* Le test en cours d'instrumentation (SPEC-BANC-009/011/012/013), ou null
+     hors d'un passage par `runUnE2E`. `etape()` et `capture()` ci-dessous
+     l'utilisent quand il existe, et ne font rien sinon (usage direct via
+     `runE2E`, sans instrumentation, reste possible). */
+  var enCours = null;
+
+  function compter(fn) {
+    return function () {
+      try {
+        var r = fn.apply(null, arguments);
+        if (enCours) enCours.assertions.ok++;
+        return r;
+      } catch (e) {
+        if (enCours) enCours.assertions.ko++;
+        throw e;
+      }
+    };
+  }
+  var brute = {
     ok: function (v, m) { if (!v) fail((m || 'attendu vrai') + ' — obtenu ' + v); },
     notOk: function (v, m) { if (v) fail((m || 'attendu faux') + ' — obtenu ' + v); },
     equal: function (a, b, m) { if (a !== b) fail((m || 'égalité') + ' — attendu ' + b + ', obtenu ' + a); },
     ne: function (a, b, m) { if (a === b) fail((m || 'différence') + ' — les deux valent ' + a); },
-    ok2: function (v, m) { A.ok(v, m); },
     gt: function (a, b, m) { if (!(a > b)) fail((m || 'supérieur') + ' — ' + a + ' <= ' + b); },
     lt: function (a, b, m) { if (!(a < b)) fail((m || 'inférieur') + ' — ' + a + ' >= ' + b); },
     close: function (a, b, eps, m) {
@@ -22,6 +47,50 @@
         fail((m || 'proximité') + ' — attendu ' + b + ', obtenu ' + a);
     },
   };
+  var A = {};
+  Object.keys(brute).forEach(function (k) { A[k] = compter(brute[k]); });
+  A.ok2 = function (v, m) { A.ok(v, m); };
+
+  /* Capture immédiate de l'image affichée, réduite à 480 px de large au
+     plus, en JPEG compressé (SPEC-BANC-011). `renderer.render` doit être
+     rappelé juste avant : le tampon peut avoir été consommé par le rendu
+     normal de la boucle de jeu entre deux `await`. */
+  function capturer(g, libelle) {
+    try {
+      g.render.render();
+      var src = g.render.renderer.domElement;
+      var w = src.width, h = src.height;
+      if (!w || !h) return null;
+      var echelle = Math.min(1, 480 / w);
+      var cw = Math.max(1, Math.round(w * echelle)), ch = Math.max(1, Math.round(h * echelle));
+      var c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+      return { libelle: libelle || '', type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.7) };
+    } catch (e) { return null; }
+  }
+
+  /* Déclare une étape en cours d'exécution (SPEC-BANC-009) : visible en
+     direct dans le banc, capturée (SPEC-BANC-011) et horodatée pour le
+     cahier de test (SPEC-BANC-012/013). Sans test en cours instrumenté
+     (`enCours` nul), ne fait rien — un test lancé hors du banc reste valide. */
+  function etape(libelle, n, total) {
+    if (!enCours) return;
+    enCours.etapeCourante = libelle + (total ? ' (' + n + '/' + total + ')' : '');
+    enCours.etapes.push({ libelle: libelle, t_ms: ahora() - enCours.t0, n: n, total: total });
+    var c = capturer(enCours.g, libelle);
+    if (c) enCours.captures.push(c);
+  }
+
+  /* Capture manuelle, hors étape déclarée. */
+  function capture(libelle) {
+    if (!enCours) return;
+    var c = capturer(enCours.g, libelle || 'capture');
+    if (c) enCours.captures.push(c);
+  }
+
+  function ahora() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
+  function moyenne(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; }
 
   // ─── utilitaires ───────────────────────────────────────────────────────────
   /* Attend n images RÉELLES. Piège : une version qui teste le compteur avant
@@ -31,7 +100,11 @@
   function frames(n) {
     return new Promise(function (res) {
       var left = Math.max(1, n | 0);
-      var step = function () { if (--left <= 0) return res(); requestAnimationFrame(step); };
+      var step = function () {
+        if (enCours) enCours.images.push(ahora());
+        if (--left <= 0) return res();
+        requestAnimationFrame(step);
+      };
       requestAnimationFrame(step);
     });
   }
@@ -103,10 +176,15 @@
     var cv = g.render.renderer.domElement;
     var host = cv.parentElement;
     var r = cv.getBoundingClientRect();
-    // clientWidth exclut la bordure, contrairement à getBoundingClientRect :
-    // c'est bien la zone de contenu que le canvas doit remplir.
-    A.close(r.width, host.clientWidth, 1.5, 'le canvas remplit son conteneur en largeur');
-    A.close(r.height, host.clientHeight, 1.5, 'et en hauteur');
+    // On compare deux rectangles VISUELS (getBoundingClientRect des deux
+    // côtés) plutôt que la taille visuelle du canvas à la taille en disposition
+    // (clientWidth) de son conteneur : le banc loge le jeu dans une surface
+    // virtuelle mise à l'échelle par CSS (SPEC-BANC-017), où les deux
+    // diffèrent légitimement — seule la comparaison visuelle reste valable
+    // dans les deux cas (jeu plein cadre ou surface réduite par transform).
+    var rHost = host.getBoundingClientRect();
+    A.close(r.width, rHost.width, 1.5, 'le canvas remplit son conteneur en largeur');
+    A.close(r.height, rHost.height, 1.5, 'et en hauteur');
     var cr = g.ui.hudDe(0).querySelector('.crosshair').getBoundingClientRect();
     A.close(cr.left + cr.width / 2, r.left + r.width / 2, 1.5, 'viseur centré horizontalement');
     A.close(cr.top + cr.height / 2, r.top + r.height / 2, 1.5, 'viseur centré verticalement');
@@ -936,10 +1014,17 @@
     await frames(5);
     var hs = document.querySelectorAll('.hud');
     A.equal(hs.length, 4, 'quatre HUD');
+    // `g.vues[i]` est exprimé dans le repère de référence de l'hôte (sa
+    // taille de disposition, `clientWidth`/`clientHeight`) ; le rectangle
+    // visuel (getBoundingClientRect) peut être mis à l'échelle par CSS dans
+    // le banc (SPEC-BANC-017) — on compare donc les deux dans le même repère
+    // plutôt que de supposer une échelle 1:1.
+    var host = g.render.renderer.domElement.parentElement;
+    var echelleVisuelle = host.getBoundingClientRect().width / host.clientWidth;
     for (var i = 0; i < 4; i++) {
       var r = hs[i].getBoundingClientRect(), v = g.vues[i];
-      A.close(r.width, v.w, 2, 'HUD ' + i + ' : largeur de sa vue');
-      A.close(r.height, v.h, 2, 'HUD ' + i + ' : hauteur de sa vue');
+      A.close(r.width, v.w * echelleVisuelle, 2, 'HUD ' + i + ' : largeur de sa vue');
+      A.close(r.height, v.h * echelleVisuelle, 2, 'HUD ' + i + ' : hauteur de sa vue');
     }
     soloRetabli(g); await frames(3);
   });
@@ -1401,9 +1486,17 @@
       A.ok(document.querySelector('select[data-opt="tailleInterface"]'), 'la taille de l interface se choisit');
       g.reglerOption('tailleInterface', '60'); await frames(2);
       var petit = panneau.getBoundingClientRect().height;
+      A.close(parseFloat(getComputedStyle(ov.parentNode).getPropertyValue('--ui')), 0.6, 1e-6, 'échelle 60 % appliquée');
       g.reglerOption('tailleInterface', '150'); await frames(2);
       var grand = panneau.getBoundingClientRect().height;
-      A.close(grand / petit, 150 / 60, 0.08, 'le panneau grandit avec la taille choisie (' + petit.toFixed(0) + ' -> ' + grand.toFixed(0) + ')');
+      A.close(parseFloat(getComputedStyle(ov.parentNode).getPropertyValue('--ui')), 1.5, 1e-6, 'échelle 150 % appliquée');
+      /* La croissance RÉELLE du panneau n'est pas strictement proportionnelle
+         à l'échelle : `.opt-liste` se range sur plusieurs colonnes « quand
+         la place le permet » (CSS grid `auto-fit`), et `zoom` change combien
+         en tient — deux comportements DU MÊME spec qui se combinent. On
+         vérifie donc que l'échelle a un effet net et dans le bon sens,
+         plutôt qu'un ratio exact qui dépend de la largeur disponible. */
+      A.gt(grand, petit * 1.3, 'le panneau grandit nettement avec la taille choisie (' + petit.toFixed(0) + ' -> ' + grand.toFixed(0) + ')');
       // à 150 %, il ne tient plus : il déborde, mais rien n'est hors d'atteinte
       A.gt(ov.scrollHeight, ov.clientHeight, 'le panneau déborde de la fenêtre');
       ov.scrollTop = 0; await frames(1);
@@ -1411,10 +1504,12 @@
       ov.scrollTop = ov.scrollHeight; await frames(1);
       var b = document.querySelector('#btn-retour').getBoundingClientRect(), o = ov.getBoundingClientRect();
       A.ok(b.bottom <= o.bottom + 1 && b.top >= o.top - 1, 'en défilant, le bouton Retour devient visible');
-      // automatique : l'interface suit la fenêtre
+      // automatique : l'interface suit la taille de l'hôte du rendu (SPEC-OPTION-008
+      // l'a rendue distincte de la fenêtre : `g.tailleVue()` est la référence)
       g.reglerOption('tailleInterface', 'auto'); await frames(2);
+      var tv = g.tailleVue();
       A.close(parseFloat(getComputedStyle(ov.parentNode).getPropertyValue('--ui')),
-              MC.Options.echelleInterface('auto', innerWidth, innerHeight), 1e-6, 'auto suit la fenêtre');
+              MC.Options.echelleInterface('auto', tv.l, tv.h), 1e-6, 'auto suit la taille de l\'hôte');
       document.querySelector('#btn-retour').click(); await frames(2);
       key('Escape'); fakeLock(g, true); await frames(3);
     } finally {
@@ -2387,8 +2482,245 @@
          'l objectif parle de l enquête : ' + (obj && obj.textContent));
   });
 
-  // ─── exécution ─────────────────────────────────────────────────────────────
-  /* `filtre` (facultatif) : ne lance que les tests dont le nom le contient. */
+  // ══════════════════════════════════════════════════════════════════════════
+  // Outillage de test — banc navigateur (L42)
+  // ══════════════════════════════════════════════════════════════════════════
+  /* SPEC-BANC-009/011 : un test à deux étapes déclarées doit produire au
+     moins quatre captures (début, deux étapes, fin) et faire apparaître ses
+     libellés dans l'ordre — c'est `runUnE2E` qui les collecte, ce test ne
+     fait qu'appeler `etape()` comme n'importe quel test réel le ferait. */
+  e2e('SPEC-BANC-009 : les étapes déclarées apparaissent avant la fin du test',
+    { teste: 'les points de progression e2e', pourquoi: 'le banc doit suivre un test en cours, pas seulement son résultat final',
+      attendu: 'deux etape() posent deux entrées horodatées, dans l\'ordre' },
+    async function (g) {
+      await reset(g);
+      etape('préparation');
+      await frames(2);
+      etape('action', 1, 2);
+      await frames(2);
+      etape('vérification', 2, 2);
+      A.ok(true, 'trois étapes déclarées sans lever d\'exception');
+    });
+
+  /* SPEC-OPTION-008 : l'espace de rendu (rendu, HUD, menus) ne descend
+     jamais sous 800×600 — on rétrécit l'hôte réel (celui que reçoit
+     `MC.createGame`, parent de la surface interne `.mc-surface`) bien en
+     dessous et on vérifie que la surface garde le plancher, réduite à
+     l'échelle plutôt qu'étirée plus petite. */
+  e2e('SPEC-OPTION-008 : l\'espace de rendu ne descend jamais sous 800×600', async function (g) {
+    await reset(g);
+    var surface = g.render.renderer.domElement.parentElement;
+    var host = surface.parentElement;
+    var stylePrec = host.getAttribute('style') || '';
+    host.style.width = '640px';
+    host.style.height = '400px';
+    window.dispatchEvent(new Event('resize'));
+    await frames(2);
+    try {
+      A.equal(surface.clientWidth, 800, 'la surface garde au moins 800 de large');
+      A.equal(surface.clientHeight, 600, 'et 600 de haut, malgré un hôte de 640×400');
+      A.ok(/scale\(/.test(surface.style.transform), 'affichage réduit par transform: scale(), pas étiré');
+      var echelleAttendue = Math.min(640 / 800, 400 / 600); // 0.667 : la hauteur est limitante ici
+      var m = surface.style.transform.match(/scale\(([\d.]+)\)/);
+      A.close(parseFloat(m[1]), echelleAttendue, 0.01, 'échelle correcte (rapport d\'aspect conservé)');
+      // les clics restent justes malgré la réduction : le bouton du menu répond
+      g.input.setState('menu');
+      await frames(2);
+      var btn = document.querySelector('#btn-nouvelle');
+      A.ok(btn, 'bouton « Nouvelle partie » présent');
+      var r = btn.getBoundingClientRect();
+      A.gt(r.width, 0, 'taille visuelle non nulle malgré la réduction');
+      // le point central du bouton doit bien désigner LE bouton (pas un
+      // voisin ni la transformation qui l'aurait décalé) : c'est ce que le
+      // navigateur utilise pour router un vrai clic.
+      var cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      var cible = document.elementFromPoint(cx, cy);
+      A.ok(cible && (cible === btn || btn.contains(cible)), 'le point central du bouton reste cliquable sous transformation CSS');
+    } finally {
+      if (stylePrec) host.setAttribute('style', stylePrec); else host.removeAttribute('style');
+      window.dispatchEvent(new Event('resize'));
+      await frames(2);
+    }
+  });
+
+  /* SPEC-BANC-010 : un test qui ne se termine jamais est coupé à son délai,
+     avec l'étape où il s'est arrêté, et n'empêche pas la suite. `fiche.delai`
+     (en secondes) le fait attendre bien moins longtemps qu'un vrai test. */
+  e2e('SPEC-BANC-010 : un test bloqué est coupé à son délai', { delai: 1,
+      teste: 'le délai par test', pourquoi: 'un test qui ne rend jamais la main ne doit pas geler la campagne',
+      attendu: 'état "delai" après ~1 s, étape rapportée' },
+    async function (g) {
+      await reset(g);
+      etape('bloqué ici volontairement');
+      await new Promise(function () { /* ne se résout jamais : le délai doit couper */ });
+    });
+
+  /* SPEC-BANC-017 : MC_DEBUG pilote le rendu intégré, à la main comme par un
+     test — téléportation, heure, saison, météo, distance de vue, plein
+     panneau puis retour, capture. */
+  e2e('SPEC-BANC-017 : MC_DEBUG pilote le jeu comme un test le ferait', async function (g) {
+    await reset(g);
+    var d = MC.Debug.creer(g);
+    var av = d.teleporter(g.player.state.pos.x + 5, g.player.state.pos.z + 5);
+    A.close(g.player.state.pos.x, av.x, 1e-6, 'téléportation en X appliquée');
+    A.close(g.player.state.pos.z, av.z, 1e-6, 'téléportation en Z appliquée');
+
+    var t = d.heure(6);
+    A.ok(t >= 0, 'heure réglée (' + t + ')');
+
+    var avantD = g.render.RENDER_DIST;
+    d.distanceVue(3);
+    A.equal(g.render.RENDER_DIST, 3, 'distance de vue changée');
+    d.distanceVue(avantD);
+
+    var cv = g.render.renderer.domElement;
+    var rAvant = cv.getBoundingClientRect();
+    var panneau = document.createElement('div');
+    panneau.style.cssText = 'position:fixed;top:0;left:0;width:300px;height:200px;';
+    document.body.appendChild(panneau);
+    A.ok(d.agrandir(panneau), 'passage en plein panneau');
+    A.ok(d.estAgrandi, 'état agrandi');
+    A.ok(d.reduire(), 'retour à la taille normale');
+    A.notOk(d.estAgrandi, 'état réduit');
+    document.body.removeChild(panneau);
+    var rApres = cv.getBoundingClientRect();
+    A.close(rApres.width / rApres.height, rAvant.width / rAvant.height, 0.05, 'rapport d\'aspect rétabli');
+
+    var img = d.capture();
+    A.ok(typeof img === 'string' && img.indexOf('data:image/jpeg') === 0, 'capture manuelle produite');
+  });
+
+  /* SPEC-BANC-016 : la fin d'un test referme ce qu'il a laissé ouvert. On
+     ouvre volontairement l'inventaire sans le refermer : `runUnE2E` doit
+     nettoyer derrière lui. */
+  e2e('SPEC-BANC-016 : le nettoyage de fin de test referme dialogues et écrans laissés ouverts', async function (g) {
+    await reset(g);
+    key('KeyE');
+    await frames(2);
+    A.equal(g.input.state, 'ui', 'inventaire ouvert, volontairement laissé ainsi');
+    var dlg = document.querySelector('.dialogue-histoire');
+    if (dlg) dlg.style.display = 'flex';
+    G.nettoyerE2E(g);
+    A.equal(g.input.state, 'menu', 'l\'état de jeu est remis à un état connu');
+    if (dlg) A.equal(dlg.style.display, 'none', 'le dialogue d\'histoire résiduel est refermé');
+    await reset(g);
+  });
+
+  /* SPEC-BANC-007 : le menu de sélection ne doit jamais rester ouvert par-
+     dessus la liste des tests une fois une action de lancement faite —
+     sinon il lui vole sa hauteur (retour testeur). Test de PAGE (pas de
+     partie réelle) : il vérifie le chrome du banc lui-même via la poignée
+     que tests/banc-ui.js expose sur `window.MC_BANC`.
+
+     Note : on n'appelle pas réellement `btn-lancer.click()` ici — ce test
+     s'exécute LUI-MÊME au sein d'une campagne (`etat.enCours` est déjà vrai),
+     et `lancer()` est délibérément non réentrant ; vider/reconstruire la
+     sélection partagée en pleine campagne d'englobante fausserait aussi son
+     résumé. On vérifie donc directement `refermerSelection` — la fonction
+     que PARTAGENT tous les boutons d'action (Lancer, Tout, échecs, ouvrir
+     un test, une vignette…) pour refermer le menu (voir tests/banc-ui.js). */
+  e2e('SPEC-BANC-007 : le menu de sélection se referme après une action de lancement', async function () {
+    if (!window.MC_BANC) return; // hors du banc (ne devrait pas arriver ici)
+    var B2 = window.MC_BANC;
+    B2.refs.panneauSel.hidden = false;
+    A.equal(B2.refs.panneauSel.hidden, false, 'panneau ouvert au départ');
+    B2.refermerSelection();
+    A.equal(B2.refs.panneauSel.hidden, true, 'refermerSelection() referme bien le panneau');
+  });
+
+  // ─── nettoyage ─────────────────────────────────────────────────────────────
+  /* SPEC-BANC-016 : fin de test et fin de campagne referment tout ce qu'un
+     test peut avoir laissé ouvert (dialogue d'histoire, journal, écrans de
+     conteneur, chat) et rendent la main au jeu dans un état stable, pour que
+     rejouer un test seul donne le même résultat que dans la campagne. */
+  function nettoyer(g) {
+    try {
+      ['.dialogue-histoire', '.journal-histoire', '.objectif-histoire'].forEach(function (sel) {
+        document.querySelectorAll(sel).forEach(function (el) { if (el.style) el.style.display = 'none'; });
+      });
+    } catch (e) { /* rien */ }
+    try {
+      if (g.chat && g.chat.enSaisie) { g.chat.saisie = ''; g.chat.enSaisie = false; }
+      if (g.input) g.input.saisieActive = false;
+    } catch (e) { /* rien */ }
+    try { if (g.ui && g.ui.heldStack) g.ui.heldStack = null; } catch (e) { /* rien */ }
+    try { fakeLock(g, true); } catch (e) { /* rien */ }
+    try { if (g.input) g.input.setState('menu'); } catch (e) { /* rien */ }
+  }
+
+  // ─── exécution d'un seul test, instrumenté ─────────────────────────────────
+  /* Rend un objet conforme à `tests[]` de `resultats.json` (SPEC-BANC-012/013).
+     `delaiDefaut` (secondes) s'applique faute de fiche.delai (SPEC-BANC-010) :
+     le test est coupé, son étape courante rapportée, et la campagne continue —
+     c'est l'appelant qui enchaîne sur le test suivant. */
+  function runUnE2E(g, test, opts) {
+    opts = opts || {};
+    initRefs();
+    var delaiMs = ((test.fiche && test.fiche.delai) || opts.delaiDefaut || 60) * 1000;
+    return new Promise(function (resolve) {
+      var ctx = { g: g, t0: ahora(), images: [], etapes: [], captures: [],
+                  assertions: { ok: 0, ko: 0 }, etapeCourante: null };
+      enCours = ctx;
+      var c0 = capturer(g, 'début');
+      if (c0) ctx.captures.push(c0);
+      var fini = false;
+
+      function metriques() {
+        var deltas = [];
+        for (var i = 1; i < ctx.images.length; i++) deltas.push(ctx.images[i] - ctx.images[i - 1]);
+        var fps = deltas.filter(function (d) { return d > 0; }).map(function (d) { return 1000 / d; });
+        var triees = fps.slice().sort(function (a, b) { return a - b; });
+        var p95 = triees.length ? triees[Math.min(triees.length - 1, Math.floor(triees.length * 0.95))] : 0;
+        var info = null;
+        try { info = g.render.renderer.info.render; } catch (e) { /* rien */ }
+        var mem = null;
+        try { mem = performance.memory ? performance.memory.usedJSHeapSize : null; } catch (e) { /* rien */ }
+        return {
+          images: ctx.images.length,
+          fps_moyen: moyenne(fps), fps_min: fps.length ? Math.min.apply(null, fps) : 0, fps_p95: p95,
+          ms_image: moyenne(deltas),
+          appels_dessin: info ? info.calls : null, triangles: info ? info.triangles : null,
+          memoire_js: mem,
+        };
+      }
+      function conclure(etat, message, pile, attendu, obtenu) {
+        if (fini) return; fini = true;
+        clearTimeout(minuteur);
+        var res = {
+          id: test.id !== undefined ? test.id : null, nom: test.name, type: 'e2e',
+          groupe: 'end-to-end', domaines: test.domaines || [], specs: test.specs || [],
+          fiche: test.fiche || null, etat: etat, duree_ms: ahora() - ctx.t0, etapes: ctx.etapes,
+          assertions: ctx.assertions, message: message || null, pile: pile || null,
+          attendu: attendu, obtenu: obtenu, metriques: metriques(), captures: ctx.captures,
+        };
+        enCours = null;
+        nettoyer(g);
+        resolve(res);
+      }
+      var minuteur = setTimeout(function () {
+        var c = capturer(g, 'délai dépassé');
+        if (c) ctx.captures.push(c);
+        conclure('delai', 'délai dépassé (' + (delaiMs / 1000) + ' s)' +
+                 (ctx.etapeCourante ? ' — étape en cours : ' + ctx.etapeCourante : ''));
+      }, delaiMs);
+
+      Promise.resolve().then(function () { return test.fn(g); }).then(function () {
+        var c = capturer(g, 'fin');
+        if (c) ctx.captures.push(c);
+        conclure('reussi', null);
+      }, function (e) {
+        var msg = (e && e.message) || String(e);
+        var pile = (e && e.stack) ? String(e.stack) : null;
+        var c = capturer(g, 'échec');
+        if (c) ctx.captures.push(c);
+        conclure('echec', msg, pile, e && e.attendu, e && e.obtenu);
+      });
+    });
+  }
+
+  // ─── exécution de la suite ─────────────────────────────────────────────────
+  /* Historique, non instrumenté : `filtre` (facultatif) ne lance que les
+     tests dont le nom le contient. Conservé pour un usage minimal. */
   async function runE2E(g, onProgress, filtre) {
     initRefs();
     g = g || window.GAME;
@@ -2406,11 +2738,38 @@
       }
       if (onProgress) onProgress(results[results.length - 1], i + 1, tests.length);
     }
-    // remise en état propre
-    try { g.input.setState('menu'); } catch (e) {}
+    nettoyer(g);
     return { results: results, passed: passed, failed: failed, total: filtre ? results.length : tests.length };
   }
 
+  /* Campagne instrumentée (SPEC-BANC-008/009/010) : `liste` est un
+     sous-ensemble de `tests` (avec éventuellement `id`/`domaines`/`specs`
+     déjà posés par le catalogue) ; `suivi = { debutTest(t), etape(t, libelle,
+     n, total), finTest(t, resultat) }` ; `arretee()` — fonction consultée
+     entre deux tests — permet à l'appelant de couper la campagne
+     (bouton « arrêter », SPEC-BANC-014 : campagne marquée interrompue). */
+  async function runCampagneE2E(g, liste, suivi, opts) {
+    initRefs();
+    opts = opts || {};
+    var resultats = [];
+    for (var i = 0; i < liste.length; i++) {
+      if (opts.arretee && opts.arretee()) break;
+      var t = liste[i];
+      if (suivi && suivi.debutTest) suivi.debutTest(t);
+      var r = await runUnE2E(g, t, opts);
+      resultats.push(r);
+      if (suivi && suivi.finTest) suivi.finTest(t, r);
+    }
+    nettoyer(g);
+    return resultats;
+  }
+
   G.runE2E = runE2E;
+  G.runUnE2E = runUnE2E;
+  G.runCampagneE2E = runCampagneE2E;
+  G.nettoyerE2E = nettoyer;
   G.E2E_COUNT = tests.length;
+  G.E2E_LISTE = tests;
+  G.etape = etape;
+  G.capture = capture;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

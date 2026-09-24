@@ -1,0 +1,138 @@
+/* banc.css — mise en page du banc de test (SPEC-BANC-008) : la PAGE ne
+   défile jamais, seuls les blocs internes défilent, et tient à 1280×800
+   comme à 800×600. */
+:root { color-scheme: dark; }
+* { box-sizing: border-box; }
+html, body {
+  margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; background: #0b0e13;
+}
+body {
+  color: #e8eaed; font: 13px/1.5 ui-monospace, Menlo, Consolas, monospace;
+}
+
+/* La page remplit toute la fenêtre, quelle que soit sa taille : aucune
+   largeur ni hauteur fixe nulle part dans ce fichier (SPEC-BANC-008). */
+#banc { display: flex; flex-direction: column; width: 100vw; height: 100vh; min-height: 0; }
+
+/* ── en-tête et menu de sélection (SPEC-BANC-007) ─────────────────────────── */
+#entete {
+  flex: 0 0 auto; position: relative; display: flex; align-items: center; gap: 12px;
+  padding: 8px 14px; border-bottom: 1px solid rgba(255,255,255,.1); background: #10151d;
+}
+#entete h1 { font-size: 15px; margin: 0; opacity: .85; white-space: nowrap; }
+#lien-cahiers { color: #9db4ff; text-decoration: none; opacity: .85; white-space: nowrap; }
+#lien-cahiers:hover { opacity: 1; text-decoration: underline; }
+.seuil { margin-left: auto; opacity: .7; font-size: 12px; display: flex; align-items: center; gap: 6px; }
+.seuil input { width: 52px; }
+
+button {
+  font: inherit; padding: 6px 12px; border-radius: 6px; cursor: pointer;
+  border: 1px solid rgba(255,255,255,.14); background: #1a212c; color: #e8eaed;
+}
+button:hover { background: #232c3a; }
+button:disabled { opacity: .4; cursor: default; }
+button.primary { border-color: rgba(126,224,138,.45); background: rgba(126,224,138,.12); color: #7ee08a; }
+input, select { font: inherit; background: #10151d; color: #e8eaed; border: 1px solid rgba(255,255,255,.14); border-radius: 5px; padding: 5px 8px; }
+
+#panneau-selection {
+  position: absolute; top: 100%; left: 8px; right: 8px; z-index: 20;
+  background: #10151d; border: 1px solid rgba(255,255,255,.14); border-radius: 8px;
+  padding: 10px; max-height: 70vh; display: flex; flex-direction: column; gap: 8px;
+  box-shadow: 0 12px 32px rgba(0,0,0,.5);
+}
+#panneau-selection[hidden] { display: none; }
+.sel-ligne { display: flex; gap: 8px; }
+.sel-ligne input { flex: 1 1 auto; }
+.arbre { overflow-y: auto; min-height: 80px; flex: 1 1 auto; border-top: 1px solid rgba(255,255,255,.08); padding-top: 6px; }
+.arbre ul { list-style: none; margin: 0; padding-left: 16px; }
+.arbre .niveau-domaine, .arbre .niveau-groupe, .arbre .niveau-test { padding-left: 14px; }
+.arbre summary { cursor: pointer; }
+.arbre .noeud { cursor: pointer; }
+.t-feuille { padding: 1px 0; opacity: .85; }
+.t-feuille:hover { opacity: 1; }
+.sel-bar { display: flex; align-items: center; gap: 8px; border-top: 1px solid rgba(255,255,255,.08); padding-top: 8px; }
+#compteur { opacity: .7; margin-right: auto; }
+
+/* ── corps : moitié gauche / moitié droite ────────────────────────────────── */
+#corps { flex: 1 1 auto; display: flex; min-height: 0; }
+#colonne-gauche { flex: 1 1 50%; display: flex; flex-direction: column; min-width: 0; min-height: 0; border-right: 1px solid rgba(255,255,255,.1); }
+#colonne-droite { flex: 1 1 50%; display: flex; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+
+/* liste des tests, défilement vertical qui suit le dernier tant qu'on ne remonte pas */
+#liste-tests { flex: 1 1 auto; min-height: 0; overflow-y: auto; list-style: none; margin: 0; padding: 6px; }
+.ligne-test { border-bottom: 1px solid rgba(255,255,255,.06); }
+.ligne-test .tete { display: flex; gap: 8px; padding: 5px 4px; cursor: pointer; align-items: baseline; }
+.ligne-test .tete:hover { background: rgba(255,255,255,.03); }
+.ligne-test .nom { flex: 1 1 auto; }
+.ligne-test .meta { opacity: .55; font-size: 11.5px; }
+.etat { width: 1.3em; display: inline-block; text-align: center; }
+.etat-attente { opacity: .35; }
+.etat-cours { color: #f0c419; }
+.etat-ok { color: #7ee08a; }
+.etat-ko { color: #e0453f; }
+.etat-delai { color: #ff9a3c; }
+.ligne-test .corps { padding: 4px 10px 10px 30px; font-size: 12px; }
+.ligne-test .corps .fiche > div { opacity: .8; margin-bottom: 2px; }
+.ligne-test .corps .message { color: #ffb4b0; margin-top: 4px; }
+.ligne-test .corps .pile { white-space: pre-wrap; font-size: 11px; opacity: .7; max-height: 140px; overflow: auto; }
+.ligne-test .corps .metriques { opacity: .6; font-size: 11.5px; margin-top: 4px; }
+.etapes { margin: 2px 0 4px 16px; padding: 0; opacity: .8; }
+.vignettes { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.vignette { max-width: 120px; max-height: 80px; border: 1px solid rgba(255,255,255,.15); border-radius: 4px; cursor: zoom-in; }
+.overlay-vignette {
+  position: fixed; inset: 0; background: rgba(0,0,0,.85); z-index: 50;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; cursor: zoom-out;
+}
+.overlay-vignette img { max-width: 92vw; max-height: 85vh; }
+.overlay-vignette .legende { opacity: .8; }
+
+/* résumé fixé en bas de la moitié gauche : ne sort jamais de la page */
+.resume { flex: 0 0 auto; padding: 8px 12px; border-top: 1px solid rgba(255,255,255,.12); background: #10151d; font-size: 12.5px; }
+.resume.ok { border-left: 3px solid #7ee08a; }
+.resume.ko { border-left: 3px solid #e0453f; }
+.resume .en-cours { opacity: .75; margin-top: 2px; }
+.resume .fin { color: #7ee08a; margin-top: 2px; }
+
+/* quart haut droit : lents + erreurs */
+#quart-haut { flex: 1 1 50%; min-height: 0; display: flex; border-bottom: 1px solid rgba(255,255,255,.1); }
+.panneau { flex: 1 1 50%; min-width: 0; display: flex; flex-direction: column; padding: 6px 8px; }
+.panneau:first-child { border-right: 1px solid rgba(255,255,255,.08); }
+.panneau h3 { font-size: 11.5px; opacity: .6; margin: 0 0 4px; text-transform: uppercase; letter-spacing: .04em; }
+.panneau .items { list-style: none; margin: 0; padding: 0; overflow-y: auto; flex: 1 1 auto; min-height: 0; }
+.panneau .items li { padding: 3px 4px; cursor: pointer; font-size: 12px; border-radius: 4px; }
+.panneau .items li:hover { background: rgba(255,255,255,.06); }
+
+/* quart bas droit : rendu 3D intégré + panneau MC_DEBUG */
+#quart-bas { flex: 1 1 50%; min-height: 0; position: relative; overflow: hidden; background: #000; }
+/* Surface virtuelle (SPEC-BANC-017) : résolution FIXE (posée en JS par
+   tests/banc-ui.js, largeur/hauteur en pixels), mise à l'échelle par
+   `transform: scale()` pour tenir dans son conteneur — le jeu qu'elle
+   contient (#host, 100 % de la surface) lit donc toujours cette résolution
+   de référence, jamais la taille réduite du quart qui l'affiche. */
+#surface-virtuelle { position: absolute; top: 0; left: 0; transform-origin: top left; background: #000; }
+#host { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* Plein panneau droit (bouton « Agrandir ») : recouvre tout #colonne-droite,
+   toujours à l'échelle, toujours à la même résolution virtuelle. */
+#surface-agrandie { position: absolute; inset: 0; z-index: 15; background: #000; }
+#surface-agrandie[hidden] { display: none; }
+/* Discret et replié par défaut (SPEC-BANC-017) : posé dans un coin, au-dessus
+   du rendu mais sans jamais couvrir le HUD du jeu (bas et centre de l'écran)
+   quand il est fermé — seul un petit onglet reste visible. */
+.debug {
+  position: absolute; right: 6px; top: 6px; z-index: 5; max-width: 260px;
+  background: rgba(10,14,20,.55); border: 1px solid rgba(255,255,255,.12); border-radius: 6px;
+  font-size: 11px; pointer-events: none;
+}
+.debug-entete { padding: 3px 7px; cursor: pointer; opacity: .65; pointer-events: auto; }
+.debug-entete:hover { opacity: 1; }
+.debug.ouvert { background: rgba(10,14,20,.92); pointer-events: auto; }
+.debug-corps { padding: 4px 8px 8px; display: flex; flex-direction: column; gap: 4px; }
+.debug-ligne { display: flex; align-items: center; gap: 4px; }
+.debug-ligne span { width: 92px; opacity: .7; flex: 0 0 auto; }
+.debug-ligne input { flex: 1 1 auto; min-width: 0; padding: 3px 5px; }
+.debug-ligne button { padding: 3px 8px; }
+
+@media (max-width: 900px) {
+  #entete h1 { display: none; }
+  .debug { max-width: 220px; }
+}

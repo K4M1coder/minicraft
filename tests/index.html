@@ -2,66 +2,60 @@
 <html lang="fr">
 <head>
 <meta charset="utf-8">
-<title>MiniCraft — tests</title>
+<title>MiniCraft — banc de test</title>
 <!-- les styles du jeu sont partagés : sans eux, l'interface testée ne serait
      pas celle qui tourne réellement (le viseur ne serait même pas positionné) -->
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="../src/ui.css">
-<style>
-  :root { color-scheme: dark; }
-  * { margin:0; padding:0; box-sizing:border-box; }
-  /* la feuille du jeu bloque le défilement : on le rétablit pour la page de tests */
-  html, body { overflow:auto; height:auto; }
-  body { background:#0b0e13; color:#e8eaed; font:13px/1.6 ui-monospace, Menlo, Consolas, monospace;
-         padding:24px; }
-  h1 { font-size:22px; margin-bottom:4px; }
-  .sub { opacity:.55; margin-bottom:18px; font-size:12px; }
-  .bar { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; }
-  button { font:inherit; padding:8px 16px; border-radius:6px; cursor:pointer;
-           border:1px solid rgba(255,255,255,.12); background:#1a212c; color:#e8eaed; }
-  button:hover { background:#232c3a; }
-  button.primary { border-color:rgba(126,224,138,.45); background:rgba(126,224,138,.12); color:#7ee08a; }
-  .summary { margin:14px 0; padding:10px 14px; border-radius:7px; border:1px solid rgba(255,255,255,.1);
-             background:rgba(255,255,255,.03); }
-  .summary.ok { border-left:3px solid #7ee08a; }
-  .summary.ko { border-left:3px solid #e0453f; }
-  .suite { margin-top:16px; }
-  .suite > h2 { font-size:14px; margin-bottom:5px; }
-  .t { padding-left:16px; }
-  .t.ok::before { content:"·  "; color:#7ee08a; }
-  .t.ko::before { content:"✗  "; color:#e0453f; }
-  .t.ok { opacity:.62; }
-  .t.ko { color:#ff8a86; }
-  .t .msg { padding-left:20px; opacity:.85; font-size:12px; color:#ffb4b0; }
-  /* la partie tourne dans un cadre : c'est justement ce qui vérifie que
-     l'interface est ancrée au conteneur et non à la fenêtre */
-  /* ui.css pose `inset: 0` sur #host : il faut neutraliser top et left
-     explicitement, sinon ils l'emportent et le cadre se colle en haut à gauche */
-  #host { position:fixed; top:auto; left:auto; right:16px; bottom:16px;
-          width:640px; height:400px;
-          border:1px solid rgba(255,255,255,.12); border-radius:8px; overflow:hidden; z-index:1; }
-  .note { font-size:11.5px; opacity:.5; margin-top:8px; max-width:620px; }
-</style>
+<link rel="stylesheet" href="banc.css">
 </head>
 <body>
 
-<h1>MiniCraft — suite de tests</h1>
-<p class="sub">unitaires et fonctionnels (logique pure) · end-to-end (vraie partie, à droite)</p>
+<div id="banc">
+  <header id="entete">
+    <h1>MiniCraft — banc de test</h1>
+    <button id="btn-menu" class="primary">Sélection ▾</button>
+    <a id="lien-cahiers" href="/tests/cahiers" target="_blank">Cahiers</a>
+    <label class="seuil">Seuil lent (s) <input id="seuil-lent" type="number" value="8" min="1" step="1"></label>
 
-<div class="bar">
-  <button class="primary" id="run-all">Tout exécuter</button>
-  <button id="run-unit">Unitaires + fonctionnels</button>
-  <button id="run-e2e">End-to-end</button>
+    <div id="panneau-selection" hidden>
+      <div class="sel-ligne">
+        <input id="recherche" placeholder="rechercher un test ou sa fiche…">
+        <select id="presets"><option value="">— préréglage —</option></select>
+      </div>
+      <div id="arbre" class="arbre"></div>
+      <div class="sel-bar">
+        <span id="compteur">0 test(s) retenu(s)</span>
+        <button id="btn-tout">Tout</button>
+        <button id="btn-echecs">Relancer les échecs</button>
+        <button id="btn-arreter" disabled>Arrêter</button>
+        <button id="btn-lancer" class="primary">Lancer</button>
+      </div>
+    </div>
+  </header>
+
+  <main id="corps">
+    <section id="colonne-gauche">
+      <ul id="liste-tests" aria-label="tests effectués"></ul>
+      <div id="resume" class="resume"></div>
+    </section>
+    <section id="colonne-droite">
+      <div id="quart-haut">
+        <div id="lents" class="panneau"><h3>Tests lents</h3><ul class="items"></ul></div>
+        <div id="erreurs" class="panneau"><h3>Tests en erreur</h3><ul class="items"></ul></div>
+      </div>
+      <div id="quart-bas">
+        <!-- surface virtuelle : résolution fixe et réaliste (par défaut
+             1280×800), mise à l'échelle par transform CSS pour tenir dans le
+             quart — le jeu ne se croit donc jamais dans une minuscule
+             fenêtre (SPEC-BANC-008/017). -->
+        <div id="surface-virtuelle"><div id="host"></div></div>
+        <div id="panneau-debug" class="debug"></div>
+      </div>
+      <div id="surface-agrandie" hidden></div>
+    </section>
+  </main>
 </div>
-
-<div id="out"></div>
-<p class="note">
-  Les tests end-to-end pilotent une partie réelle affichée en bas à droite : ils ouvrent
-  l'inventaire, minent, posent, frappent des mobs et rechargent une sauvegarde.
-  La capture souris est simulée, car un vrai verrou de pointeur exige un geste de l'utilisateur.
-</p>
-
-<div id="host"></div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -71,82 +65,10 @@ document.write(['harness.js', '../src/core.js', '../src/formes.js', '../src/nois
   '../src/mesher.js', '../src/physics.js', '../src/faune.js', '../src/factions.js', '../src/inventory.js', '../src/vehicules.js', '../src/entities.js',
   '../src/player.js', '../src/synchro.js', '../src/daycycle.js', '../src/save.js', '../src/saves.js',
   '../src/modes.js', '../src/chat.js', '../src/commandes.js', '../src/options.js', '../src/apparence.js', '../src/split.js', '../src/hud.js', '../src/gamepad.js', '../src/net-protocol.js', '../src/parametres.js', '../src/admin.js', '../src/politique.js', '../src/guildes.js', '../src/livre.js', '../src/livres.js', '../src/net.js', '../src/ambiance.js', '../src/audio.js', '../src/atlas.js',
-  '../src/render.js', '../src/ui.js', '../src/input.js', '../src/game.js',
-  'unit.js', 'functional.js', 'spec-modes.js', 'spec-saves.js', 'spec-audit.js', 'spec-armes.js', 'spec-chat.js', 'spec-split.js', 'spec-net.js', 'spec-ia-coll.js', 'spec-livre.js', 'spec-monde.js', 'spec-mer.js', 'spec-vehicules.js', 'spec-horizon.js', 'spec-climat.js', 'spec-habitats.js', 'spec-routes.js', 'spec-histoire.js', 'spec-succes.js', 'spec-ombres.js', 'spec-population.js', 'spec-hud.js', 'spec-couverture.js', 'spec-recits.js', 'spec-commandes.js', 'spec-portes.js', 'spec-eau.js', 'spec-vent.js', 'spec-loin.js', 'spec-donjons.js', 'spec-audio.js', 'spec-options.js', 'spec-souterrain.js', 'spec-apparence.js', 'spec-saisons.js', 'spec-parametres.js', 'spec-admin.js', 'spec-densite.js', 'spec-volcans.js', 'spec-caravanes.js', 'spec-zones.js', 'spec-blocs16.js', 'spec-politique.js', 'spec-guildes.js', 'spec-materiaux.js', 'spec-circuits.js', 'spec-objets.js', 'spec-formes.js', 'spec-recifs.js', 'spec-interieur.js', 'spec-batiments.js', 'e2e.js']
+  '../src/render.js', '../src/ui.js', '../src/input.js', '../src/game.js', '../src/debug.js',
+  'unit.js', 'functional.js', 'spec-modes.js', 'spec-saves.js', 'spec-audit.js', 'spec-armes.js', 'spec-chat.js', 'spec-split.js', 'spec-net.js', 'spec-ia-coll.js', 'spec-livre.js', 'spec-monde.js', 'spec-mer.js', 'spec-vehicules.js', 'spec-horizon.js', 'spec-climat.js', 'spec-habitats.js', 'spec-routes.js', 'spec-histoire.js', 'spec-succes.js', 'spec-ombres.js', 'spec-population.js', 'spec-hud.js', 'spec-couverture.js', 'spec-recits.js', 'spec-commandes.js', 'spec-portes.js', 'spec-eau.js', 'spec-vent.js', 'spec-loin.js', 'spec-donjons.js', 'spec-audio.js', 'spec-options.js', 'spec-souterrain.js', 'spec-apparence.js', 'spec-saisons.js', 'spec-parametres.js', 'spec-admin.js', 'spec-densite.js', 'spec-volcans.js', 'spec-caravanes.js', 'spec-zones.js', 'spec-blocs16.js', 'spec-politique.js', 'spec-guildes.js', 'spec-materiaux.js', 'spec-circuits.js', 'spec-objets.js', 'spec-formes.js', 'spec-recifs.js', 'spec-interieur.js', 'spec-batiments.js', 'e2e.js', 'banc-ui.js']
   .map(function (f) { return '<scr' + 'ipt src="' + f + '?v=' + Date.now() + '"></scr' + 'ipt>'; })
   .join(''));
-</script>
-<script>
-var out = document.getElementById('out');
-var game = null;
-
-function ensureGame() {
-  if (!game) game = MC.createGame(document.getElementById('host'));
-  return game;
-}
-
-function section(title) {
-  var d = document.createElement('div');
-  d.className = 'suite';
-  d.innerHTML = '<h2>' + title + '</h2>';
-  out.appendChild(d);
-  return d;
-}
-function line(parent, ok, name, msg) {
-  var d = document.createElement('div');
-  d.className = 't ' + (ok ? 'ok' : 'ko');
-  d.textContent = name;
-  if (!ok && msg) {
-    var m = document.createElement('div');
-    m.className = 'msg'; m.textContent = msg;
-    d.appendChild(m);
-  }
-  parent.appendChild(d);
-}
-function summary(label, passed, failed) {
-  var d = document.createElement('div');
-  d.className = 'summary ' + (failed ? 'ko' : 'ok');
-  d.textContent = label + ' : ' + passed + '/' + (passed + failed) +
-                  (failed ? ' — ' + failed + ' échec(s)' : ' — tout passe');
-  out.appendChild(d);
-  return d;
-}
-
-function runUnit() {
-  var res = T.run();
-  res.suites.forEach(function (s) {
-    var sec = section(s.name + ' (' + s.passed + '/' + (s.passed + s.failed) + ')');
-    s.lines.forEach(function (l) { line(sec, l.ok, l.name, l.message); });
-  });
-  summary('Unitaires + fonctionnels', res.passed, res.failed);
-  return res;
-}
-
-async function runE2ESuite() {
-  var g = ensureGame();
-  var sec = section('End-to-end (partie réelle)');
-  var sum = summary('End-to-end', 0, 0);
-  var res = await runE2E(g, function (r) {
-    line(sec, r.ok, r.name, r.message);
-  });
-  sum.className = 'summary ' + (res.failed ? 'ko' : 'ok');
-  sum.textContent = 'End-to-end : ' + res.passed + '/' + res.total +
-                    (res.failed ? ' — ' + res.failed + ' échec(s)' : ' — tout passe');
-  return res;
-}
-
-document.getElementById('run-unit').onclick = function () { out.innerHTML = ''; runUnit(); };
-document.getElementById('run-e2e').onclick = async function () { out.innerHTML = ''; await runE2ESuite(); };
-document.getElementById('run-all').onclick = async function () {
-  out.innerHTML = '';
-  var u = runUnit();
-  var e = await runE2ESuite();
-  var d = document.createElement('div');
-  d.className = 'summary ' + (u.failed + e.failed ? 'ko' : 'ok');
-  d.textContent = 'TOTAL : ' + (u.passed + e.passed) + '/' +
-                  (u.passed + u.failed + e.passed + e.failed) + ' tests';
-  out.insertBefore(d, out.firstChild);
-};
 </script>
 </body>
 </html>
