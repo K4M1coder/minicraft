@@ -14,6 +14,32 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Modifié
+
+- Banc de test navigateur (`tests/banc-ui.js`, `tests/index.html`) : retrait
+  de l'adaptateur de repli, consommation du vrai catalogue partagé
+  (`tests/catalogue.js`, `tests/presets.js`) et exécution réelle des tests
+  unitaires/e2e (`G.T.run`, `runCampagneE2E`) ; catalogue navigateur aligné
+  sur `node tests/run.js` (`spec-perf.js`/`limites-sondes.js`/`spec-limites.js`
+  chargés, auparavant absents de la page par oubli).
+
+### Corrigé
+
+- Captures des cahiers de test (SPEC-BANC-011/012) : les vignettes affichées
+  dans la page utilisent l'URL de données complète (comme avant), et seul
+  l'envoi au serveur en retire le préfixe pour transmettre du base64 pur ;
+  vérifié de bout en bout par une vraie campagne e2e (Playwright), sans
+  erreur console — chaque test garde ses propres captures, distinctes,
+  valides, visibles dans le rapport et les exports web/PDF/Word.
+- Métriques par test (SPEC-BANC-012) : les champs envoyés par le banc
+  navigateur (`fps_moyen`, `appels_dessin`, `memoire_js`) ne correspondaient
+  pas au schéma attendu par `tests/rapport.js` (`fps_moy`, `appels`,
+  `memoire`) — rapport.html, les exports et la moyenne d'images/s de la
+  campagne restaient vides silencieusement. Renommés pour correspondre.
+- Boutons d'export du cahier : la sonde `HEAD` censée les masquer si la
+  route n'existait pas encore provoquait un 405 (le serveur n'accepte que
+  `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
+  désormais stable dans le noyau.
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité
