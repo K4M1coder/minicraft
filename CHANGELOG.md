@@ -124,6 +124,12 @@ respecter (voir PLAN.md, « Commits et versions »).
 - README.md précise que `node tests/run.js` sans argument n'exécute pas
   l'intégration (unitaire/fonctionnel/spec seulement) ; `--preset pr` pour
   tout le Node, intégration comprise.
+- Fusion du lot L42 (outillage de test) avec le lot A1 (fiabilité réseau) :
+  `tests/run.js` catalogue désormais aussi `integration-secu.js` (fiche
+  déclarée, SPEC-BANC-002/G14) et `tests/spec-secu.js` cite explicitement
+  SPEC-NET-002/003 dans le nom de son test de robustesse du décodeur, pour
+  que les deux lots passent ensemble la porte G14 (100 % des tests Node ont
+  une fiche déclarée ou déduite d'une spec citée).
 
 ### Performances
 - Génération de chunk environ 60 % plus rapide (~98-112 ms/chunk → ~44-45 ms/chunk

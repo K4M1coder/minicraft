@@ -87,7 +87,7 @@
     });
 
     // ── décodeur : robustesse générale (complète SPEC-NET-002/003) ─────────
-    it('un tampon vide ou tronqué ne fait jamais planter le décodeur', function () {
+    it('SPEC-NET-002/003 : un tampon vide ou tronqué ne fait jamais planter le décodeur', function () {
       A.equal(N.decoder(null), null);
       A.equal(N.decoder(new Uint8Array(0)), null);
       A.equal(N.decoder(new Uint8Array([0x81])), null, 'un seul octet : incomplet');
