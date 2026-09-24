@@ -314,6 +314,59 @@
       } finally { nettoyer(dossier); }
     });
 
+    it('SPEC-BANC-026 : runUnE2E capture systématiquement le début et la fin de chaque test, sans dépendre de capture()/etape()', function () {
+      // Vérification STRUCTURELLE du texte source (comme SPEC-BANC-001 ci-dessus
+      // le fait déjà pour le catalogue) : tests/e2e.js pilote de vraies API
+      // navigateur (THREE, canvas, pointer lock…) qu'on ne rejoue pas sous
+      // Node ici — la vérification COMPORTEMENTALE réelle, avec un vrai
+      // navigateur sans fenêtre, vit dans la porte G15 (tests/gates.js) sur
+      // un cahier fraîchement généré, pas seulement sur ce texte.
+      var src = fs.readFileSync(path.join(RACINE, 'tests', 'e2e.js'), 'utf8');
+      var corpsRunUnE2E = src.slice(src.indexOf('function runUnE2E'), src.indexOf('function runE2E('));
+      A.ok(/capturer\(g, 'd.but'\)/.test(corpsRunUnE2E), 'une capture "début" est prise avant même d\'appeler test.fn — inconditionnellement');
+      // la capture de début a lieu AVANT le .then(test.fn) : elle ne dépend
+      // donc pas de ce que le test appelle ou non lui-même
+      A.ok(corpsRunUnE2E.indexOf('capturer(g, \'début\')') < corpsRunUnE2E.indexOf('test.fn'),
+        'la capture de début précède l\'exécution du test');
+      A.ok(/capturer\(g, 'fin'\)/.test(corpsRunUnE2E), 'une capture "fin" est prise à la réussite');
+      A.ok(/capturer\(g, 'échec'\)/.test(corpsRunUnE2E), 'une capture "échec" est prise à l\'échec');
+      A.ok(/capturer\(g, 'délai dépassé'\)/.test(corpsRunUnE2E), 'une capture est prise au délai dépassé');
+    });
+
+    it('SPEC-BANC-026 / SPEC-BANC-027 : un test sans aucun capture()/etape() garde quand même ≥ 2 captures dans le cahier écrit, dans l\'ordre chronologique', function () {
+      // Reproduit ce que produit runUnE2E pour un test qui n'appelle JAMAIS
+      // capture() ni etape() lui-même : seules les captures automatiques de
+      // début et de fin existent, dans l'ordre où elles ont été prises.
+      var dossier = tmpDir('auto-captures');
+      try {
+        var jpegDebut = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x01]);
+        var jpegFin = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 0x02]);
+        var resultats = { schema: 1, campagne: { preset: 'auto', debut: '', fin: '', duree_ms: 1, interrompue: false,
+          totaux: { total: 1, passes: 1, echecs: 0, ignores: 0, parType: {}, parDomaine: {} } },
+          tests: [{ id: 'X', nom: 'un test muet, sans capture() ni etape()', type: 'e2e', groupe: 'end-to-end',
+            domaines: [], specs: [], fiche: null, etat: 'ok', duree_ms: 5, etapes: [], assertions: { ok: 0, ko: 0 },
+            // ordre chronologique produit par runUnE2E : début d'abord, fin ensuite
+            captures: [{ libelle: 'début', fichier: 0 }, { libelle: 'fin', fichier: 1 }] }] };
+        RT.ecrireCahier(resultats, { racine: dossier, nom: 'c', captures: [
+          { libelle: 'début', type: 'image/jpeg', base64: jpegDebut.toString('base64') },
+          { libelle: 'fin', type: 'image/jpeg', base64: jpegFin.toString('base64') },
+        ] });
+        var relu = JSON.parse(fs.readFileSync(path.join(dossier, 'c', 'resultats.json'), 'utf8'));
+        A.ok(relu.tests[0].captures.length >= 2, 'au moins 2 captures même sans capture()/etape() explicite (SPEC-BANC-026)');
+        A.equal(relu.tests[0].captures[0].libelle, 'début', 'la première capture du tableau est celle de début');
+        A.equal(relu.tests[0].captures[1].libelle, 'fin', 'la seconde est celle de fin, dans l\'ordre chronologique');
+
+        // le rapport affiche les DEUX, dans le même ordre (SPEC-BANC-027) —
+        // aucune n'a de libellé nommé explicitement par le test, et pourtant
+        // les deux apparaissent : le cahier ne filtre pas sur les captures
+        // déclarées, il affiche TOUT t.captures.
+        var html = fs.readFileSync(path.join(dossier, 'c', 'rapport.html'), 'utf8');
+        var iDebut = html.indexOf('>début<'), iFin = html.indexOf('>fin<');
+        A.ok(iDebut >= 0 && iFin >= 0, 'les deux légendes "début" et "fin" apparaissent dans le rapport');
+        A.ok(iDebut < iFin, 'la capture de début apparaît avant celle de fin dans le rapport (ordre chronologique)');
+      } finally { nettoyer(dossier); }
+    });
+
     it('SPEC-BANC-015 : le serveur de test refuse une adresse distante, un envoi trop gros, et fabrique lui-même les noms de fichiers', function () {
       A.ok(RT.estAdresseLocale('127.0.0.1'));
       A.ok(RT.estAdresseLocale('::1'));
