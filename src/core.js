@@ -220,8 +220,9 @@
                              drops: [{ id: I.STICK, n: 1, chance: 0.35 }] });
   defBlock(B.SPRUCE_LOG, { name: 'Tronc de sapin', tiles: [6, 65, 6], hardness: 2.0, tool: 'axe',
                            log: true });
+  // aiguilles de sapin : un conifère (SPEC-SAISON-004) — reste vert à toute saison
   defBlock(B.SPRUCE_LEAVES, { name: 'Aiguilles de sapin', tiles: [66, 66, 66], hardness: 0.2,
-                              transparent: true, pass: 'cutout', leaves: true,
+                              transparent: true, pass: 'cutout', leaves: true, conifere: true,
                               drops: [{ id: I.STICK, n: 1, chance: 0.35 }] });
   // végétation basse : des plantes, donc traversables et cassées d'un coup
   defBlock(B.TALL_GRASS, { name: 'Hautes herbes', tiles: [67, 67, 67], hardness: 0,
@@ -552,6 +553,8 @@
   // bois et feuillage, toutes essences confondues (groundAt, apparitions)
   function isLog(id) { var d = BLOCKS[id]; return !!d && !!d.log; }
   function isLeaves(id) { var d = BLOCKS[id]; return !!d && !!d.leaves; }
+  // conifère (SPEC-SAISON-004) : un feuillage qui reste vert à toute saison
+  function isConifere(id) { var d = BLOCKS[id]; return !!d && !!d.conifere; }
 
   // eau ou plante noyée : ce qui compte comme « dans l'eau »
   function isLava(id) { var d = BLOCKS[id]; return !!d && !!d.lave; }
@@ -655,7 +658,7 @@
     FIRST_ITEM: FIRST_ITEM, DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
-    isLog: isLog, isLeaves: isLeaves, isWater: isWater, isLava: isLava, TIER_NAME: TIER_NAME,
+    isLog: isLog, isLeaves: isLeaves, isConifere: isConifere, isWater: isWater, isLava: isLava, TIER_NAME: TIER_NAME,
     TUILES_VARIABLES: TUILES_VARIABLES, INDEX_VARIANTES: INDEX_VARIANTES, tuileVariante: tuileVariante,
     PREMIERE_VARIANTE: PREMIERE_VARIANTE,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,

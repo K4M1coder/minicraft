@@ -662,12 +662,12 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-SAISON-001 | Le temps suit un calendrier : une journée dure 20 minutes réelles, une année 3 heures réelles (9 journées), en quatre saisons — printemps, été, automne, hiver — de 2 journées ¼ chacune ; la saison, le jour et l'année s'affichent, et se déduisent de l'heure du monde (les mêmes pour tous les postes, sauvegardées avec elle) | durées, découpage, affichage, déterminisme | ⏳ |
-| SPEC-SAISON-002 | La durée du jour varie : les journées sont plus longues l'été, plus courtes l'hiver, et la course du soleil s'élève ou s'abaisse avec la saison, sans saut d'un jour à l'autre | fraction de jour et hauteur du soleil selon la saison, continuité | ⏳ |
-| SPEC-SAISON-003 | La température suit la saison, progressivement : chaude l'été, froide l'hiver ; en hiver il neige là où il pleuvait, et une couche de neige couvre le sol des régions tempérées, puis fond au printemps | écart saisonnier, neige et couverture neigeuse selon la saison | ⏳ |
-| SPEC-SAISON-004 | Les feuillages suivent les saisons : verts au printemps et l'été, roussis et jaunis à l'automne, clairsemés l'hiver ; les conifères restent verts ; l'herbe jaunit à la fin de l'été ; la transition est progressive | teinte des feuillages et de l'herbe par saison et par essence | ⏳ |
-| SPEC-SAISON-005 | En hiver, lacs et rivières calmes des régions froides gèlent en surface — on marche sur la glace — et dégèlent au printemps | gel et dégel des eaux dormantes selon la saison et le climat | ⏳ |
-| SPEC-SAISON-006 | Les cultures ne poussent qu'en saison : vite l'été, lentement au printemps et à l'automne, pas l'hiver ; la reproduction des animaux reprend au printemps | croissance et naissances selon la saison | ⏳ |
+| SPEC-SAISON-001 | Le temps suit un calendrier : une journée dure 20 minutes réelles, une année 3 heures réelles (9 journées), en quatre saisons — printemps, été, automne, hiver — de 2 journées ¼ chacune ; la saison, le jour et l'année s'affichent, et se déduisent de l'heure du monde (les mêmes pour tous les postes, sauvegardées avec elle) | durées, découpage, affichage, déterminisme | ✅ |
+| SPEC-SAISON-002 | La durée du jour varie : les journées sont plus longues l'été, plus courtes l'hiver, et la course du soleil s'élève ou s'abaisse avec la saison, sans saut d'un jour à l'autre | fraction de jour et hauteur du soleil selon la saison, continuité | ✅ |
+| SPEC-SAISON-003 | La température suit la saison, progressivement : chaude l'été, froide l'hiver ; en hiver il neige là où il pleuvait, et une couche de neige couvre le sol des régions tempérées, puis fond au printemps | écart saisonnier, neige et couverture neigeuse selon la saison | ✅ |
+| SPEC-SAISON-004 | Les feuillages suivent les saisons : verts au printemps et l'été, roussis et jaunis à l'automne, clairsemés l'hiver ; les conifères restent verts ; l'herbe jaunit à la fin de l'été ; la transition est progressive | teinte des feuillages et de l'herbe par saison et par essence | ✅ |
+| SPEC-SAISON-005 | En hiver, lacs et rivières calmes des régions froides gèlent en surface — on marche sur la glace — et dégèlent au printemps | gel et dégel des eaux dormantes selon la saison et le climat | ✅ |
+| SPEC-SAISON-006 | Les cultures ne poussent qu'en saison : vite l'été, lentement au printemps et à l'automne, pas l'hiver ; la reproduction des animaux reprend au printemps | croissance et naissances selon la saison | ✅ |
 
 ## L37 — version empaquetée, serveur dédié et administration
 

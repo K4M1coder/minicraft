@@ -29,8 +29,13 @@
     switch (cmd.nom) {
       case 'heure': {
         var t = ctx.temps || 0;
-        return msg('Il est ' + DC.clockString(t) +
-                   (DC.isNight(t) ? ' — il fait nuit' : ' — il fait jour'));
+        var txt = 'Il est ' + DC.clockString(t) +
+                   (DC.isNight(t) ? ' — il fait nuit' : ' — il fait jour');
+        if (DC.saison) {
+          var sa = DC.saison(t);
+          txt += ' — ' + sa.nom + ', jour ' + sa.jour + '/' + DC.DAYS_PER_YEAR + ', an ' + sa.annee;
+        }
+        return msg(txt);
       }
       case 'jour':
         return action('Le jour se lève.',

@@ -1733,7 +1733,8 @@
         // entites et butin : le butin va au joueur le plus proche
         // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)
         var ev = net.enLigne() ? { damage: 0, picked: [] }
-                               : entities.update(dt, player.state, { reputation: world.reputation });
+                               : entities.update(dt, player.state, { reputation: world.reputation,
+                                 hiver: !!(DC.saison && DC.saison(g.time).nom === 'hiver') });
         if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
         for (var i = 0; i < ev.picked.length; i++) {
           var p2 = ev.picked[i];
@@ -1750,7 +1751,7 @@
         // temps, apparitions, cultures
         g.time += dt;
         g.duree = (g.duree || 0) + dt;
-        world.tick(dt, 14, null, { eau: !net.enLigne() });
+        world.tick(dt, 14, null, { eau: !net.enLigne(), temps: g.time });
         spawnT += dt;
         if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
           spawnT = 0;
@@ -1777,7 +1778,7 @@
         else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
-        world.tick(dt, 14);
+        world.tick(dt, 14, null, { temps: g.time });
         for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
         render.setHighlight(null);
       } else {

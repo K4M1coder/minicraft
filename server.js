@@ -406,7 +406,7 @@ setInterval(() => {
   dernier = now;
 
   heure += dt;
-  monde.tick(dt, 14);
+  monde.tick(dt, 14, null, { temps: heure });
 
   /* Le serveur simule les créatures autour des joueurs : il lui faut donc le
      terrain autour d'eux. Sans cela, une créature hors des chunks du point
@@ -480,7 +480,8 @@ setInterval(() => {
 
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
-  const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref] });
+  const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
+    hiver: MC.DayCycle.saison(heure).nom === 'hiver' });
   // les coups des créatures, appliqués aux joueurs qu'ils visaient
   ev.degatsPar.forEach(d => {
     const x = joueurs.find(y => y.js.joueur.state === d.joueur);
