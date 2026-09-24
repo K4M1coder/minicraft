@@ -63,10 +63,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC.Economie` (`game.js` `parlerA`, `ui.js` — prix/stock affichés, clic
   d'échange conforme au contrat), avec un frais de garde de banque quotidien
   (`game.js` `frame`) ; côté serveur, section « économie » (`server.js`,
-  `avancerEconomie`, `offresPour`) et `case NP.MSG.TROC` écrits contre les
-  helpers promis par B1 (inventaire et conteneurs serveur, L43 — inactifs
-  tant que B1 n'est pas fusionné, voir docs/vague-2/B2.md) ; sauvegarde
-  solo (`save.js`, champ `economie` optionnel) et serveur (`etatMonde`).
+  `avancerEconomie`, `offresPour`) et `case NP.MSG.TROC`, sur les helpers de
+  B1 (inventaire et conteneurs serveur, L43, fusionné) — `seqNouveau`,
+  `envoyerInvMaj`, `refuserOp`, `etatJoueurServeur`, la Map `banques` ;
+  sauvegarde solo (`save.js`, champ `economie` optionnel) et serveur
+  (`etatMonde`). `tests/integration-troc.js` (vrai serveur, `MC_TEST_INV`,
+  `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
+  déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
+  stock persistés après arrêt/relance `--monde`.
 
 ### Modifié
 

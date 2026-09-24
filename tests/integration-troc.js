@@ -1,14 +1,22 @@
 /* integration-troc.js — test d'intégration de SPEC-SYNC-023 (commerce
    serveur-autoritaire, L45) : vraies sockets, vrai serveur, comme
-   integration-pvp.js. NE PAS LANCER avant que B1 (inventaire et conteneurs
-   serveur, L43) soit fusionné dans master ET que cette branche s'y soit
-   rebasée : le serveur n'a pas encore d'inventaire réel ni les helpers
-   (seqNouveau, envoyerInvMaj, refuserOp, etatJoueurServeur, la Map banques)
-   que le `case NP.MSG.TROC` de server.js appelle — voir docs/vague-2/B2.md.
+   integration-pvp.js. Écrit contre les helpers de l'API inter-lots de B1
+   (seqNouveau, envoyerInvMaj, refuserOp, etatJoueurServeur, la Map banques —
+   docs/vague-2/B1.md § 5), fusionnés dans master (B1 étape 5).
 
    MC_TEST_INV donne à un joueur sans enregistrement un inventaire de départ
-   (fourni par B1, § 10 de B1.md) : on l'utilise ici pour être certain que le
-   joueur possède de quoi vendre au premier PNJ de métier rencontré.
+   (B1, § 10 de B1.md) : on l'utilise ici pour être certain que le joueur
+   possède de quoi vendre au premier PNJ rencontré. `--graine 100` place une
+   maison (habitant) à 32 blocs du point d'apparition, dans le rayon de
+   chunks chargés (vérifié hors ligne avec MC.createWorld) — un PNJ y vit dès
+   la connexion, sans déplacement ni attente arbitraire.
+
+   Arrêt du serveur : `MC_TEST_ARRET_MS` déclenche l'arrêt PROPRE du serveur
+   (la sauvegarde finale --monde) après un délai fixe, SANS dépendre d'un
+   signal — sous Windows, `child_process.kill()` (SIGTERM) ne déclenche
+   jamais `process.on('SIGTERM')` (aucun signal POSIX réel n'y existe), donc
+   la sauvegarde de fin ne s'exécuterait jamais si on tuait juste le
+   processus (voir le commentaire de MC_TEST_ARRET_MS dans server.js).
 
    Usage : node tests/integration-troc.js [port] */
 'use strict';
@@ -28,8 +36,14 @@ const ctx = vm.createContext(Object.assign(Object.create(null), {
   Map, Set, Uint8Array, isNaN, isFinite, parseInt, parseFloat,
 }));
 ctx.globalThis = ctx;
+vm.runInContext(fs.readFileSync(path.join(RACINE, 'src/core.js'), 'utf8'), ctx);
+vm.runInContext(fs.readFileSync(path.join(RACINE, 'src/contrats-vague2.js'), 'utf8'), ctx);
 vm.runInContext(fs.readFileSync(path.join(RACINE, 'src/net-protocol.js'), 'utf8'), ctx);
 const NP = ctx.MC.NetProtocol;
+const MC = ctx.MC;
+// items décalés de FIRST_ITEM - ANCIEN_FIRST_ITEM (SPEC-SAVE-017) : jamais
+// les identifiants littéraux de SPECS.md/core.js, toujours ceux d'ici.
+const ID_WHEAT = MC.Core.I.WHEAT, ID_EMERALD = MC.Core.I.EMERALD, ID_BONE = MC.Core.I.BONE;
 
 const C = { r: '\x1b[31m', g: '\x1b[32m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' };
 let passes = 0, echecs = 0;
@@ -123,6 +137,26 @@ function requete(port, chemin) {
 }
 const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
+/* Comme `client.attendre`, mais ignore tout message déjà arrivé avant
+   `avant` (un index dans `client.messages`) : `attendre` seul reprendrait
+   un message plus ancien qui matche par coïncidence le même prédicat (par
+   exemple une réponse `troc offres` reçue AVANT un `echanger`, encore dans
+   la liste), et résoudrait immédiatement avec cette version périmée plutôt
+   que d'attendre la vraie réponse à l'action qu'on vient d'envoyer. */
+function attendreDepuis(client, avant, type, ms, predicat) {
+  const ok2 = (m2) => m2.t === type && (!predicat || predicat(m2));
+  const deja = client.messages.slice(avant).find(ok2);
+  if (deja) return Promise.resolve(deja);
+  return new Promise((resolve, reject) => {
+    const fin = Date.now() + (ms || 3000);
+    const iv = setInterval(() => {
+      const m = client.messages.slice(avant).find(ok2);
+      if (m) { clearInterval(iv); resolve(m); return; }
+      if (Date.now() > fin) { clearInterval(iv); reject(new Error('delai depasse pour ' + type)); }
+    }, 30);
+  });
+}
+
 async function attendreDemarrage(port) {
   for (let essai = 0; essai < 60; essai++) {
     await dodo(100);
@@ -148,17 +182,50 @@ async function attendrePnjDeMetier(client, ms) {
   return null;
 }
 
+/* Marche vers `cible` (x, z) en envoyant de vraies entrées ENTREE (touche
+   avant, cap vers la cible) — le serveur fait foi sur la position (comme
+   tout joueur en ligne), donc c'est le seul moyen légitime de se rapprocher
+   d'un PNJ pour la vérification de portée de SPEC-SYNC-023. `depart` :
+   { x, y, z } connu (bienvenue.toi[0]) ; s'arrête dès `proche` blocs, ou au
+   délai `msMax`. Renvoie la dernière position connue (via les messages ETAT
+   `toi`, qui font foi côté serveur). */
+async function marcherVers(client, depart, cible, proche, msMax) {
+  let s = 1;
+  let pos = { x: depart.x, y: depart.y, z: depart.z };
+  const fin = Date.now() + msMax;
+  while (Date.now() < fin) {
+    const dx = cible.x - pos.x, dz = cible.z - pos.z;
+    if (Math.hypot(dx, dz) < proche) break;
+    const yaw = Math.atan2(-dx, -dz);
+    client.envoyer({ t: NP.MSG.ENTREE, s: s++, j: 0, dt: 0.05, k: 1, yaw: yaw, pitch: 0, v: 0 });
+    await dodo(50);
+    const m = client.messages.filter(x => x.t === 'etat').pop();
+    if (m && m.toi && m.toi[0]) pos = { x: m.toi[0].x, y: m.toi[0].y, z: m.toi[0].z };
+  }
+  return pos;
+}
+
 // ── scénario ─────────────────────────────────────────────────────────────────
 (async function () {
   const logs = [];
   const MONDE = path.join(RACINE, 'tests', '.tmp-monde-troc.json');
   try { fs.unlinkSync(MONDE); } catch (e) { /* rien */ }
 
+  const ARRET_MS = 14000;
   const env = Object.assign({}, process.env, {
-    MC_TEST_INV: JSON.stringify([[131, 40]]),   // 40 blé (I.WHEAT = 131) : de quoi vendre au fermier
+    // de quoi vendre à un habitant (blé) OU à l'ermite de la maison isolée
+    // (os) — lequel des deux est le PNJ le plus proche du spawn dépend du
+    // lieu généré (habitats.js : un ermite habite une maison isolée).
+    MC_TEST_INV: JSON.stringify([[ID_WHEAT, 40], [ID_BONE, 40]]),
+    MC_TEST_ARRET_MS: String(ARRET_MS),
   });
+  // graine 100 : une maison (habitant) à 32 blocs du point d'apparition,
+  // à l'intérieur du rayon de chunks chargés autour d'un joueur (chunksVoulus,
+  // R=3 chunks ≈ 48 blocs) — vérifié hors ligne avec MC.createWorld et
+  // habitats.lieuxProches, pour que peuplerLieux() y fasse vivre un PNJ dès
+  // la connexion, sans attente arbitraire ni dépendre d'un déplacement.
   let s = spawn(process.execPath,
-    [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secretTroc', '--monde', MONDE],
+    [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc', '--monde', MONDE],
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env });
   s.stdout.on('data', d => logs.push(String(d)));
   s.stderr.on('data', d => logs.push('ERR ' + String(d)));
@@ -176,8 +243,13 @@ async function attendrePnjDeMetier(client, ms) {
     const pnj = await attendrePnjDeMetier(a, 10000);
     ok(!!pnj, 'un PNJ de métier apparaît près du joueur', JSON.stringify(bienvenue && bienvenue.toi));
     if (pnj) {
-      // se rapprocher du PNJ, sans quoi le test de portée passerait trivialement
-      a.envoyer({ t: 'entree', j: 0 });   // (ne bouge pas forcément assez : voir SPEC-SYNC-023 § piège portée)
+      // se rapprocher vraiment du PNJ (portée serveur : 6 blocs, BORNES.PORTEE_TROC) —
+      // de vraies entrées ENTREE, le serveur faisant foi sur la position.
+      const depart = (bienvenue.toi && bienvenue.toi[0]) || { x: 0, y: 0, z: 0 };
+      const arrivee = await marcherVers(a, depart, { x: pnj.x, z: pnj.z }, 4, 10000);
+      ok(Math.hypot(pnj.x - arrivee.x, pnj.z - arrivee.z) <= MC.ContratsV2.BORNES.PORTEE_TROC,
+         'le joueur est à portée du PNJ après s\'être approché',
+         JSON.stringify({ pnj: { x: pnj.x, z: pnj.z }, arrivee }));
 
       a.envoyer({ t: 'troc', j: 0, action: 'consulter', eid: pnj.e });
       let rep;
@@ -187,19 +259,22 @@ async function attendrePnjDeMetier(client, ms) {
 
       if (rep && rep.offres.length) {
         // une offre de VENTE (le joueur cède une ressource, pas 'campagne|villageois')
-        const vente = rep.offres.find(o => o.give && o.give.length && o.get && o.get.id === 137 /* EMERALD */);
+        const vente = rep.offres.find(o => o.give && o.give.length && o.get && o.get.id === ID_EMERALD);
         if (vente) {
           dernierPrix = vente.prix;
+          const avantEchange = a.messages.length;
           a.envoyer({ t: 'troc', j: 0, seq: 1, action: 'echanger', eid: pnj.e, offre: vente.i, fois: 1 });
           let inv;
-          try { inv = await a.attendre('inv_maj', 4000, m => m.ack >= 1); } catch (e) { inv = null; }
+          try { inv = await attendreDepuis(a, avantEchange, 'inv_maj', 4000, m => m.ack >= 1); } catch (e) { inv = null; }
           ok(!!inv, 'echanger valide → INV_MAJ (ack)', inv && JSON.stringify(inv.refus));
 
-          const rep2 = await a.attendre('troc', 4000, m => m.action === 'offres' && m.eid === pnj.e).catch(() => null);
+          const rep2 = await attendreDepuis(a, avantEchange, 'troc', 4000, m => m.action === 'offres' && m.eid === pnj.e).catch(() => null);
           if (rep2) {
             const venteApres = rep2.offres.find(o => o.i === vente.i);
             ok(!!venteApres && venteApres.prix !== dernierPrix, 'le prix a bougé après l\'échange',
                venteApres && JSON.stringify(venteApres));
+            ok(!!venteApres && venteApres.stock === vente.stock + 6, 'le stock du village a reçu le blé vendu',
+               venteApres && JSON.stringify({ avant: vente.stock, apres: venteApres.stock }));
           }
         } else {
           details.push(`  ${C.d}(aucune offre de vente trouvée pour ce PNJ — étape ignorée)${C.x}`);
@@ -226,15 +301,21 @@ async function attendrePnjDeMetier(client, ms) {
     echecs++;
     details.push(`  ${C.r}✗ exception : ${e.message}${C.x}`);
   } finally {
-    s.kill();
-    await dodo(400);
+    // attend l'arrêt PROPRE déclenché par MC_TEST_ARRET_MS (sauvegarde finale
+    // --monde comprise) plutôt que de tuer le processus — voir l'en-tête.
+    await new Promise((resolve) => {
+      if (s.exitCode !== null) { resolve(); return; }
+      s.once('exit', resolve);
+      setTimeout(resolve, ARRET_MS + 3000);   // filet de sécurité si l'arrêt échouait
+    });
+    if (s.exitCode === null) s.kill();   // toujours orphelin après le filet : on force
   }
 
   // ── --monde arrêt/relance : prix et trésors conservés ──────────────────────
   try {
     ok(fs.existsSync(MONDE), 'un fichier --monde a été écrit');
     const s2 = spawn(process.execPath,
-      [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secretTroc2', '--monde', MONDE],
+      [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc2', '--monde', MONDE],
       { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
     s2.stdout.on('data', d => logs.push(String(d)));
     s2.stderr.on('data', d => logs.push('ERR ' + String(d)));
@@ -242,12 +323,20 @@ async function attendrePnjDeMetier(client, ms) {
       ok(await attendreDemarrage(PORT), 'le serveur relancé reprend le monde (--monde)');
       const a2 = await connecter(PORT);
       a2.envoyer({ t: 'rejoindre', nom: 'Verif', locaux: 1 });
-      await a2.attendre('bienvenue');
+      const bienvenue2 = await a2.attendre('bienvenue');
       const pnj2 = await attendrePnjDeMetier(a2, 10000);
       if (pnj2 && dernierPrix !== null) {
+        const depart2 = (bienvenue2.toi && bienvenue2.toi[0]) || { x: 0, y: 0, z: 0 };
+        await marcherVers(a2, depart2, { x: pnj2.x, z: pnj2.z }, 4, 10000);
+        const avantConsulte = a2.messages.length;
         a2.envoyer({ t: 'troc', j: 0, action: 'consulter', eid: pnj2.e });
-        const rep3 = await a2.attendre('troc', 4000, m => m.action === 'offres' && m.eid === pnj2.e).catch(() => null);
-        ok(!!rep3, 'consulter fonctionne encore après reprise du monde');
+        const rep3 = await attendreDepuis(a2, avantConsulte, 'troc', 4000, m => m.action === 'offres' && m.eid === pnj2.e).catch(() => null);
+        ok(!!rep3, 'consulter fonctionne encore après reprise du monde', rep3 && JSON.stringify(rep3));
+        if (rep3) {
+          const ligne = rep3.offres.find(o => o.get && o.get.id === ID_EMERALD);
+          ok(!!ligne && Math.abs(ligne.prix - dernierPrix) > 1e-9, 'le prix reste celui d\'après l\'échange (trésor/stock conservés par --monde)',
+             ligne && JSON.stringify({ dernierPrix: dernierPrix, ligne: ligne }));
+        }
       }
       a2.fermer();
       await dodo(200);
