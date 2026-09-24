@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+## [0.1.0] - 2026-09-24
 ### Ajouté
 
 - Les blocs se stockent désormais sur 16 bits (Uint16Array) partout où ils vivent — chunks, mailleur, lumière, sauvegardes, réseau, monde serveur — et l'espace d'ids sépare largement blocs (1..4095) et objets (4096+), levant la limite d'un octet (SPEC-SAVE-017).
@@ -155,6 +156,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.1.0]: #
 [0.0.86]: #
 [0.0.85]: #
 [0.0.84]: #
