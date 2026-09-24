@@ -13,6 +13,11 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.85] - 2026-09-24
+### Ajouté
+
+- Buissons (une à trois boules de feuillage de l'essence du lieu) et prairies fleuries en nappes de couleur dominante dans les plaines, savanes et forêts claires ; ils ploient au vent comme le reste de la végétation (VENT-004).
+
 ## [0.0.84] - 2026-09-24
 ### Ajouté
 
@@ -104,6 +109,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.85]: #
 [0.0.84]: #
 [0.0.83]: #
 [0.0.82]: #

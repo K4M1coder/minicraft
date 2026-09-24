@@ -69,6 +69,43 @@
       A.deep(me.deriveBrume(1000), MC.Meteo.creer(20260921).deriveBrume(1000), 'la même pour tous les postes');
     });
 
+    it('SPEC-VENT-004 : buissons et prairies fleuries couvrent plaines, savanes et forêts claires', function () {
+      var w = MC.createWorld(20260921), Bio = w.bio;
+      function stats(bio) {
+        var bu = 0, fl = 0, flPr = 0, pr = 0, n = 0;
+        for (var x = 0; x < 300; x++) for (var z = 0; z < 300; z += 3) {
+          n++;
+          var c = Bio.couvertBas(x, z, bio);
+          if (!c) continue;
+          if (c.buisson) bu++;
+          if (c.prairie) { pr++; if (c.fleur) flPr++; }
+          if (c.fleur) fl++;
+        }
+        return { buisson: bu / n, fleur: fl / n, prairie: pr / n, fleurEnPrairie: pr ? flPr / pr : 0 };
+      }
+      var pl = stats('plaines'), sa = stats('savane'), fo = stats('foret');
+      A.gt(pl.prairie, 0.08, 'des prairies en plaine'); A.lt(pl.prairie, 0.45, 'mais pas partout');
+      A.gt(pl.fleurEnPrairie, 0.1, 'les fleurs y abondent');
+      A.gt(pl.buisson, 0.002, 'des buissons en plaine');
+      A.gt(sa.buisson, pl.buisson, 'plus de buissons en savane');
+      A.gt(fo.prairie, 0, 'des clairières fleuries en forêt');
+      A.equal(Bio.couvertBas(10, 10, 'desert'), null, 'rien au désert');
+      A.equal(Bio.COUVERT.taiga.feuillage, B.SPRUCE_LEAVES, 'un buisson a l essence du lieu');
+      // dans le vrai monde : des fleurs groupées et des buissons au sol dans une plaine
+      var trouve = null;
+      for (var r = 0; r < 3000 && !trouve; r += 48) for (var a = 0; a < 16 && !trouve; a++) {
+        var px = Math.round(Math.cos(a / 16 * 6.28) * r), pz = Math.round(Math.sin(a / 16 * 6.28) * r);
+        if (w.biomeAt(px, pz).id === 'plaines' && Bio.couvertBas(px, pz, 'plaines') && Bio.couvertBas(px, pz, 'plaines').prairie) trouve = [px, pz];
+      }
+      A.ok(trouve, 'une prairie dans une plaine du monde');
+      var cx = Math.floor(trouve[0] / CX), cz = Math.floor(trouve[1] / CZ), fleurs = 0;
+      for (var i = -1; i <= 1; i++) for (var j = -1; j <= 1; j++) {
+        var ch = w.getChunk(cx + i, cz + j, true);
+        for (var k = 0; k < ch.blocks.length; k++) if (ch.blocks[k] === B.FLOWER_RED || ch.blocks[k] === B.FLOWER_YELLOW) fleurs++;
+      }
+      A.gt(fleurs, 20, 'une prairie fleurie autour : ' + fleurs + ' fleurs');
+    });
+
     it('SPEC-VENT-001 : le ciel d un monde suit son climat et chaque couche dérive avec le vent de son altitude', function () {
       var w = MC.createWorld(20260921), me = w.meteo;
       var d0 = me.deriveCouche(0, 3000), d4 = me.deriveCouche(4, 3000);

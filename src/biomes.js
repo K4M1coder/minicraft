@@ -595,7 +595,38 @@
     }
     function biomeAt(wx, wz) { return echantillon(wx, wz).biome; }
 
-    return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur,
+    /* SPEC-VENT-004 : buissons et prairies fleuries des plaines, savanes et
+       forêts claires. Les prairies sont des nappes (un bruit lent) où les
+       fleurs abondent, chacune d'une couleur dominante ; les buissons, une à
+       trois boules de feuillage posées au sol, de l'essence du lieu. */
+    var COUVERT = {
+      plaines: { buisson: 0.006, feuillage: B.LEAVES, prairie: 0.62 },
+      savane:  { buisson: 0.012, feuillage: B.ACACIA_LEAVES, prairie: 0.66 },
+      foret:   { buisson: 0.008, feuillage: B.LEAVES, prairie: 0.7 },
+      taiga:   { buisson: 0.005, feuillage: B.SPRUCE_LEAVES, prairie: 1 },
+    };
+    function couvertBas(wx, wz, bioId) {
+      var c = COUVERT[bioId];
+      if (!c) return null;
+      if (N.hash2(wx * 41 - 7, wz * 37 + 13) < c.buisson) {
+        var taille = 1 + Math.floor(N.hash2(wx * 5 + 1, wz * 3 - 2) * 3);
+        return { buisson: { taille: taille, feuillage: c.feuillage } };
+      }
+      var nappe = N.fbm((wx + 711) / 90, (wz - 377) / 90, 2, 2, 0.5);
+      if (nappe > c.prairie) {
+        var dens = Math.min(0.55, (nappe - c.prairie) * 3);
+        if (N.hash2(wx * 17 + 5, wz * 19 - 3) < dens) {
+          // une couleur dominante par nappe, quelques fleurs de l'autre
+          var dominante = N.value2((wx - 90) / 60, (wz + 45) / 60) > 0.5 ? B.FLOWER_YELLOW : B.FLOWER_RED;
+          var autre = dominante === B.FLOWER_RED ? B.FLOWER_YELLOW : B.FLOWER_RED;
+          return { fleur: N.hash2(wx * 3, wz * 7 + 1) < 0.8 ? dominante : autre, prairie: true };
+        }
+        return { prairie: true };
+      }
+      return null;
+    }
+
+    return { climat: climat, classer: classer, biomeAt: biomeAt, hauteur: hauteur, couvertBas: couvertBas, COUVERT: COUVERT,
              echantillon: echantillon, colonne: colonne, volcanProche: volcanProche,
              lacProche: lacProche, volcanDe: volcanDe, lacDe: lacDe, melange: melange,
              riviere: riviere, niveauRiviere: niveauRiviere, courantRiviere: courantRiviere, LIT: LIT, RIVE: RIVE,

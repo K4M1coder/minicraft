@@ -287,6 +287,16 @@
           }
           continue;
         }
+        // buissons et prairies fleuries (SPEC-VENT-004), sur l'herbe seulement
+        var cb = sf[0] === B.GRASS && Bio.couvertBas ? Bio.couvertBas(wx, wz, bioVege.id) : null;
+        if (cb && cb.buisson && x > 0 && x < 14 && z > 0 && z < 14) {
+          var bt = cb.buisson.taille, fe = cb.buisson.feuillage;
+          if (blocks[idx(x, h + 1, z)] === 0) blocks[idx(x, h + 1, z)] = fe;
+          if (bt >= 2 && blocks[idx(x + 1, h + 1, z)] === 0 && blocks[idx(x + 1, h, z)] !== 0) blocks[idx(x + 1, h + 1, z)] = fe;
+          if (bt >= 3 && blocks[idx(x, h + 2, z)] === 0) blocks[idx(x, h + 2, z)] = fe;
+          continue;
+        }
+        if (cb && cb.fleur && blocks[idx(x, h + 1, z)] === 0) { blocks[idx(x, h + 1, z)] = cb.fleur; continue; }
         // végétation basse : un tirage indépendant de celui des arbres
         var plante = tirer(bioVege.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
         if (plante && blocks[idx(x, h + 1, z)] === 0 && plantePousseSur(plante.id, sf[0])) {
