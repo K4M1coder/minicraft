@@ -20,6 +20,15 @@ respecter (voir PLAN.md, « Commits et versions »).
   deux colonnes quand la place le permet (SPEC-OPTION-007).
 - Les répliques du mode histoire se répondent aussi au clavier : Entrée ou
   Espace pour continuer, 1 à 9 pour un choix (SPEC-HISTOIRE-014).
+- Tests d'exploration des limites techniques (SPEC-LIMITE-001 à 006) : hauteur
+  et profondeur de la carte, relief réellement généré, étendue horizontale,
+  précision GPU et physique. Dans la suite standard, ils affichent un tableau
+  des succès internes, des échecs internes et des valeurs relevées sans jamais
+  bloquer, sauf si ce tableau ne peut se construire ; `node tests/explo-limites.js`
+  explore toutes les distances jusqu'à 2⁵³ et conserve un cahier dans
+  `tests/resultats/`. Premiers constats : relief de y = 6 à y = 114 sur 128,
+  tremblement GPU visible dès 131 072 blocs de l'origine, coordonnées tronquées
+  par le protocole réseau au-delà de 2³¹.
 
 ### Corrigé
 - Le popup du mode histoire gardait la souris capturée : la capture demandée au

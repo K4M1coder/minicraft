@@ -3,3 +3,5 @@ node_modules/
 *.log
 .DS_Store
 .claude/
+# cahiers de test et d’exploration (conservés localement, non versionnés)
+tests/resultats/

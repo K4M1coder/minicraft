@@ -987,3 +987,25 @@ temps réel absolus. Les specs conditionnées au FPS (SPEC-RENDU-003, 005, 006,
 | SPEC-RENDU-013 | Les chunks hors du frustum de la caméra active ne sont pas soumis au rendu (frustum culling activé sur les maillages de chunk, à la différence des maillages spéciaux qui le désactivent volontairement — arbres/silhouettes/météo, src/render.js:1225/1376/1419/1516/1563/1600/1642/1758) | test navigateur : orienter la caméra à l'opposé d'un ensemble de chunks chargés et vérifier via `renderer.info.render.calls` (ou un compteur dédié) qu'ils ne contribuent pas au rendu de cette image | ⏳ |
 | SPEC-RENDU-014 | Un culling grossier d'occlusion écarte du rendu les chunks entièrement masqués par le relief proche (ex. une colonne de chunks sous une falaise pleine face à la caméra), en plus du frustum culling (SPEC-RENDU-013) | test Node/e2e : une scène synthétique avec un mur de relief plein devant plusieurs chunks alignés derrière, vérifie que ces chunks masqués ne sont pas soumis au rendu (compteur de chunks rendus inférieur au nombre de chunks chargés) | ⏳ |
 | SPEC-RENDU-015 | Le budget de frame (SPEC-RENDU-008) et les métriques de rendu (SPEC-PERF-015) partagent la même source de mesure du FPS (`g.fps`, moyenne glissante 0,4 s de game.js:2413) : aucune mesure de FPS concurrente ou incohérente entre le panneau F3 et l'adaptatif | test Node/e2e lisant simultanément la valeur affichée au panneau F3 et celle utilisée par la décision d'adaptation, vérifie qu'elles proviennent du même calcul (égalité stricte à l'image près) | ⏳ |
+
+
+## L49 — limites techniques : exploration et banc de mesure
+
+Tests techniques secondaires : ils mesurent les limites de la carte (hauteur,
+profondeur, construction, étendue, précision) et servent de banc de mesure et
+d'exploration, pas de validation. Dans la suite standard, ils sont toujours
+verts sur ce qu'ils mesurent et affichent un tableau des succès internes, des
+échecs internes (limites atteintes) et des valeurs relevées ; seul l'échec de
+la construction du tableau les fait échouer. L'exploration profonde
+(`node tests/explo-limites.js`) couvre toutes les distances et conserve son
+cahier dans `tests/resultats/<date>_limites/`.
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-LIMITE-001 | Les bornes verticales sont mesurées et comparées : hauteur totale, niveau de la mer, socle en y = 0, pose possible jusqu'à WORLD_H − 1 et refusée au-delà et sous 0, en local comme à travers le protocole réseau | tableau : chaque borne a sa ligne et son statut (succès ou échec interne) | ✅ |
+| SPEC-LIMITE-002 | Le relief réellement généré est mesuré sur un large échantillon : plus haut sommet et marge de construction au-dessus, fond le plus bas, hauteur moyenne, répartition par tranches, points collés au plafond | tableau des hauteurs avec la marge sous le plafond (attendu ≥ 8 blocs) | ✅ |
+| SPEC-LIMITE-003 | L'étendue horizontale est explorée à des distances croissantes (de 10³ à 2⁵³ blocs) : chunk valide, pose/lecture, relief varié, répétition du monde 2³² blocs plus loin, coordonnée intacte à travers le protocole réseau ; la première distance défaillante de chaque critère est rapportée | tableau par distance et conclusion donnant les premières distances défaillantes | ✅ |
+| SPEC-LIMITE-004 | La précision des positions est mesurée : résolution 32 bits (GPU : shaders et matrices) et 64 bits (physique), erreur d'un pas de marche, et seuils de tremblement visible (≥ 1/64 bloc), de saccades (≥ 1/8), d'entiers non représentables et de physique faussée | tableau par distance et quatre seuils calculés sur les puissances de 2 | ✅ |
+| SPEC-LIMITE-005 | L'exploration profonde mesure le coût de génération selon la distance à l'origine (origine, 10⁵, 10⁷, 2·10⁹) | tableau des durées moyenne et médiane, écart maximal rapporté | ✅ |
+| SPEC-LIMITE-006 | Les sondes ne bloquent jamais sur ce qu'elles mesurent : seule la construction du tableau (sonde qui plante, ligne mal formée, statut inconnu) fait échouer le test ; l'exploration profonde conserve un cahier (rapport.md lisible et resultats.json) | une sonde plantée ou une ligne au statut inconnu font échouer la construction ; le cahier contient la fiche, l'observé et le tableau de chaque sonde | ✅ |
+| SPEC-LIMITE-007 | Une sonde navigateur mesure les limites de rendu loin de l'origine : à 10⁴, 10⁵, 10⁶ et 10⁷ blocs, le jeu téléporte la caméra, capture une image, mesure le tremblement de la géométrie et des animations (eau, vent, nuages) entre deux images fixes, et l'ajoute au tableau du cahier de test | captures et tremblement mesuré par distance dans le cahier du banc navigateur | ⏳ |
