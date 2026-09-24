@@ -30,10 +30,15 @@
      courtes garde la génération rapide sans changer ce que voit le joueur
      (les routes les plus lointaines ne se posent que quand on s'en approche). */
   var RAYON_RECHERCHE = 3100;      // depuis un chunk, jusqu'où chercher une ville concernée
+  var RAYON_RECHERCHE_MEGAPOLE = 9500;  // idem pour une mégapole, bien plus espacée (HABITAT-013)
   var MAX_VILLES = 2;              // voisines les plus proches reliées entre villes
   var MAX_VILLAGES = 3;            // villages alentour reliés à chaque ville
+  var MAX_MEGAPOLES = 2;           // mégapoles voisines reliées par un grand axe (ROUTE-007)
+  var MAX_MAISONS = 2;             // habitations isolées reliées par un chemin rural (ROUTE-007)
   var DIST_MAX_VILLE = 3000;       // au-delà, deux villes ne commercent plus directement
   var DIST_MAX_VILLAGE = 1600;
+  var DIST_MAX_MEGAPOLE = 9000;
+  var DIST_MAX_MAISON = 400;
   var RAYON_POI = 1200;            // sites remarquables cherchés autour d'une ville
   var DIST_MAX_SOMMET = 26;        // élévation minimale au-dessus de la ville pour un « sommet »
   var MAX_STEP = 1;                // dénivelé toléré par pas de marche (SPEC-ROUTE-002)
@@ -44,13 +49,17 @@
   var RAYON_LAMPES = 60;           // abords de ville éclairés
   var PAS_LAMPE = 9;               // tous les combien de blocs un lampadaire
 
-  /* Rôle d'une connexion selon le type du lieu visé — un premier jalon vers
-     une hiérarchie de routes (grands axes / commerce / chemins ruraux /
-     tourisme, L38) : aujourd'hui deux rôles seulement, mais un chemin garde
-     déjà le sien (`chemin.role`), et une future distinction plus fine
-     (rang du lieu plutôt que son seul type) n'aurait qu'à enrichir cette
-     table et `poisDe`/`connexionsDe`, sans toucher au reste du module. */
-  var ROLE_PAR_TYPE = { ville: 'commerce', village: 'commerce', volcan: 'tourisme', lac: 'tourisme', sommet: 'tourisme' };
+  /* Rôle d'une connexion selon le type du lieu visé (SPEC-ROUTE-007) : grand
+     axe entre mégapoles et villes, commerce vers villes et villages, chemin
+     rural vers une habitation isolée, tourisme vers un site remarquable.
+     `poserNoeud` s'en sert pour la largeur et le matériau (largeur/matériau
+     selon le rang) ; `chemin.role` garde le rôle du lien, comme avant. */
+  var ROLE_PAR_TYPE = { megapole: 'axe', ville: 'commerce', village: 'commerce', maison: 'rural',
+                         volcan: 'tourisme', lac: 'tourisme', sommet: 'tourisme' };
+  /* Matériau et demi-largeur (blocs de chaque côté de l'axe central) selon le
+     rang de la route (SPEC-ROUTE-007). Les ponts restent en planches/cobble,
+     quel que soit le rôle (SPEC-ROUTE-003, déjà testé ainsi). */
+  var GABARIT_PAR_ROLE = { axe: { demiLargeur: 1 }, commerce: { demiLargeur: 0 }, rural: { demiLargeur: 0 }, tourisme: { demiLargeur: 0 } };
 
   function creer(N, hauteur, habitats, Bio) {
     if (!habitats) return { appliquer: function () { return 0; }, connexionsDe: function () { return []; }, cheminEntre: function () { return null; } };
@@ -119,31 +128,66 @@
       return res;
     }
 
-    /* Les connexions d'une ville (SPEC-ROUTE-001), calculées une fois et mises
-       en cache par ville : voisines les plus proches parmi les autres villes,
-       villages alentour, et sites remarquables. */
-    function connexionsDe(ville) {
-      if (connexions.has(ville.id)) return connexions.get(ville.id);
-      var res = [];
-      var voisines = lieuxDuGenre('ville', ville.x, ville.z, DIST_MAX_VILLE)
-        .filter(function (l) { return l.id !== ville.id; })
+    /* SPEC-DENSITE-001/002 : la même carte que celle branchée dans
+       habitats.js (mêmes fonctions, même graine ⇒ le même classement), pour
+       que les routes rarélient les zones vierges (SPEC-ROUTE-007) sans
+       dépendre d'un état partagé avec habitats.js. */
+    var Dens = MC.Densite && Bio && Bio.biomeAt ? MC.Densite.creer(N, hauteur, Bio.biomeAt, Bio.riviere) : null;
+
+    /* Les connexions d'un pôle — ville OU mégapole (SPEC-ROUTE-001/007),
+       calculées une fois et mises en cache par lieu : mégapoles voisines (un
+       grand axe), villes voisines (un grand axe si l'un des deux pôles est
+       une mégapole, sinon du commerce), villages et habitations isolées
+       alentour, et sites remarquables. */
+    function connexionsDe(hub) {
+      if (connexions.has(hub.id)) return connexions.get(hub.id);
+      var res = [], estMegapole = hub.kind === 'megapole';
+      function dist(l) { return Math.hypot(l.x - hub.x, l.z - hub.z); }
+
+      if (LIEUX && LIEUX.megapole) {
+        lieuxDuGenre('megapole', hub.x, hub.z, DIST_MAX_MEGAPOLE)
+          .filter(function (l) { return l.id !== hub.id; }).slice(0, MAX_MEGAPOLES)
+          .forEach(function (l) { res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'megapole', demi: l.demi,
+                                             role: ROLE_PAR_TYPE.megapole, dist: dist(l) }); });
+      }
+      var voisines = lieuxDuGenre('ville', hub.x, hub.z, DIST_MAX_VILLE)
+        .filter(function (l) { return l.id !== hub.id; })
         .slice(0, MAX_VILLES);
       voisines.forEach(function (l) {
-        res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'ville', role: ROLE_PAR_TYPE.ville,
-                   dist: Math.hypot(l.x - ville.x, l.z - ville.z) });
+        res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'ville', demi: l.demi,
+                   role: estMegapole ? 'axe' : ROLE_PAR_TYPE.ville, dist: dist(l) });
       });
-      var villages = lieuxDuGenre('village', ville.x, ville.z, DIST_MAX_VILLAGE)
+      var villages = lieuxDuGenre('village', hub.x, hub.z, DIST_MAX_VILLAGE)
         .slice(0, MAX_VILLAGES);
       villages.forEach(function (l) {
-        res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'village', role: ROLE_PAR_TYPE.village,
-                   dist: Math.hypot(l.x - ville.x, l.z - ville.z) });
+        res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'village', demi: l.demi,
+                   role: ROLE_PAR_TYPE.village, dist: dist(l) });
       });
-      poisDe(ville).forEach(function (p) {
+      // chemins ruraux : quelques habitations isolées, tout près (ROUTE-007)
+      if (LIEUX && LIEUX.maison) {
+        lieuxDuGenre('maison', hub.x, hub.z, DIST_MAX_MAISON).slice(0, MAX_MAISONS)
+          .forEach(function (l) { res.push({ x: l.x, z: l.z, id: l.id, nom: l.nom, type: 'maison', demi: l.demi,
+                                             role: ROLE_PAR_TYPE.maison, dist: dist(l) }); });
+      }
+      poisDe(hub).forEach(function (p) {
         res.push({ x: p.x, z: p.z, id: p.id, nom: p.nom, type: p.type, role: ROLE_PAR_TYPE[p.type] || 'tourisme',
-                   dist: Math.hypot(p.x - ville.x, p.z - ville.z) });
+                   dist: dist(p) });
       });
-      connexions.set(ville.id, res);
+      connexions.set(hub.id, res);
       return res;
+    }
+
+    /* SPEC-ROUTE-007 : en zone vierge (MC.Densite), on ne trace presque
+       jamais de route « secondaire » (commerce/rural/tourisme) — seuls les
+       grands axes (mégapole ↔ ville/mégapole) la traversent systématiquement,
+       comme de vraies autoroutes qui relient les pôles sans se soucier de ce
+       qu'il y a entre les deux. Test au milieu du segment, déterministe. */
+    function routeAutorisee(a, e) {
+      if (!Dens || e.role === 'axe') return true;
+      var mx = (a.x + e.x) / 2, mz = (a.z + e.z) / 2;
+      if (Dens.classeEn(mx, mz).classe !== 'vierge') return true;
+      var r = N.hash2(Math.floor(mx) * 131 + 7, Math.floor(mz) * 997 - 3);
+      return r < 0.12;
     }
 
     // ─── tracé ───────────────────────────────────────────────────────────────
@@ -256,14 +300,31 @@
       return Math.hypot(px - qx, pz - qz);
     }
 
-    function poserNoeud(pt, put, cote) {
+    /* SPEC-ROUTE-007 : matériau et largeur selon le rang du lien — les
+       grands axes (mégapole ↔ ville/mégapole) sont pavés et deux fois plus
+       larges ; commerce (ville/village) reste au gravier ; les chemins
+       ruraux (habitations isolées) ne sont que de la terre battue. Les
+       ponts, eux, gardent toujours planches et piliers de moellons quel que
+       soit le rôle (SPEC-ROUTE-003, testé ainsi). */
+    var MATERIAU_PAR_ROLE = { axe: B.PAVE, commerce: B.GRAVEL, rural: B.DIRT, tourisme: B.GRAVEL };
+    function poserNoeud(pt, put, cote, role) {
       var y = pt.y;
       if (pt.pont) {
         put(pt.x, y, pt.z, B.PLANKS);
         for (var yy = Math.max(1, pt.hSol); yy < y; yy++) put(pt.x, yy, pt.z, B.COBBLE);
       } else {
-        put(pt.x, y, pt.z, B.GRAVEL);
-        put(pt.x, y - 1, pt.z, B.GRAVEL);
+        var mat = MATERIAU_PAR_ROLE[role] || B.GRAVEL;
+        put(pt.x, y, pt.z, mat);
+        put(pt.x, y - 1, pt.z, mat);
+        var demiL = (GABARIT_PAR_ROLE[role] || GABARIT_PAR_ROLE.commerce).demiLargeur;
+        if (demiL && pt.perp) {
+          for (var s = 1; s <= demiL; s++) {
+            put(pt.x + pt.perp.x * s, y, pt.z + pt.perp.z * s, mat);
+            put(pt.x + pt.perp.x * s, y - 1, pt.z + pt.perp.z * s, mat);
+            put(pt.x - pt.perp.x * s, y, pt.z - pt.perp.z * s, mat);
+            put(pt.x - pt.perp.x * s, y - 1, pt.z - pt.perp.z * s, mat);
+          }
+        }
       }
       put(pt.x, y + 1, pt.z, 0); put(pt.x, y + 2, pt.z, 0);
       if (pt.lampe && cote) {
@@ -283,14 +344,22 @@
       chemin.annote = true;
       var nodes = chemin.nodes, n = nodes.length;
       var demiA = chemin.a.demi || 0, demiB = chemin.b.demi || 0;
+      // SPEC-ROUTE-007 : un grand axe est plus large — il lui faut un côté
+      // (perpendiculaire au tracé) à CHAQUE nœud, pas seulement aux lampadaires
+      var large = chemin.role === 'axe';
       for (var i = 0; i < n; i++) {
         var p = nodes[i];
         var dA = Math.hypot(p.x - chemin.a.x, p.z - chemin.a.z), dB = Math.hypot(p.x - chemin.b.x, p.z - chemin.b.z);
-        if ((dA < demiA + RAYON_LAMPES || dB < demiB + RAYON_LAMPES) && i % PAS_LAMPE === 0) {
-          p.lampe = true;
+        var veutLampe = (dA < demiA + RAYON_LAMPES || dB < demiB + RAYON_LAMPES) && i % PAS_LAMPE === 0;
+        if (veutLampe) p.lampe = true;
+        if (veutLampe || large) {
           var prev = nodes[i - 1] || nodes[i + 1] || p;
           var tx = p.x - prev.x, tz = p.z - prev.z, len = Math.hypot(tx, tz) || 1;
-          p.cote = { x: Math.round(-tz / len * 3), z: Math.round(tx / len * 3) };
+          if (veutLampe) p.cote = { x: Math.round(-tz / len * 3), z: Math.round(tx / len * 3) };
+          // perpendiculaire unitaire (pas d'échelle ×3) : la largeur d'un
+          // grand axe se pose bloc à bloc, contiguë à l'axe central — une
+          // approximation au cardinal le plus proche suffit (cosmétique)
+          if (large) p.perp = { x: tz === 0 ? 0 : (tz > 0 ? -1 : 1), z: tx === 0 ? 0 : (tx > 0 ? 1 : -1) };
         }
         // panneau : le premier point qui sort du rayon de la ville d'origine
         if (!chemin.panneauPose && dA >= demiA + 4) {
@@ -310,12 +379,17 @@
       var x0 = cx * CX, z0 = cz * CZ, x1 = x0 + CX - 1, z1 = z0 + CZ - 1;
       var cxr = x0 + CX / 2, czr = z0 + CZ / 2;
       var n = 0;
-      var villes = lieuxDuGenre('ville', cxr, czr, RAYON_RECHERCHE);
-      villes.forEach(function (v) {
+      // les deux genres de pôles (ville et mégapole, HABITAT-013) portent
+      // chacun leurs connexions — la mégapole est cherchée bien plus loin
+      // (sa maille est bien plus large qu'entre deux villes)
+      var hubs = lieuxDuGenre('ville', cxr, czr, RAYON_RECHERCHE);
+      if (LIEUX && LIEUX.megapole) hubs = hubs.concat(lieuxDuGenre('megapole', cxr, czr, RAYON_RECHERCHE_MEGAPOLE));
+      hubs.forEach(function (v) {
+        var depart = { x: v.x, z: v.z, id: v.id, nom: v.nom, demi: v.demi, kind: v.kind };
         connexionsDe(v).forEach(function (e) {
           if (distSegment(cxr, czr, v.x, v.z, e.x, e.z) > MARGE_COULOIR + 12) return;
-          var chemin = cheminEntre({ x: v.x, z: v.z, id: v.id, nom: v.nom, demi: v.demi },
-                                    { x: e.x, z: e.z, id: e.id, nom: e.nom, demi: e.demi || 0, role: e.role });
+          if (!routeAutorisee(depart, e)) return;
+          var chemin = cheminEntre(depart, { x: e.x, z: e.z, id: e.id, nom: e.nom, demi: e.demi || 0, role: e.role });
           annoter(chemin);
           chemin.nodes.forEach(function (pt) {
             if (pt.x < x0 || pt.x > x1 || pt.z < z0 || pt.z > z1) return;
@@ -323,7 +397,7 @@
             // leur bord, sans recouvrir la plateforme ou les bâtiments
             var dA = Math.hypot(pt.x - chemin.a.x, pt.z - chemin.a.z), dB = Math.hypot(pt.x - chemin.b.x, pt.z - chemin.b.z);
             if (dA <= (chemin.a.demi || 0) + 2 || dB <= (chemin.b.demi || 0) + 2) return;
-            poserNoeud(pt, put, pt.cote);
+            poserNoeud(pt, put, pt.cote, chemin.role);
             n++;
           });
         });
@@ -331,7 +405,7 @@
       return n;
     }
 
-    return { appliquer: appliquer, connexionsDe: connexionsDe, cheminEntre: cheminEntre };
+    return { appliquer: appliquer, connexionsDe: connexionsDe, cheminEntre: cheminEntre, routeAutorisee: routeAutorisee };
   }
 
   MC.Routes = { creer: creer };

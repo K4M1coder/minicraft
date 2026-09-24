@@ -13,6 +13,13 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.82] - 2026-09-24
+### Ajouté
+
+- Carte de densité humaine (vierge, rurale, urbaine, hyperurbaine) combinant bruit et habitabilité (eau, relief, climat, fertilité, volcans) ; les lieux en naissent, avec des transitions progressives (DENSITE-001, 002).
+- Mégapoles de plus d'un kilomètre : tours, immeubles, avenues en grille, parcs, port (HABITAT-013).
+- Hiérarchie des routes (grands axes, commerce, chemins ruraux, tourisme) et fleuves navigables avec quais et ponts (ROUTE-007, 008).
+
 ## [0.0.81] - 2026-09-24
 ### Ajouté
 
@@ -87,5 +94,6 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.82]: #
 [0.0.81]: #
 [0.0.80]: #

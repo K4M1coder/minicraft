@@ -31,10 +31,16 @@
     var donjons = MC.Donjons.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); });
+    /* Carte de densité humaine (L38, SPEC-DENSITE-001/002) : un seul point
+       d'extension, exposé pour les zones de jeu et branché dans habitats.js
+       (repartitionOk) pour que les lieux en naissent. */
+    var densite = MC.Densite ? MC.Densite.creer(N, function (x, z) {
+      return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
+    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }) : null;
     // habitations, villages et villes : même principe que les donjons
     var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
-    }, function (x, z) { return biomeAt(x, z); }) : null;
+    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }) : null;
     // routes de commerce et de tourisme entre les lieux (même principe, encore)
     var routes = MC.Routes && habitats ? MC.Routes.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
@@ -903,7 +909,8 @@
       biomeAt: biomeAt, donjons: donjons, donjonsVaincus: donjonsVaincus,
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, pieceDonjon: pieceDonjon, butinCoffre: butinCoffre,
-      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes, pnjsMorts: pnjsMorts,
+      meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes,
+      densite: densite, pnjsMorts: pnjsMorts,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,
