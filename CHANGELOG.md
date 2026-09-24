@@ -234,6 +234,31 @@ respecter (voir PLAN.md, « Commits et versions »).
   bas, sans moyen de les atteindre : les écrans et l'inventaire défilent
   désormais verticalement et horizontalement, le haut restant toujours
   accessible (SPEC-OPTION-007).
+- SPEC-ZONE-003 échouait en campagne e2e complète depuis le nouveau banc
+  (mais pas isolément dans l'ancien testeur) : la boucle d'attente de
+  l'annonce de zone guettait la sous-chaîne « PvP » n'importe où dans
+  `document.body.textContent`, or le panneau de sélection du banc affiche en
+  permanence des libellés de spec qui la contiennent déjà (« SPEC-ZONE — zones
+  de jeu (PvP/PvE… ) »). La condition était donc déjà vraie avant la première
+  image, la boucle n'attendait jamais réellement le tick où l'annonce paraît,
+  et l'assertion suivante la ratait. Le test attend désormais le changement
+  de l'indicateur de zone lui-même (`.zone-indicateur`), sans ambiguïté avec
+  le reste de la page, et vérifie le texte de l'annonce dans son conteneur
+  dédié (`.toasts`) plutôt que dans toute la page.
+- SPEC-HISTOIRE-014 échouait de façon non déterministe en campagne e2e
+  complète (jamais isolément) : `tests/e2e.js` simule le verrou de pointeur
+  en redéfinissant `document.pointerLockElement`, mais n'empêchait pas les
+  VRAIES API `canvas.requestPointerLock()`/`document.exitPointerLock()`
+  appelées par `src/input.js` à chaque changement d'état — sous automatisation
+  (Playwright/CDP), un octroi réel peut aboutir sans geste utilisateur,
+  contrairement à un navigateur utilisé à la main. Un octroi tardif et
+  asynchrone déclenchait alors un VRAI `pointerlockchange`, lu par
+  `isLocked()` via le getter truqué (donc désynchronisé du vrai verrou), ce
+  qui pouvait remettre le jeu en pause en pleine partie après un test qui
+  enchaîne plusieurs changements d'état verrouillés (SPEC-HISTOIRE-009 juste
+  avant, dans la campagne complète). Les vraies API sont désormais coupées
+  une fois pour toutes dès le premier verrou simulé : seule `fakeLock` pilote
+  `pointerLockElement` pendant les tests.
 
 ## [0.3.0] - 2026-09-24
 ### Corrigé

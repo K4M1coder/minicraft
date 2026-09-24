@@ -110,11 +110,32 @@
   }
   function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
 
-  /* En contexte de test on ne peut pas obtenir un vrai verrou de pointeur
-     (il exige un geste utilisateur). On simule donc `pointerLockElement`
-     pour que le jeu se croie en partie, ce qui est exactement ce que teste
-     la machine à états. */
+  /* En contexte de test, `pointerLockElement` est simulé (`Object.defineProperty`)
+     pour que le jeu se croie en partie sans geste utilisateur réel — c'est
+     exactement ce que teste la machine à états. Mais sous automatisation
+     (Playwright/CDP), `canvas.requestPointerLock()` peut réellement aboutir
+     SANS geste utilisateur, contrairement à un navigateur utilisé à la main :
+     `src/input.js` appelle ces vraies API à chaque changement d'état
+     (`requestLock`/`exitLock`), et un octroi ou une levée réel(le), asynchrone,
+     déclenche un VRAI `pointerlockchange` — lu par `isLocked()` via ce même
+     getter truqué, donc DÉSYNCHRONISÉ du vrai verrou natif. Un test peut ainsi
+     se retrouver mis en PAUSE par surprise, en pleine partie, par un octroi
+     tardif que personne n'attendait (constaté sur SPEC-HISTOIRE-014, non
+     reproductible en isolation, seulement après un test qui enchaîne
+     plusieurs changements d'état verrouillés). On coupe donc les VRAIES API à
+     la racine, une fois pour toutes : seule `fakeLock` pilote alors
+     `pointerLockElement`, sans concurrence possible d'un événement natif. */
+  var verrouReelCoupe = false;
+  function couperVerrouReel(g) {
+    if (verrouReelCoupe) return;
+    verrouReelCoupe = true;
+    try {
+      g.render.renderer.domElement.requestPointerLock = function () { return Promise.resolve(); };
+    } catch (e) { /* rien */ }
+    try { document.exitPointerLock = function () {}; } catch (e) { /* rien */ }
+  }
   function fakeLock(g, on) {
+    couperVerrouReel(g);
     var cv = g.render.renderer.domElement;
     Object.defineProperty(document, 'pointerLockElement',
       { get: function () { return on ? cv : null; }, configurable: true });
@@ -2340,8 +2361,15 @@
     var z0 = g.world.zoneEn;
     try {
       g.world.zoneEn = function () { return { zone: 'pvp' }; };
-      for (var i = 0; i < 40 && !/PvP/.test(document.body.textContent); i++) await frames(1);
-      A.ok(/Vous entrez en zone PvP/.test(document.body.textContent), 'l entrée est annoncée');
+      // On attend le changement de l'INDICATEUR (mis à jour au même tick que
+      // l'annonce, dans annoncerZone) plutôt qu'un texte "PvP" n'importe où
+      // dans la page : sur le banc, le panneau de sélection des tests affiche
+      // en permanence des libellés de spec contenant "PvP" (ex. « SPEC-ZONE —
+      // zones de jeu (PvP/PvE... ) »), qui font croire à tort que l'annonce
+      // est déjà là avant même que la boucle attende une seule image.
+      for (var i = 0; i < 40 && !/zone-pvp/.test(ind.className); i++) await frames(1);
+      var toasts = document.querySelector('.toasts');
+      A.ok(toasts && /Vous entrez en zone PvP/.test(toasts.textContent), 'l entrée est annoncée');
       A.ok(/zone-pvp/.test(ind.className), 'l indicateur change');
       g.hud.regler('zone', false); g.ui.appliquerHud(); await frames(1);
       A.ok(getComputedStyle(ind).display === 'none', 'masquable comme les autres composants');
