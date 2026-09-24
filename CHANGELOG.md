@@ -29,10 +29,17 @@ respecter (voir PLAN.md, « Commits et versions »).
     peut plus faire grossir la mémoire indéfiniment — la connexion est fermée ;
   - une trame client non masquée (bit MASK à 0) est désormais rejetée et la
     connexion fermée, conformément à la RFC 6455 ;
-  - anti-flood par client : messages/s (hors `ENTREE`, cadencé par ailleurs)
-    et chat sont limités séparément par une fenêtre glissante ; les messages
-    en trop sont ignorés, une inondation qui persiste sur plusieurs secondes
-    consécutives entraîne une expulsion journalisée ;
+  - anti-flood PAR JOUEUR LOCAL (`m.j`, un poste peut partager sa connexion
+    entre plusieurs joueurs en écran partagé) ET PAR TYPE de message (hors
+    `ENTREE`, cadencé par ailleurs) : 90 `BLOC`/s (couvre la casse instantanée
+    en créatif, ~60/s à 60 im/s, marge 1,5×), 30/s pour les autres types
+    porteurs d'un joueur local, 30/s par connexion pour `REJOINDRE`/`ADMIN`,
+    et le chat séparément (5 messages/10 s, par connexion). Un dépassement de
+    budget n'ignore QUE le message en trop (un `BLOC` ignoré resynchronise le
+    client avec l'état autoritaire, comme un refus de portée) ; seul un débit
+    ABERRANT (plus de 10× le budget, hors de portée d'un client honnête)
+    déclenche d'abord un avertissement puis, s'il persiste, une expulsion
+    journalisée — plus jamais pour un débit simplement soutenu ;
   - la portée d'un joueur est vérifiée AVANT toute génération de chunk lors
     d'un `BLOC` (et non plus seulement avant l'application du bloc) : un
     client ne peut plus forcer le serveur à générer du terrain arbitrairement
@@ -44,7 +51,11 @@ respecter (voir PLAN.md, « Commits et versions »).
     fichier `.tmp` puis renomme atomiquement vers le fichier final — jamais de
     fichier tronqué au chemin final — et la sauvegarde périodique est
     asynchrone (elle ne bloque plus le tic ni les clients connectés) ; une
-    seule sauvegarde à la fois.
+    seule sauvegarde asynchrone à la fois, et son propre fichier temporaire
+    (distinct de celui de la sauvegarde d'arrêt) pour qu'aucune écriture
+    concurrente ne puisse en corrompre une autre ; un fichier `.tmp` résiduel
+    d'un arrêt brutal antérieur est nettoyé (et journalisé) au démarrage
+    suivant.
 
 ### Ajouté
 - Taille de l'interface dans les options : automatique (réduite dans les petites
@@ -79,6 +90,21 @@ respecter (voir PLAN.md, « Commits et versions »).
   résultat inchangé au bit près.
 
 ### Corrigé
+- Revue adversariale du transport réseau (L44, sous-lot A1) : un budget
+  anti-flood unique par connexion (30 msg/s) pouvait expulser à tort un
+  joueur légitime — creuser en créatif avec casse instantanée envoie jusqu'à
+  ~60 `BLOC`/s, et jusqu'à 4 joueurs locaux (écran partagé) se répartissaient
+  le même budget sur la même connexion. Les budgets sont désormais par joueur
+  local et par type de message (voir Sécurité ci-dessus), et un `BLOC` ignoré
+  par l'anti-flood n'est plus un bloc fantôme : le client reçoit le rappel de
+  l'état autoritaire.
+- La sauvegarde synchrone de l'arrêt (`arreter()`) et des gestionnaires de
+  panne écrivait dans le MÊME fichier `.tmp` que la sauvegarde périodique
+  asynchrone : un arrêt pendant qu'une sauvegarde était en vol pouvait laisser
+  un fichier temporaire tronqué au sol. Chaque mode a désormais son propre
+  fichier temporaire, l'arrêt attend (avec un délai borné) qu'une sauvegarde
+  asynchrone déjà en vol se termine, et tout `.tmp` résiduel d'un arrêt brutal
+  est supprimé au démarrage suivant.
 - Le popup du mode histoire gardait la souris capturée : la capture demandée au
   lancement arrivait après son ouverture, et il fallait quitter le navigateur
   pour pouvoir cliquer. La capture tardive est relâchée, et aucune reprise du jeu

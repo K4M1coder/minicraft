@@ -175,9 +175,23 @@ function appliquerEtatMonde(data) {
    système de fichiers, donc le fichier final est TOUJOURS soit l'ancienne
    version complète, soit la nouvelle version complète, jamais un mélange
    tronqué. Écrire directement dans le fichier final exposerait une lecture
-   (ou un arrêt brutal du processus) au milieu de l'écriture. */
-const FICHIER_TMP = () => CONF.mondeFichier + '.tmp';
+   (ou un arrêt brutal du processus) au milieu de l'écriture.
+
+   Revue adversariale du commit 2365213 (test-race-save.js) : la sauvegarde
+   PÉRIODIQUE (asynchrone) et celle de l'ARRÊT/PANNE (synchrone) écrivaient
+   toutes deux dans le MÊME fichier `.tmp` — un SIGTERM pendant que l'écriture
+   asynchrone est en vol pouvait laisser un `.tmp` tronqué au sol (l'écriture
+   du thread libuv et l'écriture synchrone du thread principal se
+   chevauchent, puis `process.exit()` coupe tout avant que l'une des deux
+   n'ait fini). Deux corrections : chaque mode écrit dans son PROPRE fichier
+   temporaire (jamais le même inode manipulé par deux écritures concurrentes),
+   et l'arrêt attend (avec un délai borné) qu'une sauvegarde asynchrone déjà
+   en vol se termine avant d'en lancer une synchrone par-dessus. */
+const FICHIER_TMP_ASYNC = () => CONF.mondeFichier + '.tmp';
+const FICHIER_TMP_SYNC = () => CONF.mondeFichier + '.tmp.' + process.pid;
 let sauvegardeEnCours = false;
+let sauvegardeEnCoursAttente = null;   // Promise résolue quand la sauvegarde async en vol se termine
+let sauvegardeArretee = false;         // plus aucune sauvegarde async après le début de l'arrêt
 
 /* Version asynchrone (SPEC-SERVEUR-004) : utilisée par la sauvegarde
    périodique, elle ne bloque JAMAIS la boucle de jeu — `fs.writeFile`/
@@ -186,38 +200,50 @@ let sauvegardeEnCours = false;
    sauvegarde à la fois : si la précédente n'est pas terminée, celle-ci est
    ignorée plutôt que d'écrire deux fichiers `.tmp` en parallèle. */
 function sauvegarderMondeAsync() {
-  if (!CONF.mondeFichier) return;
+  if (!CONF.mondeFichier || sauvegardeArretee) return;
   if (sauvegardeEnCours) return;                      // pas de sauvegarde concurrente
   sauvegardeEnCours = true;
+  let finAttente;
+  sauvegardeEnCoursAttente = new Promise((resolve) => { finAttente = resolve; });
+  const fin = () => { sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente(); };
   let data;
   try { data = JSON.stringify(etatMonde()); }
-  catch (e) { sauvegardeEnCours = false; journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
-  fs.writeFile(FICHIER_TMP(), data, (err) => {
-    if (err) {
-      sauvegardeEnCours = false;
-      journal('échec de la sauvegarde du monde (écriture) : ' + err.message);
-      return;
-    }
-    fs.rename(FICHIER_TMP(), CONF.mondeFichier, (err2) => {
-      sauvegardeEnCours = false;
+  catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); fin(); return; }
+  fs.writeFile(FICHIER_TMP_ASYNC(), data, (err) => {
+    if (err) { journal('échec de la sauvegarde du monde (écriture) : ' + err.message); fin(); return; }
+    fs.rename(FICHIER_TMP_ASYNC(), CONF.mondeFichier, (err2) => {
       if (err2) journal('échec de la sauvegarde du monde (renommage) : ' + err2.message);
+      fin();
     });
   });
 }
 
-/* Version synchrone (toujours atomique elle aussi, mêmes tmp+rename) :
-   réservée à l'arrêt du processus et aux gestionnaires de panne, où il n'y a
-   plus de prochain tour de boucle d'évènements pour attendre une écriture
-   asynchrone. */
+/* Version synchrone (toujours atomique elle aussi, mêmes tmp+rename, mais
+   dans SON PROPRE fichier temporaire — voir plus haut) : réservée à l'arrêt
+   du processus et aux gestionnaires de panne, où il n'y a plus de prochain
+   tour de boucle d'évènements pour attendre une écriture asynchrone. */
 function sauvegarderMondeSync() {
   if (!CONF.mondeFichier) return false;
   try {
-    fs.writeFileSync(FICHIER_TMP(), JSON.stringify(etatMonde()));
-    fs.renameSync(FICHIER_TMP(), CONF.mondeFichier);
+    fs.writeFileSync(FICHIER_TMP_SYNC(), JSON.stringify(etatMonde()));
+    fs.renameSync(FICHIER_TMP_SYNC(), CONF.mondeFichier);
     return true;
   } catch (e) { journal('échec de la sauvegarde du monde : ' + e.message); return false; }
 }
+const dodo = (ms) => new Promise((r) => setTimeout(r, ms));
 if (CONF.mondeFichier) {
+  // fichiers temporaires résiduels d'un arrêt brutal précédent (process tué
+  // avant la fin d'une écriture) : jamais renommés vers le fichier final,
+  // donc jamais lus — mais laissés au sol, ils s'accumuleraient sans fin.
+  try {
+    const dossier = path.dirname(CONF.mondeFichier);
+    const prefixe = path.basename(CONF.mondeFichier) + '.tmp';
+    fs.readdirSync(dossier).forEach((f) => {
+      if (f.indexOf(prefixe) !== 0) return;
+      try { fs.unlinkSync(path.join(dossier, f)); journal(`fichier temporaire résiduel supprimé : ${f}`); }
+      catch (e) { /* déjà disparu, ou permission : tant pis, non bloquant */ }
+    });
+  } catch (e) { /* dossier pas encore créé : rien à nettoyer */ }
   try {
     if (fs.existsSync(CONF.mondeFichier)) {
       const data = JSON.parse(fs.readFileSync(CONF.mondeFichier, 'utf8'));
@@ -499,47 +525,91 @@ serveur.on('upgrade', (req, socket) => {
 });
 
 // ── anti-flood par client (SPEC-SECU-005/006) ────────────────────────────────
-/* Fenêtre glissante par connexion : un tableau d'horodatages par compteur,
-   purgé à chaque appel. `ENTREE` est cadencé par ailleurs (le budget d'entrées
-   de synchro.js) et n'entre jamais dans ces compteurs. Un dépassement
-   n'ignore que le message en trop — jamais de fermeture immédiate — mais une
-   inondation qui se poursuit sur plusieurs secondes CONSÉCUTIVES entraîne une
-   expulsion, journalisée comme toute action notable. */
-const FLOOD_MSG_FENETRE_MS = 1000, FLOOD_MSG_MAX = 30;     // ex. de la spec : 30/s
-const FLOOD_CHAT_FENETRE_MS = 10000, FLOOD_CHAT_MAX = 5;   // ~1 message toutes les 2 s en rafale
-const FLOOD_SECONDES_AVANT_EXPULSION = 5;
+/* Revue adversariale du commit 2365213 : un budget UNIQUE par connexion
+   (30 msg/s) expulsait à tort un joueur légitime — creuser en créatif avec
+   casse instantanée (src/player.js, mineTick) envoie un `BLOC` par image tant
+   que le joueur regarde un bloc différent, soit jusqu'à ~60/s à 60 im/s ; et
+   jusqu'à 4 joueurs locaux (écran partagé) partagent la MÊME connexion, donc
+   le MÊME budget si on ne les distingue pas.
 
-function floodDepasse(c, cle, fenetreMs, max) {
+   Les budgets sont donc désormais PAR JOUEUR LOCAL (`m.j`, 0 à 3) ET PAR TYPE
+   de message — un joueur local qui construit vite n'entame jamais le budget
+   d'un autre, ni celui d'un autre type d'action :
+     - BLOC : FLOOD_MAX_BLOC/s, PAR joueur local — ≥ 80/s pour couvrir la
+       casse instantanée en créatif (~60/s à 60 im/s) avec une marge de 1,5×
+       pour l'instabilité d'images (rattrapage après un ralentissement) ;
+     - les autres messages porteurs d'un joueur local (BOUGE, ATTAQUE, TIR,
+       MANGER, RENAITRE, DISTRIB) : FLOOD_MAX_GENERAL/s, PAR joueur local —
+       l'exemple 30/s de la spec, ces actions n'étant jamais aussi rafraîchies
+       que la casse de bloc ;
+     - REJOINDRE/ADMIN (pas de joueur local) : FLOOD_MAX_GENERAL/s PAR
+       CONNEXION (un panneau admin ne tape jamais aussi vite) ;
+     - CHAT (pas de joueur local, un seul humain tape) : FLOOD_CHAT_MAX par
+       FLOOD_CHAT_FENETRE_MS, inchangé.
+
+   Un dépassement de budget n'ignore QUE le message en trop (lettre de
+   SPEC-SECU-005/006) — plus jamais de fermeture pour un débit simplement
+   soutenu. Seul un débit ABERRANT (> FLOOD_ABERRANT_MULT × le budget
+   applicable — un ordre de grandeur qu'aucun client honnête ne peut
+   atteindre) déclenche d'abord un avertissement (message CHAT système ciblé),
+   puis — s'il persiste plusieurs secondes consécutives malgré
+   l'avertissement — une expulsion, journalisée via MC.Admin.journaliser. */
+const FLOOD_FENETRE_MS = 1000, FLOOD_MAX_GENERAL = 30;      // ex. de la spec : 30/s
+const FLOOD_MAX_BLOC = 90;                                  // ≥ 80/s : voir justification ci-dessus
+const FLOOD_CHAT_FENETRE_MS = 10000, FLOOD_CHAT_MAX = 5;    // ~1 message toutes les 2 s en rafale
+const FLOOD_ABERRANT_MULT = 10;                             // > 10x le budget : impossible pour un client honnête
+const FLOOD_SECONDES_APRES_AVERTISSEMENT = 3;               // secondes ABERRANTES consécutives APRÈS l'avertissement
+// messages qui portent un joueur local (`m.j`) : leur budget se compte par
+// joueur local plutôt que par connexion, pour ne pas pénaliser l'écran partagé
+const FLOOD_TYPES_PAR_JOUEUR = new Set([
+  NP.MSG.BLOC, NP.MSG.BOUGE, NP.MSG.ATTAQUE, NP.MSG.TIR, NP.MSG.MANGER, NP.MSG.RENAITRE, NP.MSG.DISTRIB,
+]);
+
+/* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
+   TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un
+   débit simplement soutenu (compte un peu au-dessus du budget) d'un débit
+   aberrant (compte à 10x le budget ou plus), sans quoi un compteur qui
+   s'arrête de grossir une fois saturé ne verrait plus la différence. */
+function floodCompte(c, cle, fenetreMs) {
   const maintenant = Date.now();
   const histo = c[cle] || (c[cle] = []);
   while (histo.length && maintenant - histo[0] >= fenetreMs) histo.shift();
-  if (histo.length >= max) return true;
   histo.push(maintenant);
-  return false;
+  return histo.length;
 }
-function signalerFlood(c, type) {
+function signalerAberrant(c, cle, type) {
   const sec = Math.floor(Date.now() / 1000);
-  const cleSec = '_floodSec_' + type, cleSuite = '_floodSuite_' + type;
-  if (c[cleSec] === sec) return;                          // déjà compté cette seconde-ci
-  const consecutive = c[cleSec] === sec - 1;
-  c[cleSuite] = consecutive ? (c[cleSuite] || 0) + 1 : 1;
+  const cleSec = cle + '_sec', cleSuite = cle + '_suite', cleAverti = cle + '_averti';
+  if (c[cleSec] === sec) return;                            // déjà traité cette seconde-ci
+  const consecutif = c[cleSec] === sec - 1;
+  c[cleSuite] = consecutif ? (c[cleSuite] || 0) + 1 : 1;
   c[cleSec] = sec;
-  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'flood_' + type, cible: c.ip, details: c[cleSuite], heure });
-  if (c[cleSuite] >= FLOOD_SECONDES_AVANT_EXPULSION) {
-    journal(`x ${c.nom} (#${c.id}) expulsé — inondation ${type} persistante`);
-    fermer(c, 'inondation persistante : ' + type);
+  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'flood_aberrant_' + type, cible: c.ip, details: c[cleSuite], heure });
+  if (!c[cleAverti]) {
+    // premier constat : un avertissement, jamais une fermeture immédiate
+    c[cleAverti] = true;
+    envoyer(c, { t: NP.MSG.CHAT, auteur: null, type: 'systeme', ts: Date.now(),
+      texte: 'Débit de messages anormalement élevé : ralentissez, ou vous serez déconnecté.' });
+    journal(`! ${c.nom} (#${c.id}) avertissement anti-flood (${type})`);
+    return;
   }
+  if (c[cleSuite] >= FLOOD_SECONDES_APRES_AVERTISSEMENT) {
+    journal(`x ${c.nom} (#${c.id}) expulsé — débit aberrant persistant malgré l'avertissement (${type})`);
+    fermer(c, 'debit aberrant persistant : ' + type);
+  }
+}
+function floodVerifie(c, m, cle, fenetreMs, budget) {
+  const n = floodCompte(c, cle, fenetreMs);
+  if (n <= budget) return true;                             // sous le budget : rien à signaler
+  if (n > budget * FLOOD_ABERRANT_MULT) signalerAberrant(c, cle, m.t);
+  return false;                                              // au-dessus du budget : message ignoré (jamais fermé pour ça seul)
 }
 function antiFloodOk(c, m) {
-  if (m.t === NP.MSG.CHAT && floodDepasse(c, '_floodHistoChat', FLOOD_CHAT_FENETRE_MS, FLOOD_CHAT_MAX)) {
-    signalerFlood(c, 'chat');
-    return false;
-  }
-  if (floodDepasse(c, '_floodHistoMsg', FLOOD_MSG_FENETRE_MS, FLOOD_MSG_MAX)) {
-    signalerFlood(c, 'messages');
-    return false;
-  }
-  return true;
+  if (m.t === NP.MSG.CHAT) return floodVerifie(c, m, '_fl_chat', FLOOD_CHAT_FENETRE_MS, FLOOD_CHAT_MAX);
+  const parJoueur = FLOOD_TYPES_PAR_JOUEUR.has(m.t);
+  const cle = '_fl_' + m.t + (parJoueur ? '_' + (m.j || 0) : '');
+  const budget = m.t === NP.MSG.BLOC ? FLOOD_MAX_BLOC : FLOOD_MAX_GENERAL;
+  return floodVerifie(c, m, cle, FLOOD_FENETRE_MS, budget);
 }
 
 // ── traitement des messages ──────────────────────────────────────────────────
@@ -555,7 +625,16 @@ function traiter(c, m) {
   if (MC_TEST_PANNE && m.t === NP.MSG.CHAT && m.texte === '__panne_test_secu_001__') {
     throw new Error('panne de test SPEC-SECU-001');
   }
-  if (m.t !== NP.MSG.ENTREE && !antiFloodOk(c, m)) return;   // SPEC-SECU-005/006
+  if (m.t !== NP.MSG.ENTREE && !antiFloodOk(c, m)) {          // SPEC-SECU-005/006
+    // un BLOC ignoré doit resynchroniser le client : sans ça, sa casse/pose
+    // locale déjà appliquée (prédiction) resterait un bloc fantôme jamais
+    // corrigé — même mécanisme que le refus de portée, qui rappelle `avant`.
+    if (m.t === NP.MSG.BLOC) {
+      const avantConnu = monde.getBlock(m.x, m.y, m.z);
+      envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avantConnu });
+    }
+    return;
+  }
   switch (m.t) {
     case NP.MSG.REJOINDRE: {
       // liste noire, liste blanche, bannissement, e-mail exigé (SPEC-ADMIN-004)
@@ -1255,10 +1334,23 @@ serveur.listen(PORT, () => {
    tous deux sauvegarder : un serveur seul persistant tourne typiquement sous
    un tel gestionnaire, qui n'envoie jamais SIGINT. À l'arrêt, la sauvegarde
    DOIT être synchrone (SPEC-SERVEUR-003/004) : le processus va se terminer
-   juste après, une écriture asynchrone en cours serait perdue. */
-function arreter(signal) {
+   juste après, une écriture asynchrone en cours serait perdue.
+
+   Revue adversariale (test-race-save.js) : une sauvegarde PÉRIODIQUE peut
+   être en vol au moment du signal. `sauvegardeArretee` empêche toute
+   NOUVELLE sauvegarde async de démarrer, et on attend (au plus 1 s) que
+   celle déjà en vol se termine avant d'écrire la sauvegarde finale — sans
+   quoi son écriture, coupée en plein vol par `process.exit()`, laisserait
+   un `.tmp` tronqué au sol (elle a désormais son propre fichier temporaire,
+   donc ne peut plus corrompre CELUI de la sauvegarde finale, mais resterait
+   quand même orpheline sans cette attente). */
+async function arreter(signal) {
   journal(`arrêt demandé (${signal})`);
+  sauvegardeArretee = true;
   if (CONF.mondeFichier) {
+    if (sauvegardeEnCours && sauvegardeEnCoursAttente) {
+      await Promise.race([sauvegardeEnCoursAttente, dodo(1000)]);
+    }
     const ok = sauvegarderMondeSync();
     journal(ok ? `monde sauvegardé dans ${CONF.mondeFichier}` : 'sauvegarde finale échouée');
   }
@@ -1292,6 +1384,17 @@ if (process.env.MC_TEST_PANNE_ASYNC === '1') {
 }
 if (process.env.MC_TEST_PANNE_REJET === '1') {
   setTimeout(() => { Promise.reject(new Error('rejet de test SPEC-SECU-002')); }, 200);
+}
+/* MC_TEST_ARRET_MS : déclenche un arrêt PROPRE (la même fonction `arreter`
+   qu'un vrai SIGINT/SIGTERM) après le délai donné, sans dépendre de l'envoi
+   d'un signal — nécessaire pour tester la coordination sauvegarde
+   async/sync (SPEC-SERVEUR-003/004) : `child_process.kill('SIGTERM')` sous
+   Windows termine le processus SANS jamais invoquer `process.on('SIGTERM')`
+   (aucun signal POSIX réel n'existe sous Windows), donc un test qui
+   dépendrait de tuer le process depuis l'extérieur ne pourrait jamais
+   exercer ce chemin de code sur cette plateforme. */
+if (process.env.MC_TEST_ARRET_MS) {
+  setTimeout(() => { arreter('test'); }, parseInt(process.env.MC_TEST_ARRET_MS, 10) || 0);
 }
 
 module.exports = { serveur, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };

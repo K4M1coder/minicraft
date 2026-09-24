@@ -174,9 +174,9 @@ async function attendrePret(port) {
   }
   return false;
 }
-async function rejoindre(port, nom) {
+async function rejoindre(port, nom, locaux) {
   const cl = await connecter(port);
-  cl.envoyer({ t: 'rejoindre', nom, locaux: 1 });
+  cl.envoyer({ t: 'rejoindre', nom, locaux: locaux || 1 });
   const bienvenue = await cl.attendre('bienvenue');
   return { cl, bienvenue };
 }
@@ -316,26 +316,52 @@ async function rejoindre(port, nom) {
 
       const moi = bienvenue.toi && bienvenue.toi[0];
       ok(!!moi, 'position de spawn transmise');
-
-      // SPEC-SECU-005 : une rafale de BLOC (bien au-delà de 30/s) est bornée,
-      // et Alice reste connectée — seuls les messages en trop sont ignorés.
       const bx = Math.floor(moi.x), by = Math.floor(moi.y) + 3, bz = Math.floor(moi.z);
+
+      // ── revue adversariale (2365213) : un joueur créatif qui casse en
+      // continu (~60 BLOC/s à 60 im/s), ou jusqu à 4 joueurs locaux qui
+      // partagent la MÊME connexion, ne doivent JAMAIS être expulsés pour un
+      // débit simplement soutenu — chacun a son propre budget (m.j). ──
+      const { cl: quad, bienvenue: bvQuad } = await rejoindre(port, 'Quad', 4);
+      const posQuad = bvQuad.toi.map(t => ({ x: Math.floor(t.x), y: Math.floor(t.y) + 3, z: Math.floor(t.z) }));
+      let quadEnvoyes = 0;
+      const debutQuad = Date.now();
+      const ivQuad = setInterval(() => {
+        if (Date.now() - debutQuad > 3000 || quad.ferme) { clearInterval(ivQuad); return; }
+        for (let j = 0; j < 4; j++) {
+          const p = posQuad[j];
+          quad.envoyer({ t: 'bloc', x: p.x + (quadEnvoyes % 40), y: p.y, z: p.z, id: 0, j });
+        }
+        quadEnvoyes++;
+      }, 1000 / 60);                                       // ~60 BLOC/s PAR joueur local
+      await dodo(3300);
+      ok(!quad.ferme, 'SPEC-SECU-005 : 4 joueurs locaux à ~60 BLOC/s chacun ne sont jamais expulsés (' + quadEnvoyes + ' images)');
+      quad.fermer();
+
+      // ── un débit qui DÉPASSE le budget (mais reste plausible) : les
+      // messages en trop sont ignorés — jamais de fermeture — et un BLOC
+      // ignoré resynchronise le client avec l état autoritaire, pour ne
+      // jamais laisser un bloc fantôme posé/cassé localement en prédiction. ──
+      // on pose d'abord un bloc connu, pour avoir un `avant` non nul à vérifier
+      alice.envoyer({ t: 'bloc', x: bx, y: by, z: bz, id: 9 });
+      await alice.attendre('bloc', 2000, m => m.x === bx && m.z === bz);
+      await dodo(1200);                                    // vide le compteur avant la rafale
       const avantDiffusions = () => bob.messages.filter(m => m.t === 'bloc').length;
       const n0 = avantDiffusions();
-      for (let i = 0; i < 120; i++) {
+      for (let i = 0; i < 150; i++) {                       // 150/s > FLOOD_MAX_BLOC (90), < 10x (aberrant)
         alice.envoyer({ t: 'bloc', x: bx, y: by, z: bz, id: (i % 2) ? 9 : 0 });
       }
       await dodo(400);
       const diffuses = avantDiffusions() - n0;
-      ok(diffuses > 0 && diffuses < 120, 'SPEC-SECU-005 : la rafale de BLOC est bornée (' + diffuses + '/120 diffusés)');
+      ok(diffuses > 0 && diffuses < 150, 'SPEC-SECU-005 : une rafale au-delà du budget reste bornée (' + diffuses + '/150 diffusés)');
+      const resynchro = alice.messages.filter(m => m.t === 'bloc' && m.x === bx && m.z === bz);
+      ok(resynchro.length > diffuses, 'SPEC-SECU-005 : Alice reçoit un rappel du bloc autoritaire pour au moins un message ignoré');
+      ok(!alice.ferme, 'SPEC-SECU-005 : Alice reste connectée malgré la rafale au-delà du budget');
 
-      // laisse la fenêtre glissante du compteur général (1 s) se vider avant
-      // de vérifier qu Alice peut encore parler : sans quoi ce message de
-      // contrôle serait lui-même compté comme un excédent de la rafale.
       await dodo(1200);
       alice.envoyer({ t: 'chat', texte: 'toujours vivante apres la rafale' });
       const apresRafale = await alice.attendre('chat', 3000, m => /toujours vivante/.test(m.texte || ''));
-      ok(!!apresRafale, 'SPEC-SECU-005 : Alice reste connectée après une rafale de BLOC');
+      ok(!!apresRafale, 'SPEC-SECU-005 : Alice reste utilisable après la rafale');
 
       // SPEC-SECU-006 : le chat a sa propre limite, plus stricte, séparée.
       const avantChat = bob.messages.filter(m => m.t === 'chat').length;
@@ -345,13 +371,38 @@ async function rejoindre(port, nom) {
       ok(chatDiffuses > 0 && chatDiffuses < 15, 'SPEC-SECU-006 : la rafale de CHAT est bornée (' + chatDiffuses + '/15 diffusés)');
       ok(alice.socket.writable !== false && !alice.ferme, 'SPEC-SECU-006 : pas de bannissement automatique sur une seule rafale');
 
+      // ── débit ABERRANT (> 10x le budget BLOC, impossible pour un client
+      // honnête) : un avertissement d abord, une expulsion seulement si le
+      // débit aberrant persiste ensuite. ──
+      await dodo(1200);
+      const { cl: goinfre, bienvenue: bvGoinfre } = await rejoindre(port, 'Goinfre');
+      const pg = bvGoinfre.toi[0];
+      const gx = Math.floor(pg.x), gy = Math.floor(pg.y) + 3, gz = Math.floor(pg.z);
+      let aberrantEnvoyes = 0;
+      const ivAberrant = setInterval(() => {
+        if (goinfre.ferme) { clearInterval(ivAberrant); return; }
+        for (let k = 0; k < 30; k++) {                      // ~3000/s : bien > 10x FLOOD_MAX_BLOC (900)
+          goinfre.envoyer({ t: 'bloc', x: gx, y: gy, z: gz, id: (aberrantEnvoyes % 2) ? 9 : 0 });
+          aberrantEnvoyes++;
+        }
+      }, 10);
+      let avertie = false;
+      try {
+        await goinfre.attendre('chat', 3000, m => m.type === 'systeme' && /d.bit/i.test(m.texte || ''));
+        avertie = true;
+      } catch (e) { avertie = false; }
+      ok(avertie, 'SPEC-SECU-005 : un débit aberrant déclenche d abord un avertissement');
+      let expulsee = false;
+      try { await goinfre.attendreFermeture(6000); expulsee = true; } catch (e) { expulsee = false; }
+      clearInterval(ivAberrant);
+      ok(expulsee, 'SPEC-SECU-005 : le débit aberrant, s il persiste après l avertissement, entraîne l expulsion');
+
       // SPEC-SECU-007 : un BLOC loin de tout joueur ne doit jamais coûter
       // cher au serveur (aucune génération de chunk) — un lot de BLOC très
       // éloignés, chacun dans un chunk distinct, ne doit pas ralentir
       // perceptiblement le serveur : le round-trip d un message ordinaire
-      // juste après reste rapide. Un compte SOUS le seuil anti-flood
-      // (< 30/s) pour isoler cette mesure de SPEC-SECU-005.
-      await dodo(1200);                                   // vide les compteurs des rafales précédentes
+      // juste après reste rapide.
+      await dodo(1200);
       const t0 = Date.now();
       for (let i = 0; i < 25; i++) {
         alice.envoyer({ t: 'bloc', x: 500000 + i * 32, y: 40, z: 500000 + i * 32, id: 9 });
@@ -426,6 +477,60 @@ async function rejoindre(port, nom) {
       await dodo(200);
       try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
     }
+  }
+
+  // ── groupe 5 : course sauvegarde async/sync à l'arrêt (revue 2365213) ────
+  /* `child_process.kill('SIGTERM')` (et, mesuré, `kill -TERM` sous Git Bash)
+     TERMINE le processus SANS jamais invoquer `process.on('SIGTERM')` sous
+     Windows — il n'existe aucun signal POSIX réel sur cette plateforme, donc
+     un test qui tuerait le process depuis l'extérieur ne testerait JAMAIS le
+     chemin `arreter()` ici. `MC_TEST_ARRET_MS` déclenche le même `arreter()`
+     qu'un vrai SIGINT/SIGTERM, MAIS depuis l'intérieur du process — seul
+     moyen fiable, indépendant de la plateforme, d'exercer la coordination
+     entre la sauvegarde périodique (async) et celle de l'arrêt (sync). */
+  {
+    const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-race-'));
+    let corruptions = 0, tmpResiduels = 0, manquants = 0;
+    const ESSAIS = 16;
+    for (let i = 0; i < ESSAIS; i++) {
+      const fichier = path.join(tmp, 'monde-' + i + '.json');
+      const port = PORT + 6 + (i % 4);
+      const delai = 15 + (i % 15);                          // varie le moment de l'arrêt autour des sauvegardes (3 ms)
+      const s = demarrer(['--port', String(port), '--serveur', '--monde', fichier],
+        { MC_SAUVEGARDE_MS: '3', MC_TEST_ARRET_MS: String(delai) });
+      await new Promise((res) => s.on('exit', res));
+      await dodo(80);
+      const tmpAsync = fs.existsSync(fichier + '.tmp');
+      const tmpSync = fs.readdirSync(tmp).filter(f => f.indexOf(path.basename(fichier) + '.tmp.') === 0);
+      if (tmpAsync || tmpSync.length) { tmpResiduels++; details.push('    (tmp résiduel essai ' + i + ' : async=' + tmpAsync + ' sync=' + JSON.stringify(tmpSync) + ')'); }
+      if (!fs.existsSync(fichier)) { manquants++; continue; }
+      try { JSON.parse(fs.readFileSync(fichier, 'utf8')); }
+      catch (e) { corruptions++; details.push('    (corruption essai ' + i + ' : ' + e.message + ')'); }
+    }
+    ok(corruptions === 0, 'SPEC-SERVEUR-003 : aucune corruption sur ' + ESSAIS + ' arrêts pendant une sauvegarde en vol (corruptions=' + corruptions + ')');
+    ok(tmpResiduels === 0, 'SPEC-SERVEUR-003 : aucun fichier temporaire résiduel après un arrêt propre (' + tmpResiduels + '/' + ESSAIS + ')');
+    ok(manquants === 0, 'SPEC-SERVEUR-003 : le fichier final existe toujours après l arrêt (' + manquants + '/' + ESSAIS + ' manquants)');
+
+    // nettoyage au démarrage : un .tmp résiduel d'un arrêt brutal antérieur
+    // (process tué sans passer par arreter(), donc jamais renommé) est
+    // supprimé — journalisé — au prochain démarrage sur le même fichier.
+    const fichierBrutal = path.join(tmp, 'monde-brutal.json');
+    fs.writeFileSync(fichierBrutal, JSON.stringify({ v: 2, graine: 1, heure: 60, overrides: [], etats: [], crops: [] }));
+    fs.writeFileSync(fichierBrutal + '.tmp', '{"ecriture partielle...');
+    const portBrutal = PORT + 6;
+    const sBrutal = demarrer(['--port', String(portBrutal), '--serveur', '--monde', fichierBrutal], {});
+    try {
+      ok(await attendrePret(portBrutal), 'le serveur démarre après un .tmp résiduel préexistant');
+      await dodo(200);
+      ok(sBrutal.logs.join('').indexOf('résiduel supprimé') >= 0,
+         'SPEC-SERVEUR-003 : le .tmp résiduel d un arrêt brutal antérieur est nettoyé au démarrage, journalisé');
+      ok(!fs.existsSync(fichierBrutal + '.tmp'), 'SPEC-SERVEUR-003 : le .tmp résiduel a bien été supprimé du disque');
+    } finally {
+      try { sBrutal.kill(); } catch (e) {}
+      await dodo(150);
+    }
+
+    try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
   }
 
   console.log(`\n${C.b}Integration sécurité (L44 — sous-lot A1)${C.x}`);
