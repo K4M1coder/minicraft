@@ -554,4 +554,130 @@
       } finally { nettoyer(dossier); }
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — registre officiel versionné et historique par test (tools/registre.js)', function () {
+    var REG = require(path.join(RACINE, 'tools', 'registre.js'));
+
+    function cahierAvecCapture(racineResultats, nom, testId, preset, commitCourt, b64) {
+      RT.ecrireCahier({
+        schema: 1, campagne: { preset: preset, debut: new Date().toISOString(), environnement: { commit: commitCourt },
+          totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 } },
+        tests: [{ id: testId, nom: testId, type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [],
+          etat: 'ok', duree_ms: 1, captures: [{ libelle: 'fin', fichier: 0 }] }],
+      }, { racine: racineResultats, nom: nom, captures: [{ libelle: 'fin', type: 'image/jpeg', base64: b64 }] });
+    }
+
+    it('SPEC-BANC-028 : .gitignore exclut tests/resultats/ (cahiers locaux) mais jamais tests/registre/ (versionné)', function () {
+      var gi = fs.readFileSync(path.join(RACINE, '.gitignore'), 'utf8');
+      A.ok(/^tests\/resultats\/\s*$/m.test(gi), 'tests/resultats/ est ignoré');
+      A.notOk(/tests\/registre/.test(gi), 'tests/registre/ n\'apparaît dans aucune règle d\'exclusion');
+    });
+
+    it('SPEC-BANC-028 : inscrire() résout le commit RÉELLEMENT testé (jamais HEAD s\'il a changé depuis), dédoublonne les images par contenu', function () {
+      var racineResultats = tmpDir('reg-resultats'), dossierRegistre = tmpDir('reg-registre');
+      try {
+        var log = cp.execFileSync('git', ['log', '--format=%H', '-n', '2'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
+        var commitVise = log[1]; // pas HEAD : vérifie qu'on résout bien LE COMMIT DU CAHIER, pas le HEAD courant
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        cahierAvecCapture(racineResultats, 'run1', 'DEMO-001', 'pr', commitVise.slice(0, 10), b64);
+        var r = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push', statut: 'en_attente' });
+        A.ok(r.ok, 'inscription réussie : ' + JSON.stringify(r));
+        A.equal(r.commit, commitVise, 'le commit plein résolu est bien celui DU CAHIER, pas HEAD');
+        A.equal(r.imagesNouvelles, 1, 'une image nouvelle, écrite dans images/');
+        A.ok(fs.existsSync(path.join(dossierRegistre, 'images', REG.sha1(Buffer.from([0xFF, 0xD8, 0xFF, 0xD9])) + '.jpg')), 'nommée par son sha1');
+
+        // même contenu, un second cahier/commit : PAS de second fichier (adressage par contenu)
+        cahierAvecCapture(racineResultats, 'run2', 'DEMO-001', 'pr', log[0].slice(0, 10), b64);
+        var r2 = REG.inscrire('run2', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push', statut: 'en_attente' });
+        A.equal(r2.imagesNouvelles, 0, 'aucune image nouvelle : contenu déjà présent');
+        A.equal(r2.imagesReutilisees, 1, 'la capture identique est réutilisée, jamais recopiée');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-031 : une entrée en_attente (pre-push) est repérée puis intégrée par marquerEnAttenteCommitees (relais pre-commit)', function () {
+      var racineResultats = tmpDir('reg-resultats2'), dossierRegistre = tmpDir('reg-registre2');
+      try {
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        cahierAvecCapture(racineResultats, 'run1', 'DEMO-002', 'pr', 'HEAD', b64);
+        REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push', statut: 'en_attente' });
+        A.ok(REG.aDesEntreesEnAttente(dossierRegistre), 'une entrée en_attente existe après une inscription pre-push');
+        var n = REG.marquerEnAttenteCommitees(dossierRegistre);
+        A.equal(n, 1, 'une entrée intégrée');
+        A.notOk(REG.aDesEntreesEnAttente(dossierRegistre), 'plus aucune entrée en_attente ensuite');
+        A.equal(REG.lireEntrees(dossierRegistre)[0].statut, 'ok', 'son statut est passé à ok');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-029 : historiqueTest trie par commit réel (git rev-list --topo-order) sur le registre officiel, par lancement avec --manuel', function () {
+      var racineResultats = tmpDir('reg-resultats3'), dossierRegistre = tmpDir('reg-registre3');
+      try {
+        var log = cp.execFileSync('git', ['log', '--format=%H', '-n', '3'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
+        A.equal(log.length, 3, 'au moins 3 commits disponibles dans ce dépôt pour le test');
+        var recent = log[0], milieu = log[1], ancien = log[2];
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        // écrits dans un ordre local qui NE correspond PAS à l'ordre des commits
+        cahierAvecCapture(racineResultats, 'a', 'DEMO-003', 'pr', milieu.slice(0, 12), b64);
+        REG.inscrire('a', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+        cahierAvecCapture(racineResultats, 'b', 'DEMO-003', 'pr', ancien.slice(0, 12), b64);
+        REG.inscrire('b', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+        cahierAvecCapture(racineResultats, 'c', 'DEMO-003', 'pr', recent.slice(0, 12), b64);
+        REG.inscrire('c', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+        // et un run MANUEL, à écarter du tri par défaut
+        cahierAvecCapture(racineResultats, 'd', 'DEMO-003', 'commit', recent.slice(0, 12), b64);
+        REG.inscrire('d', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'manuel' });
+
+        var hist = REG.historiqueTest('DEMO-003', { dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.equal(hist.length, 3, 'seules les entrées pre-push (officielles) apparaissent par défaut');
+        A.deep(hist.map(function (h) { return h.commit; }), [recent, milieu, ancien],
+          'tri par commit réel (git rev-list --topo-order), pas l\'ordre d\'écriture ni l\'horodatage local');
+
+        var histManuel = REG.historiqueTest('DEMO-003', { dossierRegistre: dossierRegistre, dossierRepo: RACINE, inclureManuels: true, tri: 'lancement' });
+        A.equal(histManuel.length, 4, '--manuel inclut aussi l\'entrée manuelle');
+
+        var html = REG.exporterHistoriqueHTML('DEMO-003', { dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.ok(html.indexOf('<!DOCTYPE html>') === 0);
+        A.ok((html.match(/data:image\/jpeg;base64,/g) || []).length >= 3, 'les captures des runs officiels sont intégrées');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-030 : le témoin épinglé (par commit + hash) prime sur le défaut (dernière entrée pre-push)', function () {
+      var racineResultats = tmpDir('reg-resultats4'), dossierRegistre = tmpDir('reg-registre4');
+      try {
+        var log = cp.execFileSync('git', ['log', '--format=%H', '-n', '2'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
+        var b64a = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 1]).toString('base64');
+        var b64b = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 2]).toString('base64');
+        cahierAvecCapture(racineResultats, 'r1', 'DEMO-004', 'pr', log[1].slice(0, 12), b64a);
+        REG.inscrire('r1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+        cahierAvecCapture(racineResultats, 'r2', 'DEMO-004', 'pr', log[0].slice(0, 12), b64b);
+        REG.inscrire('r2', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+
+        var hist = REG.historiqueTest('DEMO-004', { dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        var t0 = REG.temoinDe('DEMO-004', hist, { dossierRegistre: dossierRegistre });
+        A.ok(t0 && !t0.epingle, 'témoin par défaut, non épinglé');
+        A.equal(t0.commit, hist[0].commit, 'par défaut : la dernière entrée pre-push (la plus récente par commit)');
+
+        // épingle explicitement l'entrée la plus ANCIENNE plutôt que la plus récente
+        var hashAncien = hist[hist.length - 1].captures[0].hash;
+        A.ok(REG.marquerTemoin('DEMO-004', hist[hist.length - 1].commit, hashAncien, { dossierRegistre: dossierRegistre }).ok);
+        var t1 = REG.temoinDe('DEMO-004', REG.historiqueTest('DEMO-004', { dossierRegistre: dossierRegistre, dossierRepo: RACINE }), { dossierRegistre: dossierRegistre });
+        A.ok(t1.epingle, 'marqué comme épinglé');
+        A.equal(t1.commit, hist[hist.length - 1].commit, 'le témoin épinglé remplace le défaut');
+
+        A.notOk(REG.marquerTemoin('DEMO-004', hist[0].commit, 'hash-qui-n-existe-pas', { dossierRegistre: dossierRegistre }).ok, 'hash inexistant : refusé');
+        A.ok(fs.existsSync(path.join(dossierRegistre, 'temoins.json')), 'les témoins sont persistés (versionnables avec le reste du registre)');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-028/031 : les crochets référencent bien le registre (inscription depuis pre-push, intégration depuis pre-commit)', function () {
+      var prePush = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'pre-push.js'), 'utf8');
+      var preCommit = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'pre-commit.js'), 'utf8');
+      A.ok(/require\(['"]\.\.\/registre\.js['"]\)/.test(prePush), 'pre-push.js charge tools/registre.js');
+      A.ok(/origine:\s*['"]pre-push['"]/.test(prePush) && /statut:\s*['"]en_attente['"]/.test(prePush),
+        'pre-push.js inscrit avec origine pre-push et statut en_attente');
+      A.ok(/require\(['"]\.\.\/registre\.js['"]\)/.test(preCommit), 'pre-commit.js charge tools/registre.js');
+      A.ok(/marquerEnAttenteCommitees/.test(preCommit) && /git add[^\n]*DOSSIER_REGISTRE_REL/.test(preCommit),
+        'pre-commit.js intègre les entrées en attente puis les ajoute à l\'index');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -73,6 +73,21 @@ respecter (voir PLAN.md, « Commits et versions »).
   Reste à faire : `CRAFT`/`EQUIP`/`MANGER` ne passent pas encore par
   `operer` (ui.js garde son modèle d'objet réellement tenu en main), le
   registre des conteneurs posés côté serveur (étape 7) et leur UI (étape 8).
+- Registre officiel de tests, VERSIONNÉ dans git (`tests/registre/`, distinct
+  des cahiers locaux gitignorés de `tests/resultats/`) : `tools/registre.js`
+  retient, par commit, les résultats et captures des tests jugés dignes de
+  faire foi pour l'historique visuel (SPEC-BANC-028 à 031). Une campagne de
+  validation avant push (préréglages `pr`/`e2e-fumee`, `tools/hooks/pre-push.js`)
+  y inscrit automatiquement son cahier (`statut: 'en_attente'`, intégré au
+  commit SUIVANT par `tools/hooks/pre-commit.js`, qui ne peut pas encore
+  l'être dans le commit qu'il vient de tester). Vue « historique du test »
+  (`historiqueTest()`/`exporterHistoriqueHTML()`) : agrège résultats et
+  captures d'un même test à travers le registre, triée par ordre de commit
+  git réel (`git rev-list --topo-order`) ou par ordre de lancement local,
+  export HTML autonome. Témoin épinglable par commit + hash de capture
+  (`temoin`), à défaut la dernière capture officiellement validée. Stockage
+  des captures adressé par contenu (`images/<sha1>.<ext>`) : aucune capture
+  identique n'est recopiée. CLI : `node tools/registre.js inscrire|commit|historique|temoin`.
 - Vague 2 (B1, SPEC-SYNC-007 à 017) : raccordement de `MC.ContratsV2` à
   `NP.valider` — les nouveaux types de message (`CRAFT`, `EQUIP`,
   `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le
