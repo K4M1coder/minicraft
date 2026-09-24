@@ -119,6 +119,10 @@
 
     var game = MC.createGame(host);
     window.GAME = game;
+    /* Compatibilité : l'ancienne page exposait `ensureGame()`, qu'utilisent
+       encore les e2e sans fenêtre (tools/e2e-headless.js) et les appels
+       manuels `runE2E(ensureGame(), …)`. La partie existe dès le chargement. */
+    window.ensureGame = function () { return game; };
     var debug = MC.Debug.creer(game);
     window.MC_DEBUG = debug;
 
