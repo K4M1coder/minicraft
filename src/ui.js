@@ -667,6 +667,19 @@
     /* ── Options (SPEC-OPTION-001, 003) : chaque réglage s'applique aussitôt ;
        une touche se remappe en cliquant son bouton puis en pressant la
        nouvelle touche ; un conflit est signalé et rien ne change. */
+    var NOMS_VALEURS = { auto: 'automatique', 'haute-performance': 'haute performance', economie: 'économie d’énergie',
+                         native: 'native', '800x600': '800 × 600', '1024x768': '1024 × 768', '1080p': '1080p (1920 × 1080)',
+                         '1440p': '1440p (2560 × 1440)', '4k': '4K (3840 × 2160)', horizontal: 'côte à côte', vertical: 'empilés' };
+    /* Le HUD se tient sur l'écran principal d'une vue étendue (SPEC-OPTION-006). */
+    function zoneHud(seg) {
+      var s = seg || { x: 0, y: 0, l: 1, h: 1 };
+      root.style.setProperty('--hud-x', (s.x * 100) + '%');
+      root.style.setProperty('--hud-y', (s.y * 100) + '%');
+      root.style.setProperty('--hud-l', (s.l * 100) + '%');
+      root.style.setProperty('--hud-h', (s.h * 100) + '%');
+      root.classList.toggle('vue-etendue', s.l < 1 || s.h < 1);
+      return s;
+    }
     function ecranOptions(retour) {
       var o = hooks.options ? hooks.options() : null;
       if (!o) return;
@@ -675,6 +688,17 @@
         var r = R[k];
         if (typeof r.defaut === 'boolean') {
           return '<label class="opt-ligne"><input type="checkbox" data-opt="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + ech(r.nom) + '</label>';
+        }
+        if (r.valeurs) {
+          var permises = k === 'resolution' && hooks.resolutions ? hooks.resolutions() : r.valeurs;
+          return '<label class="opt-ligne">' + ech(r.nom) + ' <select data-opt="' + k + '">' + permises.map(function (v) {
+            return '<option value="' + v + '"' + (v === o[k] ? ' selected' : '') + '>' + ech(NOMS_VALEURS[v] || v) + '</option>';
+          }).join('') + '</select></label>';
+        }
+        if (k === 'ecran' && hooks.ecrans) {
+          return '<label class="opt-ligne">' + ech(r.nom) + ' <select data-opt="ecran">' + hooks.ecrans().map(function (e, i) {
+            return '<option value="' + i + '"' + (i === o.ecran ? ' selected' : '') + '>' + ech(e.nom + ' — ' + e.largeur + '×' + e.hauteur + (e.principal ? ' (principal)' : '')) + '</option>';
+          }).join('') + '</select> <button class="petit" id="btn-ecrans">Détecter</button></label>';
         }
         return '<label class="opt-ligne">' + ech(r.nom) + ' <input type="range" data-opt="' + k + '" min="' + r.min +
                '" max="' + r.max + '" step="' + r.pas + '" value="' + o[k] + '"> <span class="opt-val" data-val="' + k + '">' +
@@ -694,9 +718,10 @@
         '<button id="btn-retour" class="primary">Retour</button></div></div>');
       var msg = overlay.querySelector('#opt-msg');
       Array.prototype.forEach.call(overlay.querySelectorAll('[data-opt]'), function (inp) {
-        inp.addEventListener(inp.type === 'checkbox' ? 'change' : 'input', function () {
+        inp.addEventListener(inp.type === 'checkbox' || inp.tagName === 'SELECT' ? 'change' : 'input', function () {
           var k = inp.getAttribute('data-opt');
-          var v = hooks.onOption(k, inp.type === 'checkbox' ? inp.checked : parseFloat(inp.value));
+          var brut = inp.type === 'checkbox' ? inp.checked : inp.tagName === 'SELECT' && MC.Options.REGLAGES[k].valeurs ? inp.value : parseFloat(inp.value);
+          var v = hooks.onOption(k, brut);
           var s = overlay.querySelector('[data-val="' + k + '"]');
           if (s) s.textContent = v;
         });
@@ -720,6 +745,11 @@
           document.addEventListener('keydown', capter, true);
         };
       });
+      var be = overlay.querySelector('#btn-ecrans');
+      if (be) be.onclick = function (e) {
+        e.preventDefault();
+        if (hooks.detecterEcrans) hooks.detecterEcrans().then(function () { ecranOptions(retour); });
+      };
       overlay.querySelector('#btn-opt-defaut').onclick = function () { hooks.onOptionsDefaut && hooks.onOptionsDefaut(); ecranOptions(retour); };
       overlay.querySelector('#btn-retour').onclick = function () { (retour || function () { hooks.onRetourMenu && hooks.onRetourMenu(); })(); };
     }
@@ -1557,7 +1587,7 @@
       panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
-      ecranOptions: ecranOptions, majTouches: majTouches,
+      ecranOptions: ecranOptions, majTouches: majTouches, zoneHud: zoneHud,
       ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,

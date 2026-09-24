@@ -62,5 +62,45 @@
       A.equal(O.nomTouche('KeyQ'), 'Q');
       A.equal(O.RESERVEES.Escape, 'pause');
     });
+
+    it('SPEC-OPTION-004 : le GPU se choisit, conservé, et se traduit en préférence du rendu', function () {
+      A.equal(O.defauts().gpu, 'auto');
+      A.equal(O.preferenceGpu('haute-performance'), 'high-performance');
+      A.equal(O.preferenceGpu('economie'), 'low-power');
+      A.equal(O.preferenceGpu('auto'), 'default');
+      A.equal(O.valeur('gpu', 'carte inconnue'), 'auto', 'un GPU disparu : repli sur l automatique');
+      var st = stockage();
+      O.sauver(st, O.regler(O.defauts(), 'gpu', 'economie'));
+      A.equal(O.charger(st).gpu, 'economie', 'conservé');
+      A.ok(O.REGLAGES.gpu.relance, 'il s applique au prochain lancement');
+    });
+
+    it('SPEC-OPTION-005 : les résolutions de 800×600 à 4K, seulement celles que l écran affiche', function () {
+      A.deep(O.REGLAGES.resolution.valeurs, ['native', '800x600', '1024x768', '1080p', '1440p', '4k']);
+      A.deep(O.resolutionsPour({ largeur: 1920, hauteur: 1080 }), ['native', '800x600', '1024x768', '1080p'], 'un écran 1080p');
+      A.equal(O.resolutionsPour({ largeur: 3840, hauteur: 2160 }).length, 6, 'un écran 4K : toutes');
+      // le tampon prend la résolution voulue, sans déformer (même facteur sur les deux axes)
+      A.close(O.rapportPixels('1080p', { l: 960, h: 540 }, 1), 2, 1e-9);
+      A.close(O.rapportPixels('800x600', { l: 1600, h: 900 }, 1), 0.5, 1e-9);
+      A.equal(O.rapportPixels('native', { l: 1600, h: 900 }, 3), 2, 'native : l écran, borné à 2');
+      A.equal(O.valeur('resolution', '8k'), 'native');
+    });
+
+    it('SPEC-OPTION-006 : un, deux ou trois écrans, côte à côte ou empilés, repli sur un seul', function () {
+      var trois = [{ largeur: 1920, hauteur: 1080, principal: false }, { largeur: 1920, hauteur: 1080, principal: true },
+                   { largeur: 1920, hauteur: 1080, principal: false }];
+      var h = O.disposition(trois, { ecran: 0, nombreEcrans: 3, orientation: 'horizontal' });
+      A.equal(h.largeur, 5760); A.equal(h.hauteur, 1080);
+      A.equal(h.segments.length, 3); A.close(h.segments[1].x, 1 / 3, 1e-9);
+      A.equal(h.principal, 1, 'le HUD sur l écran principal');
+      var v = O.disposition(trois, { ecran: 1, nombreEcrans: 2, orientation: 'vertical' });
+      A.equal(v.hauteur, 2160); A.equal(v.premier, 1); A.equal(v.segments[1].y, 0.5);
+      var r = O.disposition([trois[0]], { ecran: 0, nombreEcrans: 3, orientation: 'horizontal' });
+      A.equal(r.nombre, 1); A.ok(r.repli, 'un écran manque : un seul écran');
+      A.equal(O.disposition(trois, { ecran: 2, nombreEcrans: 2 }).premier, 1, 'la rangée tient dans les écrans présents');
+      A.equal(O.champEtendu(72, 3, 'horizontal'), 72, 'côte à côte : l aspect élargit la vue');
+      A.gt(O.champEtendu(72, 2, 'vertical'), 100, 'empilés : le champ vertical s ouvre');
+      A.ok(O.champEtendu(110, 3, 'vertical') <= 150, 'borné');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

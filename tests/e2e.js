@@ -1317,6 +1317,40 @@
     }
   });
 
+  e2e('SPEC-OPTION-005 / SPEC-OPTION-006 : la résolution et la vue étendue s appliquent au rendu', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options)), ecrans = g.ecrans;
+    try {
+      await reset(g);
+      var r = g.render.renderer, hote = r.domElement.clientWidth;
+      g.reglerOption('resolution', '800x600'); await frames(2);
+      A.close(r.getPixelRatio(), Math.min(800 / hote, 600 / r.domElement.clientHeight), 1e-6, 'le tampon prend la résolution voulue');
+      A.equal(r.domElement.clientWidth, hote, 'l image garde la taille de l hôte');
+      g.reglerOption('resolution', 'native'); await frames(2);
+      g.ecrans = [{ largeur: 1920, hauteur: 1080, principal: true, nom: 'A' }, { largeur: 1920, hauteur: 1080, principal: false, nom: 'B' }];
+      g.reglerOption('orientation', 'vertical');
+      g.reglerOption('nombreEcrans', 2); await frames(2);
+      A.gt(g.render.camera.fov, 100, 'empilés : champ vertical élargi');
+      A.ok(g.ui && document.querySelector('.vue-etendue'), 'le HUD se range sur l écran principal');
+      g.ecrans = [g.ecrans[0]];
+      g.reglerOption('nombreEcrans', 3); await frames(2);
+      A.ok(g.disposition.repli, 'un écran manque : repli');
+      A.equal(g.render.camera.fov, avant.champ, 'et la vue revient à un écran');
+      // l'écran d'options propose les listes
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      A.ok(document.querySelector('select[data-opt="resolution"]'), 'liste des résolutions');
+      A.ok(document.querySelector('select[data-opt="gpu"]'), 'choix du GPU');
+      A.ok(document.querySelector('select[data-opt="ecran"]'), 'choix de l écran');
+      document.querySelector('#btn-retour').click(); await frames(2);
+      key('Escape'); fakeLock(g, true); await frames(3);
+    } finally {
+      g.ecrans = ecrans;
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      g.reglerOption('nombreEcrans', avant.nombreEcrans);
+      g.reglerOption('resolution', avant.resolution);
+    }
+  });
+
   e2e('SPEC-OPTION-003 : une touche se remappe, un conflit est signalé, l aide suit', async function (g) {
     var avant = JSON.parse(JSON.stringify(g.options));
     function presser(code) { document.dispatchEvent(new KeyboardEvent('keydown', { code: code, bubbles: true, cancelable: true })); }

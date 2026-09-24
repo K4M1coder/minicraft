@@ -16,7 +16,70 @@
     vueMax:      { defaut: 18, min: 4, max: 18, pas: 1, nom: 'Distance de vue maximale (chunks)' },
     realiste:    { defaut: true, nom: 'Rendu réaliste lointain' },
     ombres:      { defaut: true, nom: 'Ombres' },
+    // affichage (SPEC-OPTION-004 à 006)
+    gpu:         { defaut: 'auto', valeurs: ['auto', 'haute-performance', 'economie'], nom: 'GPU de calcul', relance: true },
+    resolution:  { defaut: 'native', valeurs: ['native', '800x600', '1024x768', '1080p', '1440p', '4k'], nom: 'Résolution' },
+    pleinEcran:  { defaut: false, nom: 'Plein écran' },
+    ecran:       { defaut: 0, min: 0, max: 7, pas: 1, nom: 'Écran d’affichage' },
+    nombreEcrans: { defaut: 1, min: 1, max: 3, pas: 1, nom: 'Nombre d’écrans' },
+    orientation: { defaut: 'horizontal', valeurs: ['horizontal', 'vertical'], nom: 'Écrans côte à côte ou empilés' },
   };
+
+  /* ── Affichage ───────────────────────────────────────────────────────── */
+  var RESOLUTIONS = {
+    native: null, '800x600': { l: 800, h: 600 }, '1024x768': { l: 1024, h: 768 },
+    '1080p': { l: 1920, h: 1080 }, '1440p': { l: 2560, h: 1440 }, '4k': { l: 3840, h: 2160 },
+  };
+  /* Les résolutions qu'un écran (ou une rangée d'écrans) peut afficher. */
+  function resolutionsPour(ecran) {
+    return REGLAGES.resolution.valeurs.filter(function (id) {
+      var r = RESOLUTIONS[id];
+      return !r || !ecran || (r.l <= ecran.largeur && r.h <= ecran.hauteur);
+    });
+  }
+  /* Disposition sur un, deux ou trois écrans. `ecrans` : [{ largeur, hauteur,
+     principal }] ; s'il en manque, on revient à un seul écran (`repli`).
+     Rend la taille totale et, pour chaque écran, sa part de la vue (0..1). */
+  function disposition(ecrans, choix) {
+    ecrans = ecrans && ecrans.length ? ecrans : [{ largeur: 1920, hauteur: 1080, principal: true }];
+    var n = Math.max(1, Math.min(3, choix.nombreEcrans | 0 || 1)), vert = choix.orientation === 'vertical';
+    var premier = Math.max(0, Math.min(ecrans.length - 1, choix.ecran | 0));
+    var repli = false;
+    if (premier + n > ecrans.length) {
+      if (ecrans.length >= n) premier = ecrans.length - n;
+      else { n = 1; repli = true; }
+    }
+    var choisis = ecrans.slice(premier, premier + n), segments = [];
+    var largeur = 0, hauteur = 0;
+    choisis.forEach(function (e, i) {
+      segments.push(vert ? { x: 0, y: i / n, l: 1, h: 1 / n } : { x: i / n, y: 0, l: 1 / n, h: 1 });
+      if (vert) { hauteur += e.hauteur; largeur = Math.max(largeur, e.largeur); }
+      else { largeur += e.largeur; hauteur = Math.max(hauteur, e.hauteur); }
+    });
+    // le HUD va sur l'écran principal s'il fait partie des choisis, sinon au premier
+    var p = choisis.findIndex(function (e) { return e.principal; });
+    return { nombre: n, orientation: vert ? 'vertical' : 'horizontal', premier: premier, largeur: largeur, hauteur: hauteur,
+             segments: segments, principal: p < 0 ? 0 : p, repli: repli };
+  }
+  /* Champ de vision vertical d'une vue étendue : côte à côte, l'aspect
+     élargit déjà la vue ; empilés, le champ vertical s'ouvre d'autant. */
+  function champEtendu(fov, nombre, orientation) {
+    if (orientation !== 'vertical' || nombre <= 1) return fov;
+    var t = Math.tan(fov * Math.PI / 360) * nombre;
+    return Math.min(150, Math.atan(t) * 360 / Math.PI);
+  }
+  /* Rapport pixels/CSS pour rendre à la résolution voulue dans un hôte de
+     `taille` (la résolution native suit l'écran, bornée à 2). */
+  function rapportPixels(resolution, taille, dpr) {
+    var r = RESOLUTIONS[resolution];
+    if (!r) return Math.min(dpr || 1, 2);
+    return Math.max(0.25, Math.min(4, Math.min(r.l / Math.max(1, taille.l), r.h / Math.max(1, taille.h))));
+  }
+  /* Préférence WebGL du GPU (le navigateur ne laisse choisir que celle-ci ;
+     la version empaquetée peut désigner l'adaptateur). */
+  function preferenceGpu(gpu) {
+    return gpu === 'haute-performance' ? 'high-performance' : gpu === 'economie' ? 'low-power' : 'default';
+  }
 
   /* Actions remappables et leurs touches par défaut (AZERTY et QWERTY pour
      les déplacements). L'ordre est celui de l'aide. */
@@ -61,6 +124,7 @@
     var r = REGLAGES[cle];
     if (!r) return undefined;
     if (typeof r.defaut === 'boolean') return typeof v === 'boolean' ? v : r.defaut;
+    if (r.valeurs) return r.valeurs.indexOf(v) >= 0 ? v : r.defaut;
     v = Number(v);
     if (!isFinite(v)) return r.defaut;
     v = Math.max(r.min, Math.min(r.max, v));
@@ -145,5 +209,7 @@
 
   MC.Options = { REGLAGES: REGLAGES, ACTIONS: ACTIONS, RESERVEES: RESERVEES, defauts: defauts, valeur: valeur,
                  regler: regler, actionDe: actionDe, lier: lier, nomTouche: nomTouche, aide: aide,
-                 charger: charger, sauver: sauver, CLE: CLE };
+                 charger: charger, sauver: sauver, CLE: CLE,
+                 RESOLUTIONS: RESOLUTIONS, resolutionsPour: resolutionsPour, disposition: disposition,
+                 champEtendu: champEtendu, rapportPixels: rapportPixels, preferenceGpu: preferenceGpu };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

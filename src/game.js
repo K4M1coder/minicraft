@@ -13,7 +13,11 @@
 
   function createGame(host) {
     var atlas = MC.buildAtlas();
-    var render = MC.createRenderer(host, atlas, { renderDist: 6 });
+    // le GPU se choisit avant de créer le rendu (SPEC-OPTION-004)
+    var optionsLues = MC.Options ? MC.Options.charger((function () { try { return window.localStorage; } catch (e) { return null; } })()) : null;
+    var render = MC.createRenderer(host, atlas, { renderDist: 6,
+      powerPreference: optionsLues ? MC.Options.preferenceGpu(optionsLues.gpu) : undefined });
+    render.gpuAuLancement = optionsLues ? optionsLues.gpu : 'auto';
     var canvas = render.renderer.domElement;
 
     var SEED = 20260921;
@@ -153,6 +157,12 @@
       options: function () { return g.options; },
       onOption: function (cle, v) { return reglerOption(cle, v); },
       onLier: function (action, code) { return lierTouche(action, code); },
+      resolutions: function () {
+        var d = g.disposition || { largeur: screen.width, hauteur: screen.height };
+        return MC.Options.resolutionsPour({ largeur: d.largeur || screen.width, hauteur: d.hauteur || screen.height });
+      },
+      ecrans: function () { return g.ecrans; },
+      detecterEcrans: function () { return g.detecterEcrans(); },
       onOptionsDefaut: function () { g.options = MC.Options.defauts(); MC.Options.sauver(hudStockage, g.options); appliquerOptions(); },
     }, hud);
 
@@ -211,13 +221,43 @@
       render.setOmbres(o.ombres);
       render.reglerRealiste(o.realiste);
       if (render.RENDER_DIST > o.vueMax) render.setDistance(o.vueMax);
+      // affichage (SPEC-OPTION-005, 006)
+      g.disposition = MC.Options.disposition(g.ecrans, o);
+      render.setDisposition(g.disposition);
+      render.setResolution(o.resolution);
+      ui.zoneHud && ui.zoneHud(g.disposition.segments[g.disposition.principal]);
       ui.majTouches && ui.majTouches(o.touches);
     }
     function reglerOption(cle, v) {
       g.options = MC.Options.regler(g.options, cle, v);
       MC.Options.sauver(hudStockage, g.options);
       appliquerOptions();
+      if (cle === 'pleinEcran' || cle === 'ecran') basculerPleinEcran();
+      if (cle === 'gpu' && g.options.gpu !== render.gpuAuLancement) ui.toast('Le GPU choisi servira au prochain lancement', 'warn');
+      if (cle === 'nombreEcrans' && g.disposition.repli) ui.toast('Écrans insuffisants : affichage sur un seul écran', 'warn');
       return g.options[cle];
+    }
+    /* Les écrans de la machine (API de gestion des fenêtres quand le
+       navigateur l'offre ; sinon l'écran courant seul). */
+    g.ecrans = [{ largeur: (window.screen && screen.width) || 1920, hauteur: (window.screen && screen.height) || 1080,
+                  principal: true, nom: 'Écran principal' }];
+    g.detecterEcrans = function () {
+      if (!window.getScreenDetails) return Promise.resolve(g.ecrans);
+      return window.getScreenDetails().then(function (d) {
+        g.ecransDetails = d.screens;
+        g.ecrans = d.screens.map(function (s, i) {
+          return { largeur: s.width, hauteur: s.height, principal: s.isPrimary, nom: s.label || ('Écran ' + (i + 1)) };
+        });
+        appliquerOptions();
+        return g.ecrans;
+      }, function () { return g.ecrans; });
+    };
+    function basculerPleinEcran() {
+      var el = document.documentElement;
+      if (!g.options.pleinEcran) { if (document.fullscreenElement && document.exitFullscreen) document.exitFullscreen().catch(function () {}); return; }
+      if (!el.requestFullscreen) return;
+      var s = g.ecransDetails && g.ecransDetails[g.disposition.premier];
+      el.requestFullscreen(s ? { screen: s } : undefined).catch(function () { ui.toast('Plein écran refusé par le navigateur', 'warn'); });
     }
     function lierTouche(action, code) {
       var r = MC.Options.lier(g.options.touches, action, code);

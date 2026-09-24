@@ -47,7 +47,8 @@
       }
       return cameras[i];
     }
-    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
+    // le GPU choisi (SPEC-OPTION-004) : le navigateur n'en retient que la préférence
+    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: opts.powerPreference || 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
     // ombres portées du soleil (ou de la lune) sur le terrain proche
     renderer.shadowMap.enabled = true;
@@ -1246,10 +1247,12 @@
     }
 
     /* Réglages du joueur (SPEC-OPTION-001) : champ de vision et ombres. */
-    var ombresActives = true;
+    var ombresActives = true, champBase = 72;
     function setChamp(fov) {
-      cameras.concat([camera]).forEach(function (c) { c.fov = fov; c.updateProjectionMatrix(); });
-      return fov;
+      champBase = fov;
+      var f = MC.Options ? MC.Options.champEtendu(fov, dispositionVue.nombre, dispositionVue.orientation) : fov;
+      cameras.concat([camera]).forEach(function (c) { c.fov = f; c.updateProjectionMatrix(); });
+      return f;
     }
     function setOmbres(v) {
       ombresActives = !!v;
@@ -1702,8 +1705,17 @@
       var s = hostSize();
       sz = s;
       cameras.forEach(function (c2) { c2.aspect = s[0] / s[1]; c2.updateProjectionMatrix(); });
+      renderer.setPixelRatio(MC.Options ? MC.Options.rapportPixels(resolutionVoulue, { l: s[0], h: s[1] }, devicePixelRatio) : Math.min(devicePixelRatio, 2));
       renderer.setSize(s[0], s[1]);
     }
+    /* Résolution de rendu (SPEC-OPTION-005) : le tampon prend la taille voulue,
+       l'image s'étire sur l'hôte sans se déformer (même rapport largeur/hauteur). */
+    var resolutionVoulue = 'native';
+    function setResolution(id) { resolutionVoulue = id || 'native'; resize(); return renderer.getPixelRatio(); }
+    /* Vue étendue sur plusieurs écrans (SPEC-OPTION-006) : empilés, le champ
+       vertical s'ouvre d'autant ; côte à côte, l'aspect de l'hôte suffit. */
+    var dispositionVue = { nombre: 1, orientation: 'horizontal' };
+    function setDisposition(d) { dispositionVue = d || dispositionVue; setChamp(champBase); return dispositionVue; }
 
     /* Rendu en plusieurs vues. Le test de ciseaux limite chaque passe à son
        rectangle : sans lui, effacer le tampon pour la deuxième vue effacerait
@@ -1815,7 +1827,8 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
-      setChamp: setChamp, setOmbres: setOmbres, get ombresActives() { return ombresActives; },
+      setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
+      get resolution() { return resolutionVoulue; }, get disposition() { return dispositionVue; }, get ombresActives() { return ombresActives; },
       formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },
       majSilhouettes: majSilhouettes, reglerRealiste: reglerRealiste,
       loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },

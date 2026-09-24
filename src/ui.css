@@ -20,6 +20,8 @@
 
   /* ─── HUD ─────────────────────────────────────────────────────────────── */
   .hud { position: absolute; inset: 0; pointer-events: none; z-index: 2; }
+  /* vue étendue sur plusieurs écrans : le HUD se tient sur l'écran principal (SPEC-OPTION-006) */
+  .vue-etendue .hud { inset: auto; left: var(--hud-x); top: var(--hud-y); width: var(--hud-l); height: var(--hud-h); }
 
   /* Registre d'affichage (SPEC-HUD-001 à 012) : masque un composant, où
      qu'il vive dans le DOM (HUD principal ou calque d'écran partagé). */
