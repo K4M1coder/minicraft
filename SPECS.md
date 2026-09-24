@@ -688,10 +688,10 @@ Dépend de SPEC-SAVE-017 (identifiants sur 16 bits et états de bloc).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-CONSTR-001 | Des escaliers existent pour chaque matériau de construction ; posés, ils s'orientent selon le regard (et s'inversent posés sous un plafond) ; ils forment d'eux-mêmes angles intérieurs et extérieurs selon leurs voisins ; on les monte sans sauter | orientation, angles automatiques, montée | ⏳ |
-| SPEC-CONSTR-002 | Des demi-blocs (dalles) existent pour les matériaux qui s'y prêtent : moitié basse ou haute selon l'endroit visé, deux dalles font un bloc plein ; on y marche à mi-hauteur | pose haute/basse, fusion, collision | ⏳ |
+| SPEC-CONSTR-001 | Des escaliers existent pour chaque matériau de construction ; posés, ils s'orientent selon le regard (et s'inversent posés sous un plafond) ; ils forment d'eux-mêmes angles intérieurs et extérieurs selon leurs voisins ; on les monte sans sauter | orientation, angles automatiques, montée | ✅ |
+| SPEC-CONSTR-002 | Des demi-blocs (dalles) existent pour les matériaux qui s'y prêtent : moitié basse ou haute selon l'endroit visé, deux dalles font un bloc plein ; on y marche à mi-hauteur | pose haute/basse, fusion, collision | ✅ |
 | SPEC-CONSTR-003 | Des toitures : pans en pente, faîtages, arêtiers et noues qui s'ajustent d'eux-mêmes aux voisins (angles automatiques) ; les bâtiments générés en sont couverts selon leur style | formes de toit, raccords, bâtiments couverts | ⏳ |
-| SPEC-CONSTR-004 | Clôtures, murets, vitres et rambardes se raccordent d'eux-mêmes à leurs voisins (et aux blocs pleins), se referment en angle et en T | connexions selon les voisins | ⏳ |
+| SPEC-CONSTR-004 | Clôtures, murets, vitres et rambardes se raccordent d'eux-mêmes à leurs voisins (et aux blocs pleins), se referment en angle et en T | connexions selon les voisins | ✅ |
 | SPEC-CONSTR-005 | Le verre se fond à partir du sable ; vitres et verre teinté ; des colorants (fleurs, minerais, encre de calmar…) teignent laine, tissu, verre, béton et terre cuite | fonte, recettes de colorants, teintures | ⏳ |
 | SPEC-CONSTR-006 | Davantage de matériaux de construction : briques, béton, terre cuite, marbre, ardoise, pavés, crépi, bois de chaque essence en planches et poutres, chaume, chacun avec ses recettes et ses variantes (escalier, dalle, muret quand cela s'y prête) | matériaux, recettes, variantes | ⏳ |
 | SPEC-CONSTR-007 | Le feu : il prend aux matériaux inflammables, se propage, se consume et s'éteint sous la pluie ou dans l'eau ; il éclaire et fume ; foyers, cheminées et torches fument aussi ; la fumée monte et dérive avec le vent | propagation, extinction, lumière, fumée au vent | ⏳ |

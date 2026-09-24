@@ -231,32 +231,44 @@
         indices.push(s0, s0 + 2, s0 + 1, s0 + 1, s0 + 2, s0 + 3);
         continue;
       }
-      if (d.panneau) {
-        /* Porte ou trappe : un panneau fin, boîte quelconque dans le cube
-           unité (voir core.js `panneau`). On redessine les 6 faces d'un
-           cube, comme la boucle générale plus bas, mais mises à l'échelle de
-           cette boîte au lieu du cube plein — et sans occlusion ni AO : le
-           panneau ne couvre jamais toute la face du bloc voisin. */
-        var bx2 = d.panneau;
-        for (var pf = 0; pf < 6; pf++) {
-          var pface = FACES[pf];
-          var ps = positions.length / 3;
-          for (var pc = 0; pc < 4; pc++) {
-            var pq = pface.corners[pc];
-            var ppx = pq[0] === 0 ? bx2.x0 : bx2.x1;
-            var ppy = pq[1] === 0 ? bx2.y0 : bx2.y1;
-            var ppz = pq[2] === 0 ? bx2.z0 : bx2.z1;
-            positions.push(x + ppx, y + ppy, z + ppz);
-            normals.push(pface.dir[0], pface.dir[1], pface.dir[2]);
-            pushUV(uvs, d.tiles[0], pq[3], pq[4]);
-            var pc2 = pface.shade;
-            colors.push(pc2, pc2, pc2);
-            ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0);
-            immerges.push(0); souples.push(0); feuillages.push(0);
-            lums.push(niv ? lumEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 0);
-            ciels.push(nivC ? cielEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 1);
+      /* Porte, trappe (`panneau`, une boîte) ou escalier/dalle/clôture/muret/
+         vitre/rambarde (`forme`, L24, une ou plusieurs boîtes selon l'état
+         et les voisins — voir MC.Formes.boitesBloc). On redessine les 6
+         faces de chaque boîte, comme la boucle générale plus bas, mais mises
+         à l'échelle de cette boîte au lieu du cube plein — et sans
+         occlusion ni AO : aucune de ces boîtes ne couvre jamais toute la
+         face du bloc voisin. */
+      if (d.panneau || d.forme) {
+        var boitesForme = d.panneau ? [d.panneau]
+          : MC.Formes.boitesBloc(d, chunk.etats ? chunk.etats[idx(x, y, z)] : 0,
+              function (dx, dz) {
+                var nid = blockAt(x + dx, y, z + dz);
+                if (!nid) return { plein: false, memeType: false };
+                var nd = C.BLOCKS[nid];
+                return { plein: C.isSolid(nid), memeType: !!(nd && nd.forme === d.forme) };
+              });
+        for (var bxi = 0; bxi < boitesForme.length; bxi++) {
+          var bx2 = boitesForme[bxi];
+          for (var pf = 0; pf < 6; pf++) {
+            var pface = FACES[pf];
+            var ps = positions.length / 3;
+            for (var pc = 0; pc < 4; pc++) {
+              var pq = pface.corners[pc];
+              var ppx = pq[0] === 0 ? bx2.x0 : bx2.x1;
+              var ppy = pq[1] === 0 ? bx2.y0 : bx2.y1;
+              var ppz = pq[2] === 0 ? bx2.z0 : bx2.z1;
+              positions.push(x + ppx, y + ppy, z + ppz);
+              normals.push(pface.dir[0], pface.dir[1], pface.dir[2]);
+              pushUV(uvs, d.tiles[pface.t], pq[3], pq[4]);
+              var pc2 = pface.shade;
+              colors.push(pc2, pc2, pc2);
+              ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0);
+              immerges.push(0); souples.push(0); feuillages.push(0);
+              lums.push(niv ? lumEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 0);
+              ciels.push(nivC ? cielEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 1);
+            }
+            indices.push(ps + 1, ps + 3, ps, ps, ps + 3, ps + 2);
           }
-          indices.push(ps + 1, ps + 3, ps, ps, ps + 3, ps + 2);
         }
         continue;
       }

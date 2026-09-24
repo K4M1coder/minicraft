@@ -11,6 +11,7 @@
      de la génération de terrain. */
   function flatWorld(groundY, id) {
     var m = new Map();
+    var etats = new Map();
     var gy = groundY === undefined ? 10 : groundY;
     return {
       map: m,
@@ -23,6 +24,15 @@
       },
       setBlock: function (x, y, z, b) {
         m.set(Math.floor(x) + ',' + Math.floor(y) + ',' + Math.floor(z), b); return true;
+      },
+      /* État par bloc (SPEC-SAVE-017, L24) : même contrat que le vrai monde —
+         sans lui, poser un escalier ou une dalle lèverait une exception au
+         lieu d'exercer vraiment le code testé. */
+      getEtat: function (x, y, z) {
+        return etats.get(Math.floor(x) + ',' + Math.floor(y) + ',' + Math.floor(z)) || 0;
+      },
+      setEtat: function (x, y, z, e) {
+        etats.set(Math.floor(x) + ',' + Math.floor(y) + ',' + Math.floor(z), e | 0); return true;
       },
       groundAt: function (x, z, natural) {
         for (var y = C.WORLD_H - 1; y > 0; y--) {

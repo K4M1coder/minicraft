@@ -41,7 +41,17 @@
     for (var xx = x0; xx <= x1; xx++) {
       var id = world.getBlock(xx, yy, zz);
       if (C.isSolid(id)) return true;
-      var boites = C.boiteDe(id);
+      var d = C.BLOCKS[id];
+      var etat = (d && d.forme && world.getEtat) ? world.getEtat(xx, yy, zz) : 0;
+      var vfn = (d && d.forme) ? (function (bxx, byy, bzz, forme) {
+        return function (dx, dz) {
+          var nid = world.getBlock(bxx + dx, byy, bzz + dz);
+          if (!nid) return { plein: false, memeType: false };
+          var nd = C.BLOCKS[nid];
+          return { plein: C.isSolid(nid), memeType: !!(nd && nd.forme === forme) };
+        };
+      })(xx, yy, zz, d.forme) : null;
+      var boites = C.boiteDe(id, etat, vfn);
       if (!boites) continue;
       for (var bi = 0; bi < boites.length; bi++) {
         var b = boites[bi];
@@ -116,10 +126,30 @@
     return false;
   }
 
-  /* Déplace sur les 3 axes. Renvoie quels axes ont buté. */
-  function move(world, body, dt, w, h) {
-    var hx = moveAxis(world, body, 'x', body.vel.x * dt, w, h);
-    var hz = moveAxis(world, body, 'z', body.vel.z * dt, w, h);
+  /* Déplace sur les 3 axes. Renvoie quels axes ont buté.
+     `pas` (facultatif, SPEC-CONSTR-001) : hauteur de marche franchissable
+     sans sauter — 0,5 bloc, celle d'une marche d'escalier ou d'une dalle.
+     Si le déplacement horizontal bute mais qu'il passerait une fois le corps
+     élevé de `pas`, on l'élève avant de rejouer x/z : c'est ce qui permet de
+     monter un escalier ou une dalle en marchant, sans coup de saut. */
+  function move(world, body, dt, w, h, pas) {
+    var p = body.pos;
+    var oldX = p.x, oldZ = p.z;
+    var dx = body.vel.x * dt, dz = body.vel.z * dt;
+    var hx = moveAxis(world, body, 'x', dx, w, h);
+    var hz = moveAxis(world, body, 'z', dz, w, h);
+    if (pas && (hx || hz) && !collides(world, p.x, p.y + pas, p.z, w, h)) {
+      var eleve = false;
+      if (hx) {
+        var tx = oldX + dx;
+        if (!collides(world, tx, p.y + pas, p.z, w, h)) { p.x = tx; hx = false; eleve = true; }
+      }
+      if (hz) {
+        var tz = oldZ + dz;
+        if (!collides(world, p.x, p.y + pas, tz, w, h)) { p.z = tz; hz = false; eleve = true; }
+      }
+      if (eleve) p.y += pas;
+    }
     var dy = body.vel.y * dt;
     var hy = moveAxis(world, body, 'y', dy, w, h);
     return { x: hx, y: hy, z: hz, landed: hy && dy < 0, bumpedHead: hy && dy > 0 };
