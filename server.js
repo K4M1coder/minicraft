@@ -19,7 +19,7 @@ const RACINE = __dirname;
 const PORT = parseInt(process.argv[2], 10) || 8080;
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'noise', 'biomes', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol'];
 

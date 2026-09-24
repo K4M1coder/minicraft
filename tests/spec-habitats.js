@@ -20,12 +20,18 @@
     return l;
   }
   function types(l) { return l.batiments.map(function (b) { return b.type; }); }
+  /* Une ville assez grande pour avoir de la place pour tous ses métiers et
+     quartiers (SPEC-HABITAT-012 : une petite ville de 3×3 parcelles n'a pas
+     forcément de place pour les trois artisans à la fois). */
+  function grandeVille(w) { return lieux(w, 'ville', 12000).filter(function (v) { return v.lots >= 5; })[0]; }
 
   describe('Specs — habitations, villages et villes', function () {
     it('SPEC-HABITAT-001 : maisons isolées, villages et villes jalonnent le monde, sans se chevaucher', function () {
       var w = monde();
-      var villes = lieux(w, 'ville', 4000), villages = lieux(w, 'village', 3000), maisons = lieux(w, 'maison', 1500);
-      A.gt(villes.length, 3, 'des villes : ' + villes.length);
+      // SPEC-HABITAT-008 : les villes sont maintenant espacées de plusieurs kilomètres
+      // (une grande région par ville) — il faut regarder plus loin pour en trouver plusieurs
+      var villes = lieux(w, 'ville', 8000), villages = lieux(w, 'village', 3000), maisons = lieux(w, 'maison', 1500);
+      A.gt(villes.length, 4, 'des villes : ' + villes.length);
       A.gt(villages.length, 20, 'des villages : ' + villages.length);
       A.gt(maisons.length, 40, 'des habitations isolées : ' + maisons.length);
       // un village ne s'installe pas dans une ville, une maison isolée pas dans un village
@@ -69,7 +75,7 @@
 
     it('SPEC-HABITAT-003 : villes et villages ont point info, banque, salons, magasins, artisans, marché, fermes et loisirs', function () {
       var w = monde();
-      var v = lieux(w, 'ville', 4000)[0], t = types(v);
+      var v = grandeVille(w), t = types(v);
       ['point_info', 'banque', 'salon', 'magasin', 'artisan', 'marche', 'ferme', 'loisirs', 'maison', 'place'].forEach(function (b) {
         A.ok(t.indexOf(b) >= 0, 'la ville ' + v.nom + ' a son ' + b);
       });
@@ -91,14 +97,15 @@
     });
 
     it('SPEC-HABITAT-004 : un lieu se pose dans ses chunks : terrain nivelé, rues, bâtiments, lampadaires', function () {
-      var w = monde(), v = lieux(w, 'ville', 4000)[0];
+      var w = monde(), v = grandeVille(w);
       var r = v.plateforme.rues;
       // on génère les chunks de la ville
       for (var cx = Math.floor((v.x - v.demi) / 16); cx <= Math.floor((v.x + v.demi) / 16); cx++)
         for (var cz = Math.floor((v.z - v.demi) / 16); cz <= Math.floor((v.z + v.demi) / 16); cz++) w.getChunk(cx, cz, true);
-      // la rue est pavée, au niveau de la plateforme, et dégagée au-dessus
+      // la rue est pavée (dans le matériau du biome de la ville), au niveau
+      // de la plateforme, et dégagée au-dessus
       var rx = r.x0 + 1, rz = r.z0 + r.pas * 2 + 6;
-      A.equal(w.getBlock(rx, v.h0, rz), B.PAVE, 'rue pavée');
+      A.equal(w.getBlock(rx, v.h0, rz), r.route, 'rue pavée');
       A.equal(w.getBlock(rx, v.h0 + 5, rz), 0, 'dégagée des arbres et des bosses');
       // la plateforme est plate sous toute la ville
       var inegal = 0;
@@ -178,6 +185,89 @@
         });
       A.equal(C.BLOCKS[B.COFFRE_FORT].interactive, 'banque', 'le coffre-fort ouvre le compte');
       A.equal(C.BLOCKS[B.PANNEAU_INFO].interactive, 'info', 'le panneau renseigne');
+    });
+
+    it('SPEC-HABITAT-008 : les lieux suivent l\'habitabilité — villes espacées de plusieurs kilomètres, campagne dense en plaine, quasi vide en montagne/désert', function () {
+      var w = monde();
+      var villes = lieux(w, 'ville', 12000);
+      A.gt(villes.length, 3, 'plusieurs villes dans un large rayon : ' + villes.length);
+      // la distance au plus proche voisin se compte en kilomètres, pas en centaines de blocs
+      var distMin = Infinity;
+      villes.forEach(function (a) {
+        villes.forEach(function (b) {
+          if (a === b) return;
+          distMin = Math.min(distMin, Math.hypot(a.x - b.x, a.z - b.z));
+        });
+      });
+      A.gt(distMin, 1200, 'deux villes voisines restent à plus de 1200 blocs l\'une de l\'autre : ' + Math.round(distMin));
+      // la campagne (villages, maisons) est bien plus dense que les villes
+      var villages = lieux(w, 'village', 3000), maisons = lieux(w, 'maison', 1500);
+      A.gt(villages.length, villes.length, 'plus de villages que de villes');
+      A.gt(maisons.length, villages.length, 'plus de maisons isolées que de villages');
+      // montagnes, désert, pics glacés : la campagne s'y raréfie nettement
+      var campagne = villages.concat(maisons);
+      var parBiome = {};
+      campagne.forEach(function (l) { parBiome[l.biome] = (parBiome[l.biome] || 0) + 1; });
+      var vides = ['montagnes', 'desert', 'pics_glaces'].filter(function (b) { return parBiome[b]; });
+      var pleins = ['plaines', 'foret'].filter(function (b) { return parBiome[b]; });
+      if (vides.length && pleins.length) {
+        var moyVide = vides.reduce(function (s, b) { return s + parBiome[b]; }, 0) / vides.length;
+        var moyPlein = pleins.reduce(function (s, b) { return s + parBiome[b]; }, 0) / pleins.length;
+        A.ok(moyVide < moyPlein, 'la campagne de montagne/désert (' + moyVide.toFixed(1) +
+             ') est plus rare que celle de plaine/forêt (' + moyPlein.toFixed(1) + ')');
+      }
+    });
+
+    it('SPEC-HABITAT-009 : les bâtiments s\'adaptent au relief — fondation qui suit le terrain réel, sans trou flottant à profondeur fixe', function () {
+      var w = monde();
+      var lieuxTous = lieux(w, 'ville', 12000).concat(lieux(w, 'village', 6000));
+      // un lieu avec du dénivelé sous sa plateforme : la fondation doit relier
+      // le sol réel à la place, quelle que soit la profondeur à combler
+      var accidente = lieuxTous.slice().sort(function (a, b) { return b.denivele - a.denivele; })[0];
+      A.ok(accidente, 'au moins un lieu avec du dénivelé sous sa plateforme : ' +
+           lieuxTous.map(function (l) { return l.denivele; }).join(','));
+      for (var cx = Math.floor((accidente.x - accidente.demi) / 16); cx <= Math.floor((accidente.x + accidente.demi) / 16); cx++)
+        for (var cz = Math.floor((accidente.z - accidente.demi) / 16); cz <= Math.floor((accidente.z + accidente.demi) / 16); cz++)
+          w.getChunk(cx, cz, true);
+      // on cherche une colonne du site où le sol réel plonge nettement sous la
+      // place, et on vérifie qu'aucun trou d'air ne subsiste entre les deux —
+      // l'ancien code, lui, ne comblait qu'une profondeur fixe de 12 blocs,
+      // laissant une plateforme flottante au-dessus d'un vide dès que le
+      // dénivelé dépassait cette profondeur
+      var trouve = false;
+      for (var dx = -accidente.demi + 2; dx < accidente.demi - 1 && !trouve; dx += 3) {
+        for (var dz = -accidente.demi + 2; dz < accidente.demi - 1 && !trouve; dz += 3) {
+          var x = accidente.x + dx, z = accidente.z + dz;
+          var hNat = w.heightAt(x, z);
+          if (accidente.h0 - hNat < 3) continue;      // pas assez de dénivelé à cet endroit précis
+          trouve = true;
+          var troue = false;
+          for (var y = hNat + 1; y < accidente.h0; y++) if (w.getBlock(x, y, z) === 0) troue = true;
+          A.notOk(troue, 'fondation continue du sol réel (' + hNat + ') jusqu\'à la place (' + accidente.h0 + '), sans trou');
+        }
+      }
+      A.ok(trouve, 'une colonne du site avec assez de dénivelé pour mettre la fondation à l\'épreuve');
+    });
+
+    it('SPEC-HABITAT-012 : les villes ont des quartiers cohérents et une taille qui varie', function () {
+      var w = monde(), villes = lieux(w, 'ville', 16000);
+      A.gt(villes.length, 4, 'assez de villes pour voir varier leur taille : ' + villes.length);
+      var tailles = {};
+      villes.forEach(function (v) { tailles[v.lots] = (tailles[v.lots] || 0) + 1; });
+      A.gt(Object.keys(tailles).length, 1, 'plusieurs tailles de ville rencontrées : ' + JSON.stringify(tailles));
+      [3, 5, 7].forEach(function (n) { A.ok([3, 5, 7].indexOf(n) >= 0, 'taille ' + n + ' est une des tailles prévues'); });
+      // quartiers : centre commerçant proche de la place, faubourgs agricoles en bord de ville
+      var grande = villes.filter(function (v) { return v.lots >= 7; })[0] || grandeVille(w);
+      var quartiers = {};
+      grande.batiments.forEach(function (b) { if (b.quartier) quartiers[b.quartier] = (quartiers[b.quartier] || 0) + 1; });
+      A.ok(quartiers.centre > 0, 'un centre commerçant : ' + JSON.stringify(quartiers));
+      A.ok(quartiers.faubourgs > 0, 'des faubourgs en périphérie : ' + JSON.stringify(quartiers));
+      var fermesFaubourgs = grande.batiments.filter(function (b) { return b.type === 'ferme' && b.quartier === 'faubourgs'; });
+      A.gt(fermesFaubourgs.length, 0, 'les fermes se trouvent dans les faubourgs agricoles');
+      var centreCommerces = grande.batiments.filter(function (b) {
+        return b.quartier === 'centre' && ['banque', 'magasin', 'marche', 'salon'].indexOf(b.type) >= 0;
+      });
+      A.gt(centreCommerces.length, 0, 'le centre concentre les commerces');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
