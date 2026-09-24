@@ -67,20 +67,33 @@ Granularité : **une ligne = un test dans un run**.
 
 ### 3.3 Panneau « test » : un diaporama par image
 
-Un test produit plusieurs images : la première (role `debut`), une par image clé intermédiaire (role `intermediaire`, identifiée par son libellé stable, par ex. `apres-teleportation`), et la dernière (role `fin`). Le panneau affiche **autant de diaporamas qu'il y a d'images dans le test**, dans l'ordre du test (première, intermédiaires par `t_ms`, dernière). Précisé par l'utilisateur : chaque diaporama sert à parcourir **l'historique de cette image-là**.
+Un test produit plusieurs images : la première (role `debut`), une par image clé intermédiaire (role `intermediaire`, identifiée par son libellé stable, par ex. `apres-teleportation`), et la dernière (role `fin`). Chaque image a **son propre diaporama**, qui parcourt **l'historique de cette image-là** à travers les runs (précisé par l'utilisateur : autant de diaporamas que d'images).
 
-Chaque diaporama parcourt **les runs** de ce test pour cette image, dans l'ordre du tri choisi (lancement ou commit) et avec les filtres actifs. Sous chaque image : date, commit court + sujet, état, durée, inscrit ou non. La liste des diaporamas est l'union des images vues sur tous les runs filtrés : une image clé ajoutée ou retirée à un moment donné de l'histoire du test a quand même son diaporama.
+**Déclenchement au clic uniquement** (précisé par l'utilisateur) : aucun diaporama n'est affiché ni ne défile par défaut. Le tableau (colonne « images ») et le panneau d'un run montrent les images de ce run en **vignettes fixes**, dans l'ordre du test (première, intermédiaires par `t_ms`, dernière). Un clic sur une vignette ouvre le diaporama de CETTE image, positionné sur le run cliqué. Les autres images ne s'ouvrent que si on clique dessus à leur tour.
 
-- Disposition : grille de diaporamas qui passe à la ligne selon la largeur ; une case à cocher par image permet de masquer celles qui n'intéressent pas.
-- Navigation : flèches, curseur de position, lecture automatique avec vitesse réglable. Tous les diaporamas sont **synchronisés par défaut** (même run affiché partout, ce qui montre le déroulé complet du test pour ce run) ; un cadenas par diaporama le désynchronise pour comparer deux runs différents.
+Le diaporama parcourt les runs de ce test pour cette image, dans l'ordre du tri choisi (lancement ou commit) et avec les filtres actifs. Sous l'image : date, commit court + sujet, état, durée, inscrit ou non. L'identité d'une image est (test, rôle, libellé) : une image clé ajoutée ou retirée à un moment de l'histoire du test garde son diaporama, et les runs qui ne l'ont pas affichent « pas de capture ».
+
+- Plusieurs diaporamas peuvent être ouverts en même temps (un par vignette cliquée), côte à côte dans une zone qui passe à la ligne selon la largeur, chacun avec son bouton de fermeture.
+- Navigation : flèches et curseur de position ; la lecture automatique ne démarre que sur action explicite (bouton lecture), vitesse réglable. Les diaporamas ouverts sont **indépendants** par défaut ; un bouton « synchroniser » les aligne sur le même run pour voir le déroulé complet du test dans ce run.
 - **Témoin** : l'image témoin (épinglée, sinon la dernière capture inscrite) reste affichée en vignette fixe au-dessus de chaque diaporama. Bascule « comparer » : superposition témoin/courante avec un curseur de rideau (glisser pour révéler l'une ou l'autre) ou en clignotement. C'est un humain qui juge l'écart, aucun diff automatique ne décide.
 - Bouton « épingler comme témoin » sur l'image affichée (appelle `node tools/registre.js temoin` via une route POST).
-- Un run sans capture pour un rôle affiche une case « pas de capture » au lieu de sauter le run, pour ne pas désynchroniser les diaporamas.
+- Un run sans cette image affiche une case « pas de capture » au lieu de sauter le run, pour ne pas désynchroniser les diaporamas.
+
+### 3.4 Inscrire un run manuel au registre depuis le banc
+
+Précisé par l'utilisateur : à la fin d'une exécution manuelle lancée depuis l'interface web du serveur de tests, on doit pouvoir enregistrer le rapport dans le registre.
+
+- Dès que la campagne est terminée (y compris après un arrêt manuel, auquel cas l'entrée est marquée `interrompu`), le résumé de fin (`#resume`) affiche un bouton **« Inscrire au registre »**, à côté du lien vers le cahier.
+- Le clic appelle `POST /tests/registre/inscrire` avec l'identifiant du cahier. Le serveur appelle la même fonction que `node tools/registre.js inscrire` : copie des captures dans le stockage adressé par contenu, création de l'entrée avec `origine: 'manuel'`, `inscrit: true`, `statut: 'en_attente'`. Le commit suivant l'intègre, comme une entrée pre-push.
+- Un champ facultatif « motif » (texte court, par ex. « référence avant refonte de l'eau ») est enregistré dans l'entrée et apparaît comme une colonne de l'historique.
+- Retour visible : le bouton devient « Inscrit ✓ » et affiche un lien vers la vue historique filtrée sur ce run. Inscrire deux fois le même cahier est refusé avec un message clair (idempotence).
+- Le même bouton existe dans l'historique global sur toute ligne ou tout run `inscrit: false` encore présent dans les cahiers locaux, pour promouvoir un run après coup.
+- Cas où le dépôt contient des modifications non commitées : l'entrée cite le commit HEAD et porte `arbre_modifie: true`, affiché en avertissement dans l'historique, puisque le code testé n'est pas exactement ce commit.
 
 ## 4. Tests (le banc se teste lui-même)
 
 - Node, `tests/spec-banc.js` : filtrage, tri multi-clés, pagination, agrégation des séries, fusion registre + locaux, ordre topologique, ligne sans capture.
-- e2e : ouvrir la zone Historique, trier, filtrer, cocher une propriété et vérifier qu'un graphique apparaît, ouvrir un test et vérifier un diaporama par image (première, intermédiaires, dernière), synchronisés. Captures début, intermédiaire et fin comme tout e2e.
+- e2e : ouvrir la zone Historique, trier, filtrer, cocher une propriété et vérifier qu'un graphique apparaît, vérifier qu’aucun diaporama n’est ouvert par défaut, puis cliquer une vignette et vérifier que seul le diaporama de cette image s’ouvre sur le run cliqué et parcourt son historique ; lancer une petite campagne, cliquer « Inscrire au registre » et vérifier que l’entrée apparaît dans l’historique avec origine manuel. Captures début, intermédiaire et fin comme tout e2e.
 - Fiches SPEC-BANC à créer dans SPECS.md (L42) avant le code, une par exigence ci-dessus.
 
 ## 5. Découpage conseillé
@@ -89,4 +102,4 @@ Chaque diaporama parcourt **les runs** de ce test pour cette image, dans l'ordre
 2. Tableau : colonnes, tri, filtres, pagination, export.
 3. Graphiques timeline.
 4. Panneau test : un diaporama par image, témoin, comparaison.
-5. Intégration dans le banc (bouton, clic depuis la sélection) et test e2e.
+5. Intégration dans le banc (bouton, clic depuis la sélection), inscription manuelle en fin de campagne (§3.4) et test e2e.
