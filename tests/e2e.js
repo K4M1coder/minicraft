@@ -493,11 +493,15 @@
 
   e2e('un zombie au contact fait perdre de la vie', async function (g) {
     var s = await reset(g);
-    g.entities.spawn('zombie', s.pos.x + 0.6, s.pos.y, s.pos.z);
-    var hp0 = s.hp;
-    for (var i = 0; i < 180 && s.hp === hp0; i++) await frames(1);
-    A.lt(s.hp, hp0, 'le joueur a perdu de la vie (' + s.hp + ')');
-    g.entities.list.length = 0;
+    // le point d'apparition est une zone sûre (SPEC-ZONE-001) : l'essai se fait en zone PvP et PvE
+    var r0 = g.world.reglesZoneEn;
+    g.world.reglesZoneEn = function () { return MC.Zones.regles('pvp_pve'); };
+    try {
+      g.entities.spawn('zombie', s.pos.x + 0.6, s.pos.y, s.pos.z);
+      var hp0 = s.hp;
+      for (var i = 0; i < 180 && s.hp === hp0; i++) await frames(1);
+      A.lt(s.hp, hp0, 'le joueur a perdu de la vie (' + s.hp + ')');
+    } finally { g.world.reglesZoneEn = r0; g.entities.list.length = 0; }
   });
 
   e2e('la mort ouvre l\'écran de réapparition', async function (g) {
