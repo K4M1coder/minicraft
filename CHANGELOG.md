@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+## [0.3.0] - 2026-09-24
 ### Corrigé
 
 - Les livres du monde ont de nouveau un titre et des pages : l'identifiant textuel d'un lieu faussait leur tirage.
@@ -221,6 +222,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.3.0]: #
 [0.2.0]: #
 [0.1.0]: #
 [0.0.86]: #
