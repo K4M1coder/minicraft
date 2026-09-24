@@ -202,6 +202,12 @@ porte('G6', 'Toute fonction exportée d\'un module pur est citée par un test', 
     : { ok: true, detail: 'surface publique couverte' };
 });
 
+// ── G10 : version et journal des modifications ──────────────────────────────
+porte('G10', 'La version suit le versionnage sémantique et le journal la publie', () => {
+  const r = require('../tools/version.js').verifier();
+  return r.erreurs.length ? { ok: false, detail: r.erreurs.join(' ; ') } : { ok: true, detail: 'version ' + r.version + ' (CHANGELOG.md)' };
+});
+
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────
 const MANUELLES = [
   ['G7', '100 % des tests end-to-end passent', 'ouvrir tests/index.html'],
