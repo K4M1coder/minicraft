@@ -564,7 +564,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-ROUTE-003 | Une route franchit l'eau et les ravins par des ponts | ponts générés | ✅ |
 | SPEC-ROUTE-004 | Des routes touristiques mènent des villes aux sites remarquables (volcans, lacs, sommets) | tracés vers les sites | ✅ |
 | SPEC-ROUTE-005 | Aux carrefours, des panneaux indiquent le nom et la distance des lieux ; aux abords des villes, les routes sont éclairées | panneaux, lampadaires | ✅ |
-| SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme, et des bateaux sur les rivières navigables et le long des côtes, entre les ports | déplacements le long des tracés et des voies d'eau | ⏳ |
+| SPEC-ROUTE-006 | Des caravanes marchandes et des voyageurs circulent sur les routes de commerce et de tourisme, et des bateaux sur les rivières navigables et le long des côtes, entre les ports | déplacements le long des tracés et des voies d'eau | ✅ |
 
 ## L19 — identités procédurales
 

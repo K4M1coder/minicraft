@@ -435,6 +435,49 @@
     }
     g.abri = abri;
 
+    /* Caravanes, voyageurs et bateaux (SPEC-ROUTE-006). Les trajets des lieux
+       proches se recalculent toutes les deux secondes ; la position de chaque
+       convoi se déduit de l'heure (MC.Caravanes), la même sur tous les postes. */
+    var trajetsT = 99, trajetsProches = [], trajetsCache = new Map();
+    function convois(p1, dt) {
+      var CV = MC.Caravanes;
+      if (!CV || !world.routes || !render.syncFigurants) return;
+      trajetsT += dt;
+      if (trajetsT > 2) {
+        trajetsT = 0;
+        var lieux = world.habitats.lieuxProches(p1.x, p1.z, 900).filter(function (l) { return l.kind === 'ville' || l.kind === 'megapole'; });
+        trajetsProches = [];
+        lieux.forEach(function (l) {
+          if (!trajetsCache.has(l.id)) trajetsCache.set(l.id, CV.trajetsDe(l, world.routes));
+          trajetsCache.get(l.id).forEach(function (tr) { trajetsProches.push(tr); });
+        });
+        // bateaux : entre les ports proches que relie l'eau
+        var ports = world.habitats.lieuxProches(p1.x, p1.z, 1200).filter(function (l) {
+          return (l.batiments || []).some(function (b) { return b.type === 'port'; });
+        });
+        for (var i = 0; i < ports.length; i++) for (var j = i + 1; j < ports.length; j++) {
+          var cle = ports[i].id + '~' + ports[j].id;
+          if (!trajetsCache.has(cle)) {
+            trajetsCache.set(cle, [CV.voieEau(ports[i], ports[j], function (x, z) {
+              var e = world.bio.echantillon(x, z); return e.eau > e.h;
+            }, C.SEA_LEVEL + 0.4)].filter(Boolean));
+          }
+          trajetsCache.get(cle).forEach(function (tr) { trajetsProches.push(tr); });
+        }
+      }
+      var liste = [];
+      trajetsProches.forEach(function (tr) {
+        CV.enRoute(tr, g.time).forEach(function (f) {
+          if (Math.abs(f.x - p1.x) > 110 || Math.abs(f.z - p1.z) > 110) return;
+          if (f.type !== 'bateau') f.y += 1;
+          f.age = g.time;
+          liste.push(f);
+        });
+      });
+      g.convois = liste;
+      render.syncFigurants(liste);
+    }
+
     /* Volcans actifs (SPEC-RELIEF-011) : panaches, grondements, bombes et
        coulées qui se figent. Tout se déduit de l'heure (MC.Volcanisme) : hors
        ligne le jeu pose la lave et le basalte, en ligne le serveur fait foi. */
@@ -554,6 +597,7 @@
       render.majMeteo(et, me.derive(g.time), { me: me, temps: g.time, vent: ventLocal, sol: world.heightAt });
       majBrume(me, et, p1, dt);
       volcans(me, p1, dt);
+      convois(p1, dt);
       if (!net.enLigne()) tornadesAuSol(me, dt);
       // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
       var tj = equipe[0] && equipe[0].temperature;

@@ -2143,6 +2143,28 @@
     }
   });
 
+  e2e('SPEC-ROUTE-006 : les convois se montrent et s animent, puis disparaissent au loin', async function (g) {
+    await reset(g);
+    var p = g.player.state.pos;
+    A.ok(Array.isArray(g.convois), 'le jeu calcule les convois proches');
+    // le temps du test, le jeu ne recalcule pas ses propres convois
+    var routes0 = g.world.routes; g.world.routes = null;
+    try {
+    var liste = [{ id: 'e2e:0', type: 'villager', role: 'marchand_ambulant', x: p.x + 4, y: p.y, z: p.z, yaw: 0 },
+                 { id: 'e2e:1', type: 'goat', role: 'bat', x: p.x + 4, y: p.y, z: p.z + 2.2, yaw: 0 },
+                 { id: 'e2e:b', type: 'bateau', role: 'batelier', x: p.x + 8, y: p.y, z: p.z, yaw: 0 }];
+    A.equal(g.render.syncFigurants(liste), 3, 'trois figurants');
+    var m = g.render.figurants.get('e2e:0');
+    A.ok(m && m.userData.membres, 'le marchand a ses membres');
+    A.ok(g.render.figurants.get('e2e:b').children.length > 0, 'le bateau a sa coque');
+    // il avance : ses jambes bougent
+    var angles = [];
+    for (var i = 0; i < 10; i++) { liste[0].z += 0.1; g.render.syncFigurants(liste); angles.push(m.userData.membres.jambeG.rotation.x); await frames(1); }
+    A.gt(Math.max.apply(null, angles) - Math.min.apply(null, angles), 0.05, 'il marche');
+    A.equal(g.render.syncFigurants([]), 0, 'et disparaît');
+    } finally { g.world.routes = routes0; }
+  });
+
   e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
     await reset(g);
     g.time = MC.DayCycle.DAY_LENGTH * 0.2;

@@ -13,6 +13,11 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.86] - 2026-09-24
+### Ajouté
+
+- Caravanes marchandes (marchand et bêtes de bât, garde sur les grands axes), voyageurs et leur guide sur les routes de tourisme, bateaux entre les ports que relie l'eau ; leur position se déduit de l'heure, identique sur tous les postes sans rien échanger (ROUTE-006).
+
 ## [0.0.85] - 2026-09-24
 ### Ajouté
 
@@ -109,6 +114,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.86]: #
 [0.0.85]: #
 [0.0.84]: #
 [0.0.83]: #

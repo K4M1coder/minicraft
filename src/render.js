@@ -784,6 +784,32 @@
       return niv;
     }
 
+    /* Figurants (SPEC-ROUTE-006) : caravanes, voyageurs et bateaux dont la
+       position vient de MC.Caravanes ; même allure et mêmes animations que les
+       créatures, sans simulation. */
+    var figurants = new Map();
+    var SPEC_BATEAU = { vehicule: 'bateau', w: 1.4, h: 0.8 };
+    function syncFigurants(liste) {
+      var vus = new Set();
+      (liste || []).forEach(function (f) {
+        vus.add(f.id);
+        var m = figurants.get(f.id);
+        if (!m) {
+          var sp = f.type === 'bateau' ? SPEC_BATEAU : (MC.EntitySpecs && MC.EntitySpecs[f.type]) || { w: 0.6, h: 1.8, speed: 1.6 };
+          m = mobMesh(f.type, sp, { role: f.role, pnj: f.id });
+          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          m.userData.figurant = true;
+          scene.add(m);
+          figurants.set(f.id, m);
+        }
+        m.position.set(f.x, f.y, f.z);
+        m.rotation.y = f.yaw;
+        animerMembres(m, { pos: { x: f.x, y: f.y, z: f.z }, yaw: f.yaw, age: f.age || 0 }, dtEntites, 'f' + f.id);
+      });
+      figurants.forEach(function (m, id) { if (!vus.has(id)) { libererEntite(m); figurants.delete(id); } });
+      return figurants.size;
+    }
+
     /* Petites animations : ailes qui battent, queue qui ondule, hélice. */
     function animer(m, e) {
       var t = e.age || 0;
@@ -2042,7 +2068,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
-      majVolcans: majVolcans, panaches: panaches,
+      majVolcans: majVolcans, panaches: panaches, syncFigurants: syncFigurants, figurants: figurants,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
       get resolution() { return resolutionVoulue; }, get disposition() { return dispositionVue; }, get ombresActives() { return ombresActives; },
       formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },
