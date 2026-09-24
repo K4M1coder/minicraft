@@ -86,8 +86,11 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L23** | Saisons (validé) : journée de 20 minutes, année de 3 heures en quatre saisons, durée du jour, températures, neige, feuillages, gel des lacs, cultures en saison | `SAISON` | à faire |
 | **L38** | Carte de densité (vierge, rurale, urbaine, hyperurbaine) combinée aux biomes et à l'environnement, mégapoles, hiérarchie des routes et rivières navigables, zones de jeu PvP/PvE/PvP seul/PvE seul/sûres ; prolonge L18 (en cours) et complète COMBAT-002, HABITAT-010/011, ROUTE-006 | `DENSITE` `HABITAT` `ROUTE` `ZONE` | à faire |
 | **L39** | Factions PNJ autonomes (objectifs, actions, territoires, relations, quêtes) et factions de joueurs (création, rangs, candidatures, départ, une principale et des secondaires, canal, diplomatie, persistance) | `FACTION` | à faire |
-| **L40** | Technique : blocs sur 16 bits et migration des sauvegardes (les 128 identifiants de bloc sont épuisés) | `SAVE` | à faire |
+| **L40** | Technique (préalable à L24, L29, MER-010/011) : blocs sur 16 bits avec états (orientation, moitié, angles, connexions, énergie) et migration des sauvegardes — les 128 identifiants de bloc sont épuisés | `SAVE` | à faire |
 | **L41** | Options d'affichage : choix du GPU, résolutions (800×600 à 4K, native), plein écran, choix de l'écran, affichage étendu sur deux ou trois écrans horizontaux ou verticaux | `OPTION` | à faire |
+| **L24** | Construction fine et intérieurs (validé) : escaliers, dalles, toitures à angles automatiques, raccords, verre, colorants, matériaux, feu et fumée, intérieurs meublés, mobilier à fabriquer, livres et notes — après L40 | `CONSTR` `INTERIEUR` | à faire |
+| **L25** | Objets (validé) : tissu et armures, armes, gemmes et bijoux, nourriture et cuisine, coffres piégés et surprises | `OBJET` | à faire |
+| **L29** | Mécanismes et électricité (validé) : distributeurs, pistons, générateurs éolien/hydro/thermique, câbles, batteries, portes logiques, détecteurs, appareils, blocs de commande — après L40 | `MECA` | à faire |
 | **L37** | Version empaquetée (exécutables et archive portable), paramètres de lancement, serveur dédié persistant, console web d'administration (joueurs, positions, inventaires, actions, IP, sessions), listes blanche et noire (noms, e-mails), liens d'invitation, modérateurs (sanctions sans accès aux données personnelles), panneau admin côté client | `PACK` `SERVEUR` `ADMIN` | à faire |
 
 Les lots L14 à L22 sont **spécifiés d'avance** dans `SPECS.md` (état ⏳) : la
@@ -146,12 +149,12 @@ série de specs ⏳ dans `SPECS.md`, puis suit le cycle S1→S7.
 | Lot | Proposition | Specs pressenties |
 |---|---|---|
 | **L23** | *(validé, voir la table des lots)* **Saisons** : printemps, été, automne, hiver sur une année de jeu — feuillages qui roussissent puis tombent, neige saisonnière, lacs gelés l'hiver, durée du jour qui varie, cultures qui ne poussent qu'en saison | `SAISON` |
-| **L24** | **Construction fine** : escaliers, dalles, clôtures et portillons, vitres, lits (dormir fait passer la nuit et fixe le point de réapparition), panneaux où l'on écrit | `BLOC` `LIT` |
-| **L25** | **Armures et équipement** : casque, plastron, jambières, bottes en cuir, fer, diamant ; réduction des dégâts, usure, visibles sur l'avatar | `ARMURE` |
+| **L24** | *(validé, voir la table des lots)* **Construction fine** : escaliers, dalles, clôtures et portillons, vitres, lits (dormir fait passer la nuit et fixe le point de réapparition), panneaux où l'on écrit | `BLOC` `LIT` |
+| **L25** | *(validé, voir la table des lots)* **Armures et équipement** : casque, plastron, jambières, bottes en cuir, fer, diamant ; réduction des dégâts, usure, visibles sur l'avatar | `ARMURE` |
 | **L26** | **Agriculture et élevage** : plusieurs cultures (carottes, pommes de terre, citrouilles, canne), arrosage par proximité de l'eau, nourrir les animaux pour les faire se reproduire, enclos | `CULTURE` `ELEVAGE` |
 | **L27** | **Économie vivante** : prix des habitants qui varient avec l'offre et la demande, spécialités régionales, commerce entre villes par les caravanes des routes, monnaie | `ECO` |
 | **L28** | **Faune sociale** : troupeaux et meutes, migrations d'oiseaux, chaîne alimentaire (loups et moutons), pêche à la canne | `FAUNE` `PECHE` |
-| **L29** | **Mécanismes** : leviers, boutons, plaques de pression, portes et trappes automatiques, rails alimentés | `MECA` |
+| **L29** | *(validé, voir la table des lots)* **Mécanismes** : leviers, boutons, plaques de pression, portes et trappes automatiques, rails alimentés | `MECA` |
 | **L30** | *(repris par L36)* **Son spatial** : sons positionnés en 3D, ambiances par biome et par lieu (forêt, ville, grotte, mer), musique procédurale selon le moment et l'histoire | `AUDIO` |
 | **L31** | **Accessibilité** : sous-titres des sons, modes daltoniens, taille du texte et du HUD, commandes tactiles | `ACCES` |
 | **L32** | **Serveur persistant** : le monde du serveur sauvegardé entre deux démarrages, profils de joueurs, chat de proximité, histoires jouées en coopération | `NET` `HISTOIRE` |

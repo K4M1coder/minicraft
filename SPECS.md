@@ -680,7 +680,49 @@ Prolonge SPEC-FACTION-001 à 005 (camps des créatures et réputation).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-SAVE-017 | Les blocs se stockent sur 16 bits : de nouveaux blocs peuvent s'ajouter sans limite pratique ; les sauvegardes et les mondes serveur antérieurs (8 bits) se migrent sans perte, objets d'inventaire compris | migration d'une sauvegarde 8 bits, nouveaux identifiants | ⏳ |
+| SPEC-SAVE-017 | Les blocs se stockent sur 16 bits et portent un état (orientation, moitié haute ou basse, forme d'angle, connexions, allumé ou éteint, niveau d'énergie) : de nouveaux blocs peuvent s'ajouter sans limite pratique ; les sauvegardes et les mondes serveur antérieurs (8 bits) se migrent sans perte, objets d'inventaire compris | migration d'une sauvegarde 8 bits, nouveaux identifiants, états conservés | ⏳ |
+
+## L24 — construction fine et intérieurs
+
+Dépend de SPEC-SAVE-017 (identifiants sur 16 bits et états de bloc).
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-CONSTR-001 | Des escaliers existent pour chaque matériau de construction ; posés, ils s'orientent selon le regard (et s'inversent posés sous un plafond) ; ils forment d'eux-mêmes angles intérieurs et extérieurs selon leurs voisins ; on les monte sans sauter | orientation, angles automatiques, montée | ⏳ |
+| SPEC-CONSTR-002 | Des demi-blocs (dalles) existent pour les matériaux qui s'y prêtent : moitié basse ou haute selon l'endroit visé, deux dalles font un bloc plein ; on y marche à mi-hauteur | pose haute/basse, fusion, collision | ⏳ |
+| SPEC-CONSTR-003 | Des toitures : pans en pente, faîtages, arêtiers et noues qui s'ajustent d'eux-mêmes aux voisins (angles automatiques) ; les bâtiments générés en sont couverts selon leur style | formes de toit, raccords, bâtiments couverts | ⏳ |
+| SPEC-CONSTR-004 | Clôtures, murets, vitres et rambardes se raccordent d'eux-mêmes à leurs voisins (et aux blocs pleins), se referment en angle et en T | connexions selon les voisins | ⏳ |
+| SPEC-CONSTR-005 | Le verre se fond à partir du sable ; vitres et verre teinté ; des colorants (fleurs, minerais, encre de calmar…) teignent laine, tissu, verre, béton et terre cuite | fonte, recettes de colorants, teintures | ⏳ |
+| SPEC-CONSTR-006 | Davantage de matériaux de construction : briques, béton, terre cuite, marbre, ardoise, pavés, crépi, bois de chaque essence en planches et poutres, chaume, chacun avec ses recettes et ses variantes (escalier, dalle, muret quand cela s'y prête) | matériaux, recettes, variantes | ⏳ |
+| SPEC-CONSTR-007 | Le feu : il prend aux matériaux inflammables, se propage, se consume et s'éteint sous la pluie ou dans l'eau ; il éclaire et fume ; foyers, cheminées et torches fument aussi ; la fumée monte et dérive avec le vent | propagation, extinction, lumière, fumée au vent | ⏳ |
+| SPEC-INTERIEUR-001 | Tout bâtiment généré a un intérieur meublé selon sa fonction et son style (maison : lits, table, chaises, armoire, cheminée ; forge, boutique, bibliothèque, auberge, temple, ferme, tour…) ; aucun bâtiment n'est creux | mobilier par type de bâtiment, aucun intérieur vide | ⏳ |
+| SPEC-INTERIEUR-002 | Des objets d'intérieur se fabriquent et se posent : lits (on y dort, la nuit passe et le point de réapparition s'y fixe), tables, chaises, armoires, étagères, bibliothèques, tapis, lampes, vases, présentoirs et socles (promontoires) où exposer un objet | recettes, pose, orientation, usages | ⏳ |
+| SPEC-INTERIEUR-003 | Livres et notes : les bibliothèques des lieux contiennent des livres à lire (histoire du monde, indices des quêtes) ; un joueur écrit ses propres notes et livres, les signe, les pose sur un présentoir ou les range | lecture, écriture, signature, rangement | ⏳ |
+
+## L25 — objets : armures, armes, gemmes, nourriture, coffres
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-OBJET-001 | Le tissu se tisse (laine, coton, lin) et se teint ; armures de tissu, cuir, mailles, bronze, fer, or et diamant — casque, plastron, jambières, bottes — réduisent les dégâts selon leur matière, s'usent, se réparent, et se voient sur l'avatar | recettes, réduction des dégâts, usure, réparation, apparence | ⏳ |
+| SPEC-OBJET-002 | Davantage d'armes : dague, épée longue, hache de guerre, masse, lance, arc long, arbalète lourde, fronde, chacune avec sa portée, sa cadence, ses dégâts et son recul, dans plusieurs matières | caractéristiques, recettes | ⏳ |
+| SPEC-OBJET-003 | Gemmes taillées et bijoux (anneaux, amulettes, diadèmes) : ils se portent et donnent de petits effets (résistance, vitesse, lumière, chance au butin) ; ils valent cher auprès des marchands | taille, port, effets, valeur | ⏳ |
+| SPEC-OBJET-004 | Davantage de nourriture et une cuisine : pain, fromage, soupes, ragoûts, poissons et viandes cuits, fruits, baies, légumes, tartes, gâteaux ; chaque plat rassasie selon sa recette, certains donnent un effet ; la nourriture crue peut rendre malade | recettes, satiété, effets | ⏳ |
+| SPEC-OBJET-005 | Coffres piégés (flèches, explosion, alarme qui appelle des gardes, gaz) et coffres surprises (butin rare tiré au hasard, ou un mimic qui attaque) dans les donjons, les ruines et chez les bandits ; un piège se détecte et se désamorce avec l'outil voulu | pièges, surprises, détection, désamorçage | ⏳ |
+
+## L29 — mécanismes et électricité
+
+Dépend de SPEC-SAVE-017 (états de bloc : allumé, niveau d'énergie, orientation).
+
+| ID | Spec | Vérification | État |
+|---|---|---|---|
+| SPEC-MECA-001 | Distributeurs (lâchent ou lancent un objet de leur contenu) et pistons (poussent jusqu'à douze blocs, les pistons collants tirent) s'actionnent sur signal | actionnement, poussée, traction, limites | ⏳ |
+| SPEC-MECA-002 | Des générateurs électriques produisent selon leur milieu : éolienne (selon le vent de son altitude, SPEC-VENT-001), roue ou turbine hydraulique (selon le courant, SPEC-EAU-002), générateur thermique (lave, combustible) ; des câbles transportent l'énergie avec des pertes | production selon le milieu, transport, pertes | ⏳ |
+| SPEC-MECA-003 | Des batteries rechargeables stockent l'énergie, se chargent et se déchargent à débit borné, affichent leur niveau et le gardent une fois ramassées | charge, décharge, niveau, conservation | ⏳ |
+| SPEC-MECA-004 | Des circuits logiques : fils de signal et toutes les portes — OUI, NON, ET, OU, OU exclusif, NON-ET, NON-OU, NON-OU exclusif — plus répéteur à délai, bascule (mémoire), compteur et comparateur ; la propagation se fait par tics, de façon déterministe, sans boucle infinie | table de vérité de chaque porte, délais, mémoire, stabilité | ⏳ |
+| SPEC-MECA-005 | Des détecteurs et commandes émettent un signal : bouton, levier, plaque de pression, détecteur de présence (joueur, créature), capteur de lumière, de jour et de nuit, de pluie et de vent, horloge, détecteur de niveau d'eau | signal selon le déclencheur | ⏳ |
+| SPEC-MECA-006 | Des appareils consomment énergie ou signal : lampes, portes et trappes motorisées, tapis roulants, ascenseurs, alarmes ; sans énergie, ils s'arrêtent | fonctionnement selon l'alimentation | ⏳ |
+| SPEC-MECA-007 | Des blocs de commande exécutent une commande du jeu sur signal ; seuls les administrateurs (ou le mode créatif hors ligne) peuvent les poser ou les modifier | exécution, permissions | ⏳ |
+| SPEC-MECA-008 | Circuits et machines se simulent dans les chunks chargés, sont sauvegardés avec leur état, et en ligne le serveur fait foi | persistance, autorité du serveur | ⏳ |
 
 ## L38 — densité, mégapoles et zones de jeu
 
