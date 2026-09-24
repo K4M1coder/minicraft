@@ -2387,6 +2387,293 @@
          'l objectif parle de l enquête : ' + (obj && obj.textContent));
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // L48 — rendu fiable et adaptatif (SPEC-RENDU-…, SPEC-PERF-015/016)
+  // ══════════════════════════════════════════════════════════════════════════
+
+  /* SPEC-RENDU-001/002 : simule webglcontextlost/restored via l'extension
+     WEBGL_lose_context (la seule façon fiable de reproduire l'événement). */
+  e2e('SPEC-RENDU-001 / SPEC-RENDU-002 : la perte du contexte GPU arrête le rendu et affiche un message ; la restauration le reprend', async function (g) {
+    await reset(g);
+    var gl = g.render.renderer.getContext();
+    var ext = gl.getExtension('WEBGL_lose_context');
+    A.ok(ext, 'l extension de simulation est disponible dans ce navigateur');
+    var msg = document.querySelector('.contexte-perdu');
+    A.ok(msg, 'le message de perte existe dans le DOM');
+    A.equal(getComputedStyle(msg).display, 'none', 'invisible au repos');
+    var avantAppels = 0;
+    var infoAvant = g.render.renderer.info.render.calls;
+    ext.loseContext();
+    await frames(3);
+    A.ok(g.render.contextePerdu, 'le moteur se sait en perte de contexte');
+    A.equal(getComputedStyle(msg).display, 'flex', 'le message apparaît');
+    // pendant la perte : aucun rendu ne s avance (renderViews renvoie 0 vues traitées)
+    var traitees = g.render.renderViews(g.vues);
+    A.equal(traitees, 0, 'renderViews ne rend plus rien pendant la coupure');
+    ext.restoreContext();
+    await frames(5);
+    A.notOk(g.render.contextePerdu, 'le contexte est restauré');
+    A.equal(getComputedStyle(msg).display, 'none', 'le message disparaît');
+    // un rendu réussit de nouveau
+    var apres = g.render.renderViews(g.vues);
+    A.gt(apres, 0, 'le rendu reprend après restauration');
+  });
+
+  /* SPEC-PERF-015 : g.perf est calculé en continu, indépendamment de son
+     affichage — on le lit directement sans toucher au panneau F3. */
+  e2e('SPEC-PERF-015 : g.perf expose des métriques finies, cohérentes avec renderer.info', async function (g) {
+    await reset(g);
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    for (var i = 0; i < 20; i++) await frames(1);
+    var p = g.perf;
+    ['msGeneration', 'msMaillage', 'appelsDessin', 'triangles', 'fps', 'fpsP50', 'fpsP95', 'renderDist'].forEach(function (k) {
+      A.ok(isFinite(p[k]), 'g.perf.' + k + ' est fini : ' + p[k]);
+    });
+    A.equal(p.appelsDessin, g.render.renderer.info.render.calls, 'appelsDessin == renderer.info.render.calls');
+    A.equal(p.triangles, g.render.renderer.info.render.triangles, 'triangles == renderer.info.render.triangles');
+  });
+
+  /* SPEC-PERF-016 : le panneau F3 s'ouvre et se ferme sur la touche F3, et
+     affiche chaque métrique attendue. */
+  e2e('SPEC-PERF-016 : F3 affiche le panneau de métriques, un second appui le masque', async function (g) {
+    await reset(g);
+    var f3 = document.querySelector('.panneau-f3');
+    A.ok(f3, 'le panneau existe dans le DOM');
+    if (g.ui.f3Visible) key('F3');                 // état connu : fermé
+    await frames(1);
+    A.equal(getComputedStyle(f3).display, 'none', 'fermé au départ');
+    key('F3'); await frames(2);
+    A.equal(getComputedStyle(f3).display, 'block', 'un appui l ouvre');
+    var texte = f3.textContent;
+    ['FPS', 'dessin', 'triangles', 'génération', 'maillage', 'vue'].forEach(function (mot) {
+      A.ok(texte.toLowerCase().indexOf(mot.toLowerCase()) >= 0, 'le panneau mentionne « ' + mot + ' » : ' + texte);
+    });
+    key('F3'); await frames(1);
+    A.equal(getComputedStyle(f3).display, 'none', 'un second appui le masque');
+  });
+
+  /* SPEC-RENDU-012 : mipmaps de l'atlas, activables/désactivables sans
+     reconstruire tout le renderer (même instance avant/après). */
+  e2e('SPEC-RENDU-012 : l’option mipmaps change la texture de l’atlas sans reconstruire le renderer', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    try {
+      var rendererAvant = g.render.renderer;
+      g.reglerOption('mipmaps', true);
+      await frames(1);
+      A.equal(g.render.renderer, rendererAvant, 'même instance de renderer après le basculement');
+      A.ok(g.render.materials.opaque.map.generateMipmaps, 'generateMipmaps activé');
+      A.equal(g.render.materials.opaque.map.minFilter, THREE.LinearMipmapLinearFilter, 'filtre à mip activé');
+      g.reglerOption('mipmaps', false);
+      await frames(1);
+      A.notOk(g.render.materials.opaque.map.generateMipmaps, 'generateMipmaps désactivé');
+      A.equal(g.render.materials.opaque.map.minFilter, THREE.NearestFilter, 'filtre nearest restauré');
+    } finally {
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      g.reglerOption('mipmaps', avant.mipmaps);
+    }
+  });
+
+  /* SPEC-RENDU-011 : l'avertissement de rendu logiciel s'affiche une seule
+     fois et peut être ignoré — on ne peut pas forcer un VRAI rendu logiciel
+     dans ce navigateur, donc on exerce directement le mécanisme d'affichage
+     (celui que game.js appelle si SPEC-RENDU-010 détecte un rendu logiciel
+     au démarrage). Le drapeau « déjà averti » est définitif pour la session :
+     si un lancement précédent de ce même test (le même `g`, réutilisé par
+     toute la suite e2e) l'a déjà déclenché, un nouvel appel ne doit RIEN
+     ajouter — le test vérifie donc l'idempotence entre deux appels
+     consécutifs, condition suffisante et vraie quel que soit l'état de
+     départ, plutôt qu'un premier appel qui suppose (à tort, selon l'ordre
+     d'exécution) qu'aucun toast n'existe encore. */
+  e2e('SPEC-RENDU-011 : l’avertissement de rendu logiciel ne s’affiche qu’une seule fois', async function (g) {
+    var avant = document.querySelectorAll('.toast').length;
+    g.ui.avertirRenduLogiciel('SwiftShader (simulé)');
+    await frames(2);
+    var apresUn = document.querySelectorAll('.toast').length;
+    A.ok(apresUn - avant <= 1, 'au plus un avertissement ajouté par cet appel : ' + avant + ' → ' + apresUn);
+    if (apresUn > avant) {
+      var texte = Array.from(document.querySelectorAll('.toast')).map(function (t) { return t.textContent; }).join(' | ');
+      A.ok(/accélération matérielle/i.test(texte), 'le message parle d’accélération matérielle : ' + texte);
+    }
+    g.ui.avertirRenduLogiciel('SwiftShader (simulé)');
+    await frames(2);
+    var apresDeux = document.querySelectorAll('.toast').length;
+    A.equal(apresDeux, apresUn, 'un second appel ne redouble pas l’avertissement');
+  });
+
+  /* SPEC-RENDU-013 : les maillages de chunk gardent le frustum culling actif
+     (à la différence des maillages spéciaux, qui le désactivent). */
+  e2e('SPEC-RENDU-013 : les maillages de chunk restent soumis au frustum culling', async function (g) {
+    await reset(g);
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    for (var i = 0; i < 10; i++) await frames(1);
+    var trouve = 0, culled = 0;
+    g.world.chunks.forEach(function (c) {
+      g.render.PASSES.forEach(function (p) {
+        var m = c[p[0]];
+        if (m) { trouve++; if (m.frustumCulled) culled++; }
+      });
+    });
+    A.gt(trouve, 0, 'des maillages de chunk existent');
+    A.equal(culled, trouve, 'tous ont le frustum culling actif : ' + culled + '/' + trouve);
+  });
+
+  /* SPEC-RENDU-004 : une nappe d'eau lointaine (au-delà du seuil interne) ne
+     déclenche pas la réfraction ; approchée, elle la déclenche. */
+  e2e('SPEC-RENDU-004 : la réfraction ne s’active qu’à moins d’une distance fixe de la caméra', async function (g) {
+    var s = await reset(g);
+    var cible = null;
+    for (var r = 0; r < 400 && !cible; r += 4) for (var a2 = 0; a2 < 12 && !cible; a2++) {
+      var x = Math.round(Math.cos(a2 / 12 * 6.283) * r), z = Math.round(Math.sin(a2 / 12 * 6.283) * r);
+      var col = g.world.bio.colonne(x, z);
+      if (col.eau - col.h >= 4) cible = { x: x, z: z, eau: col.eau };
+    }
+    A.ok(cible, 'une mer existe près du départ');
+    s.flying = true;
+    g.render.setDistance(6);
+    // loin : l'eau est dans le champ (brouillard/distance de vue le permettent)
+    // mais hors du seuil de réfraction — le terrain a d'autres points d'eau
+    // (rivières, mares) éparpillés, donc on essaie plusieurs directions/
+    // distances jusqu'à en trouver une vraiment isolée d'ici (déterministe
+    // sur la graine fixe du monde de test, mais pas prévisible à l'avance)
+    var offsets = [[70, 0], [150, 0], [0, 150], [-150, 0], [0, -150], [300, 0], [0, 300], [-300, 0]];
+    var lointaine = false;
+    for (var oi = 0; oi < offsets.length && !lointaine; oi++) {
+      s.pos.x = cible.x + offsets[oi][0]; s.pos.z = cible.z + offsets[oi][1];
+      s.pos.y = cible.eau + 30; s.pitch = -0.6; s.yaw = 0;
+      g.streamChunks(true);
+      for (var i = 0; i < 15; i++) await frames(1);
+      if (g.render.eau.distance > 40) lointaine = true;
+    }
+    A.ok(lointaine, 'un point assez loin de toute eau a été trouvé : ' + g.render.eau.distance);
+    A.equal(g.render.eau.refraction.value, 0, 'pas de réfraction à cette distance');
+    // proche : la même mer, cette fois à portée
+    s.pos.x = cible.x + 0.5; s.pos.z = cible.z + 0.5; s.pos.y = cible.eau + 4; s.pitch = -0.9;
+    for (var j = 0; j < 20; j++) await frames(1);
+    A.lt(g.render.eau.distance, 40, 'l’eau est maintenant à portée : ' + g.render.eau.distance);
+    A.equal(g.render.eau.refraction.value, 1, 'la réfraction s’active');
+    s.flying = false;
+    await reset(g);
+  });
+
+  /* SPEC-RENDU-003 : sous un FPS p50 bas (injecté, jamais mesuré ici), la
+     passe de réfraction (setRenderTarget vers la cible dédiée) ne se
+     recalcule pas à chaque image. */
+  e2e('SPEC-RENDU-003 : la fréquence de la passe de réfraction est plafonnée sous un FPS bas injecté', async function (g) {
+    var s = await reset(g);
+    var cible = null;
+    for (var r = 0; r < 400 && !cible; r += 4) for (var a2 = 0; a2 < 12 && !cible; a2++) {
+      var x = Math.round(Math.cos(a2 / 12 * 6.283) * r), z = Math.round(Math.sin(a2 / 12 * 6.283) * r);
+      var col = g.world.bio.colonne(x, z);
+      if (col.eau - col.h >= 4) cible = { x: x, z: z, eau: col.eau };
+    }
+    A.ok(cible, 'une mer existe près du départ');
+    s.flying = true;
+    s.pos.x = cible.x + 0.5; s.pos.z = cible.z + 0.5; s.pos.y = cible.eau + 4; s.pitch = -0.9;
+    g.render.setDistance(5);
+    g.streamChunks(true);
+    for (var i = 0; i < 10; i++) await frames(1);
+    A.gt(g.render.eau.enVue, 0, 'de l’eau dans le champ');
+    // FPS p50 injecté bas : la même source que le panneau F3 (SPEC-RENDU-015)
+    g.render.eau.options.fpsP50 = 10;
+    // renderer.info compte aussi la carte d'ombres et d'autres passes : on
+    // compte donc les appels À LA PASSE DE RÉFRACTION elle-même, exposés par
+    // render.js, plutôt que d'espionner renderer.setRenderTarget en général
+    var avant = g.render.eau.appelsRefraction, vuesRendues = 0;
+    try {
+      for (var k = 0; k < 40; k++) { g.render.renderViews(g.vues); vuesRendues++; }
+    } finally {
+      g.render.eau.options.fpsP50 = null;
+    }
+    var appels = g.render.eau.appelsRefraction - avant;
+    A.ok(appels < vuesRendues, 'moins d’appels de réfraction que d’images rendues : ' + appels + '/' + vuesRendues);
+    s.flying = false;
+    await reset(g);
+  });
+
+  /* SPEC-RENDU-002 (revue adversariale de bf733bf) : Three.js n'a jamais
+     détaché les anciens écouteurs 'dispose' de ses géométries au redémarrage
+     du contexte GL — un dispose() tardif sur une géométrie de chunk créée
+     AVANT la perte retombait sur l'ancien contexte et levait une erreur GL
+     (« object does not belong to this context »), reproduit en direct avec
+     ~200 avertissements sur 149 chunks. Ce test provoque le même scénario
+     complet (perte → restauration → remaillage réel des chunks marqués dirty
+     par onContextRestored, game.js) PUIS force la libération de tous les
+     maillages d'entités (mobs) qui ont survécu à la perte sans être
+     reconstruits — c'est ce second cas qui a d'abord échappé à la première
+     version de ce correctif (`libererEntite` ne posait aucune garde de
+     génération, contrairement à `disposerGeom` pour les chunks), reproduit
+     par ~40 avertissements sous deux pertes de contexte successives.
+     Note technique : intercepter console.warn/console.error NE SUFFIT PAS
+     ici — l'avertissement « object does not belong to this context » est
+     émis directement par la couche de validation WebGL du navigateur (pas
+     par un appel JS console.warn de Three.js), donc invisible à un simple
+     monkey-patch de console. On vérifie à la place l'état d'erreur GL réel
+     via gl.getError(), qui EST mis à jour par ces appels invalides. */
+  e2e('SPEC-RENDU-002 : perte, restauration, remaillage des chunks et libération des entités survivantes ne lèvent aucune erreur GL', async function (g) {
+    await reset(g);
+    var gl = g.render.renderer.getContext();
+    var ext = gl.getExtension('WEBGL_lose_context');
+    A.ok(ext, 'l’extension de simulation est disponible dans ce navigateur');
+    g.render.setDistance(4);
+    g.streamChunks(true);
+    for (var i = 0; i < 15; i++) await frames(1);
+    A.gt(g.world.chunks.size, 0, 'des chunks sont chargés avant la perte (' + g.world.chunks.size + ')');
+    while (gl.getError() !== gl.NO_ERROR) { /* purge tout code d'erreur résiduel avant de mesurer */ }
+
+    ext.loseContext();
+    await frames(3);
+    ext.restoreContext();
+    await frames(5);
+    // tous les chunks visibles sont marqués dirty par onContextRestored
+    // (game.js) ; remeshDirtyNear() n'en remaille que 3 par image, on
+    // laisse donc tourner assez d'images pour tous les rattraper. Le monde
+    // continue de tourner pendant ce temps (mobs qui apparaissent) : ils
+    // sont d'abord RENDUS sous le nouveau contexte sans être reconstruits
+    // (survivent à la perte), exactement le cas visé par `libererEntite`.
+    var tours = Math.ceil(g.world.chunks.size / 3) + 15;
+    for (var k = 0; k < tours; k++) await frames(1);
+    // force la libération de toute entité encore suivie (mob, figurant…) —
+    // certaines ont pu être créées avant la perte et seulement re-rendues
+    // depuis (jamais reconstruites), le cas que `libererEntite` doit garder.
+    g.render.libererToutesEntites();
+
+    var codes = [];
+    var e;
+    while ((e = gl.getError()) !== gl.NO_ERROR) codes.push(e);
+    A.equal(codes.length, 0, 'aucune erreur GL après perte/restauration/remaillage/libération des entités (' + codes.join(',') + ')');
+  });
+
+  /* SPEC-RENDU-002 (revue, point 2) : la carte d'ombres du soleil (FBO
+     interne à Three.js) n'était jamais reconstruite après restauration —
+     `sun.shadow.map` reste abandonné (jamais dispose()) puis Three.js le
+     régénère tout seul dès le premier rendu avec `castShadow` actif. */
+  e2e('SPEC-RENDU-002 : la carte d’ombres du soleil se reconstruit après restauration du contexte', async function (g) {
+    await reset(g);
+    var gl = g.render.renderer.getContext();
+    var ext = gl.getExtension('WEBGL_lose_context');
+    A.ok(ext, 'l’extension de simulation est disponible');
+    g.render.setDistance(3);
+    g.streamChunks(true);
+    for (var i = 0; i < 10; i++) await frames(1);
+    A.ok(g.render.ombresActives, 'les ombres sont actives par défaut');
+    g.render.renderViews(g.vues);
+    var carteAvant = g.render.sun.shadow.map;
+    A.ok(carteAvant, 'une carte d’ombres existe avant la perte');
+    ext.loseContext();
+    await frames(3);
+    ext.restoreContext();
+    // la boucle de jeu normale tourne pendant ces images (game.js) : elle a
+    // déjà pu redessiner (et donc reconstruire la carte) avant qu'on
+    // revienne ici — on vérifie donc la RECONSTRUCTION (nouvelle instance),
+    // pas un instant `null` qu'un rendu concurrent aurait déjà comblé.
+    await frames(5);
+    var carteApres = g.render.sun.shadow.map;
+    A.ok(carteApres, 'la carte d’ombres est reconstruite après restauration');
+    A.ok(carteApres !== carteAvant, 'c’est une NOUVELLE carte, pas l’ancienne réutilisée après un contexte périmé');
+  });
+
   // ─── exécution ─────────────────────────────────────────────────────────────
   /* `filtre` (facultatif) : ne lance que les tests dont le nom le contient. */
   async function runE2E(g, onProgress, filtre) {

@@ -145,6 +145,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   (src/noise.js) perd aussi sa fermeture allouée à chaque appel, pour un
   résultat inchangé au bit près.
 
+### Ajouté (L48 — rendu)
+- Le renderer se remet d'une perte de contexte GPU (`webglcontextlost`) :
+  message à l'écran, rendu suspendu proprement, puis reconstruction des
+  textures/matériaux/render targets et remaillage des chunks visibles à la
+  restauration (SPEC-RENDU-001/002).
+- Qualité adaptative (`src/qualite.js`, logique pure testable sous Node) :
+  réfraction plafonnée en fréquence et limitée à l'eau proche, réfraction/
+  antialias(*)/DPR qui cèdent en cascade sous un FPS p50 bas soutenu, DPR qui
+  ne dépasse jamais le plafond des options d'affichage ni ne descend sous 1
+  (SPEC-RENDU-003 à 008 ; (*) décision exposée mais sans bascule GPU réelle,
+  voir SPECS.md). Le plancher 800×600 du tampon de rendu reste porté par le
+  dimensionnement de l'hôte (SPEC-OPTION-008, autre lot).
+- Détection d'un rendu logiciel (SwiftShader, llvmpipe…) via
+  `WEBGL_debug_renderer_info`, palier de qualité bas au démarrage et
+  avertissement au joueur, une seule fois (SPEC-RENDU-010/011).
+- Mipmaps de l'atlas de textures en option, désactivés par défaut, sans
+  reconstruction du renderer pour les activer (SPEC-RENDU-012).
+- Panneau F3 (métriques : FPS/p50/p95, appels de dessin, triangles, ms
+  génération/maillage, distance de vue) et `g.perf`, calculé en continu
+  indépendamment de son affichage (SPEC-PERF-015/016).
+
 ### Corrigé
 - Les cahiers de test n'affichaient pas les captures d'écran du banc
   navigateur, ni dans le rapport ni dans les exports : les images arrivaient
@@ -154,6 +175,25 @@ respecter (voir PLAN.md, « Commits et versions »).
   si bien que tous les tests pointaient vers les images du premier. Le préfixe
   est désormais retiré, et l'index envoyé par le banc fait foi (SPEC-BANC-011,
   SPEC-BANC-014) ; les exports web, PDF et Word intègrent ainsi chaque capture.
+- Revue adversariale de la qualité adaptative et de la perte de contexte GPU
+  (L48) : après une restauration de contexte WebGL (`webglcontextrestored`),
+  redimensionner les cibles de réfraction (`setSize`) ou disposer une
+  géométrie de chunk/InstancedMesh (arbres, silhouettes lointaines) créée
+  AVANT la perte retombait sur l'ancien contexte GL capturé par les
+  écouteurs internes de Three.js r128, levant ~200 avertissements console
+  (« object does not belong to this context ») au premier remaillage massif.
+  Les render targets de réfraction sont désormais recréées plutôt que
+  redimensionnées, et chaque géométrie reconstructible porte le numéro de
+  génération du contexte GL courant : on ne dispose jamais une géométrie
+  d'une génération révolue, on abandonne juste la référence au ramasse-
+  miettes (SPEC-RENDU-002). La carte d'ombres du soleil (FBO interne à
+  Three.js) est abandonnée sans dispose à la restauration et se reconstruit
+  seule au rendu suivant. Le même risque touchait aussi les maillages
+  d'entités (mobs, figurants, joueurs distants) et les repères lumineux :
+  contrairement aux chunks/arbres/silhouettes (rebâtis à chaque remaillage),
+  ils sont créés une seule fois et peuvent survivre à une restauration sans
+  jamais être reconstruits ; `libererEntite`/`syncReperes` portent désormais
+  la même garde de génération.
 - Revue adversariale du transport réseau (L44, sous-lot A1) : un budget
   anti-flood unique par connexion (30 msg/s) pouvait expulser à tort un
   joueur légitime — creuser en créatif avec casse instantanée envoie jusqu'à

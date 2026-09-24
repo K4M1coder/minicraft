@@ -16,7 +16,15 @@
     // le GPU se choisit avant de créer le rendu (SPEC-OPTION-004)
     var optionsLues = MC.Options ? MC.Options.charger((function () { try { return window.localStorage; } catch (e) { return null; } })()) : null;
     var render = MC.createRenderer(host, atlas, { renderDist: 6,
-      powerPreference: optionsLues ? MC.Options.preferenceGpu(optionsLues.gpu) : undefined });
+      powerPreference: optionsLues ? MC.Options.preferenceGpu(optionsLues.gpu) : undefined,
+      // SPEC-RENDU-001/002 : le message et l'arrêt du rendu passent par l'UI ;
+      // les maillages de chunks visibles sont remis en file (dirty), le reste
+      // (textures, matériaux, render targets) se reconstruit dans render.js
+      onContextLost: function () { if (ui) ui.contextePerdue(true); },
+      onContextRestored: function () {
+        world.chunks.forEach(function (c) { c.dirty = true; });
+        if (ui) ui.contextePerdue(false);
+      } });
     render.gpuAuLancement = optionsLues ? optionsLues.gpu : 'auto';
     var canvas = render.renderer.domElement;
 
@@ -139,7 +147,20 @@
       succes: MC.Succes.creer(),
       // factions de joueurs hors ligne (joueurs locaux), sauvegardées avec la partie
       guildes: MC.Guildes ? MC.Guildes.creerEtat() : undefined,
+      // SPEC-PERF-015 : métriques de rendu, calculées en continu indépendamment
+      // du panneau F3 qui les affiche (SPEC-PERF-016)
+      perf: { msGeneration: 0, msMaillage: 0, appelsDessin: 0, triangles: 0, fps: 0, fpsP50: 0, fpsP95: 0, renderDist: render.RENDER_DIST },
     };
+
+    // ── SPEC-RENDU-005 à 008, 015 : boucle de qualité adaptative ───────────
+    // Une seule fenêtre glissante de FPS (g.fps, moyenne 0,4 s déjà calculée
+    // plus bas) nourrit À LA FOIS le panneau F3 (via g.perf) et la décision
+    // d'adaptation : même source, comme l'exige SPEC-RENDU-015.
+    var fenetreFPS = MC.Qualite ? MC.Qualite.creerFenetre(5) : null;
+    var etatQualite = MC.Qualite ? MC.Qualite.creerEtat({
+      // SPEC-RENDU-010/011 : un rendu logiciel détecté démarre au palier bas
+      niveauInitial: render.materiel && render.materiel.renduLogiciel ? 99 : 0,
+    }) : null;
 
     /* SPEC-SUCCES-001 : signale un événement au suivi de la partie ; ce qui
        vient de se débloquer s'annonce une seule fois (toast, chat, son). */
@@ -185,6 +206,10 @@
       detecterEcrans: function () { return g.detecterEcrans(); },
       onOptionsDefaut: function () { g.options = MC.Options.defauts(); MC.Options.sauver(hudStockage, g.options); appliquerOptions(); },
     }, hud);
+
+    // SPEC-RENDU-011 : avertissement d'accélération matérielle absente, une
+    // seule fois au démarrage — il peut être ignoré, il ne réapparaît jamais
+    if (render.materiel && render.materiel.renduLogiciel) ui.avertirRenduLogiciel(render.materiel.nom);
 
     var input = MC.createInput(canvas, {
       peutJouer: function () { return !(ui.dialogueOuvert && ui.dialogueOuvert()); },
@@ -241,6 +266,7 @@
       render.setChamp(o.champ);
       render.setOmbres(o.ombres);
       render.reglerRealiste(o.realiste);
+      render.setMipmaps(!!o.mipmaps);            // SPEC-RENDU-012
       if (render.RENDER_DIST > o.vueMax) render.setDistance(o.vueMax);
       // affichage (SPEC-OPTION-005, 006)
       g.disposition = MC.Options.disposition(g.ecrans, o);
@@ -1217,7 +1243,10 @@
         var cx = aGenerer[i][1], cz = aGenerer[i][2];
         if (world.chunks.has(world.key(cx, cz))) continue;
         if (gen >= genMax) { manquants++; continue; }
+        // SPEC-PERF-015 : ms de génération du DERNIER chunk généré
+        var tGen0 = performance.now();
         world.getChunk(cx, cz, true);
+        g.perf.msGeneration = performance.now() - tGen0;
         // les 8 voisins : leurs faces de bordure ET leur occlusion ambiante changent
         world.marquerVoisins(cx, cz);
         gen++;
@@ -1233,7 +1262,10 @@
         // bord du disque : ses voisins en diagonale ne seront jamais générés, ce n'est pas un retard
         if (!world.voisinsCharges(mx, mz)) continue;
         // au loin, un maillage allégé ; il reprend ses plantes quand on s'approche
+        // SPEC-PERF-015 : ms de maillage du DERNIER chunk remaillé
+        var tMesh0 = performance.now();
         render.syncChunk(world, c, aMailler[j][0] > PROCHE_SIMPLE * PROCHE_SIMPLE && aMailler[j][0] > (R * 0.55) * (R * 0.55));
+        g.perf.msMaillage = performance.now() - tMesh0;
         meshed++;
       }
       // chunks voulus pas encore affichés : la distance de vue n'avance que s'ils sont rattrapés
@@ -1258,7 +1290,9 @@
           return Math.abs(c.cx - ce[0]) <= 2 && Math.abs(c.cz - ce[1]) <= 2;
         });
         if (!proche || !world.voisinsCharges(c.cx, c.cz)) return;
+        var tMesh1 = performance.now();
         render.syncChunk(world, c);
+        g.perf.msMaillage = performance.now() - tMesh1;
         done++;
       });
     }
@@ -2412,12 +2446,31 @@
       if (acc >= 0.4) {
         g.fps = Math.round(frames / acc);
         frames = 0; acc = 0;
+        // SPEC-RENDU-005 à 008, 015 : un seul échantillonnage du FPS, une
+        // seule fenêtre — le panneau F3 (g.perf) et l'adaptatif y puisent
+        // tous deux, à égalité stricte à l'image près.
+        if (fenetreFPS) {
+          MC.Qualite.ajouterEchantillon(fenetreFPS, now / 1000, g.fps);
+          var p50 = MC.Qualite.percentile(fenetreFPS, 50), p95 = MC.Qualite.percentile(fenetreFPS, 95);
+          g.perf.fps = g.fps; g.perf.fpsP50 = p50 == null ? g.fps : p50; g.perf.fpsP95 = p95 == null ? g.fps : p95;
+          var decisions = MC.Qualite.evaluer(etatQualite, now / 1000, p50);
+          g.qualite = decisions;
+          render.eau.options.refraction = decisions.refraction;
+          render.eau.options.fpsP50 = g.perf.fpsP50;
+          render.setDPR(decisions.dpr);
+        }
       }
+      // SPEC-PERF-015 : appels de dessin / triangles de la dernière image, et
+      // distance de vue courante (partagée avec le panneau F3)
+      var md = render.metriquesDessin;
+      g.perf.appelsDessin = md.appelsDessin; g.perf.triangles = md.triangles;
+      g.perf.renderDist = render.RENDER_DIST;
       for (var hi = 0; hi < equipe.length; hi++) ui.updateHUDJoueur(g, equipe[hi].player, hi);
       ui.barreBoss(st === 'playing' || st === 'ui' ? gardienProche() : null);
       ui.boussole(st === 'playing' ? world.reperes : null, player.state);
       render.syncReperes(world.reperes);
       ui.updateHUD(g);
+      if (ui.majF3) ui.majF3(g);
     }
 
     window.addEventListener('resize', render.resize);

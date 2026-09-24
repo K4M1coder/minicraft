@@ -25,6 +25,12 @@
     orientation: { defaut: 'horizontal', valeurs: ['horizontal', 'vertical'], nom: 'Écrans côte à côte ou empilés' },
     // SPEC-OPTION-007 : menus et fenêtres à l'échelle de l'écran
     tailleInterface: { defaut: 'auto', valeurs: ['auto', '60', '75', '90', '100', '110', '125', '150'], nom: 'Taille de l’interface' },
+    // SPEC-RENDU-012 : mipmaps de l'atlas de textures. Par défaut à false —
+    // l'atlas est nearest-filtré sans mipmap pour éviter le bleed entre
+    // tuiles voisines (choix délibéré de src/atlas.js, hors périmètre de ce
+    // lot) ; l'activer réduit le moiré au loin au prix d'un peu de mémoire
+    // GPU et d'un risque de bleed visuel sur certaines tuiles tachetées.
+    mipmaps: { defaut: false, nom: 'Mipmaps des textures' },
   };
 
   /* SPEC-OPTION-007 : facteur d'échelle des menus pour une fenêtre de

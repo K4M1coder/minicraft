@@ -616,6 +616,43 @@
     root.appendChild(damageFlash);
     root.appendChild(voileClimat);
 
+    // ── SPEC-RENDU-001/002 : message de perte de contexte GPU ──────────────
+    var messageContexte = el('div', 'contexte-perdu', 'Contexte graphique perdu, reconnexion…');
+    messageContexte.style.cssText = 'display:none;position:fixed;inset:0;z-index:9000;align-items:center;justify-content:center;' +
+      'background:rgba(10,12,18,0.82);color:#fff;font:600 20px system-ui,sans-serif;text-align:center;padding:24px;';
+    root.appendChild(messageContexte);
+    function contextePerdue(perdue) { messageContexte.style.display = perdue ? 'flex' : 'none'; }
+
+    // ── SPEC-RENDU-011 : avertissement d'accélération matérielle absente ──
+    var avertiRenduLogicielFait = false;
+    function avertirRenduLogiciel(nom) {
+      if (avertiRenduLogicielFait) return;         // une seule fois, jamais à chaque image
+      avertiRenduLogicielFait = true;
+      toast('Accélération matérielle absente (' + (nom || 'rendu logiciel') +
+            ') — performances dégradées attendues', 'avertissement');
+    }
+
+    // ── SPEC-PERF-016 : panneau F3, métriques de rendu ──────────────────────
+    var f3 = el('div', 'panneau-f3');
+    f3.style.cssText = 'display:none;position:fixed;top:8px;right:8px;z-index:8000;' +
+      'background:rgba(10,12,18,0.72);color:#eaf6ff;font:12px/1.5 monospace;padding:8px 12px;border-radius:4px;pointer-events:none;';
+    root.appendChild(f3);
+    var f3Visible = false;
+    function toggleF3() { f3Visible = !f3Visible; f3.style.display = f3Visible ? 'block' : 'none'; return f3Visible; }
+    window.addEventListener('keydown', function (e) {
+      if (e.code === 'F3') { e.preventDefault(); toggleF3(); }
+    });
+    function majF3(g) {
+      if (!f3Visible || !g.perf) return;
+      var p = g.perf;
+      f3.innerHTML =
+        'F3 — métriques<br>' +
+        'FPS <b>' + p.fps + '</b> · p50 <b>' + Math.round(p.fpsP50) + '</b> · p95 <b>' + Math.round(p.fpsP95) + '</b><br>' +
+        'Appels de dessin <b>' + p.appelsDessin + '</b> · triangles <b>' + p.triangles + '</b><br>' +
+        'ms génération <b>' + p.msGeneration.toFixed(1) + '</b> · ms maillage <b>' + p.msMaillage.toFixed(1) + '</b><br>' +
+        'Distance de vue <b>' + p.renderDist + '</b> chunks';
+    }
+
     // ─── chat ───────────────────────────────────────────────────────────────
     var chatBox = el('div', 'chat');
     var chatLog = el('div', 'chat-log');
@@ -1805,6 +1842,8 @@
       setRegles: setRegles, toggleLivre: toggleLivre, estCreatif: estCreatif,
       get heldStack() { return heldStack; },
       get container() { return container; },
+      contextePerdue: contextePerdue, avertirRenduLogiciel: avertirRenduLogiciel,
+      toggleF3: toggleF3, majF3: majF3, get f3Visible() { return f3Visible; },
     };
   }
 

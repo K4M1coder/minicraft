@@ -56,6 +56,62 @@
     renderer.setSize(sz[0], sz[1]);
     canvasHost.appendChild(renderer.domElement);
 
+    // ── SPEC-RENDU-010/011 : rendu logiciel (SwiftShader, llvmpipe…) ───────
+    // Interrogé une seule fois au démarrage : un rendu logiciel connu abaisse
+    // le palier de qualité de départ (voir game.js, la boucle de qualité).
+    var materiel = { renduLogiciel: false, nom: null };
+    try {
+      var glInfo = renderer.getContext();
+      var dbgInfo = glInfo && glInfo.getExtension('WEBGL_debug_renderer_info');
+      if (dbgInfo) {
+        materiel.nom = glInfo.getParameter(dbgInfo.UNMASKED_RENDERER_WEBGL);
+        materiel.renduLogiciel = MC.Qualite ? MC.Qualite.detecterRenduLogiciel(materiel.nom) : false;
+      }
+    } catch (eDbg) { /* extension absente : pas de diagnostic, rendu supposé matériel */ }
+
+    // ── SPEC-RENDU-001/002 : perte et restauration du contexte WebGL ───────
+    // `preventDefault()` empêche la perte définitive (le navigateur retente
+    // une restauration) ; le rendu se suspend pendant la coupure, puis les
+    // ressources qui vivent hors de la mémoire JS (textures, render targets,
+    // matériaux) sont explicitement reconstruites — les géométries de chunk,
+    // elles, restent en JS et sont simplement REMISES EN FILE (marquées
+    // `dirty`) par l'appelant via `onContextRestored`, qui les remaillera au
+    // rythme normal du streaming (game.js).
+    var contextePerdu = false;
+    // Numéro de génération de contexte GL : incrémenté à chaque restauration
+    // réelle. Sert à marquer les géométries reconstructibles (toGeometry,
+    // tagGen plus bas) pour ne jamais dispose() un objet d'une génération
+    // révolue — voir la note détaillée près de `toGeometry`/`disposerGeom`.
+    var contexteGen = 0;
+    var cbContextLost = typeof opts.onContextLost === 'function' ? opts.onContextLost : null;
+    var cbContextRestored = typeof opts.onContextRestored === 'function' ? opts.onContextRestored : null;
+    renderer.domElement.addEventListener('webglcontextlost', function (ev) {
+      ev.preventDefault();
+      contextePerdu = true;
+      if (cbContextLost) cbContextLost();
+    }, false);
+    renderer.domElement.addEventListener('webglcontextrestored', function () {
+      contextePerdu = false;
+      contexteGen++;
+      // textures et matériaux : on force un ré-upload/relien plutôt que de
+      // supposer que le navigateur les a conservés
+      atlas.texture.needsUpdate = true;
+      [matOpaque, matCutout, matBlend, matLumineux].forEach(function (m) { if (m) m.needsUpdate = true; });
+      // render targets de réfraction : on ABANDONNE les anciennes instances
+      // plutôt que de les redimensionner (`.setSize()` déclenchait leur
+      // dispose() interne, qui retombe sur l'ancien contexte GL capturé par
+      // l'écouteur 'dispose' de Three.js — voir la note près de
+      // `disposerGeom`). De nouvelles instances évitent tout appel GL sur les
+      // anciennes ; celles-ci sont simplement abandonnées au ramasse-miettes.
+      rtRefraction = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+      rtEcran = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+      // carte d'ombres du soleil (FBO interne à Three.js) : même règle, on
+      // abandonne la référence sans la dispose ; Three.js la reconstruit
+      // seule dès le prochain rendu avec `castShadow` actif.
+      if (sun && sun.shadow) sun.shadow.map = null;
+      if (cbContextRestored) cbContextRestored();
+    }, false);
+
     var hemi = new THREE.HemisphereLight(0xdfefff, 0x4a5a44, 0.95);
     scene.add(hemi);
     var sun = new THREE.DirectionalLight(0xfff2d8, 0.55);
@@ -244,6 +300,25 @@
     scene.add(highlight);
 
     // ─── chunks ──────────────────────────────────────────────────────────────
+    /* SPEC-RENDU-002 (revue adversariale de bf733bf) : Three.js (r128) attache
+       un écouteur 'dispose' à chaque géométrie la première fois qu'elle est
+       rendue (WebGLGeometries/WebGLAttributes) ; cet écouteur capture par
+       fermeture le contexte GL et les caches internes ACTIFS à ce moment-là.
+       À la restauration (`webglcontextrestored`), Three.js reconstruit ces
+       caches de zéro (`initGLContext`) mais NE DÉTACHE JAMAIS les anciens
+       écouteurs des objets déjà créés : un `.dispose()` appelé plus tard sur
+       une géométrie créée AVANT la perte retombe donc sur l'ancien contexte
+       capturé, ce qui lève « INVALID_OPERATION / object does not belong to
+       this context » (reproduit en direct via WEBGL_lose_context, ~200
+       avertissements sur 149 chunks). On tague chaque géométrie qui peut être
+       reconstruite après coup (chunks, relief/arbres/silhouettes lointains)
+       avec le numéro de génération de contexte en cours, et on ne dispose
+       jamais une géométrie d'une génération révolue : on abandonne juste la
+       référence, le ramasse-miettes JS s'en charge sans toucher au GPU. */
+    function tagGen(obj) { if (obj) obj.__mcGen = contexteGen; return obj; }
+    function disposerGeom(obj) {
+      if (obj && obj.geometry && obj.geometry.__mcGen === contexteGen) obj.geometry.dispose();
+    }
     function toGeometry(raw) {
       var g = new THREE.BufferGeometry();
       g.setAttribute('position', new THREE.Float32BufferAttribute(raw.positions, 3));
@@ -269,7 +344,7 @@
                                                                      : new Float32Array(nv), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
-      return g;
+      return tagGen(g);
     }
 
     // une passe de rendu = un maillage par chunk ; l'ordre de rendu va
@@ -299,7 +374,7 @@
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
         var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie);
-        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); chunk[key].geometry.dispose(); chunk[key] = null; }
+        if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); disposerGeom(chunk[key]); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);
           m.position.set(chunk.cx * C.CHUNK_X, 0, chunk.cz * C.CHUNK_Z);
@@ -318,7 +393,7 @@
     function disposeChunk(chunk) {
       PASSES.forEach(function (p) {
         var k = p[0];
-        if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); chunk[k].geometry.dispose(); chunk[k] = null; }
+        if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); disposerGeom(chunk[k]); chunk[k] = null; }
       });
     }
 
@@ -805,7 +880,7 @@
         var m = figurants.get(f.id);
         if (!m) {
           var sp = f.type === 'bateau' ? SPEC_BATEAU : (MC.EntitySpecs && MC.EntitySpecs[f.type]) || { w: 0.6, h: 1.8, speed: 1.6 };
-          m = mobMesh(f.type, sp, { role: f.role, pnj: f.id });
+          m = tagGen(mobMesh(f.type, sp, { role: f.role, pnj: f.id }));
           m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           m.userData.figurant = true;
           scene.add(m);
@@ -838,8 +913,23 @@
        materiau par entite. Sur une longue partie, les zombies disparaissant
        a chaque aube, cela s'accumule sans fin. */
     var liberees = 0;
+    /* SPEC-RENDU-002 (revue adversariale, correction 2) : contrairement aux
+       maillages de chunk/arbres/silhouettes/eau (rebâtis à chaque remaillage,
+       donc rarement vivants plus d'une génération de contexte), un maillage
+       d'entité (mob, figurant, joueur distant) est créé UNE FOIS et reste en
+       scène tant que l'entité vit — il peut donc survivre à une restauration
+       de contexte sans jamais être reconstruit, entre-temps re-rendu sous le
+       NOUVEAU contexte (Three.js y attache alors un second écouteur
+       'dispose', voir la note près de `toGeometry`). À sa mort, l'écouteur
+       de l'ancienne génération se déclenche aussi et lève la même erreur GL
+       (« object does not belong to this context ») — reproduit en direct
+       (SPEC-RENDU-002, 989/989 → sans ce garde, ~40 avertissements sous
+       deux pertes de contexte successives). Comme pour les chunks, on ne
+       dispose jamais un maillage d'entité taggé d'une génération révolue :
+       on abandonne juste la référence. */
     function libererEntite(m) {
       scene.remove(m);
+      if (m.__mcGen !== contexteGen) return;
       m.traverse(function (o) {
         if (o.geometry) { o.geometry.dispose(); }
         if (o.material) {
@@ -890,7 +980,7 @@
         vus.add(d.id);
         var m = maillagesDistants.get(d.id);
         if (!m) {
-          m = mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id });
+          m = tagGen(mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id }));
           m.add(etiquetteNom(d.nom || ('Joueur ' + d.id)));
           m.userData.nom = d.nom;
           scene.add(m);
@@ -919,8 +1009,8 @@
         vus.add(cle);
         var m2 = maillagesDistants.get(cle);
         if (!m2) {
-          m2 = d.type === 'item' && d.item ? itemMesh(d.item)
-             : mobMesh(d.type, MC.EntitySpecs[d.type] || MC.EntitySpecs.sheep, d);
+          m2 = tagGen(d.type === 'item' && d.item ? itemMesh(d.item)
+             : mobMesh(d.type, MC.EntitySpecs[d.type] || MC.EntitySpecs.sheep, d));
           scene.add(m2);
           maillagesDistants.set(cle, m2);
         }
@@ -959,7 +1049,7 @@
         seen.add(e.eid);
         var m = entityMeshes.get(e.eid);
         if (!m) {
-          m = e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e);
+          m = tagGen(e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e));
           m.userData.blesse = false;
           m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           scene.add(m);
@@ -1298,7 +1388,8 @@
       g.setIndex(new THREE.BufferAttribute(raw.indices, 1));
       g.computeVertexNormals();
       g.computeBoundingSphere();
-      if (lointain) { scene.remove(lointain); lointain.geometry.dispose(); }
+      tagGen(g);
+      if (lointain) { scene.remove(lointain); disposerGeom(lointain); }
       lointain = new THREE.Mesh(g, matLointain);
       scene.add(lointain);
       majArbresLointains(grille);
@@ -1360,10 +1451,13 @@
     })();
     var arbresLointains = null;
     function majArbresLointains(grille) {
-      if (arbresLointains) { scene.remove(arbresLointains); arbresLointains.dispose && arbresLointains.dispose(); arbresLointains = null; }
+      // note : `InstancedMesh` n'a pas de `.dispose()` propre en r128 — seule
+      // sa géométrie clonée ci-dessous a besoin d'être libérée (matArbres est
+      // un matériau partagé, jamais recréé par chunk).
+      if (arbresLointains) { scene.remove(arbresLointains); disposerGeom(arbresLointains); arbresLointains = null; }
       var l = MC.Lointain.imposteurs(grille, { max: 50000 });
       if (!l.length) return 0;
-      var g = geoArbre.clone();
+      var g = tagGen(geoArbre.clone());
       var ess = new Float32Array(l.length);
       var m = new THREE.InstancedMesh(g, matArbres, l.length), mat4 = new THREE.Matrix4();
       l.forEach(function (a, i) {
@@ -1399,12 +1493,12 @@
       var sig = (lieux || []).map(function (l) { return l.id; }).join('|');
       if (sig === sigSilhouettes) return false;
       sigSilhouettes = sig;
-      if (silhouettesLointaines) { scene.remove(silhouettesLointaines); silhouettesLointaines.dispose && silhouettesLointaines.dispose(); silhouettesLointaines = null; }
+      if (silhouettesLointaines) { scene.remove(silhouettesLointaines); disposerGeom(silhouettesLointaines); silhouettesLointaines = null; }
       var boites = MC.Lointain.silhouettes(lieux);
       if (!boites.length) return true;
       var parLieu = {};
       (lieux || []).forEach(function (l) { parLieu[l.id] = l; });
-      var geo = new THREE.BoxGeometry(1, 1, 1);
+      var geo = tagGen(new THREE.BoxGeometry(1, 1, 1));
       geo.translate(0, 0.5, 0);
       var m = new THREE.InstancedMesh(geo, matSilhouettes, boites.length), mat4 = new THREE.Matrix4(), col = new THREE.Color();
       boites.forEach(function (b, i) {
@@ -1830,12 +1924,20 @@
       var sig = l.map(function (r) { return r.id + ':' + r.x + ':' + r.z + ':' + r.couleur; }).join('|');
       if (sig === sigReperes) return colonnes.size;
       sigReperes = sig;
-      colonnes.forEach(function (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+      // une colonne ne change que quand la liste des repères change (rare) :
+      // elle peut donc rester en scène, jamais reconstruite, à travers une
+      // restauration de contexte GPU — même garde de génération que
+      // `libererEntite` (voir sa note) pour éviter de disposer un maillage
+      // d'une génération de contexte révolue.
+      colonnes.forEach(function (m) {
+        scene.remove(m);
+        if (m.__mcGen === contexteGen) { m.geometry.dispose(); m.material.dispose(); }
+      });
       colonnes.clear();
       l.forEach(function (r) {
-        var m = new THREE.Mesh(new THREE.BoxGeometry(0.35, 120, 0.35),
+        var m = tagGen(new THREE.Mesh(new THREE.BoxGeometry(0.35, 120, 0.35),
           new THREE.MeshBasicMaterial({ color: r.couleur, transparent: true, opacity: 0.45, depthWrite: false,
-                                        fog: false, blending: THREE.AdditiveBlending }));
+                                        fog: false, blending: THREE.AdditiveBlending })));
         m.position.set(r.x + 0.5, 60, r.z + 0.5);
         m.renderOrder = 3;
         scene.add(m);
@@ -2023,17 +2125,62 @@
       return cam;
     }
 
+    /* SPEC-RENDU-007 : le palier de qualité adaptative (2 → 1,5 → 1, piloté
+       par la boucle de qualité de game.js) ne dépasse jamais le plafond des
+       options d'affichage (résolution voulue / devicePixelRatio, déjà géré
+       par SPEC-OPTION-005) ni ne descend sous 1. Les deux plafonds se
+       combinent ici plutôt que de se marcher dessus à chaque redimensionnement. */
+    var dprPalier = 2;
+    function plafondDPR() {
+      return MC.Options ? MC.Options.rapportPixels(resolutionVoulue, { l: sz[0], h: sz[1] }, devicePixelRatio) : Math.min(devicePixelRatio, 2);
+    }
+    function appliquerDPR() {
+      // Note de coordination : le plancher 800×600 (SPEC-OPTION-008) est porté
+      // par le dimensionnement de l'hôte lui-même (un autre lot le fait dans
+      // hostSize()/resize() — une transformation CSS ramène un hôte plus
+      // petit à une surface interne 800×600). L'adaptatif ne fait donc QUE
+      // respecter le plafond des options (SPEC-RENDU-007) sans reforcer un
+      // plancher ici, pour ne pas fausser une résolution fixe volontairement
+      // plus petite que l'hôte (SPEC-OPTION-005) ni la vue de test (cadre
+      // réduit). `MC.Qualite.ajusterDPR`/`dprPlancher` restent disponibles et
+      // testés pour un usage futur si le dimensionnement change de méthode.
+      var v = MC.Qualite ? MC.Qualite.plafonnerDPR(dprPalier, plafondDPR())
+                          : Math.max(1, Math.min(dprPalier, plafondDPR()));
+      renderer.setPixelRatio(v);
+      return v;
+    }
+    function setDPR(palier) { dprPalier = palier > 0 ? palier : dprPalier; return appliquerDPR(); }
+    /* Coordination à venir avec SPEC-OPTION-008 (plancher 800×600 de la
+       surface d'affichage, porté par un autre lot dans hostSize()) : l'ordre
+       ci-dessous est volontaire et doit être conservé par la fusion —
+       1) `sz = hostSize()` d'abord (la taille CSS/plancher de l'hôte, déjà
+          garantie ≥ 800×600 par cet autre lot) ; 2) `appliquerDPR()` ensuite,
+          qui LIT `sz` via `plafondDPR()` pour calculer le plafond des options
+          (SPEC-OPTION-005) — si l'ordre s'inversait, le DPR se calculerait
+          sur l'ancienne taille d'un redimensionnement ; 3) `renderer.setSize`
+          en dernier, avec la taille déjà connue. Ne pas laisser la fusion
+          intercaler un calcul de DPR entre un changement de taille d'hôte et
+          sa prise en compte ici. */
     function resize() {
       var s = hostSize();
       sz = s;
       cameras.forEach(function (c2) { c2.aspect = s[0] / s[1]; c2.updateProjectionMatrix(); });
-      renderer.setPixelRatio(MC.Options ? MC.Options.rapportPixels(resolutionVoulue, { l: s[0], h: s[1] }, devicePixelRatio) : Math.min(devicePixelRatio, 2));
+      appliquerDPR();
       renderer.setSize(s[0], s[1]);
     }
     /* Résolution de rendu (SPEC-OPTION-005) : le tampon prend la taille voulue,
        l'image s'étire sur l'hôte sans se déformer (même rapport largeur/hauteur). */
     var resolutionVoulue = 'native';
     function setResolution(id) { resolutionVoulue = id || 'native'; resize(); return renderer.getPixelRatio(); }
+    // SPEC-RENDU-012 : mipmaps de l'atlas, optionnels (moins de mémoire GPU,
+    // au prix d'un moiré possible de loin quand ils sont coupés). On ne
+    // touche qu'à la texture concernée — aucune reconstruction du renderer.
+    function setMipmaps(actif) {
+      atlas.texture.generateMipmaps = !!actif;
+      atlas.texture.minFilter = actif ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
+      atlas.texture.needsUpdate = true;
+      return !!actif;
+    }
     /* Vue étendue sur plusieurs écrans (SPEC-OPTION-006) : empilés, le champ
        vertical s'ouvre d'autant ; côte à côte, l'aspect de l'hôte suffit. */
     var dispositionVue = { nombre: 1, orientation: 'horizontal' };
@@ -2063,17 +2210,28 @@
       sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
       return { scene: sc, camera: cam, mat: mat };
     })();
-    var sousLEau = false, eauEnVue = 0;
+    var sousLEau = false, eauEnVue = 0, eauDistance = Infinity;
+    // SPEC-RENDU-004 : au-delà de ce seuil, l'eau reste visible mais sans
+    // réfraction en temps réel — inutile de payer la passe pour une surface
+    // qui n'occupe que quelques pixels à l'écran.
+    var SEUIL_DISTANCE_REFRACTION = 40;
     function eauProche(cam) {
-      var n = 0;
+      var n = 0, d2Min = Infinity;
       maillagesEau.forEach(function (m) {
         if (!m.visible) return;
         var dx = m.position.x + 8 - cam.position.x, dz = m.position.z + 8 - cam.position.z;
-        if (dx * dx + dz * dz < 96 * 96) n++;
+        var d2 = dx * dx + dz * dz;
+        if (d2 < 96 * 96) { n++; if (d2 < d2Min) d2Min = d2; }
       });
-      return n;
+      return { n: n, distance: d2Min === Infinity ? Infinity : Math.sqrt(d2Min) };
     }
+    // SPEC-RENDU-003 : compté à part du renderer.info général — le rendu
+    // d'une image « pleine » déclenche déjà d'autres passes internes (carte
+    // d'ombres…) qui appellent aussi setRenderTarget, un simple espionnage de
+    // cette méthode ne distinguerait pas la passe de réfraction du reste.
+    var compteurAppelsRefraction = 0;
     function passeRefraction(cam) {
+      compteurAppelsRefraction++;
       renderer.getDrawingBufferSize(tailleTampon);
       var w = Math.max(4, tailleTampon.x >> 1), h = Math.max(4, tailleTampon.y >> 1);
       if (rtRefraction.width !== w || rtRefraction.height !== h) rtRefraction.setSize(w, h);
@@ -2084,11 +2242,18 @@
       renderer.setRenderTarget(null);
       maillagesEau.forEach(function (m) { m.visible = m.userData.vuAvant; });
       refractionTex.value = rtRefraction.texture;
-      refractionActive.value = 1;
     }
+    // SPEC-RENDU-003 : compteur d'images propre à la passe de réfraction —
+    // sert à sauter une image sur deux quand le FPS (SPEC-RENDU-015, même
+    // source que le panneau F3) est sous un seuil déclaré.
+    var compteurImagesRefraction = 0;
+    var SEUIL_FPS_REFRACTION = 40;
     function rendreVue(cam) {
-      eauEnVue = eauProche(cam);
-      refractionActive.value = 0;
+      var e = eauProche(cam);
+      eauEnVue = e.n; eauDistance = e.distance;
+      var eauProcheAssez = MC.Qualite ? MC.Qualite.eauRefractanteVisible(eauDistance, SEUIL_DISTANCE_REFRACTION) : eauDistance <= SEUIL_DISTANCE_REFRACTION;
+      var refractionApplicable = eauEnVue > 0 && optionsRendu.refraction && eauProcheAssez;
+      refractionActive.value = refractionApplicable ? 1 : 0;
       if (sousLEau) {
         renderer.getDrawingBufferSize(tailleTampon);
         if (rtEcran.width !== tailleTampon.x || rtEcran.height !== tailleTampon.y) rtEcran.setSize(tailleTampon.x, tailleTampon.y);
@@ -2099,12 +2264,22 @@
         renderer.render(calque.scene, calque.camera);
         return;
       }
-      if (eauEnVue > 0 && optionsRendu.refraction) passeRefraction(cam);
+      if (refractionApplicable) {
+        compteurImagesRefraction++;
+        // toujours recalculée au premier appel (pas de texture précédente à réutiliser)
+        var premiereFois = !rtRefraction.__rempli;
+        var ok = premiereFois || !MC.Qualite || MC.Qualite.refractionFrequenceOK(compteurImagesRefraction, optionsRendu.fpsP50, SEUIL_FPS_REFRACTION);
+        if (ok) { passeRefraction(cam); rtRefraction.__rempli = true; }
+      }
       renderer.render(scene, cam);
     }
-    var optionsRendu = { refraction: true };
+    var optionsRendu = { refraction: true, fpsP50: null };
 
     function renderViews(vues) {
+      // SPEC-RENDU-001 : le rendu s'arrête proprement pendant la perte du
+      // contexte GPU — aucun appel `renderer.render` tant qu'il n'est pas
+      // restauré (webglcontextrestored).
+      if (contextePerdu) return 0;
       var taille = hostSize();
       if (!vues || vues.length <= 1) {
         renderer.setScissorTest(false);
@@ -2131,7 +2306,7 @@
       return vues.length;
     }
 
-    function render() { placerCiel(camera); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; placerCiel(camera); renderer.render(scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2145,6 +2320,12 @@
       resize: resize, render: render, renderViews: renderViews,
       cameraDe: cameraDe, cameras: cameras,
       get RENDER_DIST() { return RENDER_DIST; },
+      // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
+      setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps,
+      // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel
+      get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
+      // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte
+      get metriquesDessin() { return { appelsDessin: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux },
       forceTorches: forceTorches,
       PASSES: PASSES,
@@ -2158,7 +2339,8 @@
       loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },
               get brouillard() { return scene.fog; } },
       eau: { maillages: maillagesEau, refraction: refractionActive, options: optionsRendu, ventEau: ventEau,
-             get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; } },
+             get sousLEau() { return sousLEau; }, get enVue() { return eauEnVue; }, get distance() { return eauDistance; },
+             get appelsRefraction() { return compteurAppelsRefraction; } },
       ombres: { soleil: sun, cadre: CADRE_OMBRE, soleilDir: soleilDir, forceNuages: forceOmbreNuages, ombrerLointain: ombrerLointain },
       majPrecipitations: majPrecipitations, precipitations: { pluie: pluie, neige: neige },
       get flash() { return flash; }, get eclairsVisibles() { return eclairs.length; },
