@@ -666,6 +666,15 @@
         yeuxDans(teteG, ht * 0.55, -w * 0.38, w * 0.18);
         var acc = (va && va.accessoire) || (L.chapeau ? 'chapeau_sorciere' : null);
         accessoire(acc, teteG, buste, w, ht, hj, hb);
+        // armure visible (SPEC-OBJET-001) : teinte du casque et du plastron
+        // équipés, lue via l'apparence — petit ajout localisé, sans dupliquer
+        // la logique de couleur (déjà dans core.js/apparence.js)
+        if (entite && entite.equip && MC.Apparence) {
+          var cCasque = MC.Apparence.couleurArmure(entite.equip.casque);
+          if (cCasque !== null) teteG.add(boite(w * 0.82, ht * 0.32, w * 0.82, cCasque, 0, ht * 0.86, 0));
+          var cPlastron = MC.Apparence.couleurArmure(entite.equip.plastron);
+          if (cPlastron !== null) buste.material.color.set(cPlastron);
+        }
         membres = { jambeG: jg, jambeD: jd, brasG: bg, brasD: bd, tete: teteG, buste: buste };
         main = { bras: bd, y: -hb * 0.95, z: -w * 0.1 };
       }

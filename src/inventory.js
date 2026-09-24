@@ -267,6 +267,96 @@
   shaped(B.VITRE, 16, ['GGG', 'GGG'], { G: B.GLASS });
   shaped(B.RAMBARDE, 6, ['SBS', 'SBS'], { S: B.STONE_BRICK, B: I.STICK });
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ─── L25 objets (SPEC-OBJET-001 à 005) ───────────────────────────────────
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── tissu et cuir (SPEC-OBJET-001) ──────────────────────────────────────
+  // la laine se tisse en tissu ; le cuir se tanne à partir de chair
+  // putréfiée (un débouché pour un butin de zombie autrement inutile)
+  shapeless(I.TISSU, 4, [B.WOOL, B.WOOL]);
+  // le cuir se tanne au fourneau (voir SMELT plus bas) à partir de chair putréfiée
+
+  // ─── armures : fabrication et réparation (SPEC-OBJET-001) ───────────────
+  var ARMOR_PATTERN = {
+    CASQUE: ['MMM', 'M M'],
+    PLASTRON: ['M M', 'MMM', 'MMM'],
+    JAMBIERES: ['MMM', 'M M', 'M M'],
+    BOTTES: ['M M'],
+  };
+  var ARMOR_MATERIAL = {
+    TISSU: I.TISSU, CUIR: I.CUIR, BRONZE: I.BRONZE_LINGOT,
+    FER: I.IRON_INGOT, OR: I.GOLD_INGOT, DIAMANT: I.DIAMOND,
+  };
+  Object.keys(ARMOR_MATERIAL).forEach(function (fam) {
+    var mat = ARMOR_MATERIAL[fam];
+    Object.keys(ARMOR_PATTERN).forEach(function (slot) {
+      var id = I[fam + '_' + slot];
+      shaped(id, 1, ARMOR_PATTERN[slot], { M: mat });
+      // réparation à l'établi (et à l'enclume, qui donne accès au même établi) :
+      // une pièce usée combinée à sa matière première redevient neuve
+      shapeless(id, 1, [id, mat]);
+    });
+  });
+  // les mailles se tissent de ficelle autour d'un peu de fer, sans plaque
+  shapeless(I.MAILLES_CASQUE, 1, [I.FICELLE, I.FICELLE, I.IRON_INGOT]);
+  shapeless(I.MAILLES_PLASTRON, 1, [I.FICELLE, I.FICELLE, I.FICELLE, I.IRON_INGOT, I.IRON_INGOT]);
+  shapeless(I.MAILLES_JAMBIERES, 1, [I.FICELLE, I.FICELLE, I.IRON_INGOT, I.IRON_INGOT]);
+  shapeless(I.MAILLES_BOTTES, 1, [I.FICELLE, I.IRON_INGOT]);
+  shapeless(I.MAILLES_CASQUE, 1, [I.MAILLES_CASQUE, I.IRON_INGOT]);
+  shapeless(I.MAILLES_PLASTRON, 1, [I.MAILLES_PLASTRON, I.IRON_INGOT]);
+  shapeless(I.MAILLES_JAMBIERES, 1, [I.MAILLES_JAMBIERES, I.IRON_INGOT]);
+  shapeless(I.MAILLES_BOTTES, 1, [I.MAILLES_BOTTES, I.IRON_INGOT]);
+
+  // ─── armes (SPEC-OBJET-002) ───────────────────────────────────────────────
+  var ARME_FAMILLES = ['DAGUE', 'EPEE_LONGUE', 'HACHE_GUERRE', 'MASSE', 'LANCE'];
+  var ARME_PATTERN = {
+    DAGUE: ['M', 'S'],
+    EPEE_LONGUE: ['MM', 'MM', ' S'],
+    HACHE_GUERRE: ['MM', 'MM', 'MS'],
+    MASSE: ['MM', 'MS', 'SS'],
+    // distinct de la pelle (M/S/S) et de l'épée (M/M/S) : la pointe entre deux hampes
+    LANCE: ['S', 'M', 'S'],
+  };
+  var ARME_TIER_SUFFIXE = ['BOIS', 'PIERRE', 'FER', 'DIAMANT'];
+  ARME_FAMILLES.forEach(function (fam) {
+    MATS.forEach(function (m, i) {
+      var mat = m[0];
+      shaped(I[fam + '_' + ARME_TIER_SUFFIXE[i]], 1, ARME_PATTERN[fam], { M: mat, S: I.STICK });
+    });
+  });
+  shapeless(I.ARC_LONG, 1, [I.STICK, I.STICK, I.STICK, I.FICELLE, I.FICELLE, I.FEATHER]);
+  shapeless(I.ARBALETE_LOURDE, 1, [I.STICK, I.STICK, I.IRON_INGOT, I.IRON_INGOT, I.FICELLE, I.FICELLE]);
+  shapeless(I.FRONDE, 1, [I.FICELLE, I.FICELLE, I.STICK]);
+  shapeless(I.GALET, 4, [B.COBBLE]);
+
+  // ─── gemmes taillées et bijoux (SPEC-OBJET-003) ─────────────────────────
+  shapeless(I.RUBIS_TAILLE, 1, [I.RUBIS]);
+  shapeless(I.SAPHIR_TAILLE, 1, [I.SAPHIR]);
+  shapeless(I.EMERAUDE_TAILLEE, 1, [I.EMERALD]);
+  shapeless(I.DIAMANT_TAILLE, 1, [I.DIAMOND]);
+  var BIJOU_GEMME_TAILLEE = { RUBIS: I.RUBIS_TAILLE, SAPHIR: I.SAPHIR_TAILLE,
+                              EMERAUDE: I.EMERAUDE_TAILLEE, DIAMANT: I.DIAMANT_TAILLE };
+  ['ANNEAU', 'AMULETTE', 'DIADEME'].forEach(function (fam) {
+    var monture = fam === 'ANNEAU' ? I.ARGENT_LINGOT : fam === 'AMULETTE' ? I.GOLD_INGOT : I.DIAMOND;
+    Object.keys(BIJOU_GEMME_TAILLEE).forEach(function (gem) {
+      shapeless(I[fam + '_' + gem], 1, [monture, BIJOU_GEMME_TAILLEE[gem]]);
+    });
+  });
+
+  // ─── nourriture et cuisine (SPEC-OBJET-004) ──────────────────────────────
+  shapeless(I.FROMAGE, 1, [B.WOOL, B.SEL]);
+  shapeless(I.SOUPE_LEGUMES, 1, [I.BOWL, I.MELON_SLICE, I.WHEAT]);
+  shapeless(I.RAGOUT, 1, [I.BOWL, I.COOKED_MUTTON, I.WHEAT]);
+  shapeless(I.TARTE_POMME, 1, [I.WHEAT, I.WHEAT, I.APPLE]);
+  shapeless(I.GATEAU, 1, [I.WHEAT, I.WHEAT, I.WHEAT, I.FROMAGE]);
+
+  // ─── pièges (SPEC-OBJET-005) ─────────────────────────────────────────────
+  shapeless(I.KIT_DESAMORCAGE, 1, [I.IRON_INGOT, I.IRON_INGOT, I.FICELLE, I.STICK]);
+  // un joueur peut aussi piéger ou enjoliver son propre coffre
+  shapeless(B.COFFRE_PIEGE, 1, [B.CHEST, I.FICELLE, I.FLECHE]);
+  shapeless(B.COFFRE_SURPRISE, 1, [B.CHEST, I.GOLD_INGOT]);
+
   /* Réduit une grille w×h à sa boîte englobante non vide.
      Sans ça, une recette posée en bas à droite d'une grille 3×3 ne serait pas
      reconnue alors qu'elle est valide. */
@@ -337,6 +427,8 @@
   SMELT[I.CUIVRE_BRUT] = I.CUIVRE_LINGOT;
   SMELT[I.ETAIN_BRUT] = I.ETAIN_LINGOT;
   SMELT[I.ARGENT_BRUT] = I.ARGENT_LINGOT;
+  // le cuir se tanne au fourneau, à partir de chair putréfiée (SPEC-OBJET-001)
+  SMELT[I.ROTTEN_FLESH] = I.CUIR;
 
   function smeltResult(id) { return SMELT[id] || 0; }
   function fuelValue(id) {
@@ -405,6 +497,19 @@
     { give: [{ id: I.EMERALD, n: 4 }], get: { id: I.SAPHIR, n: 1 } },
     { give: [{ id: I.EMERALD, n: 6 }], get: { id: I.BIJOU, n: 1 } },
     { give: [{ id: I.BIJOU, n: 1 }], get: { id: I.EMERALD, n: 8 } },
+    // les bijoux taillés (SPEC-OBJET-003) valent cher : la monture y ajoute son prix
+    { give: [{ id: I.ANNEAU_RUBIS, n: 1 }], get: { id: I.EMERALD, n: 6 } },
+    { give: [{ id: I.ANNEAU_SAPHIR, n: 1 }], get: { id: I.EMERALD, n: 6 } },
+    { give: [{ id: I.ANNEAU_EMERAUDE, n: 1 }], get: { id: I.EMERALD, n: 6 } },
+    { give: [{ id: I.ANNEAU_DIAMANT, n: 1 }], get: { id: I.EMERALD, n: 6 } },
+    { give: [{ id: I.AMULETTE_RUBIS, n: 1 }], get: { id: I.EMERALD, n: 9 } },
+    { give: [{ id: I.AMULETTE_SAPHIR, n: 1 }], get: { id: I.EMERALD, n: 9 } },
+    { give: [{ id: I.AMULETTE_EMERAUDE, n: 1 }], get: { id: I.EMERALD, n: 9 } },
+    { give: [{ id: I.AMULETTE_DIAMANT, n: 1 }], get: { id: I.EMERALD, n: 9 } },
+    { give: [{ id: I.DIADEME_RUBIS, n: 1 }], get: { id: I.EMERALD, n: 14 } },
+    { give: [{ id: I.DIADEME_SAPHIR, n: 1 }], get: { id: I.EMERALD, n: 14 } },
+    { give: [{ id: I.DIADEME_EMERAUDE, n: 1 }], get: { id: I.EMERALD, n: 14 } },
+    { give: [{ id: I.DIADEME_DIAMANT, n: 1 }], get: { id: I.EMERALD, n: 14 } },
   ];
 
   function canTrade(inv, trade) {

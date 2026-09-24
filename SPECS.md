@@ -703,11 +703,11 @@ Dépend de SPEC-SAVE-017 (identifiants sur 16 bits et états de bloc).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-OBJET-001 | Le tissu se tisse (laine, coton, lin) et se teint ; armures de tissu, cuir, mailles, bronze, fer, or et diamant — casque, plastron, jambières, bottes — réduisent les dégâts selon leur matière, s'usent, se réparent, et se voient sur l'avatar | recettes, réduction des dégâts, usure, réparation, apparence | ⏳ |
-| SPEC-OBJET-002 | Davantage d'armes : dague, épée longue, hache de guerre, masse, lance, arc long, arbalète lourde, fronde, chacune avec sa portée, sa cadence, ses dégâts et son recul, dans plusieurs matières | caractéristiques, recettes | ⏳ |
-| SPEC-OBJET-003 | Gemmes taillées et bijoux (anneaux, amulettes, diadèmes) : ils se portent et donnent de petits effets (résistance, vitesse, lumière, chance au butin) ; ils valent cher auprès des marchands | taille, port, effets, valeur | ⏳ |
-| SPEC-OBJET-004 | Davantage de nourriture et une cuisine : pain, fromage, soupes, ragoûts, poissons et viandes cuits, fruits, baies, légumes, tartes, gâteaux ; chaque plat rassasie selon sa recette, certains donnent un effet ; la nourriture crue peut rendre malade | recettes, satiété, effets | ⏳ |
-| SPEC-OBJET-005 | Coffres piégés (flèches, explosion, alarme qui appelle des gardes, gaz) et coffres surprises (butin rare tiré au hasard, ou un mimic qui attaque) dans les donjons, les ruines et chez les bandits ; un piège se détecte et se désamorce avec l'outil voulu | pièges, surprises, détection, désamorçage | ⏳ |
+| SPEC-OBJET-001 | Le tissu se tisse (laine — coton et lin laissés à une culture future) ; armures de tissu, cuir, mailles, bronze, fer, or et diamant — casque, plastron, jambières, bottes — réduisent les dégâts selon leur matière, s'usent, se réparent à l'établi, et se voient sur l'avatar | recettes, réduction des dégâts, usure, réparation, apparence | ✅ |
+| SPEC-OBJET-002 | Davantage d'armes : dague, épée longue, hache de guerre, masse, lance, arc long, arbalète lourde, fronde, chacune avec sa portée, sa cadence, ses dégâts et son recul, dans plusieurs matières | caractéristiques, recettes | ✅ |
+| SPEC-OBJET-003 | Gemmes taillées et bijoux (anneaux, amulettes, diadèmes) : ils se portent et donnent de petits effets (résistance, vitesse, lumière, chance au butin) ; ils valent cher auprès des marchands | taille, port, effets, valeur | ✅ |
+| SPEC-OBJET-004 | Davantage de nourriture et une cuisine : fromage, soupes, ragoûts, tartes, gâteaux, baies, en plus du pain et des viandes/poissons déjà cuisinables ; chaque plat rassasie selon sa recette, certains soignent un peu ; la nourriture crue peut rendre malade | recettes, satiété, effets | ✅ |
+| SPEC-OBJET-005 | Coffres piégés (flèches, explosion, alarme qui appelle des gardes, gaz) et coffres surprises (butin rare tiré au hasard, ou un mimic qui attaque) ; un piège se détecte et se désamorce avec le kit voulu — la pose automatique dans les donjons/ruines/camps générés reste à câbler | pièges, surprises, détection, désamorçage | ✅ |
 
 ## L29 — mécanismes et électricité
 

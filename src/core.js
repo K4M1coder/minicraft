@@ -832,6 +832,172 @@
     return out;
   }
 
+  // ═══════════════════════════════════════════════════════════════════════
+  // ─── L25 objets (SPEC-OBJET-001 à 005) ───────────────────────────────────
+  // Plage réservée à cet agent : objets 222-499 (avant décalage FIRST_ITEM),
+  // blocs 600-649, tuiles d'atlas 640-767. Les autres agents (formes ;
+  // matériaux/verre/feu ; mécanismes) travaillent dans d'autres plages.
+  // ═══════════════════════════════════════════════════════════════════════
+
+  // ─── coffres piégés et surprises (SPEC-OBJET-005) ────────────────────────
+  // Se comportent comme un coffre tant qu'on ne l'a pas ouvert : c'est
+  // l'interaction (game.js) qui résout le piège ou la surprise à l'ouverture.
+  B.COFFRE_PIEGE = 600;
+  B.COFFRE_SURPRISE = 601;
+  defBlock(B.COFFRE_PIEGE, { name: 'Coffre suspect', tiles: [718, 719, 719], hardness: 2.5,
+                             tool: 'axe', interactive: 'coffre_piege' });
+  defBlock(B.COFFRE_SURPRISE, { name: 'Coffre doré', tiles: [720, 721, 721], hardness: 2.5,
+                                tool: 'axe', interactive: 'coffre_surprise' });
+
+  var TRAP_TYPES = ['fleches', 'explosion', 'alarme', 'gaz'];
+  // Fonctions pures, injectables par `rand` pour des tests déterministes.
+  function tirerPiege(rand) {
+    var r = (rand || Math.random)();
+    return TRAP_TYPES[Math.min(TRAP_TYPES.length - 1, Math.floor(r * TRAP_TYPES.length))];
+  }
+  function tirerSurprise(rand) { return (rand || Math.random)() < 0.7 ? 'rare' : 'mimic'; }
+  // Un kit de désamorçage réussit presque toujours ; sans lui, on ne tente rien.
+  function tenterDesamorcage(aLeKit, rand) {
+    if (!aLeKit) return false;
+    return (rand || Math.random)() < 0.9;
+  }
+
+  // Les objets ci-dessous sont numérotés dans l'ancien espace (128..) par
+  // lisibilité, comme le reste de `I` ; `DEC` les reporte dans le nouvel
+  // espace (FIRST_ITEM), exactement comme le fait la boucle plus haut pour
+  // les objets déjà déclarés — indispensable puisque cette boucle a déjà
+  // tourné au moment où ce bloc s'exécute.
+  var DEC = FIRST_ITEM - ANCIEN_FIRST_ITEM;
+
+  // ─── matières de base : tissu et cuir (SPEC-OBJET-001) ───────────────────
+  I.TISSU = 222 + DEC; I.CUIR = 223 + DEC;
+  defItem(I.TISSU, { name: 'Tissu', tile: 640 });
+  defItem(I.CUIR, { name: 'Cuir', tile: 641 });
+
+  // ─── armures : sept matières × quatre pièces (SPEC-OBJET-001) ────────────
+  // `defense` : cumulée par armureReduction (player.js), plafonnée à 80 %.
+  // `couleurArmure` : lue par apparence.js pour habiller l'avatar (render.js).
+  var ARMOR_SLOTS = ['CASQUE', 'PLASTRON', 'JAMBIERES', 'BOTTES'];
+  var NOM_PIECE = { CASQUE: 'Casque', PLASTRON: 'Plastron', JAMBIERES: 'Jambières', BOTTES: 'Bottes' };
+  var ARMOR_MATS = [
+    // clé, nom, durabilité, couleur, défense [casque, plastron, jambières, bottes]
+    { cle: 'TISSU',   nom: 'en tissu',   dur: 60,  couleur: 0xd8d0b0, def: [1, 2, 1, 1] },
+    { cle: 'CUIR',    nom: 'en cuir',    dur: 80,  couleur: 0x8a5a2a, def: [1, 3, 2, 1] },
+    { cle: 'MAILLES', nom: 'en mailles', dur: 120, couleur: 0x9aa0a8, def: [1, 4, 3, 1] },
+    { cle: 'BRONZE',  nom: 'en bronze',  dur: 130, couleur: 0xc08a4a, def: [2, 5, 3, 2] },
+    { cle: 'FER',     nom: 'en fer',     dur: 180, couleur: 0xd8d8dc, def: [2, 6, 5, 2] },
+    { cle: 'OR',      nom: 'en or',      dur: 110, couleur: 0xe8c840, def: [2, 5, 3, 1] },
+    { cle: 'DIAMANT', nom: 'en diamant', dur: 450, couleur: 0x60e0e0, def: [3, 8, 6, 3] },
+  ];
+  (function () {
+    var idArmure = 224 + DEC, tileArmure = 642;
+    ARMOR_MATS.forEach(function (m) {
+      ARMOR_SLOTS.forEach(function (slot, i) {
+        var nomCle = m.cle + '_' + slot;
+        I[nomCle] = idArmure++;
+        defItem(I[nomCle], {
+          name: NOM_PIECE[slot] + ' ' + m.nom, tile: tileArmure++,
+          equipSlot: slot.toLowerCase(), defense: m.def[i], durability: m.dur,
+          couleurArmure: m.couleur, maxStack: 1,
+        });
+      });
+    });
+  })();
+
+  // ─── armes de mêlée : cinq familles × quatre matières (SPEC-OBJET-002) ──
+  // `portee`, `cadence`, `recul` : lus par player.js/game.js pour la portée
+  // de visée, le délai entre deux coups et l'intensité du recul infligé.
+  var MELEE_TYPES = [
+    { cle: 'DAGUE',        nom: 'Dague',            tool: 'sword', dmg0: 2, dmgPas: 1, cadence: 0.22, portee: 4,   recul: 0.6 },
+    { cle: 'EPEE_LONGUE',  nom: 'Épée longue',       tool: 'sword', dmg0: 4, dmgPas: 2, cadence: 0.55, portee: 6,   recul: 1.1 },
+    { cle: 'HACHE_GUERRE', nom: 'Hache de guerre',   tool: 'axe',   dmg0: 5, dmgPas: 2, cadence: 0.85, portee: 5,   recul: 1.8 },
+    { cle: 'MASSE',        nom: 'Masse',             tool: null,    dmg0: 6, dmgPas: 2, cadence: 0.95, portee: 4.5, recul: 2.4 },
+    { cle: 'LANCE',        nom: 'Lance',             tool: 'sword', dmg0: 3, dmgPas: 2, cadence: 0.5,  portee: 7,   recul: 1.0 },
+  ];
+  var MELEE_TIER_SUFFIXE = ['', 'BOIS', 'PIERRE', 'FER', 'DIAMANT'];
+  (function () {
+    var idArme = 252 + DEC, tileArme = 670;
+    MELEE_TYPES.forEach(function (t) {
+      for (var tier = 1; tier <= 4; tier++) {
+        var nomCle = t.cle + '_' + MELEE_TIER_SUFFIXE[tier];
+        I[nomCle] = idArme++;
+        var o = {
+          name: t.nom + ' ' + TIER_NAME[tier], tile: tileArme++,
+          damage: t.dmg0 + t.dmgPas * (tier - 1), durability: TIER_DURABILITY[tier],
+          cadence: t.cadence, portee: t.portee, recul: t.recul, maxStack: 1,
+        };
+        if (t.tool) { o.tool = t.tool; o.tier = tier; }
+        defItem(I[nomCle], o);
+      }
+    });
+  })();
+
+  // ─── armes à distance et fronde (SPEC-OBJET-002) ─────────────────────────
+  // `cadenceTir` : délai minimal entre deux tirs (player.js) ; 0 = comme
+  // l'arc et l'arbalète d'origine, qui tirent à chaque clic.
+  I.ARC_LONG = 272 + DEC; I.ARBALETE_LOURDE = 273 + DEC; I.FRONDE = 274 + DEC; I.GALET = 275 + DEC;
+  defItem(I.ARC_LONG, { name: 'Arc long', tile: 690, ranged: 'fleche', maxStack: 1,
+                        durability: 260, damage: 1, vitesseTir: 40, bonusTir: 2, cadenceTir: 0.15 });
+  defItem(I.ARBALETE_LOURDE, { name: 'Arbalète lourde', tile: 691, ranged: 'fleche', maxStack: 1,
+                               durability: 420, damage: 1, vitesseTir: 52, bonusTir: 7, cadenceTir: 1.1 });
+  defItem(I.FRONDE, { name: 'Fronde', tile: 692, ranged: 'galet', maxStack: 1,
+                      durability: 200, damage: 1, vitesseTir: 30, bonusTir: 0, cadenceTir: 0.35 });
+  defItem(I.GALET, { name: 'Galet', tile: 693, ammo: true, ammoType: 'galet', damage: 3 });
+  ITEMS[I.FLECHE].ammoType = 'fleche';
+
+  // ─── gemmes taillées et bijoux (SPEC-OBJET-003) ─────────────────────────
+  I.RUBIS_TAILLE = 276 + DEC; I.SAPHIR_TAILLE = 277 + DEC; I.EMERAUDE_TAILLEE = 278 + DEC; I.DIAMANT_TAILLE = 279 + DEC;
+  defItem(I.RUBIS_TAILLE, { name: 'Rubis taillé', tile: 694 });
+  defItem(I.SAPHIR_TAILLE, { name: 'Saphir taillé', tile: 695 });
+  defItem(I.EMERAUDE_TAILLEE, { name: 'Émeraude taillée', tile: 696 });
+  defItem(I.DIAMANT_TAILLE, { name: 'Diamant taillé', tile: 697 });
+  /* Un bijou se porte dans un unique emplacement (`equipSlot: 'bijou'`) et
+     donne un petit effet selon sa gemme ; la monture (anneau, amulette,
+     diadème) module son intensité. `effet.type` : 'resistance' (réduction
+     de dégâts en plus de l'armure), 'vitesse' (multiplicateur de
+     déplacement), 'chance' (bonus de chance au butin), 'lumiere' (rayon de
+     lumière porté — donnée exposée pour un futur raccord au moteur
+     d'éclairage, non câblée ici). */
+  var GEMME_EFFET = {
+    RUBIS: { type: 'resistance', valeur: 0.06 }, SAPHIR: { type: 'vitesse', valeur: 0.12 },
+    EMERAUDE: { type: 'chance', valeur: 0.12 }, DIAMANT: { type: 'lumiere', valeur: 8 },
+  };
+  var BIJOU_MULT = { ANNEAU: 1, AMULETTE: 1.3, DIADEME: 1.6 };
+  var BIJOU_NOM = { ANNEAU: 'Anneau', AMULETTE: 'Amulette', DIADEME: 'Diadème' };
+  var NOM_GEMME = { RUBIS: 'de rubis', SAPHIR: 'de saphir', EMERAUDE: "d'émeraude", DIAMANT: 'de diamant' };
+  (function () {
+    var idBijou = 280 + DEC, tileBijou = 698;
+    ['ANNEAU', 'AMULETTE', 'DIADEME'].forEach(function (fam) {
+      ['RUBIS', 'SAPHIR', 'EMERAUDE', 'DIAMANT'].forEach(function (gem) {
+        var nomCle = fam + '_' + gem;
+        I[nomCle] = idBijou++;
+        var base = GEMME_EFFET[gem];
+        var valeur = Math.round(base.valeur * BIJOU_MULT[fam] * 1000) / 1000;
+        defItem(I[nomCle], {
+          name: BIJOU_NOM[fam] + ' ' + NOM_GEMME[gem], tile: tileBijou++,
+          equipSlot: 'bijou', maxStack: 1, effet: { type: base.type, valeur: valeur },
+        });
+      });
+    });
+  })();
+
+  // ─── nourriture et cuisine (SPEC-OBJET-004) ──────────────────────────────
+  I.FROMAGE = 292 + DEC; I.SOUPE_LEGUMES = 293 + DEC; I.RAGOUT = 294 + DEC; I.TARTE_POMME = 295 + DEC;
+  I.GATEAU = 296 + DEC; I.BAIES = 297 + DEC; I.KIT_DESAMORCAGE = 298 + DEC;
+  defItem(I.FROMAGE, { name: 'Fromage', tile: 710, food: 4 });
+  defItem(I.SOUPE_LEGUMES, { name: 'Soupe de légumes', tile: 711, food: 6, rend: I.BOWL, maxStack: 1 });
+  defItem(I.RAGOUT, { name: 'Ragoût', tile: 712, food: 8, soin: 2, rend: I.BOWL, maxStack: 1 });
+  defItem(I.TARTE_POMME, { name: 'Tarte aux pommes', tile: 713, food: 6 });
+  defItem(I.GATEAU, { name: 'Gâteau', tile: 714, food: 9, soin: 2 });
+  defItem(I.BAIES, { name: 'Baies', tile: 715, food: 2 });
+  // outil de détection/désamorçage des pièges (SPEC-OBJET-005) : consommé à l'usage
+  defItem(I.KIT_DESAMORCAGE, { name: 'Kit de désamorçage', tile: 716 });
+
+  // la viande et le poisson crus rendent malade une fois sur trois (player.js)
+  [I.RAW_MUTTON, I.RAW_PORK, I.RAW_CHICKEN, I.RAW_FISH].forEach(function (id) { ITEMS[id].cru = true; });
+  // le buisson mort laisse parfois des baies
+  BLOCKS[B.DEAD_BUSH].drops.push({ id: I.BAIES, n: 1, chance: 0.3 });
+
   MC.Core = {
     VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
@@ -848,5 +1014,6 @@
     boiteDe: boiteDe, estPorte: estPorte, estTrappe: estTrappe, bascule: bascule,
     orientDeRegard: orientDeRegard, PORTE_FERMEE_LIST: PORTE_FERMEE_LIST,
     PORTE_OUVERTE_LIST: PORTE_OUVERTE_LIST, EPAIS_PANNEAU: EPAIS_PANNEAU,
+    tirerPiege: tirerPiege, tirerSurprise: tirerSurprise, tenterDesamorcage: tenterDesamorcage,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

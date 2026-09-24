@@ -1442,7 +1442,7 @@
         var hw = sp.w / 2 + 0.12;
         var t = entities.rayBox(o, d, m.pos.x - hw, m.pos.y - 0.12, m.pos.z - hw,
                                 m.pos.x + hw, m.pos.y + sp.h + 0.12, m.pos.z + hw);
-        if (t !== null && t <= pl.REACH && t < bt) { bt = t; best = m; }
+        if (t !== null && t <= pl.reachArme() && t < bt) { bt = t; best = m; }
       });
       return best;
     }
@@ -1454,7 +1454,7 @@
       net.distants.forEach(function (dj) {
         var t = entities.rayBox(o, d, dj.pos.x - 0.42, dj.pos.y - 0.1, dj.pos.z - 0.42,
                                 dj.pos.x + 0.42, dj.pos.y + 1.9, dj.pos.z + 0.42);
-        if (t !== null && t <= pl.REACH && t < bt) { bt = t; best = dj; }
+        if (t !== null && t <= pl.reachArme() && t < bt) { bt = t; best = dj; }
       });
       return best;
     }
@@ -1462,16 +1462,18 @@
       var pl = j.player, st = pl.state;
       if (st.attackCd > 0) return false;
       var h = pl.held(), d = h ? C.def(h.id) : null;
+      // cadence propre à l'arme (SPEC-OBJET-002), 0.45s sinon
+      var cadence = (d && d.cadence !== undefined) ? d.cadence : 0.45;
       var m = mobDistantVise(pl);
       if (m) {
-        st.attackCd = 0.45;
+        st.attackCd = cadence;
         net.attaquer(m.eid, (d && d.damage) || 1, j.index);
         audio.play('frapper');
         return true;
       }
       var dj = joueurDistantVise(pl);
       if (!dj) return false;
-      st.attackCd = 0.45;
+      st.attackCd = cadence;
       net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index);
       audio.play('frapper');
       return true;
@@ -1490,7 +1492,8 @@
     function onAttack() {
       if (input.state !== 'playing') return;
       if (net.enLigne()) { attaqueEnLigne(equipe[0]); return; }
-      var e = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
+      // portée propre à l'arme en main (SPEC-OBJET-002 : lance, dague…)
+      var e = entities.aimedAt(player.eyePos(), player.lookDir(), player.reachArme());
       if (e && e === player.state.monture) e = null;
       if (e) {
         var r = player.attack(e);
@@ -1555,6 +1558,9 @@
           if (chat) chat.systeme(ri.message);
           audio.jouer(MC.Ambiance.sonInteraction('interface'), { categorie: 'interaction' });
           return;
+        } else if (kind === 'coffre_piege' || kind === 'coffre_surprise') {
+          ouvrirCoffreSuspect(kind, target, k);
+          return;
         } else {
           ui.openContainer('craft', player.state.inv);
           audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
@@ -1585,13 +1591,80 @@
       return { categorie: 'interaction', x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 };
     }
 
+    /* Coffres piégés et surprises (SPEC-OBJET-005). Le kit de désamorçage en
+       main tente de neutraliser le piège avant qu'il ne se déclenche ; sans
+       lui (ou en cas d'échec), il se déclenche immédiatement. Un coffre
+       surprise cache soit un butin rare, soit un mimic hostile. */
+    function ouvrirCoffreSuspect(kind, target, k) {
+      var aLeKit = player.heldId() === I.KIT_DESAMORCAGE;
+      if (aLeKit) {
+        var ok = MC.Core.tenterDesamorcage(true, Math.random);
+        if (!player.regles.blocsIllimites) player.state.inv.consumeAt(player.state.selected, 1);
+        if (ok) {
+          world.setBlock(target.x, target.y, target.z, B.CHEST);
+          ui.toast('Piège désamorcé.');
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+          return;
+        }
+        ui.toast('Le désamorçage échoue !', 'warn');
+      }
+      declencherPiege(kind, target, k);
+    }
+
+    function declencherPiege(kind, target, k) {
+      if (kind === 'coffre_surprise') {
+        world.setBlock(target.x, target.y, target.z, 0);
+        var s = MC.Core.tirerSurprise(Math.random);
+        if (s === 'mimic') {
+          entities.spawn('mimic', target.x + 0.5, target.y, target.z + 0.5);
+          ui.toast("Ce n'était pas un vrai coffre !", 'warn');
+        } else {
+          var inv = Inv.create(27);
+          var rare = [[I.DIAMOND, 1, 3], [I.EMERALD, 2, 5], [I.GOLD_INGOT, 2, 4], [I.BIJOU, 0, 1]];
+          rare.forEach(function (r) {
+            var n = r[1] + Math.floor(Math.random() * (r[2] - r[1] + 1));
+            if (n > 0) inv.add(r[0], n);
+          });
+          chests[k] = inv;
+          ui.openContainer('chest', player.state.inv, chests[k], k);
+          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+          input.setState('ui');
+        }
+        return;
+      }
+      var t = MC.Core.tirerPiege(Math.random);
+      if (t === 'fleches') {
+        player.hurt(6);
+        ui.toast('Un mécanisme vous tire dessus !', 'warn');
+      } else if (t === 'explosion') {
+        player.hurt(10);
+        world.setBlock(target.x, target.y, target.z, 0);
+        ui.toast('Ça explose !', 'warn');
+        audio.play('brise');
+        return;
+      } else if (t === 'alarme') {
+        entities.spawn('garde', target.x + 0.5, target.y + 1, target.z + 0.5);
+        entities.spawn('garde', target.x - 0.5, target.y + 1, target.z - 0.5);
+        ui.toast('Une alarme retentit, des gardes accourent !', 'warn');
+      } else if (t === 'gaz') {
+        player.state.malade += 15;
+        ui.toast('Un gaz toxique vous saisit...', 'warn');
+      }
+      // le piège se déclenche une fois : le coffre redevient un coffre normal
+      world.setBlock(target.x, target.y, target.z, B.CHEST);
+      chests[k] = Inv.create(27);
+      ui.openContainer('chest', player.state.inv, chests[k], k);
+      audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
+      input.setState('ui');
+    }
+
     function onKey(code) {
       var act = MC.Options.actionDe(g.options.touches, code);
       if (act === 'inventaire') {
-        ui.openContainer('inv', player.state.inv);
+        ui.openContainer('inv', player.state.inv, player.state.equip);
         input.setState('ui');
       } else if (act === 'livre') {
-        ui.openContainer('inv', player.state.inv);
+        ui.openContainer('inv', player.state.inv, player.state.equip);
         ui.toggleLivre();
         input.setState('ui');
       } else if (act === 'sauvegarder') {

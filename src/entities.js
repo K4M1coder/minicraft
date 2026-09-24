@@ -34,7 +34,7 @@
     slime:    { w: 0.9,  h: 0.9,  hp: 10, speed: 2.6, damage: 2, hostile: true, sauteur: true },
     wolf:     { w: 0.6,  h: 0.85, hp: 12, speed: 3.4, damage: 3, neutral: true },
     pig:      { w: 0.8,  h: 0.9,  hp: 10, speed: 1.4, damage: 0,
-                drops: [{ id: I.RAW_PORK, n: 2 }] },
+                drops: [{ id: I.RAW_PORK, n: 2 }, { id: I.CUIR, n: 1, chance: 0.5 }] },
     chicken:  { w: 0.45, h: 0.7,  hp: 4,  speed: 1.4, damage: 0,
                 drops: [{ id: I.RAW_CHICKEN, n: 1 }, { id: I.FEATHER, n: 1 }] },
     goat:     { w: 0.7,  h: 1.1,  hp: 10, speed: 2.0, damage: 3, neutral: true },
@@ -132,6 +132,11 @@
                          drops: [{ id: I.ROTTEN_FLESH, n: 1 }, { id: I.LAPIS, n: 1, chance: 0.3 }] },
     creature_aveugle:  { w: 0.6, h: 1.0, hp: 14, speed: 2.0, damage: 2, hostile: true, nageur: true, lest: true,
                          drops: [{ id: I.RAW_FISH, n: 1 }, { id: B.ALGUE_LUMINEUSE, n: 1, chance: 0.3 }] },
+
+    // ── coffre surprise (SPEC-OBJET-005) : un coffre qui mordait ──
+    mimic: { w: 0.9, h: 0.9, hp: 26, speed: 2.4, damage: 5, hostile: true,
+             drops: [{ id: I.EMERALD, n: 2, chance: 0.6 }, { id: I.GOLD_INGOT, n: 2, chance: 0.5 },
+                     { id: I.DIAMOND, n: 1, chance: 0.25 }] },
   };
   /* Butin de gardien : un trésor propre à chacun — que rien d'autre ne donne —
      et une part commune. L'épée runique reste le trésor des gardiens de crypte. */
@@ -426,7 +431,10 @@
     /* `auteur` : qui frappe — le joueur (son état, qui porte un inventaire),
        une créature, ou rien (chute, asphyxie). */
     function estJoueur(a) { return !!(a && a.inv); }
-    function damage(e, amount, knockFrom, auteur) {
+    /* `reculMul` (SPEC-OBJET-002) : intensité du recul propre à l'arme du
+       joueur (dague légère, masse écrasante…) ; 1 par défaut, comme avant
+       l'ajout des nouvelles armes de mêlée. */
+    function damage(e, amount, knockFrom, auteur, reculMul) {
       if (e.hurtCd > 0 || e.dead) return false;
       var s = SPECS[e.type];
       e.hp -= amount;
@@ -441,7 +449,7 @@
       if (knockFrom) {
         var dx = e.pos.x - knockFrom.x, dz = e.pos.z - knockFrom.z;
         var d = Math.hypot(dx, dz) || 1;
-        var k = s.boss ? RECUL_BOSS : (s.vehicule ? 0 : 1);
+        var k = (s.boss ? RECUL_BOSS : (s.vehicule ? 0 : 1)) * (reculMul === undefined ? 1 : reculMul);
         e.vel.x += (dx / d) * 5 * k; e.vel.z += (dz / d) * 5 * k; e.vel.y = 4.5 * k;
       }
       if (e.hp <= 0) {
