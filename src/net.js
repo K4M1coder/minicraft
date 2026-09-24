@@ -236,6 +236,12 @@
     function envoyerChat(texte) {
       return envoyer({ t: NP.MSG.CHAT, texte: texte });
     }
+    /* SPEC-MECA-001 : le contenu d'un distributeur, envoyé quand on ferme son
+       interface — le serveur en a besoin pour savoir quoi éjecter sur signal. */
+    function distribuerMaj(x, y, z, slots) {
+      return envoyer({ t: NP.MSG.DISTRIB, x: x, y: y, z: z,
+                        slots: (slots || []).map(function (s) { return s ? { id: s.id, n: s.n } : null; }) });
+    }
     /* Panneau admin en jeu (SPEC-ADMIN-006) : une seule voie d'accès, l'action
        porte le détail. Le serveur revérifie toujours le rôle qu'il a
        lui-même attribué à la connexion — jamais un rôle affiché ici. */
@@ -245,7 +251,7 @@
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin,
+      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,

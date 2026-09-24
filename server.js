@@ -95,6 +95,9 @@ const chat = MC.Chat.creer({ max: 120 });
 // bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
 const politique = MC.Politique.creer(CONF.graine);
 const guildes = MC.Guildes.creerEtat();
+// SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
+// s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
+const distributeurs = new Map();
 let heure = 60;
 let meteoT = null;
 let accEau = 0;
@@ -602,7 +605,11 @@ function traiter(c, m) {
       // une casse lâche son butin côté serveur : c'est lui qui le distribue
       if (m.id === 0 && avant) {
         const cassure = C.breakTime(avant, m.outil);
-        C.dropsOf(avant, cassure.harvests).forEach(d =>
+        // SPEC-OBJET-003 : bijou d'émeraude — chance au butin
+        const bijou = js && js.joueur.state.equip && js.joueur.state.equip.bijou;
+        const bd = bijou && C.def(bijou.id);
+        const bonusChance = (bd && bd.effet && bd.effet.type === 'chance') ? bd.effet.valeur : 0;
+        C.dropsOf(avant, cassure.harvests, null, bonusChance).forEach(d =>
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
@@ -625,6 +632,19 @@ function traiter(c, m) {
       // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
+      // SPEC-MECA-001 : un distributeur cassé lâche ce qu'il contenait.
+      if (m.id === 0 && avant === C.B.DISTRIBUTEUR) {
+        const kd = `${m.x},${m.y},${m.z}`;
+        const slots = distributeurs.get(kd);
+        if (slots) slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
+        distributeurs.delete(kd);
+      }
+      break;
+    }
+
+    case NP.MSG.DISTRIB: {
+      const kd = `${m.x},${m.y},${m.z}`;
+      if (monde.getBlock(m.x, m.y, m.z) === C.B.DISTRIBUTEUR) distributeurs.set(kd, m.slots);
       break;
     }
 
@@ -676,6 +696,22 @@ function joueursEnLigne() {
     nom: cl.nom, ip: cl.ip, connecteLe: null,
     x: +js.joueur.state.pos.x.toFixed(1), y: +js.joueur.state.pos.y.toFixed(1), z: +js.joueur.state.pos.z.toFixed(1),
   }));
+}
+/* SPEC-MECA-007 : rejoue la commande d'un bloc de commande avec le MÊME
+   analyseur/routeur que le chat (MC.Chat.parseCommande + MC.Commandes.executer,
+   SPEC-CMD-001) — seules les actions qui ont un sens sans joueur qui tape
+   sont appliquées ici (l'heure du monde) ; les autres (rejoindre un serveur,
+   ouvrir le panneau admin…) sont silencieusement ignorées. */
+function executerBlocCommandeServeur(x, y, z) {
+  const texte = monde.getCommande(x, y, z);
+  if (!texte) return;
+  const cmd = MC.Chat.parseCommande(texte);
+  if (!cmd) return;
+  const res = MC.Commandes.executer(cmd, {
+    temps: heure, dureeJour: MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200,
+    graine: CONF.graine, position: { x, y, z }, meteo: null, succes: null, enLigne: true, joueurs: [],
+  });
+  (res.actions || []).forEach(a => { if (a.type === 'heure') heure = a.valeur; });
 }
 function traiterAdmin(c, m) {
   const Adm = MC.Admin;
@@ -736,6 +772,12 @@ function executerActionAdmin(role, nomActeur, action, args) {
       if (r.ok) MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_retiree', cible: null, heure });
       return { ok: true, data: r };
     }
+    case 'bloc_commande': {
+      const x = args.x | 0, y = args.y | 0, z = args.z | 0;
+      const texte = monde.setCommande(x, y, z, args.texte);
+      MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'bloc_commande', cible: `${x},${y},${z}`, details: texte, heure });
+      return { ok: true, data: { texte } };
+    }
     case 'sanction': {
       const res = Adm.sanctionner(admin, { nom: args.nom, type: args.type, dureeMs: args.dureeMs, auteur: nomActeur }, heure);
       if (res.ok && (args.type === 'expulser' || args.type === 'bannir')) {
@@ -769,8 +811,12 @@ function blocAutorise(js, m, avant, c) {
     if (def.circuit && def.circuit.adminSeul) return blocCommandeAutorise(c);
     return true;
   }
-  // on ne pose que dans une case libre (air, eau, plante)
-  if (!C.isReplaceable(avant)) return false;
+  // on ne pose que dans une case libre (air, eau, plante) — sauf la fusion de
+  // deux dalles du même matériau en bloc plein (SPEC-CONSTR-002), qui écrit
+  // par-dessus la dalle visée elle-même, jamais une case vide.
+  const defAvant = C.BLOCKS[avant];
+  const fusionDalle = !!(defAvant && defAvant.forme === 'dalle' && defAvant.mat === m.id);
+  if (!fusionDalle && !C.isReplaceable(avant)) return false;
   const posee = C.BLOCKS[m.id];
   if (posee && posee.circuit && posee.circuit.adminSeul) return blocCommandeAutorise(c);
   return true;
@@ -889,7 +935,33 @@ setInterval(() => {
   accCircuits += dt;
   if (accCircuits >= 0.2) {
     accCircuits = 0;
-    monde.tickCircuits({ temps: heure }).forEach(ch => diffuser({
+    monde.tickCircuits({
+      temps: heure,
+      // SPEC-MECA-001 : éjecte le premier objet du distributeur — munition
+      // (ammo) en projectile, sinon un objet au sol ; les entités (item ou
+      // arrow) rejoignent tout seules la diffusion d'état périodique (ETAT),
+      // pas besoin de message dédié.
+      onDistribuer: (x, y, z) => {
+        const kd = `${x},${y},${z}`;
+        const slots = distributeurs.get(kd);
+        if (!slots) return;
+        const i = MC.Circuits.distributeurChoix(slots);
+        if (i < 0) return;
+        const st = slots[i];
+        const idef = C.ITEMS[st.id];
+        st.n -= 1;
+        if (st.n <= 0) slots[i] = null;
+        if (idef && idef.ammo) {
+          entites.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
+                         14, idef.damage || 5, null, idef.ammoType || 'fleche');
+        } else {
+          entites.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
+        }
+      },
+      // SPEC-MECA-007 : rejoue la commande stockée avec le même routage que
+      // /faction plus haut — messages système, pas de diffusion large.
+      onCommande: (x, y, z) => executerBlocCommandeServeur(x, y, z),
+    }).forEach(ch => diffuser({
       t: NP.MSG.BLOC, x: ch.x, y: ch.y, z: ch.z,
       id: ch.setBlock !== undefined ? ch.setBlock : monde.getBlock(ch.x, ch.y, ch.z),
       etat: ch.setEtat !== undefined ? ch.setEtat : (monde.getEtat(ch.x, ch.y, ch.z) || 0),
@@ -940,6 +1012,14 @@ setInterval(() => {
         entites.list.forEach(en => {
           if (en.kind !== 'item' && en.pos && monde.meteo.foudroie(lieu, en.pos, abriServeur)) entites.damage(en, 8, null, null);
         });
+        // SPEC-CONSTR-007 : la foudre allume ce qu'elle touche, si c'est inflammable.
+        if (MC.Feu) {
+          const ySol = monde.estCharge(lieu.x, lieu.z) ? monde.groundAt(lieu.x, lieu.z) : monde.heightAt(lieu.x, lieu.z);
+          MC.Feu.allumerParFoudre(monde.getBlock, lieu.x, ySol, lieu.z).forEach(a => {
+            monde.setBlock(a[0], a[1], a[2], a[3]);
+            diffuser({ t: NP.MSG.BLOC, x: a[0], y: a[1], z: a[2], id: a[3], etat: 0 });
+          });
+        }
       });
     });
   }

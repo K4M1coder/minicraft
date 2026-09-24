@@ -65,6 +65,18 @@
 
     function setAt(i, stack) { slots[i] = stack || null; }
 
+    /* Ajoute une pile porteuse de `data` (SPEC-MECA-003) : chaque pile ayant
+       sa propre donnée, on ne la fusionne jamais avec une pile existante
+       (même id) — juste une case vide. Renvoie le reliquat, comme `add`. */
+    function addStack(id, n, data) {
+      if (data === undefined) return add(id, n);
+      if (!id || n <= 0) return 0;
+      var i = firstEmpty();
+      if (i < 0) return n;
+      slots[i] = { id: id, n: n, data: data };
+      return 0;
+    }
+
     /* Use un outil d'un point. Renvoie 'broken' si l'outil casse, 'used' s'il
        s'use, null s'il n'est pas usable. La pile porte son propre compteur
        `dmg` : chaque outil etant une pile de 1, il n'y a pas d'ambiguite. */
@@ -83,14 +95,14 @@
       return -1;
     }
     // le 3e champ (usure) n'est ecrit que s'il existe : les anciennes
-    // sauvegardes a deux champs restent lisibles. Le 4e champ (`data`,
-    // SPEC-INTERIEUR-003) porte des données arbitraires par pile — le
-    // contenu d'un livre écrit, par exemple — et suit le même principe
-    // additif : absent, il ne change rien à la lecture d'une pile ancienne.
+    // sauvegardes a deux champs restent lisibles. Le 4e champ `data` est un
+    // objet générique optionnel porté par la pile (ex. SPEC-MECA-003 : le
+    // niveau d'une batterie ramassée ; aussi utilisé pour le contenu d'un
+    // livre) — n'importe quel usage futur peut s'y ranger sans nouveau champ.
     function serialize() {
       return slots.map(function (s) {
         if (!s) return 0;
-        if (s.data) return [s.id, s.n, s.dmg || 0, s.data];
+        if (s.data !== undefined) return [s.id, s.n, s.dmg || 0, s.data];
         return s.dmg ? [s.id, s.n, s.dmg] : [s.id, s.n];
       });
     }
@@ -100,14 +112,14 @@
         if (d && d[0]) {
           slots[i] = { id: d[0], n: d[1] };
           if (d[2]) slots[i].dmg = d[2];
-          if (d[3]) slots[i].data = d[3];
+          if (d[3] !== undefined) slots[i].data = d[3];
         } else slots[i] = null;
       }
     }
 
     return {
       slots: slots, size: slots.length, stackAt: stackAt, add: add, count: count,
-      remove: remove, consumeAt: consumeAt, setAt: setAt, isEmpty: isEmpty,
+      remove: remove, consumeAt: consumeAt, setAt: setAt, addStack: addStack, isEmpty: isEmpty,
       wearTool: wearTool,
       firstEmpty: firstEmpty, serialize: serialize, load: load,
     };

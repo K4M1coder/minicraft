@@ -133,6 +133,21 @@
       A.deep(F.allumerParLave(lire, 0, 0, 0, toujours), [[0, 0, 0, B.FEU, 0]], 'la planche prend feu, tirage favorable');
       A.deep(F.allumerParLave(lire, 0, 0, 0, rien), [], 'tirage défavorable : rien ne se passe encore');
     });
+    it('SPEC-CONSTR-007 : la foudre allume ce qu\'elle touche, si c\'est inflammable', function () {
+      // le bloc frappé au sol est inflammable : il prend feu directement
+      var lireSol = function (x, y, z) { return (x === 0 && y === 10 && z === 0) ? B.PLANKS : 0; };
+      A.deep(F.allumerParFoudre(lireSol, 0, 10, 0), [[0, 10, 0, B.FEU, 0]], 'le sol frappé prend feu');
+      // le sol n'est pas inflammable (pierre), mais ce qui est juste au-dessus l'est (une charpente)
+      var lireDessus = function (x, y, z) {
+        if (x === 0 && y === 10 && z === 0) return B.STONE;
+        if (x === 0 && y === 11 && z === 0) return B.PLANKS;
+        return 0;
+      };
+      A.deep(F.allumerParFoudre(lireDessus, 0, 10, 0), [[0, 11, 0, B.FEU, 0]], 'sinon le bloc juste au-dessus');
+      // rien d'inflammable nulle part : pas de feu
+      var lireRien = function () { return B.STONE; };
+      A.deep(F.allumerParFoudre(lireRien, 0, 10, 0), [], 'rien à allumer : rien ne se passe');
+    });
     it('SPEC-CONSTR-007 : un briquet peut allumer un feu contre un matériau inflammable ou un appui', function () {
       var lireAvecPlanche = function (x, y, z) { return (x === 1 && y === 0 && z === 0) ? B.PLANKS : 0; };
       A.ok(F.peutAllumer(lireAvecPlanche, 0, 0, 0), 'une case vide contre une planche peut s allumer');

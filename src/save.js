@@ -94,6 +94,15 @@
       // l'on a dormi — absente tant qu'on n'a jamais dormi (comportement
       // d'avant cette spec : la réapparition suit alors le point d'arrivée).
       spawnPoint: state.spawnPoint || null,
+      // SPEC-MECA-001 : distributeurs — même format que les coffres.
+      distributeurs: state.distributeurs ? Object.keys(state.distributeurs).map(function (k) {
+        return [k, state.distributeurs[k].serialize()];
+      }) : [],
+      // SPEC-MECA-007 : commande (texte) de chaque bloc de commande.
+      commandes: state.world.commandesBloc ? Array.from(state.world.commandesBloc.entries()).map(function (e) {
+        var p = e[0].split(',');
+        return [+p[0], +p[1], +p[2], e[1]];
+      }) : [],
       furnaces: state.furnaces ? Object.keys(state.furnaces).map(function (k) {
         var f = state.furnaces[k];
         return [k, f.input ? [f.input.id, f.input.n] : 0,
@@ -250,6 +259,23 @@
     // fois ; sinon on laisse game.js retomber sur son comportement d'avant
     // (réapparition au point d'arrivée du joueur).
     state.spawnPoint = data.spawnPoint || state.spawnPoint || null;
+    // SPEC-MECA-001 : contenu des distributeurs, même principe que les coffres
+    // mais une petite grille de 9 cases.
+    if (state.distributeurs) {
+      for (var dk in state.distributeurs) delete state.distributeurs[dk];
+      (data.distributeurs || []).forEach(function (d) {
+        var inv = MC.Inventory.create(9);
+        inv.load(d[1]);
+        state.distributeurs[d[0]] = inv;
+      });
+    }
+    // SPEC-MECA-007 : la commande (texte) de chaque bloc de commande.
+    if (w.commandesBloc) {
+      w.commandesBloc.clear();
+      (data.commandes || []).forEach(function (c) {
+        if (c[3]) w.commandesBloc.set(c[0] + ',' + c[1] + ',' + c[2], String(c[3]).slice(0, 200));
+      });
+    }
 
     if (state.furnaces && data.furnaces) {
       for (var k in state.furnaces) delete state.furnaces[k];

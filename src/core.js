@@ -537,7 +537,8 @@
   defBlock(B.TETE_PISTON, { name: 'Tête de piston', tiles: [802, 802, 802], hardness: 1.2, tool: 'pickaxe',
                             circuit: { type: 'tete-piston' } });
   defBlock(B.BLOC_COMMANDE, { name: 'Bloc de commande', tiles: [803, 803, 803],
-                              hardness: -1, circuit: { type: 'commande', adminSeul: true } });
+                              hardness: -1, circuit: { type: 'commande', adminSeul: true },
+                              interactive: 'bloc_commande' });
 
   // blé : 4 stades, non solides, cassables instantanément
   var WHEAT_STAGES = [B.WHEAT0, B.WHEAT1, B.WHEAT2, B.WHEAT3];
@@ -981,16 +982,20 @@
 
   // Liste d'objets réellement lâchés. `rand` est injecté pour rendre les tests
   // déterministes (on passe une fonction constante plutôt que Math.random).
-  function dropsOf(blockId, harvests, rand) {
+  // `bonusChance` (SPEC-OBJET-003) : un bijou d'émeraude porte chance — il
+  // resserre le tirage aléatoire vers 0 plutôt que de gonfler `d.chance`
+  // directement, pour qu'un drop déjà garanti (chance 1) reste inchangé.
+  function dropsOf(blockId, harvests, rand, bonusChance) {
     if (!harvests) return [];
     var b = BLOCKS[blockId];
     if (!b) return [];
     var list = b.drops || [{ id: blockId, n: 1 }];
     var r = rand || Math.random;
+    var mul = 1 - Math.max(0, Math.min(0.9, bonusChance || 0));
     var out = [];
     for (var i = 0; i < list.length; i++) {
       var d = list[i];
-      if (d.chance !== undefined && r() > d.chance) continue;
+      if (d.chance !== undefined && r() * mul > d.chance) continue;
       out.push({ id: d.id, n: d.n });
     }
     return out;

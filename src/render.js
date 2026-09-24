@@ -1966,6 +1966,37 @@
       return Math.min(proches.length, torchPool.length);
     }
 
+    /* ── Lumière portée (SPEC-OBJET-003) ──────────────────────────────────────
+       Un bijou de diamant (effet 'lumiere') donne une petite source qui suit
+       le joueur qui le porte. Même choix que les torches ci-dessus : un pool
+       borné de lumières ponctuelles réaffectées chaque image, plutôt qu'une
+       source posée sur le monde (qui exigerait de remailler les chunks à
+       chaque pas — bien plus coûteux pour un effet qui, lui, bouge en
+       permanence). */
+    var MAX_LUM_PORTEE = 4;
+    var lumPorteePool = [];
+    for (var lp = 0; lp < MAX_LUM_PORTEE; lp++) {
+      var pl3 = new THREE.PointLight(0xcfe9ff, 0, 20, 1.3);
+      pl3.visible = false;
+      scene.add(pl3);
+      lumPorteePool.push(pl3);
+    }
+    // `porteurs` : [{x,y,z,rayon}], déjà filtrée par l'appelant (un par joueur
+    // local portant un bijou à effet 'lumiere').
+    function updateLumieresPortees(porteurs) {
+      porteurs = porteurs || [];
+      for (var i = 0; i < lumPorteePool.length; i++) {
+        var L = lumPorteePool[i];
+        if (i < porteurs.length) {
+          var p = porteurs[i];
+          L.position.set(p.x, p.y + 1.2, p.z);
+          L.distance = Math.max(6, (p.rayon || 8) * 2);
+          L.intensity = 0.55;
+          L.visible = true;
+        } else { L.visible = false; L.intensity = 0; }
+      }
+    }
+
     /* Une surbrillance par joueur : en écran partagé chacun vise un bloc
        différent, une seule boîte sauterait de l'un à l'autre. */
     var surbrillances = [highlight];
@@ -2107,6 +2138,7 @@
       syncChunk: syncChunk, disposeChunk: disposeChunk, syncEntities: syncEntities,
       updateAmbience: updateAmbience, setHighlight: setHighlight, setCamera: setCamera,
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
+      updateLumieresPortees: updateLumieresPortees,
       libererToutesEntites: libererToutesEntites, syncDistants: syncDistants,
       maillagesDistants: maillagesDistants,
       get materiauxLiberes() { return liberees; },

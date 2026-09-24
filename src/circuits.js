@@ -380,6 +380,23 @@
           laveProche = VOISINS6.some(function (v) { return api.getBlock(b.x + v[0], b.y + v[1], b.z + v[2]) === B.LAVA; });
         }
         nouvelEtat = puissanceThermique(laveProche, ctx.combustible || 0);
+      } else if (t === 'distributeur') {
+        // SPEC-MECA-001 : sur front montant, éjecte un objet — quoi et
+        // comment (objet au sol ou projectile) dépend du CONTENU du
+        // distributeur, que ce module ignore délibérément (pure, sans accès
+        // à l'inventaire ni au monde) : `ctx.onDistribuer` est un simple
+        // rappel que l'appelant (game.js hors ligne, server.js en ligne)
+        // branche sur son propre stockage de conteneur.
+        var sigDist = bruts.some(Boolean), precDist = !!(b.etat & 1);
+        if (sigDist && !precDist && ctx.onDistribuer) ctx.onDistribuer(b.x, b.y, b.z);
+        nouvelEtat = sigDist ? 1 : 0;
+      } else if (t === 'commande') {
+        // SPEC-MECA-007 : sur front montant, exécute la commande stockée —
+        // même principe : ce module ne connaît ni le texte ni le routage
+        // des actions, seulement le moment où déclencher `ctx.onCommande`.
+        var sigCmd = bruts.some(Boolean), precCmd = !!(b.etat & 1);
+        if (commandeDeclenche(sigCmd, precCmd) && ctx.onCommande) ctx.onCommande(b.x, b.y, b.z);
+        nouvelEtat = sigCmd ? 1 : 0;
       } else if (t === 'batterie') {
         var apport = Math.max.apply(null, entrees.concat([0]));
         var res = tickBatterie(b.etat, 15, apport, ctx.demandeBatterie || 0, d.circuit.taux || 4);
