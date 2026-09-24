@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+## [0.4.0] - 2026-09-24
 ### Sécurité
 
 - Fiabilité du transport réseau (L44, sous-lot A1 — SPEC-SECU-001 à 008,
@@ -384,6 +385,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.4.0]: #
 [0.3.0]: #
 [0.2.0]: #
 [0.1.0]: #
