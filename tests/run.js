@@ -143,11 +143,43 @@ ctx.T.fichierCourant = null;
    nom de section — sinon le catalogue affiche des groupes absurdes comme
    « et le rapport d'aspect de la caméra doit suivre, sinon l'image est
    étirée », qui est la fin d'un commentaire explicatif, pas un titre. */
+/* Un appel `e2e(nom, { ... }, async function (g) {` porte sa fiche en 2e
+   argument : un littéral d'OBJET JSON (clés et chaînes entre guillemets
+   doubles, sans fonction ni expression) — c'est ce que produit
+   JSON.stringify, la forme dans laquelle ces fiches sont écrites à la main.
+   On le retrouve par comptage d'accolades (en ignorant celles à l'intérieur
+   des chaînes) puis on le fait analyser par JSON.parse : jamais par eval,
+   toujours en texte, comme le reste de cette fonction. */
+function ficheLitteraleA(texte, depart) {
+  let i = depart;
+  while (i < texte.length && /\s/.test(texte[i])) i++;
+  if (texte[i] !== '{') return null;
+  let depth = 0, j = i, inStr = false, strCh = null, esc = false;
+  for (; j < texte.length; j++) {
+    const c = texte[j];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (c === '\\') esc = true;
+      else if (c === strCh) inStr = false;
+      continue;
+    }
+    if (c === '"' || c === "'") { inStr = true; strCh = c; continue; }
+    if (c === '{') depth++;
+    else if (c === '}') { depth--; if (depth === 0) { j++; break; } }
+  }
+  try { return JSON.parse(texte.slice(i, j)); } catch (e) { return null; }
+}
+
 function e2eListeDepuisTexte() {
   const fichier = path.join(root, 'tests', 'e2e.js');
   if (!fs.existsSync(fichier)) return [];
   const texte = fs.readFileSync(fichier, 'utf8');
   const lignes = texte.split('\n');
+  // décalage (en caractères, dans `texte`) du début de chaque ligne — calculé
+  // une fois, plutôt que de le tenir à jour au fil d'une boucle qui saute des
+  // lignes par endroits (les bandeaux de section).
+  const debutsLignes = new Array(lignes.length);
+  { let acc = 0; for (let k = 0; k < lignes.length; k++) { debutsLignes[k] = acc; acc += lignes[k].length + 1; } }
   const out = [];
   let dernierGroupe = null;
   const reBordure = /^\s*\/\/\s*[─═]{5,}\s*$/;
@@ -163,7 +195,14 @@ function e2eListeDepuisTexte() {
       }
     }
     const ma = reAppel.exec(lignes[i]);
-    if (ma) out.push({ nom: ma[2].replace(/\\(.)/g, '$1'), groupe: dernierGroupe || 'e2e', fichier: 'tests/e2e.js' });
+    if (ma) {
+      let p = debutsLignes[i] + ma[0].length;
+      while (p < texte.length && /[\s,]/.test(texte[p])) p++;
+      const fiche = ficheLitteraleA(texte, p);
+      const entree = { nom: ma[2].replace(/\\(.)/g, '$1'), groupe: dernierGroupe || 'e2e', fichier: 'tests/e2e.js' };
+      if (fiche) entree.fiche = fiche;
+      out.push(entree);
+    }
   }
   return out;
 }

@@ -285,12 +285,11 @@ porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BAN
 
 // ── G14 : fiches à 100 % (SPEC-BANC-002) ────────────────────────────────────
 /* Numérotée G14 (G13 était prise entre-temps, voir G13 ci-dessus). Portée :
-   les tests EXÉCUTABLES SOUS NODE (unitaire, fonctionnel, spec, intégration,
-   charge) — les tests end-to-end (tests/e2e.js) sont du ressort du banc
-   navigateur, qui n'est pas construit par ce lot (voir tests/catalogue.js,
-   en-tête, et le rapport de ce lot) ; ils rejoindront cette porte quand
-   e2e() portera lui aussi une fiche. */
-porte('G14', '100 % des tests Node ont une fiche déclarée ou déduite d\'une spec citée (SPEC-BANC-002)', () => {
+   tout le catalogue, y compris les tests end-to-end (tests/e2e.js) — chacun
+   porte désormais sa fiche en 2e argument de e2e(nom, fiche, fn), lue en
+   texte par tests/run.js (e2eListeDepuisTexte / ficheLitteraleA), sans
+   jamais évaluer e2e.js sous Node. */
+porte('G14', '100 % des tests ont une fiche déclarée ou déduite d\'une spec citée (SPEC-BANC-002)', () => {
   let out;
   try {
     out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8' });
@@ -301,13 +300,13 @@ porte('G14', '100 % des tests Node ont une fiche déclarée ou déduite d\'une s
   lignes.forEach((l, i) => {
     const mt = /^\[(\w+)\]/.exec(l);
     if (mt) typeCourant = mt[1];
-    if (l.trim() === '(aucune fiche)' && typeCourant && typeCourant !== 'e2e') {
+    if (l.trim() === '(aucune fiche)' && typeCourant) {
       sansFiche.push((lignes[i - 1] || '').trim());
     }
   });
   return sansFiche.length
-    ? { ok: false, detail: sansFiche.length + ' test(s) Node sans fiche ni spec citée : ' + sansFiche.slice(0, 5).join(' | ') }
-    : { ok: true, detail: '100 % des tests Node ont une fiche' };
+    ? { ok: false, detail: sansFiche.length + ' test(s) sans fiche ni spec citée : ' + sansFiche.slice(0, 5).join(' | ') }
+    : { ok: true, detail: '100 % des tests ont une fiche' };
 });
 
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────

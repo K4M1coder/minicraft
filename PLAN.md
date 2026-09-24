@@ -49,7 +49,7 @@ Exécutées par `node tests/gates.js`. Toute porte rouge bloque le commit.
 | **G11** | Les crochets git sont branchés et la règle du cran est juste | oui |
 | **G12** | Budget de performance de la génération (lot perf, `tests/bench-generation.js`) | oui |
 | **G13** | Les crochets git citent un préréglage du catalogue de tests, existant et non vide (SPEC-BANC-006) | oui |
-| **G14** | 100 % des tests Node ont une fiche déclarée ou déduite d'une spec citée (SPEC-BANC-002) | oui |
+| **G14** | 100 % des tests, y compris les end-to-end, ont une fiche déclarée ou déduite d'une spec citée (SPEC-BANC-002) | oui |
 
 ### Commits et versions
 

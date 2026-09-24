@@ -28,6 +28,13 @@ respecter (voir PLAN.md, « Commits et versions »).
   prédiction (`creerPrediction`) et enregistrement joueur persistable
   (`versEnregistrement`/`depuisEnregistrement`) ; même code pour le solo, la
   prédiction client et le serveur (raccordement réseau et serveur à venir).
+- Route `GET /tests/version` (`server.js`) : renvoie `{ commit, versionJeu }`,
+  utilisée par le banc pour renseigner `campagne.environnement.commit` dans
+  les cahiers de test envoyés (`tests/banc-ui.js`, `envoyerCahier()`).
+- Les 55 tests end-to-end restants (`tests/e2e.js`) portent désormais leur
+  propre fiche (`teste`/`pourquoi`/`attendu`) en 2e argument de `e2e()`,
+  sans changement de nom ni de logique — 100 % du catalogue e2e (136 tests)
+  est maintenant couvert (SPEC-BANC-002).
 
 ### Modifié
 
@@ -37,9 +44,30 @@ respecter (voir PLAN.md, « Commits et versions »).
   unitaires/e2e (`G.T.run`, `runCampagneE2E`) ; catalogue navigateur aligné
   sur `node tests/run.js` (`spec-perf.js`/`limites-sondes.js`/`spec-limites.js`
   chargés, auparavant absents de la page par oubli).
+- `tests/run.js` (`e2eListeDepuisTexte`) lit désormais aussi la fiche
+  déclarée en 2e argument des appels `e2e(nom, fiche, fn)`, par analyse
+  textuelle en comptant les accolades puis `JSON.parse` (jamais `eval`,
+  toujours sans exécuter `tests/e2e.js` sous Node).
+- Porte **G14** (`tests/gates.js`) : couvre désormais tout le catalogue, y
+  compris les tests end-to-end, la fiche de chacun étant lisible depuis
+  `tests/e2e.js` (voir ci-dessus) ; l'exclusion temporaire des tests `e2e`
+  est retirée (PLAN.md mis à jour).
+- `tests/harness.js` : un test Node qui retourne une `Promise` échoue
+  désormais explicitement (garde anti-faux-positif) plutôt que d'être compté
+  vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
 
+- Catalogue de tests (`tests/catalogue.js`, `ficheDe()`) : `fiche.delai` ne
+  survivait pas au passage du test brut à l'entrée du catalogue — un test
+  e2e voulant un délai plus court que le défaut tournait donc à son délai
+  PAR DÉFAUT (60 s) plutôt que celui déclaré dans sa fiche (SPEC-BANC-010).
+- `tests/run.js` (`e2eListeDepuisTexte`) : un simple commentaire `//`
+  explicatif au-dessus d'un `e2e(...)` (une phrase se terminant par un point
+  ou une virgule) pouvait être pris à tort pour un titre de section, faussant
+  le groupe affiché par `--lister` pour les tests qui suivaient.
+- Bandeau manquant au-dessus d'un groupe de tests dans `tests/e2e.js`,
+  faisant hériter ces tests du groupe précédent dans `--lister`.
 - Captures des cahiers de test (SPEC-BANC-011/012) : les vignettes affichées
   dans la page utilisent l'URL de données complète (comme avant), et seul
   l'envoi au serveur en retire le préfixe pour transmettre du base64 pur ;

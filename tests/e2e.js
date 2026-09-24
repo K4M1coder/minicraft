@@ -184,7 +184,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Démarrage et états
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('le jeu démarre sur le menu principal, monde déjà généré', async function (g) {
+  e2e('le jeu démarre sur le menu principal, monde déjà généré', {
+        "teste": "au premier chargement, l'état est menu et le monde est déjà généré en arrière-plan",
+        "pourquoi": "un joueur qui arrive doit voir le menu tout de suite, sans attendre la génération",
+        "attendu": "état menu, overlay visible, des chunks déjà présents, boutons Nouvelle partie et Multijoueur"
+  }, async function (g) {
     g.input.setState('menu');
     await frames(2);
     A.equal(g.input.state, 'menu', 'état menu');
@@ -198,7 +202,11 @@
      le centre du canvas, on vise à côté de ce qu'on croit viser. On compare au
      conteneur (et non à la fenêtre) pour que le test vaille aussi dans la page
      de tests, où la partie est affichée dans un cadre réduit. */
-  e2e('le viseur coïncide avec le centre du canvas', async function (g) {
+  e2e('le viseur coïncide avec le centre du canvas', {
+        "teste": "l'alignement visuel du viseur (crosshair) avec le centre du canvas de rendu",
+        "pourquoi": "un viseur décalé ferait viser un bloc différent de celui affiché à l'écran",
+        "attendu": "le canvas remplit son conteneur, le viseur est centré horizontalement et verticalement, l'aspect caméra suit"
+  }, async function (g) {
     var cv = g.render.renderer.domElement;
     var host = cv.parentElement;
     var r = cv.getBoundingClientRect();
@@ -218,7 +226,11 @@
     A.close(g.render.camera.aspect, r.width / r.height, 0.02, 'aspect de la caméra cohérent');
   });
 
-  e2e('passer en partie masque le menu', async function (g) {
+  e2e('passer en partie masque le menu', {
+        "teste": "le passage à l'état playing masque l'overlay du menu",
+        "pourquoi": "le menu ne doit pas rester visible par-dessus le jeu une fois la partie lancée",
+        "attendu": "état playing et overlay display: none"
+  }, async function (g) {
     g.input.setState('playing');
     fakeLock(g, true);
     await frames(2);
@@ -229,7 +241,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Capture souris et pause  (les défauts signalés)
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('perdre la capture souris met le jeu en PAUSE', async function (g) {
+  e2e('perdre la capture souris met le jeu en PAUSE', {
+        "teste": "perdre le pointer lock (Échap, clic hors fenêtre) fait passer le jeu en pause plutôt qu'en course libre",
+        "pourquoi": "sans ce garde-fou, un joueur qui perd la capture continuerait à bouger sans contrôle",
+        "attendu": "état paused et menu pause affiché"
+  }, async function (g) {
     await reset(g);
     A.equal(g.input.state, 'playing', 'en partie');
     fakeLock(g, false);                     // simule Échap / clic hors fenêtre
@@ -238,7 +254,11 @@
     A.equal(getComputedStyle(document.querySelector('.overlay')).display, 'flex', 'menu pause affiché');
   });
 
-  e2e('en pause, le monde est figé', async function (g) {
+  e2e('en pause, le monde est figé', {
+        "teste": "qu'en pause, ni la physique du joueur ni l'horloge du monde n'avancent",
+        "pourquoi": "une pause qui laisse tomber le joueur ou avancer le temps trahit sa promesse d'arrêt",
+        "attendu": "position Y et g.time inchangés après 30 frames en pause"
+  }, async function (g) {
     await reset(g);
     var s = g.player.state;
     s.pos.y += 8;                            // en l'air : il devrait tomber
@@ -250,14 +270,22 @@
     A.close(g.time, t0, 1e-6, 'le temps du monde est figé');
   });
 
-  e2e('perdre le focus de la fenêtre met en pause', async function (g) {
+  e2e('perdre le focus de la fenêtre met en pause', {
+        "teste": "l'événement blur de la fenêtre déclenche la pause",
+        "pourquoi": "changer d'onglet ou d'application ne doit pas laisser le jeu tourner sans contrôle",
+        "attendu": "état paused après un événement blur"
+  }, async function (g) {
     await reset(g);
     window.dispatchEvent(new Event('blur'));
     await frames(2);
     A.equal(g.input.state, 'paused', 'pause sur perte de focus');
   });
 
-  e2e('les touches sont relâchées quand on perd le contrôle', async function (g) {
+  e2e('les touches sont relâchées quand on perd le contrôle', {
+        "teste": "que les actions clavier (ex. avancer) retombent à faux quand la capture est perdue",
+        "pourquoi": "sans ça, une touche maintenue au moment de la perte de contrôle resterait bloquée en 'appuyée', créant une dérive fantôme au retour",
+        "attendu": "actions().forward vrai touche enfoncée, puis faux après fakeLock(false)"
+  }, async function (g) {
     await reset(g);
     key('KeyW');
     A.ok(g.input.actions().forward, 'touche enfoncée');
@@ -266,7 +294,11 @@
     A.notOk(g.input.actions().forward, 'touche relâchée : pas de dérive fantôme');
   });
 
-  e2e('reprendre depuis la pause relance la partie', async function (g) {
+  e2e('reprendre depuis la pause relance la partie', {
+        "teste": "le bouton Reprendre du menu pause ramène en état playing",
+        "pourquoi": "c'est le chemin normal de retour au jeu après une pause",
+        "attendu": "après clic sur #btn-resume et reverrouillage souris, état playing"
+  }, async function (g) {
     await reset(g);
     fakeLock(g, false);
     await frames(2);
@@ -277,7 +309,11 @@
     A.equal(g.input.state, 'playing', 'partie reprise');
   });
 
-  e2e('Échap bascule partie ↔ pause', async function (g) {
+  e2e('Échap bascule partie ↔ pause', {
+        "teste": "la touche Échap fait l'aller-retour entre playing et paused",
+        "pourquoi": "c'est le raccourci clavier attendu par convention pour mettre en pause",
+        "attendu": "premier Échap => paused, second Échap (avec verrouillage souris) => playing"
+  }, async function (g) {
     await reset(g);
     key('Escape');
     await frames(2);
@@ -288,7 +324,11 @@
     A.equal(g.input.state, 'playing', 'Échap reprend');
   });
 
-  e2e('la souris ne fait pivoter la vue qu\'en partie', async function (g) {
+  e2e('la souris ne fait pivoter la vue qu\'en partie', {
+        "teste": "que le mouvement souris ne change le yaw qu'en état playing, pas en pause",
+        "pourquoi": "en pause, la vue ne doit plus répondre à la souris (menu affiché par-dessus)",
+        "attendu": "yaw change en playing, yaw inchangé après un look() en pause"
+  }, async function (g) {
     await reset(g);
     var y0 = g.player.state.yaw;
     look(100, 0);
@@ -301,7 +341,11 @@
     A.equal(g.player.state.yaw, y1, 'en pause : la vue ne bouge plus');
   });
 
-  e2e('un delta de souris aberrant est ignoré', async function (g) {
+  e2e('un delta de souris aberrant est ignoré', {
+        "teste": "qu'un très grand delta de souris (artefact d'acquisition du pointer lock) est filtré",
+        "pourquoi": "sans filtre, le premier mouvement après capture ferait tourner la caméra violemment",
+        "attendu": "yaw inchangé après un delta de 5000, mais un mouvement normal (50) fait tourner la vue"
+  }, async function (g) {
     await reset(g);
     var y0 = g.player.state.yaw;
     look(5000, 0);                           // artefact d'acquisition du verrou
@@ -310,7 +354,11 @@
     A.ne(g.player.state.yaw, y0, 'un mouvement normal passe');
   });
 
-  e2e('la souris tourne dans le bon sens', async function (g) {
+  e2e('la souris tourne dans le bon sens', {
+        "teste": "le sens de rotation de la caméra en fonction du mouvement de la souris",
+        "pourquoi": "une inversion d'axe rendrait le jeu injouable",
+        "attendu": "souris à droite tourne à droite (produit vectoriel positif), souris en bas fait regarder vers le bas (pitch négatif)"
+  }, async function (g) {
     await reset(g);
     var s = g.player.state;
     s.yaw = 0; s.pitch = 0;
@@ -324,7 +372,11 @@
     A.lt(s.pitch, 0, 'souris en bas => on regarde en bas');
   });
 
-  e2e('le tangage est borné : on ne se retourne jamais', async function (g) {
+  e2e('le tangage est borné : on ne se retourne jamais', {
+        "teste": "que le pitch (tangage) reste borné à ±90° même avec un mouvement souris massif",
+        "pourquoi": "sans borne, le joueur pourrait faire un tour complet et perdre tout repère visuel",
+        "attendu": "|pitch| < π/2 + epsilon dans les deux sens, même après de nombreux mouvements extrêmes"
+  }, async function (g) {
     await reset(g);
     for (var i = 0; i < 60; i++) look(0, -150);
     A.lt(Math.abs(g.player.state.pitch), Math.PI / 2 + 1e-6, 'tangage borné');
@@ -335,7 +387,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Déplacement réel dans la boucle
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('avancer déplace le joueur dans la direction du regard', async function (g) {
+  e2e('avancer déplace le joueur dans la direction du regard', {
+        "teste": "que la touche avancer (Z/W) déplace le joueur dans l'axe où il regarde, pour les 4 directions cardinales",
+        "pourquoi": "c'est le déplacement de base du jeu ; un décalage entre regard et mouvement casserait toute la navigation",
+        "attendu": "à chaque yaw testé, un déplacement notable et aligné (produit scalaire > 0.97) avec la direction du regard"
+  }, async function (g) {
     var s = await reset(g);
     s.flying = true;
     for (var deg = 0; deg < 360; deg += 90) {
@@ -354,7 +410,11 @@
     s.flying = false;
   });
 
-  e2e('le joueur tombe et se pose sur le terrain', async function (g) {
+  e2e('le joueur tombe et se pose sur le terrain', {
+        "teste": "la gravité et la résolution de collision au sol après une chute",
+        "pourquoi": "le joueur doit finir par se stabiliser sur un bloc solide, pas traverser le sol ni rester suspendu",
+        "attendu": "onGround devient vrai et un bloc solide se trouve sous les pieds"
+  }, async function (g) {
     var s = await reset(g);
     s.pos.y += 12;
     s.vel.y = 0;
@@ -367,7 +427,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Inventaire et craft par l'interface
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('E ouvre l\'inventaire et libère la souris', async function (g) {
+  e2e('E ouvre l\'inventaire et libère la souris', {
+        "teste": "la touche E ouvre l'écran d'inventaire (état ui) et le referme en playing",
+        "pourquoi": "c'est le raccourci standard pour accéder à l'inventaire pendant la partie",
+        "attendu": "état ui et .inv-screen visible après E, retour à playing après un second E"
+  }, async function (g) {
     await reset(g);
     key('KeyE');
     await frames(2);
@@ -379,7 +443,11 @@
     A.equal(g.input.state, 'playing', 'refermé');
   });
 
-  e2e('Échap ferme l\'inventaire sans passer par la pause', async function (g) {
+  e2e('Échap ferme l\'inventaire sans passer par la pause', {
+        "teste": "que Échap, depuis l'inventaire ouvert, ramène directement en playing sans passer par paused",
+        "pourquoi": "fermer l'inventaire ne doit pas mettre le jeu en pause : ce sont deux écrans distincts",
+        "attendu": "état playing directement après Échap depuis l'inventaire"
+  }, async function (g) {
     await reset(g);
     key('KeyE');
     await frames(2);
@@ -389,7 +457,11 @@
     A.equal(g.input.state, 'playing', 'retour direct en partie');
   });
 
-  e2e('l\'inventaire affiche les objets détenus', async function (g) {
+  e2e('l\'inventaire affiche les objets détenus', {
+        "teste": "que le contenu réel de l'inventaire (quantités) est rendu dans l'écran .inv-screen",
+        "pourquoi": "l'affichage doit refléter fidèlement l'état de l'inventaire du joueur",
+        "attendu": "la quantité 17 apparaît dans le texte de l'écran après avoir ajouté 17 cobble"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 17);
     key('KeyE');
@@ -399,7 +471,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('cliquer déplace une pile entre deux cases', async function (g) {
+  e2e('cliquer déplace une pile entre deux cases', {
+        "teste": "le glisser-déposer d'une pile d'objets entre deux cases de l'inventaire au clic gauche",
+        "pourquoi": "c'est l'interaction de base pour réorganiser son inventaire",
+        "attendu": "clic sur la case source prend la pile en main, clic sur la case cible la dépose, la source se vide"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 10);
     key('KeyE');
@@ -415,7 +491,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('le clic droit prend la moitié d\'une pile', async function (g) {
+  e2e('le clic droit prend la moitié d\'une pile', {
+        "teste": "que le clic droit sur une pile n'en prend que la moitié, en laissant l'autre moitié en place",
+        "pourquoi": "c'est le comportement standard attendu pour scinder une pile",
+        "attendu": "5 pris en main et 5 restants sur une pile de 10"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 10);
     key('KeyE');
@@ -428,7 +508,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('crafter des planches depuis un tronc, via l\'interface', async function (g) {
+  e2e('crafter des planches depuis un tronc, via l\'interface', {
+        "teste": "le circuit complet de craft à travers l'UI : poser un tronc dans la grille de craft, obtenir des planches, les récupérer dans l'inventaire",
+        "pourquoi": "vérifie que la reconnaissance de recette et le remplissage d'inventaire fonctionnent bout en bout via les vrais clics UI",
+        "attendu": "une recette reconnue donnant 4 planches, récupérées en main puis retrouvées dans l'inventaire après fermeture"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.LOG, 1);
     key('KeyE');
@@ -451,7 +535,11 @@
     A.equal(s.inv.count(B.PLANKS), 4, 'les planches sont rentrées à l\'inventaire');
   });
 
-  e2e('fermer l\'inventaire rend les objets restés dans la grille', async function (g) {
+  e2e('fermer l\'inventaire rend les objets restés dans la grille', {
+        "teste": "que fermer l'inventaire restitue au joueur les objets laissés dans la grille de craft (rien n'est perdu)",
+        "pourquoi": "un objet oublié dans la grille de craft ne doit jamais disparaître à la fermeture",
+        "attendu": "objets sortis de l'inventaire pendant le craft, puis intégralement restitués après fermeture (Échap)"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 8);
     key('KeyE');
@@ -465,7 +553,11 @@
     A.equal(s.inv.count(B.COBBLE), 8, 'restitués à la fermeture — rien n\'est perdu');
   });
 
-  e2e('un établi posé ouvre une grille 3×3', async function (g) {
+  e2e('un établi posé ouvre une grille 3×3', {
+        "teste": "l'interaction avec un établi posé dans le monde : il ouvre bien une interface de craft avec grille 3×3",
+        "pourquoi": "l'établi doit donner accès à la grande grille de craft, contrairement à la grille 2×2 de l'inventaire seul",
+        "attendu": "useOn renvoie 'open:craft' et la grille affichée contient 9 cases"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z) + 2;
     var by = g.world.groundAt(bx, bz, true) + 1;
@@ -479,7 +571,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('SPEC-CONSTR-001 : deux escaliers posés s\'orientent et s\'ajustent en angle, dans la vraie boucle', async function (g) {
+  e2e('SPEC-CONSTR-001 : deux escaliers posés s\'orientent et s\'ajustent en angle, dans la vraie boucle', {
+        "teste": "la pose d'escaliers dans la boucle de jeu réelle : orientation selon le regard, puis ajustement d'angle (forme intérieure/extérieure) entre deux escaliers adjacents perpendiculaires",
+        "pourquoi": "couvre SPEC-CONSTR-001 en conditions réelles (rendu inclus), pas seulement en test unitaire de la logique de formes",
+        "attendu": "le premier escalier s'oriente selon le regard du joueur ; le second, adjacent et perpendiculaire, fait prendre à au moins l'un des deux une forme d'angle plutôt que droite"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z) + 2;
     var by = g.world.groundAt(bx, bz, true) + 1;
@@ -515,7 +611,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Miner, poser, ramasser — dans la boucle réelle
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('maintenir le clic gauche mine le bloc visé', async function (g) {
+  e2e('maintenir le clic gauche mine le bloc visé', {
+        "teste": "que maintenir le clic gauche sur un bloc visé finit par le casser",
+        "pourquoi": "c'est l'action de minage de base du jeu",
+        "attendu": "après un maintien suffisant du clic, le bloc visé devient de l'air (id 0)"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(I.IRON_PICKAXE, 1); s.selected = 0;
     s.pitch = -Math.PI / 2 + 0.05;
@@ -529,7 +629,11 @@
     A.equal(g.world.getBlock(t.x, t.y, t.z), 0, 'le bloc a été cassé');
   });
 
-  e2e('le bloc miné tombe puis est ramassé automatiquement', async function (g) {
+  e2e('le bloc miné tombe puis est ramassé automatiquement', {
+        "teste": "qu'un bloc cassé fait apparaître une entité au sol qui est ensuite ramassée automatiquement par le joueur",
+        "pourquoi": "le cycle minage -> drop -> ramassage doit fonctionner sans action supplémentaire du joueur",
+        "attendu": "le total d'objets dans l'inventaire augmente après le minage et l'attente du ramassage"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(I.IRON_SHOVEL, 1); s.selected = 0;
     s.pitch = -Math.PI / 2 + 0.05;
@@ -545,7 +649,11 @@
     A.gt(total1, total0, 'l\'inventaire s\'est rempli (' + total0 + ' -> ' + total1 + ')');
   });
 
-  e2e('la barre de progression du minage apparaît puis disparaît', async function (g) {
+  e2e('la barre de progression du minage apparaît puis disparaît', {
+        "teste": "l'anneau de progression de minage (.mining-ring) s'affiche pendant le maintien du clic et disparaît au relâchement",
+        "pourquoi": "le joueur a besoin d'un retour visuel de la progression de minage",
+        "attendu": "display block pendant le minage, display none après relâchement du clic"
+  }, async function (g) {
     var s = await reset(g);
     s.pitch = -Math.PI / 2 + 0.05;
     await frames(2);
@@ -558,7 +666,11 @@
     A.equal(getComputedStyle(hudM.querySelector('.mining-ring')).display, 'none', 'barre masquée');
   });
 
-  e2e('le clic droit pose un bloc du bon type', async function (g) {
+  e2e('le clic droit pose un bloc du bon type', {
+        "teste": "que le clic droit pose bien le type de bloc sélectionné, sur la face visée, en consommant une unité",
+        "pourquoi": "c'est l'action de construction de base du jeu",
+        "attendu": "useOn renvoie 'place', le bloc posé est du bon type, l'inventaire perd une unité"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.BRICK, 10); s.selected = 0;
     // on choisit une colonne bien définie, à l'écart du joueur, et on s'assure
@@ -574,7 +686,11 @@
     A.equal(s.inv.count(B.BRICK), n0 - 1, 'une brique consommée');
   });
 
-  e2e('poser dans son propre corps est refusé', async function (g) {
+  e2e('poser dans son propre corps est refusé', {
+        "teste": "que poser un bloc à l'emplacement occupé par le joueur lui-même est refusé",
+        "pourquoi": "sans ce garde-fou le joueur pourrait s'enfermer ou se bloquer dans un bloc",
+        "attendu": "useOn renvoie null et rien n'est consommé dans l'inventaire"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.BRICK, 5); s.selected = 0;
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z);
@@ -586,7 +702,11 @@
     A.equal(s.inv.count(B.BRICK), n0, 'rien consommé');
   });
 
-  e2e('le bloc visé est mis en surbrillance', async function (g) {
+  e2e('le bloc visé est mis en surbrillance', {
+        "teste": "que le contour de surbrillance (LineSegments) du bloc visé s'affiche quand on vise un bloc et s'éteint quand on ne vise rien",
+        "pourquoi": "le joueur doit voir clairement quel bloc sera affecté par ses actions",
+        "attendu": "visible=true en visant le sol, visible=false en regardant le ciel"
+  }, async function (g) {
     var s = await reset(g);
     s.pitch = -Math.PI / 2 + 0.05;
     await frames(3);
@@ -600,7 +720,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Combat et entités
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('un mob apparaît et reçoit un maillage', async function (g) {
+  e2e('un mob apparaît et reçoit un maillage', {
+        "teste": "qu'une entité apparue (spawn) reçoit un objet 3D de rendu, et que le retirer libère cet objet",
+        "pourquoi": "toute entité vivante doit être visible, et sa suppression ne doit pas laisser de maillage fantôme",
+        "attendu": "un maillage existe après spawn, il est absent après entities.remove()"
+  }, async function (g) {
     var s = await reset(g);
     var z = g.entities.spawn('zombie', s.pos.x + 3, s.pos.y, s.pos.z);
     await frames(3);
@@ -610,7 +734,11 @@
     A.notOk(g.render.entityMeshes.get(z.eid), 'objet 3D retiré avec l\'entité');
   });
 
-  e2e('frapper un mob visé le blesse', async function (g) {
+  e2e('frapper un mob visé le blesse', {
+        "teste": "qu'un clic gauche sur un mob visé (mouton) lui inflige des dégâts",
+        "pourquoi": "c'est le mécanisme de combat de base contre les entités",
+        "attendu": "les PV du mouton diminuent après le coup"
+  }, async function (g) {
     var s = await reset(g);
     s.yaw = 0; s.pitch = 0;
     var dist = 2.5;
@@ -628,7 +756,11 @@
     A.lt(z.hp, hp0, 'le mouton est blessé (' + hp0 + ' -> ' + z.hp + ')');
   });
 
-  e2e('un zombie au contact fait perdre de la vie', async function (g) {
+  e2e('un zombie au contact fait perdre de la vie', {
+        "teste": "qu'un zombie au contact du joueur, en zone où le PvE est autorisé, lui inflige des dégâts au fil du temps",
+        "pourquoi": "les mobs hostiles doivent représenter une menace réelle en zone de jeu, pas seulement en zone protégée",
+        "attendu": "les PV du joueur diminuent dans les 180 frames suivant le contact"
+  }, async function (g) {
     var s = await reset(g);
     // le point d'apparition est une zone sûre (SPEC-ZONE-001) : l'essai se fait en zone PvP et PvE
     var r0 = g.world.reglesZoneEn;
@@ -641,7 +773,11 @@
     } finally { g.world.reglesZoneEn = r0; g.entities.list.length = 0; }
   });
 
-  e2e('la mort ouvre l\'écran de réapparition', async function (g) {
+  e2e('la mort ouvre l\'écran de réapparition', {
+        "teste": "que descendre les PV à zéro fait passer en état dead avec un écran de réapparition, et que cliquer Réapparaître relance la partie avec la vie restaurée",
+        "pourquoi": "le cycle mort/réapparition doit être complet et ne pas laisser le joueur bloqué",
+        "attendu": "état dead puis playing après clic, PV à 20, dead=false"
+  }, async function (g) {
     var s = await reset(g);
     g.player.hurt(20);
     await frames(4);
@@ -658,7 +794,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Agriculture, fourneau, cycle
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('labourer puis planter fonctionne en jeu', async function (g) {
+  e2e('labourer puis planter fonctionne en jeu', {
+        "teste": "l'usage d'une houe sur de l'herbe (labourer) puis de graines sur la terre labourée (planter)",
+        "pourquoi": "c'est le point de départ du cycle d'agriculture",
+        "attendu": "labourer transforme GRASS en FARMLAND, planter pose WHEAT0 au-dessus et la culture est suivie par world.crops"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 2, bz = Math.floor(s.pos.z);
     var by = g.world.groundAt(bx, bz, true);
@@ -674,7 +814,11 @@
     A.gt(g.world.crops.size, 0, 'la culture est suivie');
   });
 
-  e2e('le blé pousse avec le temps et se récolte', async function (g) {
+  e2e('le blé pousse avec le temps et se récolte', {
+        "teste": "que le blé progresse à travers ses stades de croissance avec le temps du monde, puis peut être récolté pour donner du blé en item",
+        "pourquoi": "la croissance temporisée des cultures est le cœur de la mécanique d'agriculture",
+        "attendu": "après plusieurs tick du monde, le blé atteint WHEAT3 (mûr) et sa récolte produit un drop de type WHEAT"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 3, bz = Math.floor(s.pos.z);
     var by = g.world.groundAt(bx, bz, true);
@@ -688,7 +832,11 @@
     A.ok(res.drops.some(function (d) { return d.id === I.WHEAT; }), 'du blé obtenu');
   });
 
-  e2e('le fourneau cuit et l\'interface se met à jour', async function (g) {
+  e2e('le fourneau cuit et l\'interface se met à jour', {
+        "teste": "le cycle complet de cuisson d'un fourneau : ouverture de l'interface, dépôt de minerai et combustible, cuisson dans le temps, apparition du résultat",
+        "pourquoi": "vérifie que la logique de cuisson tourne bien à travers l'état 'ui' de la boucle réelle, pas seulement en isolation",
+        "attendu": "useOn renvoie 'open:furnace', et après attente, output contient un lingot de fer"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 2, bz = Math.floor(s.pos.z) + 2;
     var by = g.world.groundAt(bx, bz, true) + 1;
@@ -710,7 +858,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('clic droit sur un villageois ouvre le panneau d echange', async function (g) {
+  e2e('clic droit sur un villageois ouvre le panneau d echange', {
+        "teste": "que viser et faire un clic droit sur un villageois ouvre l'interface d'échange avec la liste complète de ses offres",
+        "pourquoi": "c'est le point d'entrée du commerce avec les villageois",
+        "attendu": "état ui, un élément .trades affiché avec autant de lignes que d'offres dans MC.Inventory.TRADES"
+  }, async function (g) {
     var s = await reset(g);
     s.yaw = 0; s.pitch = 0;
     var dist = 2.2;
@@ -728,7 +880,11 @@
     g.entities.remove(v);
   });
 
-  e2e('un echange realisable se conclut au clic', async function (g) {
+  e2e('un echange realisable se conclut au clic', {
+        "teste": "qu'une offre d'échange payable (le joueur a le prix demandé) se conclut au clic : le prix est prélevé, la contrepartie reçue",
+        "pourquoi": "c'est le mécanisme transactionnel de base du commerce",
+        "attendu": "après clic sur l'offre, l'inventaire reçoit la contrepartie et perd le prix"
+  }, async function (g) {
     var s = await reset(g);
     var t = MC.Inventory.TRADES[0];
     s.inv.add(t.give[0].id, t.give[0].n);
@@ -744,7 +900,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('une offre non payable est inerte', async function (g) {
+  e2e('une offre non payable est inerte', {
+        "teste": "qu'une offre d'échange marquée indisponible (classe .ko) ne fait rien au clic",
+        "pourquoi": "un joueur sans les moyens de payer ne doit pas pouvoir déclencher l'échange",
+        "attendu": "la ligne porte bien la classe .ko et l'inventaire est inchangé après clic"
+  }, async function (g) {
     var s = await reset(g);
     g.ui.openContainer('trade', s.inv, null, 1);
     g.input.setState('ui');
@@ -758,7 +918,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('poser une torche cree une lumiere ponctuelle', async function (g) {
+  e2e('poser une torche cree une lumiere ponctuelle', {
+        "teste": "que poser une torche l'inscrit au registre de lumières du monde et crée une source lumineuse visible à sa position, retirée si la torche est cassée",
+        "pourquoi": "l'éclairage dynamique doit suivre fidèlement la présence des torches, sans fuite ni lumière fantôme",
+        "attendu": "une entrée dans world.lights et une lumière du torchPool positionnée sur la torche ; les deux disparaissent quand la torche est cassée"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.TORCH, 4); s.selected = 0;
     var bx = Math.floor(s.pos.x) + 2, bz = Math.floor(s.pos.z);
@@ -783,7 +947,11 @@
       'lumiere eteinte quand la torche disparait');
   });
 
-  e2e('le nombre de lumieres reste borne meme avec beaucoup de torches', async function (g) {
+  e2e('le nombre de lumieres reste borne meme avec beaucoup de torches', {
+        "teste": "qu'avec un grand nombre de torches posées, le nombre de lumières réellement actives dans le rendu reste borné à MAX_TORCH_LIGHTS",
+        "pourquoi": "un nombre illimité de lumières temps réel effondrerait les performances",
+        "attendu": "le nombre de lumières visibles dans le torchPool ne dépasse jamais render.MAX_TORCH_LIGHTS, malgré 40 torches posées"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z);
     var by = g.world.groundAt(bx, bz, true) + 3;
@@ -800,7 +968,11 @@
     g.world.lights.forEach(function (t) { g.world.setBlock(t.x, t.y, t.z, 0); });
   });
 
-  e2e('un coffre stocke des objets et les rend quand on le casse', async function (g) {
+  e2e('un coffre stocke des objets et les rend quand on le casse', {
+        "teste": "qu'un coffre affiche son contenu dans son interface, et que le casser fait tomber son contenu au sol",
+        "pourquoi": "un coffre ne doit jamais faire perdre les objets qu'il contient",
+        "attendu": "le contenu (42) apparaît dans l'interface, puis des entités tombent au sol quand le coffre est cassé (spillContainer) et le coffre est oublié"
+  }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 3, bz = Math.floor(s.pos.z) + 1;
     var by = g.world.groundAt(bx, bz, true) + 1;
@@ -826,7 +998,11 @@
     g.entities.list.length = 0;
   });
 
-  e2e('la jauge d usure apparait sur un outil entame', async function (g) {
+  e2e('la jauge d usure apparait sur un outil entame', {
+        "teste": "que la jauge d'usure (.wear) n'apparaît dans l'inventaire que sur un outil déjà entamé, pas sur un outil neuf",
+        "pourquoi": "couvre le bug identifié (catalogue.js ignorait fiche.delai) où la jauge d'usure ne s'affichait pas correctement ; vérifie le mécanisme dans la vraie interface",
+        "attendu": "aucune .wear sur un outil neuf, au moins une .wear après wearTool(0)"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(I.WOOD_PICKAXE, 1); s.selected = 0;
     key('KeyE');
@@ -843,7 +1019,11 @@
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
-  e2e('la touche G jette l objet tenu', async function (g) {
+  e2e('la touche G jette l objet tenu', {
+        "teste": "que la touche G jette une unité de l'objet actuellement sélectionné, en créant une entité au sol",
+        "pourquoi": "c'est le raccourci standard pour se débarrasser d'un objet",
+        "attendu": "une unité de moins dans l'inventaire, une entité supplémentaire au sol"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 3); s.selected = 0;
     var avant = g.entities.list.length;
@@ -854,7 +1034,11 @@
     g.entities.list.length = 0;
   });
 
-  e2e('des grottes existent sous la surface', async function (g) {
+  e2e('des grottes existent sous la surface', {
+        "teste": "que la génération de terrain produit bien des cavités souterraines (blocs d'air) sous la surface",
+        "pourquoi": "les grottes font partie de l'identité du monde généré ; sans elles, le sous-sol serait un bloc plein",
+        "attendu": "au moins un bloc d'air trouvé en sondant des colonnes de chunks générés entre y=5 et y=20"
+  }, async function (g) {
     await reset(g);
     var creux = 0;
     g.world.chunks.forEach(function (c) {
@@ -990,7 +1174,11 @@
     A.ok(log.textContent.indexOf('onerror') >= 0, 'le texte brut est bien affiche');
   });
 
-  e2e('le retour arriere efface un caractere', async function (g) {
+  e2e('le retour arriere efface un caractere', {
+        "teste": "que la touche Retour arrière (Backspace) efface le dernier caractère du champ de saisie du chat",
+        "pourquoi": "c'est un raccourci d'édition de texte de base attendu par tout utilisateur",
+        "attendu": "la saisie 'abc' devient 'ab' après un Backspace"
+  }, async function (g) {
     await reset(g);
     key('KeyT');
     await frames(2);
@@ -1631,7 +1819,11 @@
     key('Escape'); fakeLock(g, true); await frames(3);
   });
 
-  e2e('le ciel change entre le jour et la nuit', async function (g) {
+  e2e('le ciel change entre le jour et la nuit', {
+        "teste": "que la couleur de fond du ciel change selon l'heure du monde, et que la nuit est plus sombre que le jour",
+        "pourquoi": "le cycle jour/nuit doit se refléter visuellement dans le rendu",
+        "attendu": "couleur de fond différente entre 20% et 70% de DAY_LENGTH, et la nuit strictement plus sombre (somme RVB plus faible)"
+  }, async function (g) {
     await reset(g);
     var DL = MC.DayCycle.DAY_LENGTH;
     g.time = DL * 0.2;
@@ -1646,7 +1838,11 @@
     g.time = DL * 0.2;
   });
 
-  e2e('sous l\'eau, la vue se teinte et le brouillard se resserre', async function (g) {
+  e2e('sous l\'eau, la vue se teinte et le brouillard se resserre', {
+        "teste": "qu'être immergé dans l'eau resserre la distance du brouillard de rendu par rapport à l'air libre",
+        "pourquoi": "l'immersion doit donner un retour visuel clair (vue trouble) cohérent avec le fait d'être sous l'eau",
+        "attendu": "fog.far strictement inférieur à sa valeur hors de l'eau, une fois la tête immergée dans une poche d'eau créée pour le test"
+  }, async function (g) {
     var s = await reset(g);
     var far0 = g.render.scene.fog.far;
     // on crée une poche d'eau autour de la tête
@@ -1664,7 +1860,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Sauvegarde
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('sauvegarder puis recharger restitue la construction et l\'inventaire', async function (g) {
+  e2e('sauvegarder puis recharger restitue la construction et l\'inventaire', {
+        "teste": "le cycle complet sauvegarde/rechargement : une construction posée, un inventaire modifié et des PV changés sont retrouvés à l'identique après avoir tout effacé puis rechargé la sauvegarde",
+        "pourquoi": "c'est la garantie de persistance de base attendue par un joueur",
+        "attendu": "après effacement puis MC.Saves.charger(), le bloc posé, la quantité de verre et les PV sont retrouvés exactement"
+  }, async function (g) {
     var s = await reset(g);
     /* La sauvegarde ecrit dans l emplacement de la partie courante : sans
        emplacement il n y a rien a ecrire, et c est voulu. On en cree un. */
@@ -1695,7 +1895,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // HUD
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('le HUD reflète la vie et la faim', async function (g) {
+  e2e('le HUD reflète la vie et la faim', {
+        "teste": "que les barres de vie (cœurs) et de faim (pastilles) du HUD affichent le bon nombre de pips pleins selon hp et hunger",
+        "pourquoi": "le joueur doit pouvoir lire son état vital d'un coup d'œil, fidèlement",
+        "attendu": "6 PV affiche 3 cœurs pleins, 4 points de faim affiche 2 pastilles pleines"
+  }, async function (g) {
     var s = await reset(g);
     s.hp = 6; s.hunger = 4;
     await frames(3);
@@ -1708,7 +1912,11 @@
     s.hp = 20; s.hunger = 20;
   });
 
-  e2e('la jauge d\'air n\'apparaît que sous l\'eau', async function (g) {
+  e2e('la jauge d\'air n\'apparaît que sous l\'eau', {
+        "teste": "que la barre d'air (.bar.air) du HUD reste masquée à air plein et apparaît en apnée",
+        "pourquoi": "afficher la jauge d'air en permanence encombrerait l'interface hors de l'eau, sans utilité",
+        "attendu": "display none à air=10 (plein), différent de none à air=4 (en manque)"
+  }, async function (g) {
     var s = await reset(g);
     s.air = 10;
     await frames(3);
@@ -1720,7 +1928,11 @@
     s.air = 10;
   });
 
-  e2e('la hotbar suit la sélection et le contenu', async function (g) {
+  e2e('la hotbar suit la sélection et le contenu', {
+        "teste": "que la hotbar affiche la bonne case en surbrillance et les bonnes quantités, et se met à jour au changement de sélection clavier",
+        "pourquoi": "la hotbar est la vue principale de l'inventoire actif pendant le jeu",
+        "attendu": "case 0 en surbrillance avec quantité 7 affichée, puis case 2 sélectionnée et en surbrillance après Digit3"
+  }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.BRICK, 7);
     await frames(3);
@@ -1735,7 +1947,11 @@
     s.selected = 0;
   });
 
-  e2e('la molette change d\'objet sélectionné', async function (g) {
+  e2e('la molette change d\'objet sélectionné', {
+        "teste": "que la molette de la souris fait défiler la sélection de la hotbar, dans les deux sens",
+        "pourquoi": "c'est un raccourci standard et rapide de changement d'objet",
+        "attendu": "deltaY positif avance la sélection (0 -> 1), deltaY négatif la recule (1 -> 0)"
+  }, async function (g) {
     var s = await reset(g);
     s.selected = 0;
     window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
@@ -1747,7 +1963,11 @@
   // ══════════════════════════════════════════════════════════════════════════
   // Performance
   // ══════════════════════════════════════════════════════════════════════════
-  e2e('la boucle tient une cadence correcte', async function (g) {
+  e2e('la boucle tient une cadence correcte', {
+        "teste": "que la boucle de jeu tient un minimum de 20 images par seconde sur 90 frames mesurées",
+        "pourquoi": "une cadence trop basse rendrait le jeu injouable ; ce test sert de garde-fou de performance minimal",
+        "attendu": "fps mesuré > 20 (seuil volontairement bas pour absorber la variance du banc headless)"
+  }, async function (g) {
     await reset(g);
     var t0 = performance.now();
     await frames(90);
@@ -1852,7 +2072,11 @@
     await reset(g);
   });
 
-  e2e('explorer ne fait pas exploser le nombre de chunks', async function (g) {
+  e2e('explorer ne fait pas exploser le nombre de chunks', {
+        "teste": "qu'en se déplaçant en vol sur une longue distance, les chunks trop éloignés du joueur sont bien déchargés et leur nombre total reste borné",
+        "pourquoi": "sans déchargement, une longue exploration ferait fuir la mémoire indéfiniment",
+        "attendu": "aucun chunk chargé au-delà de RENDER_DIST + 5, et le nombre total de chunks reste sous une borne liée à la distance de vue"
+  }, async function (g) {
     var s = await reset(g);
     s.flying = true;
     s.yaw = 0;
