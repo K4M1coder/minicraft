@@ -128,6 +128,19 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 
+- Rendu (mesher.js, régression du lot A3 « greedy meshing », SPEC-PERF-011 à
+  013) : `tileOrigin(tile, rot)` appliquait la rotation de variante de tuile
+  (herbe/sable/pierre/neige… `tourne: true`) à l'origine ET `localUV`
+  l'appliquait à nouveau à la coordonnée locale ajoutée par le shader d'atlas
+  (`uvBase + fract(uvRep) * tailleTuile`, `avecAtlasRepete` dans render.js) —
+  la rotation se retrouvait appliquée DEUX FOIS pour toute face tournée (rot
+  1/2/3, la majorité des blocs de terrain), décalant l'échantillonnage d'une
+  tuile entière dans l'atlas : un damier de tuiles fausses (parfois un tout
+  autre bloc) recouvrait sable, plage et chemins, signalé en jouant. `tileOrigin`
+  reste désormais toujours à l'origine NON tournée de la tuile (seul `localUV`
+  porte la rotation), vérifié par reconstruction algébrique face à `pushUV` (la
+  référence sans repli greedy) et reproduit/confirmé corrigé en navigateur réel
+  (Playwright, seed -1001861235).
 - Workers de chunk (L47, B3, revue adversariale) : le message `init` était
   envoyé via `pool.envoyer()`, qui ne distribue qu'à UN SEUL worker libre —
   correct pour `genere`/`maille`, faux pour `init` qui doit atteindre CHAQUE

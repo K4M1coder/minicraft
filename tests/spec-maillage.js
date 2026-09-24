@@ -225,5 +225,49 @@
       }
       A.close(totalG, totalN, 0.5, 'surface totale identique (fusionné ' + totalG.toFixed(1) + ' vs naïf ' + totalN.toFixed(1) + ')');
     });
+
+    /* Régression du 2026-09-25 : sur du vrai terrain (sable/plage/chemin
+       mélangés à de l'eau), le rendu affichait un damier de tuiles fausses —
+       des faces d'herbe/sable/pierre montraient la tuile d'un AUTRE bloc.
+       Cause racine : `tileOrigin(tile, rot)` (src/mesher.js) appliquait la
+       rotation à l'origine ET `localUV` l'appliquait aussi à la coordonnée
+       locale ajoutée par le shader (uvBase + fract(uvRep) * tailleTuile,
+       voir render.js avecAtlasRepete) — la rotation se retrouvait appliquée
+       DEUX FOIS pour toute face tournée (rot 1/2/3, le cas de la plupart des
+       blocs de terrain via TUILES_VARIABLES `tourne: true`), décalant
+       l'échantillonnage d'une tuile entière dans l'atlas. `pushUV` (utilisé
+       tel quel par le maillage non fusionné et par les tests plus anciens)
+       ne l'applique qu'une fois : c'est la référence. Ce test reconstruit,
+       pour CHAQUE rotation possible, le résultat que le shader obtiendrait
+       depuis uvBase/uvRep (tileOrigin + localUV * tailleTuile) et vérifie
+       qu'il retombe pile sur pushUV — sans la correction, rot 1/2/3
+       divergent d'une tuile entière (jusqu'à 0.058 en U, très supérieur à la
+       marge d'un demi-texel tolérée ici). */
+    it('SPEC-PERF-011 à 013 : uvBase + fract(uvRep) * tailleTuile retombe sur pushUV, à toute rotation', function () {
+      var M = MC.Mesher;
+      var MARGE = M.MARGE_UV, COLS = M.ATLAS_COLS, ROWS = M.ATLAS_ROWS;
+      var tailleTuile = [(1 - 2 * MARGE) / COLS, (1 - 2 * MARGE) / ROWS];
+      // tuiles avec variantes réelles (issues de TUILES_VARIABLES) : herbe,
+      // sable, pierre — les blocs de terrain les plus courants.
+      [0, 4, 3, 200].forEach(function (tile) {
+        [0, 1, 2, 3].forEach(function (rot) {
+          [[0, 0], [1, 0], [0, 1], [1, 1]].forEach(function (uv) {
+            var u = uv[0], v = uv[1];
+            var uvs = [];
+            M.pushUV(uvs, tile, u, v, rot);
+            var base = M.tileOrigin(tile);
+            var local = M.localUV(u, v, rot);
+            var reconstruit = [base[0] + local[0] * tailleTuile[0], base[1] + local[1] * tailleTuile[1]];
+            var msg = 'tuile ' + tile + ' rot ' + rot + ' coin (' + u + ',' + v + ')';
+            // marge d'un demi-texel (~1e-4 max, comparable à EPS_REP) : bien
+            // en-deçà d'une tuile entière (~0.06 en U, ~0.015 en V) — sans
+            // la correction, rot 1/2/3 dépassaient cette tolérance d'au
+            // moins deux ordres de grandeur.
+            A.close(reconstruit[0], uvs[0], 2e-4, msg + ' — U');
+            A.close(reconstruit[1], uvs[1], 2e-4, msg + ' — V');
+          });
+        });
+      });
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

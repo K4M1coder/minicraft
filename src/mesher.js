@@ -101,17 +101,23 @@
     }
   })();
 
-  /* Origine (coin local 0,0 après rotation) d'une tuile dans l'atlas, avec la
+  /* Origine (coin local 0,0 AVANT rotation) d'une tuile dans l'atlas, avec la
      même marge d'un demi-texel que pushUV. Sert de base à l'échantillonnage
      répété d'un quad fusionné (voir avecLumiereDesBlocs dans render.js : le
-     shader ajoute fract(uvRep) * tailleTuile à cette origine). */
-  function tileOrigin(tile, rot) {
-    var a = 0, b = 0;
-    if (rot === 1) { a = 0; b = 1; }
-    else if (rot === 2) { a = 1; b = 1; }
-    else if (rot === 3) { a = 1; b = 0; }
-    a = MARGE_UV + a * (1 - 2 * MARGE_UV);
-    b = MARGE_UV + b * (1 - 2 * MARGE_UV);
+     shader ajoute fract(uvRep) * tailleTuile à cette origine).
+     BUG CORRIGÉ (régression du 2026-09-25, damier de tuiles au sol) : cette
+     fonction appliquait AUSSI la rotation à l'origine — alors que `localUV`
+     (juste en dessous) l'applique déjà à la coordonnée locale ajoutée par le
+     shader. Les deux combinées appliquaient la rotation DEUX FOIS pour toute
+     face tournée (rot 1/2/3 — la plupart des blocs de terrain, via
+     TUILES_VARIABLES `tourne: true`), décalant l'échantillonnage d'une tuile
+     entière : le shader lisait la tuile VOISINE dans l'atlas (parfois un
+     tout autre bloc) au lieu de la bonne. `pushUV` (le rendu de référence,
+     sans repli greedy) n'appliquait la rotation qu'UNE fois — c'est lui qui
+     fait foi ; `tileOrigin` doit donc toujours rester à l'origine NON
+     tournée de la tuile, quel que soit `rot`. Voir tests/spec-maillage.js. */
+  function tileOrigin(tile) {
+    var a = MARGE_UV, b = MARGE_UV;
     var tx = tile % ATLAS_COLS, ty = (tile / ATLAS_COLS) | 0;
     return [(tx + a) / ATLAS_COLS, 1 - (ty + 1 - b) / ATLAS_ROWS];
   }
@@ -171,7 +177,7 @@
     var uvBases = [], uvReps = [];
     function pushUVFull(tile, u, v, rot) {
       pushUV(uvs, tile, u, v, rot || 0);
-      var ob = tileOrigin(tile, rot || 0);
+      var ob = tileOrigin(tile);
       uvBases.push(ob[0], ob[1]);
       var lc = localUV(u, v, rot || 0);
       uvReps.push(lc[0], lc[1]);
@@ -518,7 +524,7 @@
 
     function emettreQuad(f, idxU, idxV, idxN, n, u0, v0, w, h, cell) {
       var start = positions.length / 3;
-      var ob = tileOrigin(cell.tile, cell.rot);
+      var ob = tileOrigin(cell.tile);
       for (var k = 0; k < 4; k++) {
         var c = f.corners[k], compU = c[idxU], compV = c[idxV];
         var pos = [0, 0, 0];
