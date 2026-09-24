@@ -414,6 +414,34 @@ function repondreJSON(res, code, obj) {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8', 'Content-Length': Buffer.byteLength(corps) });
   res.end(corps);
 }
+/* Défense CSRF sur les routes d'écriture du banc de test (SPEC-BANC-015 et
+   la bibliothèque des cahiers, SPEC-BANC-018/019) : même si elles sont déjà
+   réservées à `estAdresseLocale` (127.0.0.1/::1), un navigateur ouvert
+   localement peut être amené par une page tierce à émettre une requête
+   `POST`/`DELETE` vers ces routes (l'attaquant ne LIT pas la réponse grâce à
+   CORS, mais l'écriture, elle, a bien lieu — c'est le cœur d'une attaque
+   CSRF). On refuse donc toute requête dont l'`Origin` est PRÉSENT mais NE
+   correspond PAS à l'origine du serveur lui-même, et toute requête que le
+   navigateur qualifie lui-même de `cross-site` via `Sec-Fetch-Site` — les
+   deux sont posés par le navigateur, jamais falsifiables depuis une page web
+   normale. Correction revue adversariale (1/3, CRITIQUE). */
+function requeteFiable(req, port) {
+  const origine = req.headers['origin'];
+  if (origine) {
+    const originesAttendues = [
+      'http://127.0.0.1:' + port, 'http://localhost:' + port, 'http://[::1]:' + port,
+    ];
+    if (originesAttendues.indexOf(origine) < 0) {
+      return { ok: false, code: 403, motif: 'origine refusée' };
+    }
+  }
+  const secFetchSite = req.headers['sec-fetch-site'];
+  if (secFetchSite === 'cross-site') {
+    return { ok: false, code: 403, motif: 'requête intersites refusée' };
+  }
+  return { ok: true };
+}
+
 const RE_API = /^\/admin\/api\/([a-z_]+)\/?$/;
 function traiterApiAdmin(req, res) {
   const url = req.url.split('?')[0];
@@ -447,6 +475,13 @@ function traiterApiAdmin(req, res) {
    l'adresse distante et la taille reçue. */
 function traiterResultatsTest(req, res) {
   if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const fiable = requeteFiable(req, PORT);
+  if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
+  const typeContenu = String(req.headers['content-type'] || '');
+  if (typeContenu.split(';')[0].trim() !== 'application/json') {
+    repondreJSON(res, 415, { ok: false, motif: 'Content-Type attendu : application/json' });
+    return true;
+  }
   const RT = require('./tools/resultats-tests.js');
   const LIMITE = RT.LIMITE_OCTETS_DEFAUT;
   let brut = '';
@@ -518,10 +553,16 @@ function traiterCahiers(req, res) {
   }
   if (action === 'comparer' && req.method === 'GET') { repondreJSON(res, 200, cahier.compareCahiers(racine, dossier, q.avec)); return true; }
   if (action === 'conserver' && req.method === 'POST') {
+    const fiable = requeteFiable(req, PORT);
+    if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
     lireCorpsJSON(req, (args) => { repondreJSON(res, 200, cahier.marquerConserve(racine, dossier, args.valeur !== false)); });
     return true;
   }
-  if (!action && req.method === 'DELETE') { repondreJSON(res, 200, cahier.supprimerCahier(racine, dossier)); return true; }
+  if (!action && req.method === 'DELETE') {
+    const fiable = requeteFiable(req, PORT);
+    if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
+    repondreJSON(res, 200, cahier.supprimerCahier(racine, dossier)); return true;
+  }
   repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' });
   return true;
 }

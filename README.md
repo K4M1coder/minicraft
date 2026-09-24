@@ -149,10 +149,10 @@ sélections partagées par tout : `commit`, `pr`, `regression`, `bugs`, `en-cour
 `e2e`, `integration`, `rapide`, `visuel`, `limites`.
 
 ```bash
-node tests/run.js                       # tout le catalogue exécutable sous Node (~1100 tests)
+node tests/run.js                       # SANS argument : unitaire + fonctionnel + spec seulement (~1100 tests) — PAS l'intégration
 node tests/run.js climat                # filtre positionnel historique : nom du groupe ou du test
 node tests/run.js --preset commit       # rapide (< 60 s), sans navigateur ni intégration, sans @lent
-node tests/run.js --preset pr           # Node + intégration ; sert aussi de CI de merge request
+node tests/run.js --preset pr           # tout le Node (unitaire/fonctionnel/spec) + les scripts tests/integration-*.js ; sert aussi de CI de merge request
 node tests/run.js --domaine SYNC,NET --type spec   # critères combinables (intersection)
 node tests/run.js --sauf etiquettes=lent           # exclusion
 node tests/run.js --echecs              # relance les échecs de la dernière campagne Node

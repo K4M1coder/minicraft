@@ -71,6 +71,32 @@ function nomDossier(preset, date) {
 
 const EXT_PAR_TYPE = { 'image/jpeg': 'jpg', 'image/webp': 'webp', 'image/png': 'png' };
 
+const LIMITE_CHAMP = 200;
+/* Force en chaîne, tronque et retire les caractères de contrôle — les
+   champs de campagne (préréglage, commit, version du jeu, navigateur, GPU,
+   résolution) viennent du JSON posté par un client sur /tests/resultats et
+   sont potentiellement hostiles (revue adversariale, correction XSS stocké
+   1/3) : tests/cahiers.html les affiche ensuite dans un innerHTML échappé,
+   mais on assainit aussi à l'écriture pour ne jamais persister n'importe
+   quoi dans resultats.json (défense en profondeur, pas la seule barrière). */
+function assainirChamp(v) {
+  if (v === undefined || v === null) return v;
+  // eslint-disable-next-line no-control-regex
+  return String(v).replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '').slice(0, LIMITE_CHAMP);
+}
+function assainirCampagne(campagne) {
+  if (!campagne || typeof campagne !== 'object') return campagne;
+  const c = campagne;
+  if (c.preset !== undefined) c.preset = assainirChamp(c.preset);
+  if (c.environnement && typeof c.environnement === 'object') {
+    const env = c.environnement;
+    ['commit', 'versionJeu', 'navigateur', 'gpu', 'resolution'].forEach((champ) => {
+      if (env[champ] !== undefined) env[champ] = assainirChamp(env[champ]);
+    });
+  }
+  return c;
+}
+
 /* Écrit resultats.json + rapport.html + captures/. `resultats` suit le
    schéma de tests/rapport.js. `captures` (facultatif) : [{ libelle, type,
    base64 }] — le fichier fabriqué pour chacune est reporté dans
@@ -102,6 +128,7 @@ function ecrireCahier(resultats, options) {
 
   // reporte les noms de fichiers fabriqués dans les entrées de test correspondantes
   const resultatsFinaux = JSON.parse(JSON.stringify(resultats || {}));
+  if (resultatsFinaux.campagne) assainirCampagne(resultatsFinaux.campagne);
   (resultatsFinaux.tests || []).forEach((t) => {
     (t.captures || []).forEach((c) => {
       const f = fichierParLibelle.get(c.libelle);
@@ -182,5 +209,6 @@ function traiterEnvoi(corps, contexte) {
 
 module.exports = {
   estAdresseLocale, peutRecevoirResultats, slug, nomDossier, ecrireCahier, elaguer, traiterEnvoi,
-  DOSSIER_RESULTATS, MAX_DOSSIERS, LIMITE_OCTETS_DEFAUT,
+  assainirCampagne, assainirChamp,
+  DOSSIER_RESULTATS, MAX_DOSSIERS, LIMITE_OCTETS_DEFAUT, LIMITE_CHAMP,
 };

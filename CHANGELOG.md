@@ -103,6 +103,28 @@ respecter (voir PLAN.md, « Commits et versions »).
   — les quatre rendus (page serveur, HTML autonome, PDF, Word) partagent le
   même modèle de document (`tests/rapport.js`, `MC_RAPPORT.modele()`).
 
+### Corrigé
+- Outillage de test (L42) : `tests/cahiers.html` échappe désormais tout
+  champ de cahier (préréglage, source, version du jeu, commit) affiché dans
+  le tableau — ces valeurs viennent du JSON posté par un client sur
+  `/tests/resultats` et pouvaient contenir du HTML actif (XSS stocké) ;
+  `tools/resultats-tests.js` assainit aussi ces champs à l'écriture
+  (longueur, caractères de contrôle). Les routes d'écriture
+  (`POST /tests/resultats`, `POST .../conserver`, `DELETE /tests/cahiers/
+  <dossier>`) refusent désormais une requête dont l'`Origin` diffère de
+  celle du serveur ou que le navigateur qualifie lui-même de
+  `Sec-Fetch-Site: cross-site` (CSRF), et `POST /tests/resultats` exige
+  `Content-Type: application/json`.
+- `tools/domaines-touches.js` (utilisé par le crochet `pre-commit` pour
+  restreindre le préréglage `commit` aux domaines touchés) retombe
+  désormais sur la suite complète dès qu'UN SEUL fichier modifié n'a aucun
+  domaine reconnu (ex. `src/core.js`), même si d'autres fichiers de la
+  liste ont un domaine clair — un fichier partagé sans domaine propre peut
+  affecter n'importe quel domaine.
+- README.md précise que `node tests/run.js` sans argument n'exécute pas
+  l'intégration (unitaire/fonctionnel/spec seulement) ; `--preset pr` pour
+  tout le Node, intégration comprise.
+
 ### Performances
 - Génération de chunk environ 60 % plus rapide (~98-112 ms/chunk → ~44-45 ms/chunk
   mesurés sur 80 chunks en spirale, même graine) : le bruit 3D des grottes

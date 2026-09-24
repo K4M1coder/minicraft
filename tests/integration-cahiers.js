@@ -103,6 +103,88 @@ async function attendrePret(port) {
     // adresse non locale refusée (en-tête X-Forwarded-For n'est pas utilisé par le serveur :
     // c'est req.socket.remoteAddress qui compte, toujours local ici — donc on vérifie
     // directement la fonction, déjà couverte sous Node dans spec-banc.js)
+
+    // ── CSRF / XSS stocké (correction revue adversariale, 1/3, CRITIQUE) ────
+    const rOrigineEtrangere = await requete(PORT, 'POST', '/tests/resultats', envoi, { 'Content-Type': 'application/json', Origin: 'http://evil.example' });
+    eq(rOrigineEtrangere.code, 403, 'SPEC-BANC-015 : Origin étranger refusé sur POST /tests/resultats');
+
+    const rTypeInvalide = await requete(PORT, 'POST', '/tests/resultats', envoi, { 'Content-Type': 'text/plain' });
+    ok(rTypeInvalide.code === 415 || rTypeInvalide.code === 403, 'SPEC-BANC-015 : Content-Type non JSON refusé sur POST /tests/resultats', String(rTypeInvalide.code));
+
+    // conserver/supprimer refusés depuis une origine étrangère (CSRF)
+    const rConserverEtranger = await requete(PORT, 'POST', '/tests/cahiers/' + dossier + '/conserver', { valeur: true }, { 'Content-Type': 'application/json', Origin: 'http://evil.example' });
+    eq(rConserverEtranger.code, 403, 'SPEC-BANC-018 : Origin étranger refusé sur POST .../conserver');
+    const rSupprimerEtranger = await requete(PORT, 'DELETE', '/tests/cahiers/' + dossier, null, { Origin: 'http://evil.example' });
+    eq(rSupprimerEtranger.code, 403, 'SPEC-BANC-018 : Origin étranger refusé sur DELETE .../<dossier>');
+
+    // un champ hostile (<script>) survit tel quel dans le JSON, mais ressort
+    // ÉCHAPPÉ dans le rendu HTML de la bibliothèque — XSS stocké corrigé
+    const chargeHostile = '<script>alert(1)</script>';
+    const envoiHostile = {
+      resultats: {
+        schema: 1,
+        campagne: {
+          preset: chargeHostile, debut: new Date().toISOString(), fin: new Date().toISOString(), duree_ms: 1,
+          totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 },
+          environnement: { source: 'navigateur', commit: chargeHostile, versionJeu: chargeHostile },
+        },
+        tests: [],
+      },
+    };
+    const rEnvoiHostile = await requete(PORT, 'POST', '/tests/resultats', envoiHostile, { 'Content-Type': 'application/json' });
+    ok(rEnvoiHostile.code === 200, 'SPEC-BANC-015 : un cahier au contenu hostile est quand même accepté (assaini, pas rejeté)');
+    const dossierHostile = rEnvoiHostile.corps && JSON.parse(rEnvoiHostile.corps.toString()).dossier.split('/').pop();
+
+    const rApiHostile = await requete(PORT, 'GET', '/tests/cahiers/api', null);
+    const listeHostile = rApiHostile.code === 200 ? JSON.parse(rApiHostile.corps.toString()).cahiers : [];
+    const entreeHostile = listeHostile.find((c) => c.dossier === dossierHostile);
+    ok(!!entreeHostile && entreeHostile.preset.indexOf('<script>') >= 0, 'l\'API JSON renvoie le champ tel quel (le JSON n\'a pas à échapper, seul le rendu HTML doit le faire)');
+
+    const rPageHostile = await requete(PORT, 'GET', '/tests/cahiers', null);
+    ok(rPageHostile.corps.toString().indexOf('<script>alert(1)</script>') < 0, 'la page /tests/cahiers.html servie telle quelle ne contient jamais le contenu hostile (rendu côté client, pas serveur)');
+
+    // le rendu se fait côté navigateur (tests/cahiers.html, fonction rafraichir()) : on
+    // exécute ce même code sous Node, dans un DOM minimal simulé, pour vérifier RÉELLEMENT
+    // que le innerHTML produit échappe le champ hostile — pas seulement que la source
+    // appelle echapper() (ce qu'un simple grep du fichier ne prouverait pas).
+    const { JSDOMMinimal } = (function () {
+      function el(tag) {
+        const e = { tagName: tag, _innerHTML: '', className: '', children: [], attrs: {}, style: {} };
+        Object.defineProperty(e, 'innerHTML', { get() { return e._innerHTML; }, set(v) { e._innerHTML = v; e.children = []; } });
+        e.appendChild = (c) => { e.children.push(c); };
+        e.setAttribute = (k, v) => { e.attrs[k] = v; };
+        return e;
+      }
+      const elements = { filtre: Object.assign(el('input'), { value: '' }), tri: Object.assign(el('select'), { value: 'debut' }), corps: el('tbody'), vide: el('div') };
+      const document = {
+        getElementById: (id) => elements[id],
+        createElement: (tag) => el(tag),
+      };
+      return { JSDOMMinimal: { document, elements } };
+    })();
+
+    const scriptMatch = fs.readFileSync(path.join(RACINE, 'tests', 'cahiers.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/);
+    const vm = require('vm');
+    const ctxCahiers = vm.createContext({
+      document: JSDOMMinimal.document, fetch: () => Promise.resolve({ json: () => Promise.resolve({ cahiers: [] }) }),
+      alert: () => {}, confirm: () => true, console,
+    });
+    vm.runInContext(scriptMatch[1], ctxCahiers, { filename: 'cahiers.html-script' });
+    ctxCahiers.TOUS = [{
+      dossier: dossierHostile || 'x', preset: chargeHostile, source: 'navigateur',
+      totaux: { passes: 1, total: 1 }, duree_ms: 1, versionJeu: chargeHostile, commit: chargeHostile,
+      interrompue: false, conserve: false, debut: new Date().toISOString(),
+    }];
+    ctxCahiers.rafraichir();
+    const ligneRendue = JSDOMMinimal.elements.corps.children[0] && JSDOMMinimal.elements.corps.children[0].innerHTML;
+    ok(!!ligneRendue, 'la ligne du cahier hostile est bien rendue par rafraichir()');
+    ok(ligneRendue && ligneRendue.indexOf('<script>alert(1)</script>') < 0, 'XSS stocké corrigé : aucun <script> littéral dans le innerHTML rendu');
+    ok(ligneRendue && ligneRendue.indexOf('&lt;script&gt;alert(1)&lt;/script&gt;') >= 0, 'XSS stocké corrigé : le contenu hostile ressort échappé (&lt;script&gt;) dans le innerHTML rendu');
+
+    try {
+      const racine = path.join(RACINE, 'tests', 'resultats');
+      if (dossierHostile) fs.rmSync(path.join(racine, dossierHostile), { recursive: true, force: true });
+    } catch (e) { /* rien */ }
   } finally {
     try { s.kill(); } catch (e) { /* rien */ }
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* rien */ }

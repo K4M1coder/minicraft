@@ -57,6 +57,16 @@
 var TOUS = [];
 var SELECTION = [];
 
+// Échappement HTML strict — tout champ de cahier vient du JSON posté par un
+// client sur /tests/resultats (potentiellement hostile) : preset, source,
+// versionJeu, commit, dossier sont donc TOUJOURS échappés avant d'être
+// insérés dans un innerHTML (correction revue adversariale, XSS stocké).
+function echapper(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 function charger() {
   fetch('/tests/cahiers/api').then(function (r) { return r.json(); }).then(function (j) {
     TOUS = j.cahiers || [];
@@ -84,13 +94,13 @@ function rafraichir() {
     var totaux = c.totaux ? (c.totaux.passes + '/' + c.totaux.total) : '?';
     tr.innerHTML =
       '<td><input type="checkbox" ' + (SELECTION.indexOf(c.dossier) >= 0 ? 'checked' : '') + ' onchange="basculerSelection(\'' + c.dossier + '\', this.checked)"></td>' +
-      '<td>' + (c.debut ? new Date(c.debut).toLocaleString('fr-FR') : '—') + '</td>' +
-      '<td>' + (c.preset || '—') + '</td>' +
-      '<td>' + (c.source || '—') + '</td>' +
+      '<td>' + (c.debut ? echapper(new Date(c.debut).toLocaleString('fr-FR')) : '—') + '</td>' +
+      '<td>' + (c.preset ? echapper(c.preset) : '—') + '</td>' +
+      '<td>' + (c.source ? echapper(c.source) : '—') + '</td>' +
       '<td>' + totaux + '</td>' +
       '<td>' + (c.duree_ms ? Math.round(c.duree_ms / 1000) + ' s' : '—') + '</td>' +
-      '<td>' + (c.versionJeu || '—') + '</td>' +
-      '<td>' + (c.commit || '—') + '</td>' +
+      '<td>' + (c.versionJeu ? echapper(c.versionJeu) : '—') + '</td>' +
+      '<td>' + (c.commit ? echapper(c.commit) : '—') + '</td>' +
       '<td>' + (c.interrompue ? '<span class="badge interrompue">interrompue</span>' : '') + (c.conserve ? '<span class="badge conserve">conservé</span>' : '') + '</td>' +
       '<td>' +
         '<a class="lien" href="/tests/resultats/' + c.dossier + '/rapport.html" target="_blank">ouvrir</a>' +

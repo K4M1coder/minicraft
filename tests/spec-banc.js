@@ -148,6 +148,17 @@
       });
     });
 
+    it('SPEC-BANC-006 : domainesTouches() ne restreint le préréglage commit que si CHAQUE fichier touché a un domaine reconnu, sinon repli complet (revue adversariale)', function () {
+      var domainesTouches = require(path.join(RACINE, 'tools', 'domaines-touches.js')).domainesTouches;
+      A.equal(domainesTouches(['src/core.js', 'src/eau.js'], RACINE), null,
+        'un fichier partagé sans domaine propre (core.js) fait retomber sur le repli complet, même si eau.js a un domaine clair');
+      A.deep(domainesTouches(['src/eau.js'], RACINE), ['EAU'], 'un fichier seul avec domaine reconnu restreint bien à ce domaine');
+      A.equal(domainesTouches(['src/eau.js', 'src/meteo.js'], RACINE) && domainesTouches(['src/eau.js', 'src/meteo.js'], RACINE).indexOf('EAU') >= 0, true,
+        'plusieurs fichiers ayant chacun un domaine reconnu restreignent à l\'union de ces domaines');
+      A.equal(domainesTouches([], RACINE), null, 'liste vide : repli complet');
+      A.equal(domainesTouches(['README.md'], RACINE), null, 'fichier hors src/ : repli complet');
+    });
+
     it('SPEC-BANC-010 : un test qui dépasse son délai est marqué en échec avec son étape, la campagne continue', function () {
       var script = "const vm=require('vm'),fs=require('fs');" +
         "const ctx=vm.createContext({console,Math,JSON,Date,Error,Number,String,Array,Object,Boolean,Map,Set,isNaN,isFinite,parseInt,parseFloat,performance:{now:()=>Date.now()}});" +
