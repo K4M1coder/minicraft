@@ -1,0 +1,2 @@
+#!/bin/sh
+exec node tools/hooks/commit-msg.js "$1"

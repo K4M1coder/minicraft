@@ -45,6 +45,32 @@ Exécutées par `node tests/gates.js`. Toute porte rouge bloque le commit.
 | **G7** | 100 % des tests end-to-end passent dans le navigateur | manuelle (page de tests) |
 | **G8** | Aucune erreur console au chargement du jeu | manuelle (navigateur) |
 | **G9** | 55 images/s au minimum en jeu, écran partagé compris | manuelle (mesure e2e) |
+| **G10** | La version suit le versionnage sémantique et CHANGELOG.md la publie | oui (et crochet pre-commit) |
+| **G11** | Les crochets git sont branchés et la règle du cran est juste | oui |
+
+### Commits et versions
+
+Les bonnes pratiques retenues, et ce qui les fait respecter :
+
+- **Commits conventionnels** : `type(portée)!: résumé`, types `feat` `fix` `perf`
+  `refactor` `docs` `test` `chore` `build` `ci` `style` `revert` `specs` ; `!` ou un
+  pied `BREAKING CHANGE:` signale une rupture. *Crochet commit-msg.*
+- **Journal** : tout `feat`, `fix` ou `perf` qui touche au code ajoute sa ligne sous
+  « Non publié » dans CHANGELOG.md (format Tenez un Changelog), dans le même commit.
+  *Crochet commit-msg.*
+- **Version** : `X.Y.Z`, de 1 à 5 chiffres chacun ; elle ne bouge **que** dans un
+  commit de publication `chore(release): vX.Y.Z`, à la fin d'une tâche, produit par
+  `node tools/version.js --publier`, qui calcule le cran d'après les commits depuis la
+  dernière étiquette — rupture → X (Y tant que X vaut 0), `feat` → Y, `fix`/`perf` → Z,
+  le reste ne publie rien — date la section du journal, commite et pose l'étiquette
+  `vX.Y.Z`. `--prevoir` montre ce qu'il ferait. *Crochet commit-msg (refus d'une
+  version changée hors publication) ; G10 et crochet pre-commit (accord jeu ↔ journal).*
+- **Contrôles rapides à chaque commit** : syntaxe des .js indexés, marqueurs de
+  conflit oubliés, accord de version. *Crochet pre-commit.* La suite complète reste
+  `node tests/gates.js`, avant chaque publication.
+- Les crochets vivent dans `.githooks/` (versionnés) ; `node tools/version.js --installer`
+  les branche (`core.hooksPath`) et G11 vérifie qu'ils le sont. Les agents, dans leurs
+  worktrees, partagent la configuration du dépôt : ils y sont soumis aussi.
 
 G5 mérite un mot : c'est cette porte qui garantit que la logique reste
 exécutable sous Node. Sans elle, une seule référence à `window` glissée dans

@@ -208,6 +208,22 @@ porte('G10', 'La version suit le versionnage sémantique et le journal la publie
   return r.erreurs.length ? { ok: false, detail: r.erreurs.join(' ; ') } : { ok: true, detail: 'version ' + r.version + ' (CHANGELOG.md)' };
 });
 
+// ── G11 : commits encadrés ─────────────────────────────────────────────────
+porte('G11', 'Les crochets git encadrent commits et versions', () => {
+  const { execSync } = require('child_process');
+  let chemin = '';
+  try { chemin = execSync('git config --get core.hooksPath', { encoding: 'utf8' }).trim(); } catch (e) { /* absent */ }
+  if (chemin !== '.githooks') return { ok: false, detail: 'crochets non branchés : node tools/version.js --installer' };
+  const manquants = ['commit-msg', 'pre-commit'].filter(h => !fs.existsSync(path.join(root, '.githooks', h)));
+  if (manquants.length) return { ok: false, detail: 'crochets absents : ' + manquants.join(', ') };
+  // la règle du cran, sur des cas connus
+  const V = require('../tools/version.js');
+  const cas = [[['feat: a', 'fix: b'], '0.3.4', 'y'], [['fix(x): a'], '1.2.3', 'z'], [['feat!: a'], '1.2.3', 'x'],
+               [['feat!: a'], '0.2.3', 'y'], [['docs: a', 'chore: b'], '1.0.0', null]];
+  const faux = cas.filter(c => V.cranDes(c[0].map(t => ({ titre: t, corps: '' })), c[1]) !== c[2]);
+  return faux.length ? { ok: false, detail: 'règle du cran fausse pour ' + JSON.stringify(faux[0]) } : { ok: true, detail: 'commit-msg et pre-commit actifs, règle du cran vérifiée' };
+});
+
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────
 const MANUELLES = [
   ['G7', '100 % des tests end-to-end passent', 'ouvrir tests/index.html'],

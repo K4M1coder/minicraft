@@ -5,13 +5,24 @@ Toutes les évolutions notables de MiniCraft sont consignées ici.
 Le format suit [Tenez un Changelog](https://keepachangelog.com/fr/1.1.0/) et
 le projet adopte le [versionnage sémantique](https://semver.org/lang/fr/) :
 `X.Y.Z`, chaque nombre ayant de 1 à 5 chiffres (jusqu'à `99999.99999.99999`).
-Chaque tâche terminée (une spec ou un lot livré) fait monter au moins `Z` d'un cran (`node tools/version.js`) ; les commits intermédiaires consignent leurs changements sous « Non publié » sans monter la version ;
-`Y` monte pour une fonctionnalité notable qui reste compatible, `X` pour ce
-qui rompt la compatibilité (sauvegardes, protocole réseau). La version du jeu
-(`MC.Core.VERSION_JEU`) est toujours celle de la dernière entrée publiée ; la
-porte G10 le vérifie.
+Les commits suivent les *Commits conventionnels* ; la version ne monte que dans
+un commit de publication `chore(release): vX.Y.Z`, à la fin d'une tâche, calculé
+par `node tools/version.js --publier` d'après les commits depuis la dernière
+étiquette (rupture → X, ou Y tant que X vaut 0 ; `feat` → Y ; `fix`/`perf` → Z).
+La version du jeu (`MC.Core.VERSION_JEU`) est toujours celle de la dernière
+entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le font
+respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+### Ajouté
+
+- Versionnage encadré : Commits conventionnels vérifiés par un crochet commit-msg,
+  journal obligatoire pour tout feat/fix/perf touchant au code, version modifiable
+  seulement dans un commit de publication ; `tools/version.js --publier` calcule le
+  cran d'après les commits depuis la dernière étiquette, date le journal, commite et
+  étiquette ; crochet pre-commit (syntaxe, marqueurs de conflit, accord de version) ;
+  porte G11.
 
 ## [0.0.86] - 2026-09-24
 ### Ajouté
