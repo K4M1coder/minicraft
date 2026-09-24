@@ -119,7 +119,9 @@
      oublie une vérification que les autres appliquent. */
   var ACTIONS_ADMIN_SEUL = ['invitation_creer', 'invitation_revoquer', 'liste_ajouter',
     'liste_retirer', 'role_nommer', 'reglages'];
-  var ACTIONS_PARTAGEES = ['joueurs', 'sessions', 'journal', 'inventaire', 'sanction', 'listes'];
+  // `mesures` (SPEC-SERVEUR-002) : lecture seule, utile au banc de charge comme
+  // à toute supervision — donc partagée plutôt que réservée à l'admin.
+  var ACTIONS_PARTAGEES = ['joueurs', 'sessions', 'journal', 'inventaire', 'sanction', 'listes', 'mesures'];
 
   function peutAgir(roleActeur, action, roleCible) {
     if (!roleActeur) return false;

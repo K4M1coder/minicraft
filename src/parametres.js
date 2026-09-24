@@ -17,7 +17,8 @@
     { nom: 'port', cle: 'port', attend: 'entier', defaut: 8080, min: 1, max: 65535, aide: 'port d\'écoute (défaut 8080)' },
     { nom: 'graine', cle: 'graine', attend: 'entier', defaut: null, aide: 'graine de génération du monde' },
     { nom: 'monde', cle: 'monde', attend: 'texte', defaut: null, aide: 'fichier de sauvegarde du monde (persistance)' },
-    { nom: 'max-joueurs', cle: 'maxJoueurs', attend: 'entier', defaut: 8, min: 1, max: 64, aide: 'nombre maximal de joueurs' },
+    // borne à 100 (SPEC-SERVEUR-002) : le banc de charge simule jusqu'à 100 clients par palier
+    { nom: 'max-joueurs', cle: 'maxJoueurs', attend: 'entier', defaut: 8, min: 1, max: 100, aide: 'nombre maximal de joueurs' },
     { nom: 'pvp', cle: 'pvp', attend: 'bool', defaut: false, aide: 'joueur contre joueur (on/off, défaut off)' },
     { nom: 'liste-blanche', cle: 'listeBlanche', valeur: false, aide: 'seuls les joueurs inscrits entrent' },
     { nom: 'admin', cle: 'admin', attend: 'texte', defaut: null, aide: 'mot de passe ou jeton d\'administration' },

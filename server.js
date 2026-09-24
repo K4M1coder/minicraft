@@ -574,6 +574,7 @@ function executerActionAdmin(role, nomActeur, action, args) {
   if (!Adm.peutAgir(role, action, roleCible)) return { ok: false, motif: 'refuse' };
 
   switch (action) {
+    case 'mesures': return { ok: true, data: statsMesures() };
     case 'joueurs': return { ok: true, data: Adm.vueJoueurs(admin, joueursEnLigne(), role) };
     case 'sessions': return { ok: true, data: Adm.vueSessions(admin, args.nom, role) };
     case 'listes': return { ok: true, data: Adm.vueListes(admin, role) };
@@ -633,6 +634,37 @@ function tousLesJoueurs() {
   return l;
 }
 
+// ── instrumentation de performance (SPEC-SERVEUR-002) ───────────────────────
+/* Coût quasi nul quand désactivée (une lecture d'env au démarrage, un `if`
+   par tic) : le banc de charge l'active via MC_MESURES=1, une exploitation
+   normale ne le fait jamais. Les échantillons vivent en mémoire seulement —
+   10 s d'historique à 60 Hz suffisent pour une moyenne et un 95e centile
+   représentatifs sans faire grossir le processus. */
+const MESURES_ACTIVES = process.env.MC_MESURES === '1';
+const MESURES_MAX_ECH = 600;
+const mesuresTicks = [];
+function enregistrerTic(ms) {
+  mesuresTicks.push(ms);
+  if (mesuresTicks.length > MESURES_MAX_ECH) mesuresTicks.shift();
+}
+function statsMesures() {
+  if (!MESURES_ACTIVES) return { actif: false };
+  if (!mesuresTicks.length) return { actif: true, echantillons: 0 };
+  const tri = mesuresTicks.slice().sort((a, b) => a - b);
+  const somme = tri.reduce((a, b) => a + b, 0);
+  const idxP95 = Math.min(tri.length - 1, Math.floor(tri.length * 0.95));
+  const mem = process.memoryUsage();
+  return {
+    actif: true,
+    echantillons: tri.length,
+    tickMoyenMs: +(somme / tri.length).toFixed(3),
+    tickP95Ms: +tri[idxP95].toFixed(3),
+    memoireRssMo: +(mem.rss / 1048576).toFixed(2),
+    memoireHeapMo: +(mem.heapUsed / 1048576).toFixed(2),
+    joueurs: [...clients.values()].filter(c => c.rejoint).length,
+  };
+}
+
 // ── boucle de simulation ─────────────────────────────────────────────────────
 const { performance } = require('perf_hooks');
 let dernier = performance.now();
@@ -655,6 +687,7 @@ setInterval(() => {
   if (now - dernier < PERIODE_TICK * 0.9) return;
   const dt = Math.min((now - dernier) / 1000, 0.25);
   dernier = now;
+  const __t0 = MESURES_ACTIVES ? performance.now() : 0;
 
   heure += dt;
   monde.tick(dt, 14, null, { temps: heure });
@@ -784,7 +817,7 @@ setInterval(() => {
         if (e.role) { o.r = e.role; o.n = e.nom; }
         return o;
       };
-      const commun = { t: NP.MSG.ETAT, joueurs: js, mobs: [], heure: +heure.toFixed(1) };
+      const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
         /* À chacun les créatures les plus proches de SES joueurs : avec les
@@ -793,11 +826,19 @@ setInterval(() => {
         const pos = c.joueurs.map(x => x.joueur.state.pos);
         const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
         commun.mobs = entites.list.filter(e => d2(e) < 96 * 96).sort((a, b) => d2(a) - d2(b)).slice(0, 80).map(decrire);
+        /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
+           ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
+           liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques
+           dizaines de joueurs, ça sature le réseau bien avant que la
+           simulation elle-même ne peine (identifié au banc de charge,
+           SPEC-SERVEUR-002 — chiffres avant/après dans docs/charge.md). */
+        commun.joueurs = js.filter(j => d2({ pos: { x: j.x, z: j.z } }) < 96 * 96);
         commun.toi = c.joueurs.map(x => SY.etatJoueur(x.joueur, x.dernier));
         envoyer(c, commun);
       });
     }
   }
+  if (MESURES_ACTIVES) enregistrerTic(performance.now() - __t0);
 }, 4);
 
 // ── ouverture automatique du navigateur (SPEC-PACK-001) ─────────────────────
