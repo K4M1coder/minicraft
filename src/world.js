@@ -10,7 +10,8 @@
   function key(a, b) { return a + ',' + b; }
   function key3(x, y, z) { return x + ',' + y + ',' + z; }
 
-  function createWorld(seed) {
+  function createWorld(seed, opts) {
+    opts = opts || {};
     var N = MC.makeNoise(seed === undefined ? 20260921 : seed);
     var chunks = new Map();
     // toutes les modifications du joueur, pour la sauvegarde et pour que la
@@ -37,6 +38,42 @@
     var densite = MC.Densite ? MC.Densite.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }) : null;
+    /* Zones de jeu (SPEC-ZONE-001/004) : la carte déterministe suit la
+       densité (branchée juste au-dessus) et la politique choisie par le
+       serveur (`opts.zonePolitique` — un réglage de lancement, comme la
+       graine). L'état mutable (redéfinitions d'un administrateur) est un
+       registre séparé, comme `donjonsVaincus` : il vit avec ce monde, pas
+       avec la carte, et se sauvegarde avec lui (SPEC-SERVEUR-001). */
+    /* Le point d'apparition sûr (SPEC-ZONE-001) doit être celui où l'on naît
+       VRAIMENT, pas l'origine (0,0) : `findSpawnColumn` (plus bas) est une
+       fonction pure du relief, sans état — l'appeler ici, avant même que le
+       monde ait un chunk chargé, donne exactement la même colonne que
+       server.js recalculera pour y placer les joueurs. */
+    var zoneSpawnParDefaut = opts.zoneSpawn;
+    if (!zoneSpawnParDefaut) {
+      var colSpawn = findSpawnColumn();
+      zoneSpawnParDefaut = { x: colSpawn[0], z: colSpawn[1] };
+    }
+    var zones = MC.Zones ? MC.Zones.creer(N, densite, {
+      politique: opts.zonePolitique, spawn: zoneSpawnParDefaut,
+    }) : null;
+    var zonesEtat = MC.Zones ? MC.Zones.creerEtat({ politique: opts.zonePolitique }) : null;
+    function zoneEn(x, z) { return MC.Zones ? MC.Zones.zoneEn(zones, zonesEtat, x, z) : { zone: 'pvp_pve', redefinie: false }; }
+    function reglesZoneEn(x, z) {
+      return MC.Zones ? MC.Zones.reglesEn(zones, zonesEtat, x, z)
+                       : { degatsJoueurs: true, degatsMob: true, apparitionHostile: true };
+    }
+    /* Un client multijoueur ne connaît la politique de zones du serveur (le
+       réglage --zone) qu'à la bienvenue — parfois après avoir déjà construit
+       ce monde avec la politique par défaut (même graine que le serveur).
+       On reconstruit alors juste la carte des zones, sans toucher au reste
+       du monde déjà généré (SPEC-ZONE-003 : l'affichage doit rester juste). */
+    function accorderPolitiqueZone(politique) {
+      if (!MC.Zones || !politique || politique === zonesEtat.politique) return false;
+      zones = MC.Zones.creer(N, densite, { politique: politique, spawn: zoneSpawnParDefaut });
+      zonesEtat.politique = politique;
+      return true;
+    }
     // habitations, villages et villes : même principe que les donjons
     var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
@@ -44,7 +81,7 @@
     // routes de commerce et de tourisme entre les lieux (même principe, encore)
     var routes = MC.Routes && habitats ? MC.Routes.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
-    }, habitats, Bio) : null;
+    }, habitats, Bio, zoneEn) : null;
     // habitants tués : identifiant → heure de la mort (sauvegardé : les morts le restent)
     var pnjsMorts = new Map();
     // le compte en banque du joueur, commun à toutes les banques
@@ -921,6 +958,8 @@
       salleDonjon: salleDonjon, pieceDonjon: pieceDonjon, butinCoffre: butinCoffre,
       meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes,
       densite: densite, pnjsMorts: pnjsMorts,
+      get zones() { return zones; }, zonesEtat: zonesEtat, zoneEn: zoneEn, reglesZoneEn: reglesZoneEn,
+      accorderPolitiqueZone: accorderPolitiqueZone,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       get banque() { return banque; }, set banque(b) { banque = b; },
       key: key, key3: key3,

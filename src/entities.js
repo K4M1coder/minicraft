@@ -264,7 +264,7 @@
     /* Avance un projectile par petits pas et s'arrete au premier contact.
        On subdivise le deplacement : a 34 m/s et 60 images/s, un pas entier
        fait 0,57 bloc — un mur d'un bloc passerait au travers un tir sur deux. */
-    function stepArrow(e, dt, player, events, joueurs) {
+    function stepArrow(e, dt, player, events, joueurs, pvpOk) {
       var cibles = joueurs && joueurs.length ? joueurs : (player ? [player] : []);
       e.vie -= dt;
       if (e.vie <= 0) { remove(e); return; }
@@ -303,7 +303,13 @@
           if (!pj || pj.dead || e.tireur === pj) continue;
           if (e.pos.y > pj.pos.y && e.pos.y < pj.pos.y + 1.8 &&
               Math.abs(e.pos.x - pj.pos.x) < 0.3 && Math.abs(e.pos.z - pj.pos.z) < 0.3) {
-            if (events) {
+            /* SPEC-COMBAT-002 / SPEC-ZONE-002 : une flèche tirée par un autre
+               joueur n'est un coup permis que si le PvP l'est (réglage du
+               serveur ET zone, jugés par `pvpOk`, fourni par l'appelant) ;
+               tirée par une créature, c'est une question de zone PvE. */
+            var permis = estJoueur(e.tireur) ? (pvpOk ? pvpOk(e.tireur.pos, pj.pos) : false)
+                                              : degatsMobOk(pj.pos);
+            if (events && permis) {
               if (pj === player) events.damage += e.degats;
               events.degatsPar.push({ joueur: pj, n: e.degats });
             }
@@ -827,7 +833,7 @@
         if (e.hurtCd > 0) e.hurtCd -= dt;
 
         if (e.type === 'arrow') {
-          stepArrow(e, dt, player, events, joueurs);
+          stepArrow(e, dt, player, events, joueurs, opts.pvpOk);
           continue;
         }
 
@@ -882,8 +888,12 @@
           e.coupA = e.age;
           // le coup va à la cible : le joueur, ou la créature combattue
           if (choix.joueur) {
-            if (pj === player) events.damage += act.attack;
-            events.degatsPar.push({ joueur: pj, n: act.attack });
+            // SPEC-ZONE-002 : une zone sûre ou PvE-hostile-restreinte protège
+            // aussi du corps à corps d'une créature déjà présente
+            if (degatsMobOk(pj.pos)) {
+              if (pj === player) events.damage += act.attack;
+              events.degatsPar.push({ joueur: pj, n: act.attack });
+            }
           } else if (choix.cible && !choix.cible.dead) damage(choix.cible, act.attack, e.pos, e);
         }
         // méduse : elle pique quiconque la frôle
@@ -892,8 +902,10 @@
           if (e.piqueCd <= 0 && P.boxOverlap(e.pos.x, e.pos.y, e.pos.z, e.w + 0.2, e.h,
                                              pj.pos.x, pj.pos.y, pj.pos.z, 0.6, 1.8)) {
             e.piqueCd = 1;
-            if (pj === player) events.damage += se.pique;
-            events.degatsPar.push({ joueur: pj, n: se.pique });
+            if (degatsMobOk(pj.pos)) {
+              if (pj === player) events.damage += se.pique;
+              events.degatsPar.push({ joueur: pj, n: se.pique });
+            }
           }
         }
         if (act && act.tir) {
@@ -1068,6 +1080,22 @@
     /* Apparition. Le point d'abord : son biome ET son milieu décident de qui
        peut y naître — dans l'eau la faune marine, en l'air les oiseaux, au sol
        le reste. Toujours hors de vue immédiate du joueur. */
+    /* Zone de jeu (SPEC-ZONE-002) : une zone qui interdit les apparitions
+       hostiles (sûre, ou PvP seul) refuse toute naissance d'une créature
+       hostile en son sein — hors ligne comme en ligne, puisque c'est ici,
+       dans le module partagé par le client et par server.js, que toute
+       apparition passe. Sans zones branchées (monde de test), tout reste
+       permis, comme avant cette spec. */
+    function apparitionHostileOk(bx, bz) {
+      return !world.reglesZoneEn || world.reglesZoneEn(bx, bz).apparitionHostile !== false;
+    }
+    /* SPEC-ZONE-002 : une zone sûre annule aussi les dégâts qu'un monstre
+       inflige à un joueur qui s'y tient (mêlée, piqûre, flèche) — pas
+       seulement ses apparitions. On juge au point où se trouve le JOUEUR
+       visé : c'est sa protection qui compte, où que se tienne l'agresseur. */
+    function degatsMobOk(pos) {
+      return !world.reglesZoneEn || world.reglesZoneEn(pos.x, pos.z).degatsMob !== false;
+    }
     function trySpawn(player, isNight, rand, limits) {
       var r = rand || Math.random;
       var lim = limits || { zombie: 12, sheep: 8, villager: 4 };
@@ -1082,6 +1110,7 @@
       if (!bio || !MC.Biomes) {
         // monde sans biomes (tests) : la répartition d'origine, au sol
         var t0 = nuitHostile ? 'zombie' : (r() < 0.65 ? 'sheep' : 'villager');
+        if (t0 === 'zombie' && !apparitionHostileOk(bx, bz)) return null;
         return naitreAuSol(t0, bx, bz, lim, r);
       }
       var gy = world.groundAt(bx, bz, true);
@@ -1093,14 +1122,19 @@
         if (!type) return null;
         // les noyés ne sortent qu'à la nuit
         if (type === 'drowned' && !isNight) return null;
+        if (SPECS[type] && SPECS[type].hostile && !apparitionHostileOk(bx, bz)) return null;
         return naitreDansLEau(type, bx, gy, bz, lim, r);
       }
       if (r() < 0.22) {
         type = MC.Biomes.tirerMob(bio.mobsCiel, r());
-        if (type) return naitreEnLAir(type, bx, gy, bz, lim, r);
+        if (type && (!SPECS[type] || !SPECS[type].hostile || apparitionHostileOk(bx, bz))) {
+          return naitreEnLAir(type, bx, gy, bz, lim, r);
+        }
+        if (type) return null;
       }
       type = MC.Biomes.tirerMob(nuitHostile ? bio.mobsNuit : bio.mobsJour, r());
       if (!type) return null;
+      if (SPECS[type] && SPECS[type].hostile && !apparitionHostileOk(bx, bz)) return null;
       return naitreAuSol(type, bx, bz, lim, r);
     }
 
@@ -1128,6 +1162,7 @@
       if (!type) return null;
       var s = SPECS[type];
       if (!s || !sousPlafond(type, s, limits || {})) return null;
+      if (s.hostile && !apparitionHostileOk(bx, bz)) return null;
       if (P.collides(world, bx + 0.5, by, bz + 0.5, s.w, s.h)) return null;
       return spawn(type, bx + 0.5, by, bz + 0.5, { arme: tirerArme(type, r) || undefined });
     }

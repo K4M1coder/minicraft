@@ -65,6 +65,10 @@
     var carte = null;                  // { world, joueur, reperes, exploration, echelle }
     var ECHELLES = [0.5, 1, 2, 4, 8];  // blocs par pixel
 
+    // SPEC-ZONE-003 : une teinte par zone, assez légère pour laisser voir le
+    // terrain dessous — c'est le changement de teinte, d'un pixel à l'autre,
+    // qui dessine la frontière, sans calcul de contour séparé.
+    var TEINTE_ZONE = { sure: [70, 200, 110], pve: [190, 200, 70], pvp: [220, 140, 60], pvp_pve: [210, 70, 70] };
     function dessinerCarte() {
       if (!carte) return;
       var W = carteCanvas.width, H = carteCanvas.height;
@@ -72,6 +76,7 @@
       var img = carteCtx.createImageData(W, H), px = img.data;
       var cxMonde = j.pos.x, czMonde = j.pos.z;
       var tuiles = {};
+      var zoneFn = carte.world && carte.world.zoneEn;
       for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
         var m = MC.Carte.versMonde(x, y, W, H, cxMonde, czMonde, ech);
         var bx = Math.floor(m.x), bz = Math.floor(m.z);
@@ -79,14 +84,23 @@
         var t = tuiles[k];
         if (t === undefined) t = tuiles[k] = carte.exploration.tuile(carte.world, ccx, ccz);
         var o = (y * W + x) * 4;
+        var rC, gC, bC;
         if (!t) {
           // inexploré : du parchemin, légèrement quadrillé
           var q = ((bx >> 4) + (bz >> 4)) & 1 ? 214 : 206;
-          px[o] = q; px[o + 1] = q - 16; px[o + 2] = q - 44; px[o + 3] = 255;
-          continue;
+          rC = q; gC = q - 16; bC = q - 44;
+        } else {
+          var i = (((bz - ccz * 16) * 16) + (bx - ccx * 16)) * 4;
+          rC = t[i]; gC = t[i + 1]; bC = t[i + 2];
         }
-        var i = (((bz - ccz * 16) * 16) + (bx - ccx * 16)) * 4;
-        px[o] = t[i]; px[o + 1] = t[i + 1]; px[o + 2] = t[i + 2]; px[o + 3] = 255;
+        if (zoneFn) {
+          var teinte = TEINTE_ZONE[zoneFn(bx, bz).zone];
+          if (teinte) {
+            var a = 0.16;
+            rC = rC * (1 - a) + teinte[0] * a; gC = gC * (1 - a) + teinte[1] * a; bC = bC * (1 - a) + teinte[2] * a;
+          }
+        }
+        px[o] = rC; px[o + 1] = gC; px[o + 2] = bC; px[o + 3] = 255;
       }
       carteCtx.putImageData(img, 0, 0);
       // repères
@@ -334,6 +348,18 @@
       boussoleEl.innerHTML = '<i style="background:' + r.couleur + '"></i>' + echapper(r.nom) +
         ' · <b>' + Math.round(d.distance) + ' m</b> <span class="fl">' + FLECHES[i] + '</span>';
       return { repere: r, distance: d.distance, fleche: FLECHES[i] };
+    }
+
+    // zone de jeu courante (SPEC-ZONE-003) : sous la boussole, discrète
+    var ZONE_LIBELLES = { sure: 'Zone sûre', pve: 'Zone PvE', pvp: 'Zone PvP', pvp_pve: 'Zone PvP + PvE' };
+    var zoneEl = el('div', 'zone-indicateur');
+    zoneEl.style.display = 'none';
+    root.appendChild(zoneEl);
+    function zoneIndicateur(zone) {
+      if (!zone) { zoneEl.style.display = 'none'; return; }
+      zoneEl.style.display = '';
+      zoneEl.textContent = ZONE_LIBELLES[zone] || zone;
+      zoneEl.className = 'zone-indicateur zone-' + zone;
     }
 
     function barreBoss(info) {
@@ -1589,7 +1615,7 @@
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
       barreBoss: barreBoss, ouvrirCarte: ouvrirCarte, fermerCarte: fermerCarte, carteOuverte: carteOuverte,
-      dessinerCarte: dessinerCarte, boussole: boussole,
+      dessinerCarte: dessinerCarte, boussole: boussole, zoneIndicateur: zoneIndicateur,
       panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
       panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,

@@ -189,10 +189,19 @@
                  yaw: estFini(msg.yaw) ? +msg.yaw : 0,
                  pitch: estFini(msg.pitch) ? Math.max(-1.6, Math.min(1.6, +msg.pitch)) : 0,
                  v: msg.v ? 1 : 0 };
-      case MSG.ATTAQUE:
-        if (!estEntier(msg.eid)) return null;
-        return { t: msg.t, eid: msg.eid | 0, j: joueurLocal(msg.j),
-                 degats: estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 1 };
+      case MSG.ATTAQUE: {
+        // SPEC-COMBAT-002 : soit une créature (eid), soit un autre joueur
+        // (joueurCible, la clé "id" ou "id/j" sous laquelle net.js le suit) —
+        // jamais aucun des deux, sinon on ne sait pas viser.
+        var degats = estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 1;
+        if (estEntier(msg.eid)) {
+          return { t: msg.t, eid: msg.eid | 0, j: joueurLocal(msg.j), degats: degats };
+        }
+        if (typeof msg.joueurCible === 'string' && /^\d+(\/\d+)?$/.test(msg.joueurCible)) {
+          return { t: msg.t, joueurCible: msg.joueurCible.slice(0, 16), j: joueurLocal(msg.j), degats: degats };
+        }
+        return null;
+      }
       case MSG.MANGER:
         if (!estEntier(msg.id)) return null;
         return { t: msg.t, id: msg.id | 0, j: joueurLocal(msg.j) };
@@ -219,7 +228,7 @@
         // liste est un message qui ne peut rien faire, jamais planter
         var ACTIONS = ['auth', 'joueurs', 'inventaire', 'sessions', 'listes', 'journal',
           'liste_ajouter', 'liste_retirer', 'invitation_creer', 'invitation_revoquer',
-          'role_nommer', 'sanction'];
+          'role_nommer', 'sanction', 'zone_definir', 'zone_retirer'];
         if (typeof msg.action !== 'string' || ACTIONS.indexOf(msg.action) < 0) return null;
         // charge bornee : un panneau admin n'a jamais besoin de gros volumes
         var args = msg.args && typeof msg.args === 'object' ? msg.args : {};

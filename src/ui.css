@@ -308,6 +308,16 @@
               font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; display: flex; gap: 6px; align-items: center; }
   .boussole .fl { font-size: 15px; }
 
+  /* zone de jeu courante (SPEC-ZONE-003) */
+  .zone-indicateur { position: absolute; top: 68px; left: 50%; transform: translateX(-50%); z-index: 3;
+                      pointer-events: none; padding: 2px 10px; border-radius: 3px;
+                      font: 11px/1.5 ui-monospace, Menlo, Consolas, monospace; letter-spacing: .02em;
+                      background: rgba(10,12,16,.55); }
+  .zone-indicateur.zone-sure { color: #9ee6a8; }
+  .zone-indicateur.zone-pve { color: #cfe08a; }
+  .zone-indicateur.zone-pvp { color: #e0a86a; }
+  .zone-indicateur.zone-pvp_pve { color: #e08a8a; }
+
   /* factions */
   .factions-panneau { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); z-index: 12;
                       width: min(420px, calc(100vw - 32px)); background: #1c1e24; border: 2px solid #4a5060;

@@ -19,6 +19,7 @@
     { id: 'notifications', nom: 'Notifications', selecteurs: ['.toasts'] },
     { id: 'chat', nom: 'Chat', selecteurs: ['.chat'] },
     { id: 'boussole', nom: 'Boussole des repères', selecteurs: ['.boussole'] },
+    { id: 'zone', nom: 'Zone de jeu courante', selecteurs: ['.zone-indicateur'] },
     { id: 'gardien', nom: 'Barre du gardien', selecteurs: ['.barre-boss'] },
     { id: 'objectif', nom: 'Objectif de l\'histoire', selecteurs: ['.objectif-histoire'] },
     { id: 'etiquettes', nom: 'Étiquettes des joueurs (écran partagé)', selecteurs: ['.etiquette'] },

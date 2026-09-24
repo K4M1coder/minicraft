@@ -19,6 +19,8 @@
     { nom: 'monde', cle: 'monde', attend: 'texte', defaut: null, aide: 'fichier de sauvegarde du monde (persistance)' },
     { nom: 'max-joueurs', cle: 'maxJoueurs', attend: 'entier', defaut: 8, min: 1, max: 64, aide: 'nombre maximal de joueurs' },
     { nom: 'pvp', cle: 'pvp', attend: 'bool', defaut: false, aide: 'joueur contre joueur (on/off, défaut off)' },
+    { nom: 'zone', cle: 'zone', attend: 'texte', defaut: 'generee', options: ['generee', 'tout_pve', 'tout_sur', 'tout_pvp'],
+      aide: 'politique des zones de jeu (SPEC-ZONE-004) : generee, tout_pve, tout_sur ou tout_pvp' },
     { nom: 'liste-blanche', cle: 'listeBlanche', valeur: false, aide: 'seuls les joueurs inscrits entrent' },
     { nom: 'admin', cle: 'admin', attend: 'texte', defaut: null, aide: 'mot de passe ou jeton d\'administration' },
     { nom: 'aide', cle: 'aide', valeur: false, aide: 'affiche cette liste et s\'arrête' },
@@ -144,6 +146,9 @@
         config[def.cle] = b;
       } else {
         if (!brut) return erreurAvecAide('--' + nom + ' attend une valeur non vide', def);
+        if (def.options && def.options.indexOf(brut) < 0) {
+          return erreurAvecAide('--' + nom + ' attend l\'une de ces valeurs : ' + def.options.join(', ') + ', reçu : ' + brut, def);
+        }
         config[def.cle] = brut;
       }
     }

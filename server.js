@@ -27,7 +27,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'noise', 'biomes', 'densite', 'volcanisme', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
+const MODULES = ['core', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'donjons', 'habitats', 'routes', 'carte', 'meteo', 'lointain', 'world', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
                  'chat', 'split', 'net-protocol', 'parametres', 'admin'];
 
@@ -88,7 +88,7 @@ if (!PARAMS.admin) {
 }
 
 const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
-const monde = MC.createWorld(CONF.graine);
+const monde = MC.createWorld(CONF.graine, { zonePolitique: PARAMS.zone });
 const entites = MC.createEntities(monde);
 const chat = MC.Chat.creer({ max: 120 });
 let heure = 60;
@@ -113,6 +113,7 @@ function etatMonde() {
     pilles: monde.coffresPilles ? Array.from(monde.coffresPilles) : [],
     pnjsMorts: monde.pnjsMorts ? Array.from(monde.pnjsMorts.entries()) : [],
     admin: MC.Admin.serialiser(admin),
+    zones: monde.zonesEtat ? MC.Zones.serialiser(monde.zonesEtat) : null,
   };
 }
 function appliquerEtatMonde(data) {
@@ -133,6 +134,7 @@ function appliquerEtatMonde(data) {
     (data.pnjsMorts || []).forEach(m => { if (m && typeof m[0] === 'string') monde.pnjsMorts.set(m[0], +m[1] || 0); });
   }
   if (data.admin) MC.Admin.appliquer(admin, data.admin);
+  if (data.zones && monde.zonesEtat) MC.Zones.appliquer(monde.zonesEtat, data.zones);
   return true;
 }
 function sauvegarderMonde() {
@@ -414,6 +416,7 @@ function traiter(c, m) {
       envoyer(c, {
         t: NP.MSG.BIENVENUE,
         id: c.id, graine: CONF.graine, mode: CONF.mode, difficulte: CONF.difficulte,
+        zone: monde.zonesEtat ? monde.zonesEtat.politique : 'generee',
         heure, blocs,
         // la position qui fait foi, pour chaque joueur local du poste
         toi: c.joueurs.map(js => SY.etatJoueur(js.joueur, 0)),
@@ -447,9 +450,38 @@ function traiter(c, m) {
     case NP.MSG.ATTAQUE: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || js.joueur.state.dead) break;
+      const st = js.joueur.state;
+
+      // SPEC-COMBAT-002 : cible un autre JOUEUR plutôt qu'une créature —
+      // mêmes portée, cadence et dégâts qu'en PvE, mais soumis au réglage
+      // PvP du serveur ET aux règles de zone des deux joueurs.
+      if (m.joueurCible) {
+        if (js.attaqueCd > 0) break;
+        const cible = joueurParCle(m.joueurCible);
+        if (!cible || cible.js.joueur.state.dead) break;
+        if (cible.c.id === c.id && cible.j === m.j) break;               // pas sur soi-même
+        const vst = cible.js.joueur.state;
+        const d2 = Math.hypot(vst.pos.x - st.pos.x, vst.pos.y + 0.9 - st.pos.y - 1.6, vst.pos.z - st.pos.z);
+        if (d2 > 6) break;
+        if (!pvpAutorise(st.pos, vst.pos)) break;
+        js.attaqueCd = 0.4;
+        const avant = vst.dead;
+        vst.hurtCd = 0;
+        cible.js.joueur.hurt(m.degats);
+        // recul, comme pour une créature (entities.damage s'en inspire)
+        const dx = vst.pos.x - st.pos.x, dz = vst.pos.z - st.pos.z, dd = Math.hypot(dx, dz) || 1;
+        vst.vel.x += (dx / dd) * 5; vst.vel.z += (dz / dd) * 5; vst.vel.y = 4.5;
+        MC.Admin.journaliser(admin, { auteur: c.nom, action: 'combat_joueur', cible: cible.c.nom, details: m.degats, heure });
+        if (!avant && vst.dead) {
+          const msg = chat.systeme(c.nom + ' a vaincu ' + cible.c.nom);
+          if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
+          journal(`⚔ ${c.nom} a vaincu ${cible.c.nom} (PvP)`);
+        }
+        break;
+      }
+
       const e = entites.list.find(x => x.eid === m.eid);
       if (!e || e.dead || e.type === 'item') break;
-      const st = js.joueur.state;
       const d = Math.hypot(e.pos.x - st.pos.x, e.pos.y + e.h / 2 - st.pos.y - 1.6, e.pos.z - st.pos.z);
       // portée et cadence vérifiées : on ne frappe ni de loin ni en rafale
       if (d > 6 || js.attaqueCd > 0) break;
@@ -593,6 +625,18 @@ function executerActionAdmin(role, nomActeur, action, args) {
       return { ok: true, data: Adm.revoquerInvitation(admin, args.token, nomActeur, heure) };
     case 'role_nommer':
       return { ok: true, data: Adm.nommerRole(admin, args.nom, args.role || null, nomActeur, heure) };
+    case 'zone_definir': {
+      // SPEC-ZONE-004 / SPEC-ADMIN-006 : un administrateur redéfinit la zone
+      // de la région où se trouve le point (x, z) donné.
+      const r = MC.Zones.definirRegion(monde.zonesEtat, +args.x || 0, +args.z || 0, args.zone, nomActeur, heure);
+      if (r.ok) MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_definie', cible: r.region, details: r.zone, heure });
+      return { ok: true, data: r };
+    }
+    case 'zone_retirer': {
+      const r = MC.Zones.retirerRegion(monde.zonesEtat, +args.x || 0, +args.z || 0);
+      if (r.ok) MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_retiree', cible: null, heure });
+      return { ok: true, data: r };
+    }
     case 'sanction': {
       const res = Adm.sanctionner(admin, { nom: args.nom, type: args.type, dureeMs: args.dureeMs, auteur: nomActeur }, heure);
       if (res.ok && (args.type === 'expulser' || args.type === 'bannir')) {
@@ -631,6 +675,21 @@ function tousLesJoueurs() {
   const l = [];
   clients.forEach(c => { if (c.rejoint && c.joueurs) c.joueurs.forEach((js, j) => l.push({ c, j, js })); });
   return l;
+}
+
+/* SPEC-COMBAT-002 : le PvP n'est permis que si le serveur l'autorise
+   (--pvp, désactivé par défaut) ET si la zone des DEUX joueurs le permet
+   (SPEC-ZONE-001) — un joueur réfugié en zone sûre reste protégé même si
+   son agresseur, lui, se tient en zone PvP. */
+function pvpAutorise(posA, posB) {
+  return !!CONF.pvp && (!MC.Zones || MC.Zones.pvpAutorise(monde.zones, monde.zonesEtat, posA, posB));
+}
+// un identifiant stable pour désigner un joueur cible dans un message ATTAQUE
+function cleJoueur(id, j) { return id + '/' + (j || 0); }
+function joueurParCle(cle) {
+  const p = String(cle).split('/');
+  const id = +p[0], j = +p[1] || 0;
+  return tousLesJoueurs().find(x => x.c.id === id && x.j === j) || null;
 }
 
 // ── boucle de simulation ─────────────────────────────────────────────────────
@@ -732,7 +791,7 @@ setInterval(() => {
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
-    hiver: MC.DayCycle.saison(heure).nom === 'hiver' });
+    hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise });
   // les coups des créatures, appliqués aux joueurs qu'ils visaient
   ev.degatsPar.forEach(d => {
     const x = joueurs.find(y => y.js.joueur.state === d.joueur);

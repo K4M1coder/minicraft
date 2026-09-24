@@ -49,9 +49,12 @@
           /* Le message promettait une reconstruction qui n'avait pas lieu :
              le client gardait SON terrain, le serveur le sien, et les blocs
              échangés tombaient sur un relief qui n'était pas le bon. */
-          remplacerMonde(m.graine);
+          remplacerMonde(m.graine, { zonePolitique: m.zone });
           composerEquipe(equipe.length || 1, regles);
           ui.toast('Graine du serveur : ' + m.graine + ' — monde reconstruit');
+        } else if (m.zone && world.accorderPolitiqueZone) {
+          // même graine : on aligne juste la carte des zones sur celle du serveur
+          world.accorderPolitiqueZone(m.zone);
         }
         g.time = m.heure || 0;
         (m.blocs || []).forEach(function (b) {
@@ -389,11 +392,11 @@
        NOUVEAU monde, encore vide — les chunks de la partie précédente
        restaient affichés, superposés au nouveau terrain : blocs flottants
        qu'on traverse, murs invisibles contre lesquels on bute. */
-    function remplacerMonde(graine) {
+    function remplacerMonde(graine, mondeOpts) {
       world.reset(render.disposeChunk);
       entities.list.length = 0;
       render.libererToutesEntites();
-      world = MC.createWorld(graine);
+      world = MC.createWorld(graine, mondeOpts);
       reconstruireDependances();
       grille = creerGrilleLointaine();
       // les habitants suivis appartenaient à l'ancien monde
@@ -660,7 +663,7 @@
     }
 
     // ─── habitants, métiers et lieux ─────────────────────────────────────────
-    var pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null;
+    var pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null, zoneActuelle = null;
     function ouvrirBanque() {
       if (!world.banque) return;
       ui.openContainer('chest', player.state.inv, world.banque, 'banque');
@@ -677,6 +680,13 @@
       });
       if (r.temps !== undefined && !net.enLigne()) g.time = r.temps;
       if (r.ouvrir === 'banque') ouvrirBanque();
+      // un panneau d'information rappelle aussi la zone de jeu ici (SPEC-ZONE-003) :
+      // utile en particulier aux bornes posées aux frontières le long des routes
+      if (service === 'info' && r.ok && world.zoneEn) {
+        var LIBELLES = { sure: 'zone sûre', pve: 'zone PvE', pvp: 'zone PvP', pvp_pve: 'zone PvP et PvE' };
+        var z = world.zoneEn(st.pos.x, st.pos.z).zone;
+        r.message += ' Vous êtes ici en ' + (LIBELLES[z] || z) + '.';
+      }
       return r;
     }
     g.rendreService = rendreService;
@@ -976,6 +986,26 @@
         if (l) ui.toast('Bienvenue à ' + l.nom + ' — ' + MC.Habitats.LIEUX[l.kind].nom.toLowerCase() + ', ' + l.style.toLowerCase());
         if (l && g.histoire) signalerHistoire({ type: 'lieu', id: l.id });
         if (l) signalerSucces({ type: 'lieu', kind: l.kind });
+      }
+    }
+
+    /* Zone de jeu courante (SPEC-ZONE-003) : affichée au HUD, et l'entrée
+       dans une nouvelle zone annoncée — comme un lieu, mais suivant la carte
+       des zones plutôt que celle des habitations. */
+    function annoncerZone() {
+      if (!world.zoneEn) { zoneActuelle = null; ui.zoneIndicateur(null); return; }
+      var p = player.state.pos;
+      var z = world.zoneEn(p.x, p.z).zone;
+      ui.zoneIndicateur(z);
+      if (z !== zoneActuelle) {
+        var premiere = zoneActuelle === null;
+        zoneActuelle = z;
+        if (!premiere) {
+          var LIBELLES = { sure: 'zone sûre', pve: 'zone PvE', pvp: 'zone PvP', pvp_pve: 'zone PvP et PvE' };
+          var texte = 'Vous entrez en ' + (LIBELLES[z] || z);
+          ui.toast(texte);
+          if (chat) chat.systeme(texte);
+        }
       }
     }
 
@@ -1412,14 +1442,33 @@
       });
       return best;
     }
+    /* Un autre joueur, en ligne : même visée qu'une créature, avec un
+       gabarit fixe (SPEC-COMBAT-002) — le serveur seul décide si le coup
+       porte réellement (réglage PvP, zones des deux joueurs). */
+    function joueurDistantVise(pl) {
+      var o = pl.eyePos(), d = pl.lookDir(), best = null, bt = Infinity;
+      net.distants.forEach(function (dj) {
+        var t = entities.rayBox(o, d, dj.pos.x - 0.42, dj.pos.y - 0.1, dj.pos.z - 0.42,
+                                dj.pos.x + 0.42, dj.pos.y + 1.9, dj.pos.z + 0.42);
+        if (t !== null && t <= pl.REACH && t < bt) { bt = t; best = dj; }
+      });
+      return best;
+    }
     function attaqueEnLigne(j) {
       var pl = j.player, st = pl.state;
       if (st.attackCd > 0) return false;
-      var m = mobDistantVise(pl);
-      if (!m) return false;
-      st.attackCd = 0.45;
       var h = pl.held(), d = h ? C.def(h.id) : null;
-      net.attaquer(m.eid, (d && d.damage) || 1, j.index);
+      var m = mobDistantVise(pl);
+      if (m) {
+        st.attackCd = 0.45;
+        net.attaquer(m.eid, (d && d.damage) || 1, j.index);
+        audio.play('frapper');
+        return true;
+      }
+      var dj = joueurDistantVise(pl);
+      if (!dj) return false;
+      st.attackCd = 0.45;
+      net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index);
       audio.play('frapper');
       return true;
     }
@@ -1989,7 +2038,7 @@
         render.majSilhouettes(world.habitats.lieuxProches(s2.pos.x, s2.pos.z, 1000));
       }
       majMeteo(dt);
-      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); majHistoire(dt); }
+      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); annoncerZone(); majHistoire(dt); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);
