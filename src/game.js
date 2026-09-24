@@ -187,6 +187,7 @@
     }, hud);
 
     var input = MC.createInput(canvas, {
+      peutJouer: function () { return !(ui.dialogueOuvert && ui.dialogueOuvert()); },
       onLook: function (dyaw, dpitch) {
         var s = player.state;
         s.yaw += dyaw;
@@ -247,7 +248,12 @@
       render.setResolution(o.resolution);
       ui.zoneHud && ui.zoneHud(g.disposition.segments[g.disposition.principal]);
       ui.majTouches && ui.majTouches(o.touches);
+      ui.echelle && ui.echelle(MC.Options.echelleInterface(o.tailleInterface, window.innerWidth, window.innerHeight));
     }
+    // en « auto », l'interface suit la taille de la fenêtre (SPEC-OPTION-007)
+    window.addEventListener('resize', function () {
+      if (ui.echelle) ui.echelle(MC.Options.echelleInterface(g.options.tailleInterface, window.innerWidth, window.innerHeight));
+    });
     function reglerOption(cle, v) {
       g.options = MC.Options.regler(g.options, cle, v);
       MC.Options.sauver(hudStockage, g.options);
@@ -1899,6 +1905,14 @@
 
     function onKeyAnyState(code) {
       if (input.state !== 'ui') return;
+      // une réplique du récit se répond aussi au clavier : 1-9 pour un choix,
+      // Entrée ou Espace pour le premier (« Continuer »)
+      if (ui.dialogueOuvert && ui.dialogueOuvert()) {
+        var n = /^(Digit|Numpad)([1-9])$/.exec(code);
+        if (n) ui.choisirDialogue(+n[2] - 1);
+        else if (code === 'Enter' || code === 'NumpadEnter' || code === 'Space') ui.choisirDialogue(0);
+        return;
+      }
       var act = MC.Options.actionDe(g.options.touches, code);
       if (act === 'inventaire') closeUI();
       else if (act === 'carte' && ui.carteOuverte()) closeUI();

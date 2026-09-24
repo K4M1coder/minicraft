@@ -14,6 +14,22 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+- Taille de l'interface dans les options : automatique (réduite dans les petites
+  fenêtres, jamais sous 60 %) ou de 60 à 150 % ; les options se rangent sur
+  deux colonnes quand la place le permet (SPEC-OPTION-007).
+- Les répliques du mode histoire se répondent aussi au clavier : Entrée ou
+  Espace pour continuer, 1 à 9 pour un choix (SPEC-HISTOIRE-014).
+
+### Corrigé
+- Le popup du mode histoire gardait la souris capturée : la capture demandée au
+  lancement arrivait après son ouverture, et il fallait quitter le navigateur
+  pour pouvoir cliquer. La capture tardive est relâchée, et aucune reprise du jeu
+  ne recapture la souris tant qu'une réplique attend (SPEC-HISTOIRE-014).
+- Selon la résolution, les menus (options en tête) étaient rognés en haut et en
+  bas, sans moyen de les atteindre : les écrans et l'inventaire défilent
+  désormais verticalement et horizontalement, le haut restant toujours
+  accessible (SPEC-OPTION-007).
 
 ## [0.3.0] - 2026-09-24
 ### Corrigé

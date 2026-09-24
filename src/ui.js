@@ -352,18 +352,29 @@
       var choix = d.choix && d.choix.length ? d.choix : [{ id: null, texte: 'Continuer' }];
       dialogueEl.innerHTML = '<h3>' + ech(d.titre || '') + '</h3><p>' + ech(d.texte || '') + '</p><div class="row"></div>';
       var row = dialogueEl.querySelector('.row');
-      choix.forEach(function (c) {
-        var b = el('button', c.id === null ? 'primary' : 'choix-histoire', ech(c.texte));
-        b.addEventListener('mousedown', function (ev) {
-          ev.preventDefault(); ev.stopPropagation();
+      dialogueChoix = [];
+      choix.forEach(function (c, i) {
+        var b = el('button', c.id === null ? 'primary' : 'choix-histoire',
+                   (choix.length > 1 ? '<kbd>' + (i + 1) + '</kbd> ' : '') + ech(c.texte));
+        var choisir = function () {
           dialogueEl.style.display = 'none';
+          dialogueChoix = [];
           if (surChoix) surChoix(c.id);
-        });
+        };
+        dialogueChoix.push(choisir);
+        b.addEventListener('mousedown', function (ev) { ev.preventDefault(); ev.stopPropagation(); choisir(); });
         row.appendChild(b);
       });
       dialogueEl.style.display = '';
     }
+    var dialogueChoix = [];
     function dialogueOuvert() { return dialogueEl.style.display !== 'none'; }
+    /* Répond au clavier : `i`-ième choix (0 = le premier, ou « Continuer »). */
+    function choisirDialogue(i) {
+      if (!dialogueOuvert() || !dialogueChoix[i]) return false;
+      dialogueChoix[i]();
+      return true;
+    }
     var journalEl = el('div', 'journal-histoire');
     journalEl.style.display = 'none';
     root.appendChild(journalEl);
@@ -821,7 +832,10 @@
        nouvelle touche ; un conflit est signalé et rien ne change. */
     var NOMS_VALEURS = { auto: 'automatique', 'haute-performance': 'haute performance', economie: 'économie d’énergie',
                          native: 'native', '800x600': '800 × 600', '1024x768': '1024 × 768', '1080p': '1080p (1920 × 1080)',
-                         '1440p': '1440p (2560 × 1440)', '4k': '4K (3840 × 2160)', horizontal: 'côte à côte', vertical: 'empilés' };
+                         '1440p': '1440p (2560 × 1440)', '4k': '4K (3840 × 2160)', horizontal: 'côte à côte', vertical: 'empilés',
+                         '60': '60 %', '75': '75 %', '90': '90 %', '100': '100 %', '110': '110 %', '125': '125 %', '150': '150 %' };
+    /* SPEC-OPTION-007 : l'échelle des menus, fenêtres et dialogues. */
+    function echelle(e) { root.style.setProperty('--ui', String(e)); return e; }
     /* Le HUD se tient sur l'écran principal d'une vue étendue (SPEC-OPTION-006). */
     function zoneHud(seg) {
       var s = seg || { x: 0, y: 0, l: 1, h: 1 };
@@ -1784,7 +1798,7 @@
       ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,
-      objectifHistoire: objectifHistoire, dialogueHistoire: dialogueHistoire, dialogueOuvert: dialogueOuvert,
+      objectifHistoire: objectifHistoire, dialogueHistoire: dialogueHistoire, dialogueOuvert: dialogueOuvert, choisirDialogue: choisirDialogue, echelle: echelle,
       journalHistoire: journalHistoire, fermerJournal: fermerJournal, journalOuvert: journalOuvert, ecranFin: ecranFin,
       isContainerOpen: isContainerOpen, renderContainer: renderContainer,
       refreshFurnace: refreshFurnace,

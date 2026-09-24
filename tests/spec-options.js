@@ -86,6 +86,16 @@
       A.equal(O.valeur('resolution', '8k'), 'native');
     });
 
+    it('SPEC-OPTION-007 : la taille de l interface — automatique selon la fenêtre, ou choisie', function () {
+      A.equal(O.defauts().tailleInterface, 'auto');
+      A.equal(O.echelleInterface('auto', 1920, 1080), 1, 'grande fenêtre : taille normale, pas d agrandissement');
+      A.close(O.echelleInterface('auto', 1024, 768), 0.8, 1e-9, '1024×768 : réduite');
+      A.close(O.echelleInterface('auto', 800, 600), 0.63, 0.01, '800×600 : la plus contrainte des deux dimensions');
+      A.equal(O.echelleInterface('auto', 320, 200), 0.6, 'jamais sous 60 %');
+      A.equal(O.echelleInterface('125', 800, 600), 1.25, 'une taille choisie l emporte sur la fenêtre');
+      A.equal(O.valeur('tailleInterface', '300'), 'auto', 'une taille inconnue revient à auto');
+    });
+
     it('SPEC-OPTION-006 : un, deux ou trois écrans, côte à côte ou empilés, repli sur un seul', function () {
       var trois = [{ largeur: 1920, hauteur: 1080, principal: false }, { largeur: 1920, hauteur: 1080, principal: true },
                    { largeur: 1920, hauteur: 1080, principal: false }];

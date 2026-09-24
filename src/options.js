@@ -23,7 +23,23 @@
     ecran:       { defaut: 0, min: 0, max: 7, pas: 1, nom: 'Écran d’affichage' },
     nombreEcrans: { defaut: 1, min: 1, max: 3, pas: 1, nom: 'Nombre d’écrans' },
     orientation: { defaut: 'horizontal', valeurs: ['horizontal', 'vertical'], nom: 'Écrans côte à côte ou empilés' },
+    // SPEC-OPTION-007 : menus et fenêtres à l'échelle de l'écran
+    tailleInterface: { defaut: 'auto', valeurs: ['auto', '60', '75', '90', '100', '110', '125', '150'], nom: 'Taille de l’interface' },
   };
+
+  /* SPEC-OPTION-007 : facteur d'échelle des menus pour une fenêtre de
+     `largeur` × `hauteur` pixels CSS. « auto » réduit l'interface quand la
+     fenêtre est plus petite que la maquette (1280 × 800), jamais sous 60 %,
+     et ne l'agrandit pas ; sinon le pourcentage choisi. */
+  var MAQUETTE = { l: 1280, h: 800 };
+  function echelleInterface(taille, largeur, hauteur) {
+    if (taille && taille !== 'auto') {
+      var p = parseFloat(taille);
+      return isFinite(p) ? Math.max(0.5, Math.min(2, p / 100)) : 1;
+    }
+    var e = Math.min((largeur || MAQUETTE.l) / MAQUETTE.l, (hauteur || MAQUETTE.h) / MAQUETTE.h);
+    return Math.round(Math.max(0.6, Math.min(1, e)) * 100) / 100;
+  }
 
   /* ── Affichage ───────────────────────────────────────────────────────── */
   var RESOLUTIONS = {
@@ -207,7 +223,7 @@
     try { if (stockage) stockage.setItem(CLE, JSON.stringify(opts)); return true; } catch (e) { return false; }
   }
 
-  MC.Options = { REGLAGES: REGLAGES, ACTIONS: ACTIONS, RESERVEES: RESERVEES, defauts: defauts, valeur: valeur,
+  MC.Options = { echelleInterface: echelleInterface, MAQUETTE: MAQUETTE, REGLAGES: REGLAGES, ACTIONS: ACTIONS, RESERVEES: RESERVEES, defauts: defauts, valeur: valeur,
                  regler: regler, actionDe: actionDe, lier: lier, nomTouche: nomTouche, aide: aide,
                  charger: charger, sauver: sauver, CLE: CLE,
                  RESOLUTIONS: RESOLUTIONS, resolutionsPour: resolutionsPour, disposition: disposition,

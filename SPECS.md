@@ -597,6 +597,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-HISTOIRE-011 | Chaque histoire est générée depuis la graine : lieux, personnages, indices, ennemis et rebondissements changent d'une partie à l'autre, et la même graine redonne la même histoire | déterminisme et variété | ✅ |
 | SPEC-HISTOIRE-012 | L'enquête : des suspects aux alibis, des indices à trouver, un coupable à désigner ; la fin dépend de l'accusation et des indices réunis | enquête jouée jusqu'à ses fins | ✅ |
 | SPEC-HISTOIRE-013 | La colonie : bâtir les bâtiments requis, attirer des habitants, tenir face aux vagues ; la fin dépend de la prospérité atteinte | colonie jouée jusqu'à ses fins | ✅ |
+| SPEC-HISTOIRE-014 | Une réplique du récit libère toujours la souris — même si la capture demandée au lancement arrive après son ouverture — et aucune reprise du jeu ne la recapture tant qu'elle attend ; elle se répond au clic ou au clavier (Entrée/Espace : continuer, 1-9 : choix) | capture tardive relâchée, reprise bloquée, réponses au clavier | ✅ |
 
 ## L22 — couverture des interactions
 
@@ -618,6 +619,7 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-OPTION-004 | Les options d'affichage choisissent le GPU de calcul parmi ceux de la machine (dans la version empaquetée ; dans le navigateur, la préférence haute performance ou économie d'énergie) ; le choix s'applique au prochain lancement s'il ne peut l'être à chaud, et le programme le signale | liste des GPU, choix conservé, repli si le GPU disparaît | ✅ |
 | SPEC-OPTION-005 | La résolution se choisit parmi 800×600, 1024×768, 1080p, 1440p et 4K (et la résolution native), en fenêtre ou en plein écran ; l'image s'adapte sans déformation ; une résolution que l'écran ne peut pas afficher n'est pas proposée | résolutions proposées, rendu à la taille choisie, plein écran | ✅ |
 | SPEC-OPTION-006 | L'écran d'affichage se choisit parmi ceux connectés, et le jeu peut s'étendre sur deux ou trois écrans, côte à côte (horizontalement) ou empilés (verticalement) : une seule vue continue, champ de vision élargi dans l'axe des écrans et HUD sur l'écran principal ; la disposition est conservée et revient à un seul écran si un écran manque | écrans détectés, vue continue sur 2 ou 3 écrans, orientation, repli | ✅ |
+| SPEC-OPTION-007 | Aucun menu n'est rogné, quelle que soit la résolution : un écran plus grand que la fenêtre défile verticalement et horizontalement (haut toujours atteignable), et la taille de l'interface se règle (automatique selon la fenêtre, ou de 60 à 150 %) ; les options se rangent en colonnes quand la place le permet | défilement, échelle automatique et choisie | ✅ |
 | SPEC-CMD-001 | Chaque commande du chat fait ce qu'elle annonce (/aide, /heure, /jour, /nuit, /ou, /graine, /vider, /qui, /meteo, /succes) | toutes les commandes | ✅ |
 
 ## HUD — affichage tête haute

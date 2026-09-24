@@ -109,6 +109,9 @@
     /* Point d'entrée unique : tout changement d'état passe par ici, et le
        verrou suit. Aucun autre code ne touche à requestPointerLock. */
     function setState(next) {
+      // une fenêtre qui attend une réponse (réplique du récit) garde la main :
+      // reprendre le jeu recapturerait la souris et la rendrait incliquable
+      if (LOCKED_STATES[next] && hooks.peutJouer && !hooks.peutJouer()) next = 'ui';
       if (next === state) return;
       var prev = state;
       state = next;
@@ -121,6 +124,11 @@
     document.addEventListener('pointerlockchange', function () {
       lockPending = false;
       if (isLocked()) {
+        // La capture est asynchrone : demandée en jouant, elle peut n'arriver
+        // qu'après le passage à une interface (un récit qui s'ouvre au
+        // lancement de la partie). On la relâche aussitôt, sinon le curseur
+        // resterait prisonnier d'une fenêtre qu'il faut pouvoir cliquer.
+        if (!LOCKED_STATES[state]) { document.exitPointerLock(); return; }
         lockError = null;
         clearTimeout(retryTimer);
         if (hooks.onLockGained) hooks.onLockGained();

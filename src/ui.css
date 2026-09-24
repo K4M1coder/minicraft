@@ -87,9 +87,29 @@
                   transition: opacity .12s; }
 
   /* ─── écrans ──────────────────────────────────────────────────────────── */
+  /* SPEC-OPTION-007 : un écran plus grand que la fenêtre défile (verticalement
+     et horizontalement) au lieu d'être rogné. Les marges automatiques centrent
+     le panneau quand il tient, et le collent en haut à gauche — donc
+     entièrement atteignable — quand il déborde (align-items: center rognerait
+     le haut, hors de portée du défilement). --ui : taille de l'interface. */
   .overlay { position: absolute; inset: 0; z-index: 10; display: none;
-             align-items: center; justify-content: center;
+             overflow: auto; overscroll-behavior: contain;
              background: radial-gradient(circle at 50% 40%, rgba(27,37,54,.94), rgba(8,10,15,.97) 70%); }
+  .overlay > *, .inv-screen > * { margin: auto; flex-shrink: 0; zoom: var(--ui, 1); }
+  .dialogue-histoire, .journal-histoire { zoom: var(--ui, 1); }
+  .dialogue-histoire kbd { font: inherit; font-size: 11px; opacity: .7; border: 1px solid currentColor;
+                           border-radius: 3px; padding: 0 4px; margin-right: 2px; }
+  /* les options : réglages sur deux colonnes quand la place le permet */
+  .panel.options { max-width: 920px; width: min(94vw, 920px); padding: 22px 28px; }
+  .opt-liste { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px 22px;
+               text-align: left; margin-bottom: 14px; }
+  .opt-ligne { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 13px; }
+  .opt-ligne input[type=range] { flex: 1; min-width: 110px; }
+  .opt-touches { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 4px 18px;
+                 text-align: left; margin-bottom: 10px; }
+  .opt-touche { display: flex; justify-content: space-between; align-items: center; gap: 8px; font-size: 12.5px; }
+  .opt-touche button { padding: 4px 10px; font-size: 12px; min-width: 70px; }
+  .panel.options h2 { font-size: 16px; margin: 6px 0 8px; }
   .panel { text-align: center; max-width: 560px; padding: 30px 40px; }
   .panel h1 { font-size: 40px; letter-spacing: -1px; margin-bottom: 4px;
               background: linear-gradient(90deg, var(--good), var(--accent));
@@ -109,8 +129,8 @@
   .hint { font-size: 11.5px; opacity: .55; margin-top: 14px; line-height: 1.5; }
 
   /* ─── inventaire ──────────────────────────────────────────────────────── */
-  .inv-screen { position: absolute; inset: 0; z-index: 8; display: none;
-                align-items: center; justify-content: center; background: rgba(6,8,12,.72); }
+  .inv-screen { position: absolute; inset: 0; z-index: 8; display: none; overflow: auto;
+                background: rgba(6,8,12,.72); }
   .inv-box { background: var(--panel); border: 1px solid var(--line); border-radius: 10px;
              padding: 18px 20px; display: flex; flex-direction: column; gap: 12px;
              align-items: center; box-shadow: 0 20px 60px rgba(0,0,0,.6); }

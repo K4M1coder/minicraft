@@ -1389,6 +1389,40 @@
     }
   });
 
+  e2e('SPEC-OPTION-007 : les écrans défilent au lieu d être rognés, et la taille de l interface s applique', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    try {
+      await reset(g);
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      var ov = document.querySelector('.overlay'), panneau = ov.firstElementChild;
+      A.equal(getComputedStyle(ov).overflowY, 'auto', 'l écran défile verticalement');
+      A.equal(getComputedStyle(ov).overflowX, 'auto', 'et horizontalement');
+      A.ok(document.querySelector('select[data-opt="tailleInterface"]'), 'la taille de l interface se choisit');
+      g.reglerOption('tailleInterface', '60'); await frames(2);
+      var petit = panneau.getBoundingClientRect().height;
+      g.reglerOption('tailleInterface', '150'); await frames(2);
+      var grand = panneau.getBoundingClientRect().height;
+      A.close(grand / petit, 150 / 60, 0.08, 'le panneau grandit avec la taille choisie (' + petit.toFixed(0) + ' -> ' + grand.toFixed(0) + ')');
+      // à 150 %, il ne tient plus : il déborde, mais rien n'est hors d'atteinte
+      A.gt(ov.scrollHeight, ov.clientHeight, 'le panneau déborde de la fenêtre');
+      ov.scrollTop = 0; await frames(1);
+      A.ok(panneau.getBoundingClientRect().top >= ov.getBoundingClientRect().top - 1, 'le haut du panneau est visible, pas rogné');
+      ov.scrollTop = ov.scrollHeight; await frames(1);
+      var b = document.querySelector('#btn-retour').getBoundingClientRect(), o = ov.getBoundingClientRect();
+      A.ok(b.bottom <= o.bottom + 1 && b.top >= o.top - 1, 'en défilant, le bouton Retour devient visible');
+      // automatique : l'interface suit la fenêtre
+      g.reglerOption('tailleInterface', 'auto'); await frames(2);
+      A.close(parseFloat(getComputedStyle(ov.parentNode).getPropertyValue('--ui')),
+              MC.Options.echelleInterface('auto', innerWidth, innerHeight), 1e-6, 'auto suit la fenêtre');
+      document.querySelector('#btn-retour').click(); await frames(2);
+      key('Escape'); fakeLock(g, true); await frames(3);
+    } finally {
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      g.reglerOption('tailleInterface', avant.tailleInterface || 'auto');
+    }
+  });
+
   e2e('SPEC-OPTION-003 : une touche se remappe, un conflit est signalé, l aide suit', async function (g) {
     var avant = JSON.parse(JSON.stringify(g.options));
     function presser(code) { document.dispatchEvent(new KeyboardEvent('keydown', { code: code, bubbles: true, cancelable: true })); }
@@ -2298,6 +2332,46 @@
 
   /* Tout à la fin aussi : encore un changement de partie, vers un autre
      archétype (l enquête). */
+  e2e('SPEC-HISTOIRE-014 : une réplique du récit libère la souris et se répond au clic ou au clavier', async function (g) {
+    await reset(g);
+    videParties();
+    g.render.setDistance(5);
+    var sortie = document.exitPointerLock, sorties = 0;
+    try {
+      g.creerPartie({ nom: 'Récit clavier', mode: 'histoire', difficulte: 'facile', graineTexte: 'couronne', joueurs: 1,
+                      histoire: { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
+      await frames(5);
+      var dlg = document.querySelector('.dialogue-histoire');
+      A.ok(dlg.style.display !== 'none', 'le premier chapitre est raconté');
+      A.equal(g.input.state, 'ui', 'la main est à l interface');
+      // la capture demandée au lancement arrive APRÈS l'ouverture du récit :
+      // elle doit être relâchée aussitôt, sinon la réplique est incliquable
+      document.exitPointerLock = function () { sorties++; };
+      fakeLock(g, true);
+      A.gt(sorties, 0, 'une capture tardive est relâchée');
+      A.equal(g.input.state, 'ui', 'et l on reste sur l interface');
+      // reprendre le jeu (fin de chargement, retour de pause) ne recapture pas la souris
+      g.input.setState('playing');
+      A.equal(g.input.state, 'ui', 'pas de reprise tant qu une réplique attend');
+      fakeLock(g, false);
+      // Entrée répond « Continuer » ; on déroule les répliques au clavier
+      for (var i = 0; i < 12 && dlg.style.display !== 'none'; i++) { key('Enter'); await frames(2); }
+      A.equal(dlg.style.display, 'none', 'le récit se déroule au clavier');
+      A.equal(g.input.state, 'playing', 'puis on reprend la main');
+      // un choix se prend au chiffre
+      var pris = null;
+      g.input.setState('ui');
+      g.ui.dialogueHistoire({ titre: 'Choix', texte: '?', choix: [{ id: 'a', texte: 'A' }, { id: 'b', texte: 'B' }] },
+                            function (id) { pris = id; });
+      A.ok(/1/.test(dlg.querySelector('kbd').textContent), 'les choix affichent leur touche');
+      key('Digit2'); await frames(1);
+      A.equal(pris, 'b', 'la touche 2 prend le deuxième choix');
+    } finally {
+      document.exitPointerLock = sortie;
+      fakeLock(g, true); g.input.setState('playing'); await frames(2);
+    }
+  });
+
   e2e('SPEC-HISTOIRE-010 : les trois archétypes se choisissent et se jouent — ici, l enquête', async function (g) {
     await reset(g);
     videParties();
