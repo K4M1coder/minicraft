@@ -880,7 +880,7 @@
         var m = figurants.get(f.id);
         if (!m) {
           var sp = f.type === 'bateau' ? SPEC_BATEAU : (MC.EntitySpecs && MC.EntitySpecs[f.type]) || { w: 0.6, h: 1.8, speed: 1.6 };
-          m = mobMesh(f.type, sp, { role: f.role, pnj: f.id });
+          m = tagGen(mobMesh(f.type, sp, { role: f.role, pnj: f.id }));
           m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           m.userData.figurant = true;
           scene.add(m);
@@ -913,8 +913,23 @@
        materiau par entite. Sur une longue partie, les zombies disparaissant
        a chaque aube, cela s'accumule sans fin. */
     var liberees = 0;
+    /* SPEC-RENDU-002 (revue adversariale, correction 2) : contrairement aux
+       maillages de chunk/arbres/silhouettes/eau (rebâtis à chaque remaillage,
+       donc rarement vivants plus d'une génération de contexte), un maillage
+       d'entité (mob, figurant, joueur distant) est créé UNE FOIS et reste en
+       scène tant que l'entité vit — il peut donc survivre à une restauration
+       de contexte sans jamais être reconstruit, entre-temps re-rendu sous le
+       NOUVEAU contexte (Three.js y attache alors un second écouteur
+       'dispose', voir la note près de `toGeometry`). À sa mort, l'écouteur
+       de l'ancienne génération se déclenche aussi et lève la même erreur GL
+       (« object does not belong to this context ») — reproduit en direct
+       (SPEC-RENDU-002, 989/989 → sans ce garde, ~40 avertissements sous
+       deux pertes de contexte successives). Comme pour les chunks, on ne
+       dispose jamais un maillage d'entité taggé d'une génération révolue :
+       on abandonne juste la référence. */
     function libererEntite(m) {
       scene.remove(m);
+      if (m.__mcGen !== contexteGen) return;
       m.traverse(function (o) {
         if (o.geometry) { o.geometry.dispose(); }
         if (o.material) {
@@ -965,7 +980,7 @@
         vus.add(d.id);
         var m = maillagesDistants.get(d.id);
         if (!m) {
-          m = mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id });
+          m = tagGen(mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id }));
           m.add(etiquetteNom(d.nom || ('Joueur ' + d.id)));
           m.userData.nom = d.nom;
           scene.add(m);
@@ -994,8 +1009,8 @@
         vus.add(cle);
         var m2 = maillagesDistants.get(cle);
         if (!m2) {
-          m2 = d.type === 'item' && d.item ? itemMesh(d.item)
-             : mobMesh(d.type, MC.EntitySpecs[d.type] || MC.EntitySpecs.sheep, d);
+          m2 = tagGen(d.type === 'item' && d.item ? itemMesh(d.item)
+             : mobMesh(d.type, MC.EntitySpecs[d.type] || MC.EntitySpecs.sheep, d));
           scene.add(m2);
           maillagesDistants.set(cle, m2);
         }
@@ -1034,7 +1049,7 @@
         seen.add(e.eid);
         var m = entityMeshes.get(e.eid);
         if (!m) {
-          m = e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e);
+          m = tagGen(e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e));
           m.userData.blesse = false;
           m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
           scene.add(m);
@@ -1909,12 +1924,20 @@
       var sig = l.map(function (r) { return r.id + ':' + r.x + ':' + r.z + ':' + r.couleur; }).join('|');
       if (sig === sigReperes) return colonnes.size;
       sigReperes = sig;
-      colonnes.forEach(function (m) { scene.remove(m); m.geometry.dispose(); m.material.dispose(); });
+      // une colonne ne change que quand la liste des repères change (rare) :
+      // elle peut donc rester en scène, jamais reconstruite, à travers une
+      // restauration de contexte GPU — même garde de génération que
+      // `libererEntite` (voir sa note) pour éviter de disposer un maillage
+      // d'une génération de contexte révolue.
+      colonnes.forEach(function (m) {
+        scene.remove(m);
+        if (m.__mcGen === contexteGen) { m.geometry.dispose(); m.material.dispose(); }
+      });
       colonnes.clear();
       l.forEach(function (r) {
-        var m = new THREE.Mesh(new THREE.BoxGeometry(0.35, 120, 0.35),
+        var m = tagGen(new THREE.Mesh(new THREE.BoxGeometry(0.35, 120, 0.35),
           new THREE.MeshBasicMaterial({ color: r.couleur, transparent: true, opacity: 0.45, depthWrite: false,
-                                        fog: false, blending: THREE.AdditiveBlending }));
+                                        fog: false, blending: THREE.AdditiveBlending })));
         m.position.set(r.x + 0.5, 60, r.z + 0.5);
         m.renderOrder = 3;
         scene.add(m);

@@ -135,7 +135,7 @@
       A.notOk(Q.detecterRenduLogiciel(null), 'nom absent : pas de faux positif');
     });
 
-    it('niveau initial : un rendu logiciel détecté peut démarrer directement au palier bas', function () {
+    it('SPEC-RENDU-011 : niveau initial — un rendu logiciel détecté peut démarrer directement au palier bas', function () {
       var etat = Q.creerEtat({ paliersDPR: [2, 1.5, 1], niveauInitial: 99 });
       var d = Q.decisions(etat);
       A.equal(etat.niveau, etat.niveauMax, 'borné au niveau maximal déclaré');

@@ -2595,13 +2595,23 @@
   /* SPEC-RENDU-002 (revue adversariale de bf733bf) : Three.js n'a jamais
      détaché les anciens écouteurs 'dispose' de ses géométries au redémarrage
      du contexte GL — un dispose() tardif sur une géométrie de chunk créée
-     AVANT la perte retombait sur l'ancien contexte et levait une erreur GL,
-     visible en console (« object does not belong to this context »),
-     reproduit en direct avec ~200 avertissements sur 149 chunks. Ce test
-     provoque le même scénario complet (perte → restauration → remaillage
-     réel des chunks marqués dirty par onContextRestored, game.js) et vérifie
-     qu'aucun message console lié au GL/contexte n'apparaît. */
-  e2e('SPEC-RENDU-002 : perte puis restauration puis remaillage des chunks ne lèvent aucun avertissement console', async function (g) {
+     AVANT la perte retombait sur l'ancien contexte et levait une erreur GL
+     (« object does not belong to this context »), reproduit en direct avec
+     ~200 avertissements sur 149 chunks. Ce test provoque le même scénario
+     complet (perte → restauration → remaillage réel des chunks marqués dirty
+     par onContextRestored, game.js) PUIS force la libération de tous les
+     maillages d'entités (mobs) qui ont survécu à la perte sans être
+     reconstruits — c'est ce second cas qui a d'abord échappé à la première
+     version de ce correctif (`libererEntite` ne posait aucune garde de
+     génération, contrairement à `disposerGeom` pour les chunks), reproduit
+     par ~40 avertissements sous deux pertes de contexte successives.
+     Note technique : intercepter console.warn/console.error NE SUFFIT PAS
+     ici — l'avertissement « object does not belong to this context » est
+     émis directement par la couche de validation WebGL du navigateur (pas
+     par un appel JS console.warn de Three.js), donc invisible à un simple
+     monkey-patch de console. On vérifie à la place l'état d'erreur GL réel
+     via gl.getError(), qui EST mis à jour par ces appels invalides. */
+  e2e('SPEC-RENDU-002 : perte, restauration, remaillage des chunks et libération des entités survivantes ne lèvent aucune erreur GL', async function (g) {
     await reset(g);
     var gl = g.render.renderer.getContext();
     var ext = gl.getExtension('WEBGL_lose_context');
@@ -2610,27 +2620,29 @@
     g.streamChunks(true);
     for (var i = 0; i < 15; i++) await frames(1);
     A.gt(g.world.chunks.size, 0, 'des chunks sont chargés avant la perte (' + g.world.chunks.size + ')');
+    while (gl.getError() !== gl.NO_ERROR) { /* purge tout code d'erreur résiduel avant de mesurer */ }
 
-    var messages = [];
-    var origWarn = console.warn, origError = console.error;
-    console.warn = function () { messages.push(Array.prototype.slice.call(arguments).join(' ')); return origWarn.apply(console, arguments); };
-    console.error = function () { messages.push(Array.prototype.slice.call(arguments).join(' ')); return origError.apply(console, arguments); };
-    try {
-      ext.loseContext();
-      await frames(3);
-      ext.restoreContext();
-      await frames(5);
-      // tous les chunks visibles sont marqués dirty par onContextRestored
-      // (game.js) ; remeshDirtyNear() n'en remaille que 3 par image, on
-      // laisse donc tourner assez d'images pour tous les rattraper.
-      var tours = Math.ceil(g.world.chunks.size / 3) + 15;
-      for (var k = 0; k < tours; k++) await frames(1);
-    } finally {
-      console.warn = origWarn;
-      console.error = origError;
-    }
-    var suspectes = messages.filter(function (m) { return /context|GL_INVALID|does not belong|WEBGL|WebGL/i.test(m); });
-    A.equal(suspectes.length, 0, 'aucun avertissement GL/contexte (' + suspectes.length + ') : ' + suspectes.slice(0, 3).join(' | '));
+    ext.loseContext();
+    await frames(3);
+    ext.restoreContext();
+    await frames(5);
+    // tous les chunks visibles sont marqués dirty par onContextRestored
+    // (game.js) ; remeshDirtyNear() n'en remaille que 3 par image, on
+    // laisse donc tourner assez d'images pour tous les rattraper. Le monde
+    // continue de tourner pendant ce temps (mobs qui apparaissent) : ils
+    // sont d'abord RENDUS sous le nouveau contexte sans être reconstruits
+    // (survivent à la perte), exactement le cas visé par `libererEntite`.
+    var tours = Math.ceil(g.world.chunks.size / 3) + 15;
+    for (var k = 0; k < tours; k++) await frames(1);
+    // force la libération de toute entité encore suivie (mob, figurant…) —
+    // certaines ont pu être créées avant la perte et seulement re-rendues
+    // depuis (jamais reconstruites), le cas que `libererEntite` doit garder.
+    g.render.libererToutesEntites();
+
+    var codes = [];
+    var e;
+    while ((e = gl.getError()) !== gl.NO_ERROR) codes.push(e);
+    A.equal(codes.length, 0, 'aucune erreur GL après perte/restauration/remaillage/libération des entités (' + codes.join(',') + ')');
   });
 
   /* SPEC-RENDU-002 (revue, point 2) : la carte d'ombres du soleil (FBO

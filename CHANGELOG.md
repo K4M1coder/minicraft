@@ -187,7 +187,12 @@ respecter (voir PLAN.md, « Commits et versions »).
   d'une génération révolue, on abandonne juste la référence au ramasse-
   miettes (SPEC-RENDU-002). La carte d'ombres du soleil (FBO interne à
   Three.js) est abandonnée sans dispose à la restauration et se reconstruit
-  seule au rendu suivant.
+  seule au rendu suivant. Le même risque touchait aussi les maillages
+  d'entités (mobs, figurants, joueurs distants) et les repères lumineux :
+  contrairement aux chunks/arbres/silhouettes (rebâtis à chaque remaillage),
+  ils sont créés une seule fois et peuvent survivre à une restauration sans
+  jamais être reconstruits ; `libererEntite`/`syncReperes` portent désormais
+  la même garde de génération.
 - Revue adversariale du transport réseau (L44, sous-lot A1) : un budget
   anti-flood unique par connexion (30 msg/s) pouvait expulser à tort un
   joueur légitime — creuser en créatif avec casse instantanée envoie jusqu'à
