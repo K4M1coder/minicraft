@@ -151,6 +151,9 @@
     /* lumineux : lave, magma, lanternes marines. Sans éclairage : ils gardent
        leur éclat de nuit comme au fond des abysses, au lieu de s'assombrir. */
     var matLumineux = new THREE.MeshBasicMaterial({ map: atlas.texture, vertexColors: true });
+    // ce matériau passe aussi par le greedy meshing (mesher.js) : même
+    // répétition d'atlas que les autres, voir avecAtlasRepete plus bas.
+    matLumineux.onBeforeCompile = function (sh) { avecAtlasRepete(sh); };
 
     /* Lumière des blocs (MC.Lumiere) : un attribut `lum` par sommet, ajouté
        comme une lueur chaude par-dessus l'éclairage du ciel. Plus discrète en
@@ -174,6 +177,30 @@
       '  float b = sin(q.x * 0.7 - t * 0.9 + sin(q.y * 1.1)) * sin(q.y * 0.9 + t * 1.2);',
       '  return pow(abs(a * 0.6 + b * 0.4), 3.0) * 2.2;',
       '}', ''].join('\n');
+    /* SPEC-PERF-011 à 013 (sous-lot A3, greedy meshing) : la taille d'une
+       tuile d'atlas (hors marge d'un demi-texel), commune à toutes les
+       tuiles puisque l'atlas est une grille régulière — voir mesher.js
+       (tileOrigin/localUV) pour la construction de uvBase/uvRep. */
+    var tailleTuileAtlas = { value: new THREE.Vector2(
+      (1 - 2 * MC.Mesher.MARGE_UV) / MC.Mesher.ATLAS_COLS,
+      (1 - 2 * MC.Mesher.MARGE_UV) / MC.Mesher.ATLAS_ROWS) };
+    // remplace l'échantillonnage standard de la texture par une version qui
+    // répète la tuile (fract) au lieu de l'étirer sur un quad fusionné —
+    // sans cela, un grand quad greedy-meshé afficherait sa tuile zoomée/floue
+    // (NearestFilter, sans mipmaps) plutôt que répétée à l'identique.
+    function avecAtlasRepete(sh) {
+      sh.uniforms.tailleTuileAtlas = tailleTuileAtlas;
+      sh.vertexShader = 'attribute vec2 uvBase;\nattribute vec2 uvRep;\nvarying vec2 vUvBase;\nvarying vec2 vUvRep;\n' +
+        sh.vertexShader.replace('#include <begin_vertex>',
+          '#include <begin_vertex>\n  vUvBase = uvBase;\n  vUvRep = uvRep;');
+      sh.fragmentShader = 'uniform vec2 tailleTuileAtlas;\nvarying vec2 vUvBase;\nvarying vec2 vUvRep;\n' +
+        sh.fragmentShader.replace('#include <map_fragment>', [
+          '#ifdef USE_MAP',
+          '  vec2 uvLocale = fract(vUvRep);',
+          '  vec4 sampledDiffuseColor = texture2D(map, vUvBase + uvLocale * tailleTuileAtlas);',
+          '  diffuseColor *= sampledDiffuseColor;',
+          '#endif'].join('\n'));
+    }
     function avecLumiereDesBlocs(mat, eau) {
       mat.onBeforeCompile = function (sh) {
         sh.uniforms.tempsEau = UN.temps; sh.uniforms.ventEau = ventEau;
@@ -268,6 +295,7 @@
                    '\n      diffuseColor.a = 1.0;' +
                    '\n    }' +
                    '\n  }' : ''));
+        avecAtlasRepete(sh);
       };
       return mat;
     }
@@ -342,6 +370,20 @@
       // caduc, 2 conifère, 3 dessus d'herbe) — voir avecLumiereDesBlocs.
       g.setAttribute('feuillage', new THREE.Float32BufferAttribute(raw.feuillages && raw.feuillages.length === nv ? raw.feuillages
                                                                      : new Float32Array(nv), 1));
+      /* uvBase/uvRep (SPEC-PERF-011 à 013, sous-lot A3) : le greedy meshing de
+         mesher.js fusionne des faces coplanaires de même tuile en un seul
+         grand quad — mais l'atlas n'a pas de mipmaps ni de retour à la ligne
+         par tuile (NearestFilter, une seule texture pour tout l'atlas), donc
+         étirer l'UV du quad fusionné aurait zoomé/flouté la texture au lieu
+         de la répéter. `uvBase` (origine de la tuile dans l'atlas) et
+         `uvRep` (coordonnée locale « dépliée », pouvant dépasser [0,1] sur un
+         quad fusionné) laissent le shader (avecLumiereDesBlocs ci-dessous)
+         reconstruire l'échantillonnage avec un fract() par fragment, pour
+         que la texture se répète à l'identique au lieu de s'étirer. */
+      g.setAttribute('uvBase', new THREE.Float32BufferAttribute(raw.uvBases && raw.uvBases.length === nv * 2 ? raw.uvBases
+                                                                   : new Float32Array(nv * 2), 2));
+      g.setAttribute('uvRep', new THREE.Float32BufferAttribute(raw.uvReps && raw.uvReps.length === nv * 2 ? raw.uvReps
+                                                                  : new Float32Array(nv * 2), 2));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return tagGen(g);
@@ -373,7 +415,10 @@
       chunk.lumiere = lumiere;
       for (var i = 0; i < passes.length; i++) {
         var key = passes[i][0], mat = passes[i][1], pass = passes[i][2];
-        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie);
+        // fusion (7e argument) : greedy meshing actif pour le rendu réel
+        // (SPEC-PERF-011 à 013) — voir mesher.js pour pourquoi ce n'est pas
+        // le comportement par défaut de buildChunk.
+        var raw = MC.Mesher.buildChunk(chunk, pass, sample, lumiere, eauDe, !!simplifie, true);
         if (chunk[key]) { maillagesEau.delete(chunk[key]); scene.remove(chunk[key]); disposerGeom(chunk[key]); chunk[key] = null; }
         if (raw) {
           var m = new THREE.Mesh(toGeometry(raw), mat);

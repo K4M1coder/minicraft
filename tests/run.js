@@ -76,12 +76,11 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
   });
   return;
 }
-
 const SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
              'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'ambiance', 'audio', 'qualite'];
 const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-secu', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-routes', 'spec-histoire', 'spec-succes', 'spec-ombres', 'spec-population', 'spec-hud', 'spec-couverture', 'spec-recits', 'spec-commandes', 'spec-portes', 'spec-eau', 'spec-vent', 'spec-loin', 'spec-donjons', 'spec-audio', 'spec-options', 'spec-souterrain', 'spec-apparence', 'spec-saisons', 'spec-parametres', 'spec-admin', 'spec-densite', 'spec-volcans', 'spec-caravanes', 'spec-zones', 'spec-blocs16', 'spec-politique', 'spec-guildes', 'spec-materiaux', 'spec-circuits', 'spec-objets', 'spec-formes', 'spec-recifs', 'spec-interieur', 'spec-batiments', 'spec-banc',
              // exploration (lot perf) : sondes non bloquantes, @exploration — voir tests/catalogue.js
-             'spec-perf', 'limites-sondes', 'spec-limites', 'spec-rendu'];
+             'spec-perf', 'limites-sondes', 'spec-limites', 'spec-rendu', 'spec-maillage'];
 
 /* `require`, `process`, `__dirname` : exposés UNIQUEMENT pour que
    tests/spec-banc.js (Node-only, voir son en-tête) puisse vérifier

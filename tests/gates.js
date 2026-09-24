@@ -237,17 +237,22 @@ porte('G11', 'Les crochets git encadrent commits et versions', () => {
   return faux.length ? { ok: false, detail: 'règle du cran fausse pour ' + JSON.stringify(faux[0]) } : { ok: true, detail: 'commit-msg et pre-commit actifs, règle du cran vérifiée' };
 });
 
-// ── G12 : budget de performance de la génération ────────────────────────────
-porte('G12', 'La génération de chunk reste sous le budget de tests/budget-perf.json', () => {
-  try {
-    const out = execFileSync(process.execPath, [path.join(root, 'tests', 'bench-generation.js')],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
-    const m = out.match(/moyenne = ([\d.]+) ms.*p95\s*= ([\d.]+) ms/s);
-    return { ok: true, detail: m ? `moyenne ${m[1]} ms, p95 ${m[2]} ms` : 'budget respecté' };
-  } catch (e) {
-    const out = (e.stdout || '') + (e.stderr || '');
-    return { ok: false, detail: out.split('\n').filter(l => l.includes('✗')).join(' ; ') || 'bench-generation.js en échec' };
+// ── G12 : budget de performance de la génération et du maillage ─────────────
+porte('G12', 'La génération et le maillage restent sous le budget de tests/budget-perf.json', () => {
+  const bancs = ['bench-generation.js', 'bench-maillage.js'];
+  const details = [];
+  for (const banc of bancs) {
+    try {
+      const out = execFileSync(process.execPath, [path.join(root, 'tests', banc)],
+        { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      const m = out.match(/moyenne = ([\d.]+) ms.*p95\s*= ([\d.]+) ms/s);
+      details.push(`${banc} : ${m ? `moyenne ${m[1]} ms, p95 ${m[2]} ms` : 'budget respecté'}`);
+    } catch (e) {
+      const out = (e.stdout || '') + (e.stderr || '');
+      return { ok: false, detail: `${banc} — ` + (out.split('\n').filter(l => l.includes('✗')).join(' ; ') || 'en échec') };
+    }
   }
+  return { ok: true, detail: details.join(' ; ') };
 });
 
 // ── G13 : crochets ↔ préréglages (SPEC-BANC-006) ────────────────────────────
