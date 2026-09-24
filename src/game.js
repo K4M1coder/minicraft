@@ -527,6 +527,22 @@
       });
     }
 
+    /* Fumée (SPEC-CONSTR-007) : feu, foyers, cheminées et torches proches —
+       les sources de lumière (world.lights) filtrées à celles qui fument
+       (C.estFumigene), les plus proches d'abord, bornées comme les torches. */
+    function fumees(me, p1, dt) {
+      if (!render.majFumees) return;
+      var proches = [];
+      world.lights.forEach(function (l) {
+        if (!MC.Core.estFumigene(world.getBlock(l.x, l.y, l.z))) return;
+        var dx = l.x + 0.5 - p1.x, dy = l.y - p1.y, dz = l.z + 0.5 - p1.z;
+        proches.push({ d2: dx * dx + dy * dy + dz * dz, x: l.x + 0.5, y: l.y + 1, z: l.z + 0.5 });
+      });
+      proches.sort(function (a, b) { return a.d2 - b.d2; });
+      var t = g.time;
+      render.majFumees(proches.slice(0, 12), dt, me.ventEn ? function (y) { return me.ventEn(t, y); } : null);
+    }
+
     /* Brume (SPEC-VENT-003) : le point bas alentour dit où elle se pose ;
        échantillonné toutes les deux secondes, le relief ne change pas si vite. */
     var brumeT = 99, brumeLieu = null;
@@ -604,6 +620,7 @@
       render.majMeteo(et, me.derive(g.time), { me: me, temps: g.time, vent: ventLocal, sol: world.heightAt });
       majBrume(me, et, p1, dt);
       volcans(me, p1, dt);
+      fumees(me, p1, dt);
       convois(p1, dt);
       if (!net.enLigne()) tornadesAuSol(me, dt);
       // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend

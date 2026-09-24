@@ -422,6 +422,9 @@
        B.MUSHROOM_STEM, B.MUSHROOM_CAP, B.BIRCH_LOG, B.BIRCH_LEAVES, B.LOG, B.LEAVES, B.FLOWER_RED,
        B.FLOWER_YELLOW, B.SANDSTONE, B.GRAVEL, B.BASALT, B.BLUE_ICE, B.MELON, B.CLAY, B.SPONGE, B.ICE,
        B.FARMLAND, C.WHEAT_STAGES[3],
+       // le seau d'eau : un mécanisme du jeu (puiser à une source avec un seau
+       // vide, voir player.js:utiliserSeau), pas une recette (SPEC-CONSTR-005/006)
+       I.SEAU_EAU,
        // minerais (SPEC-MINERAI-001) et bioluminescence des grottes (SPEC-LUMIERE-007)
        B.MINERAI_METAUX, B.MINERAI_ARGENT, B.MINERAI_GEMMES, B.MINERAI_CRISTAL, B.SEL,
        B.CHAMPI_LUMINEUX, B.CRISTAL_LUMINEUX, B.ALGUE_LUMINEUSE, B.PLANCTON_LUMINEUX,

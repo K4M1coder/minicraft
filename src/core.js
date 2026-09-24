@@ -97,6 +97,23 @@
     DISTRIBUTEUR: 681, PISTON: 682, PISTON_COLLANT: 683, TETE_PISTON: 684,
     BLOC_COMMANDE: 685,
   });
+
+  // ─── L24 matériaux (SPEC-CONSTR-005/006/007) : blocs 400-599 ───────────────
+  var B24 = {
+    VERRE_ROUGE: 400, VERRE_JAUNE: 401, VERRE_BLEU: 402, VERRE_VERT: 403,
+    VERRE_NOIR: 404, VERRE_BLANC: 405, VERRE_GRIS: 406,
+    BETON_POUDRE_ROUGE: 407, BETON_POUDRE_JAUNE: 408, BETON_POUDRE_BLEU: 409, BETON_POUDRE_VERT: 410,
+    BETON_POUDRE_NOIR: 411, BETON_POUDRE_BLANC: 412, BETON_POUDRE_GRIS: 413,
+    BETON_ROUGE: 414, BETON_JAUNE: 415, BETON_BLEU: 416, BETON_VERT: 417,
+    BETON_NOIR: 418, BETON_BLANC: 419, BETON_GRIS: 420,
+    WOOL_BLACK: 421, WOOL_WHITE: 422, WOOL_GRAY: 423,
+    TERRACOTTA_BLUE: 424, TERRACOTTA_GREEN: 425, TERRACOTTA_BLACK: 426,
+    TERRACOTTA_WHITE: 427, TERRACOTTA_GRAY: 428,
+    MARBRE: 429, CHAUME: 430,
+    POUTRE_CHENE: 431, POUTRE_SAPIN: 432, POUTRE_BOULEAU: 433, POUTRE_ACACIA: 434, POUTRE_JUNGLE: 435,
+    FEU: 436, FOYER: 437, CHEMINEE: 438,
+  };
+  for (var clefB24 in B24) B[clefB24] = B24[clefB24];
   var I = {
     STICK: 128, COAL: 129, IRON_INGOT: 130, WHEAT: 131, SEEDS: 132, BREAD: 133,
     RAW_MUTTON: 134, COOKED_MUTTON: 135, ROTTEN_FLESH: 136, EMERALD: 137,
@@ -138,6 +155,9 @@
     BRONZE_PIOCHE: 217, BRONZE_HACHE: 218, BRONZE_PELLE: 219, BRONZE_EPEE: 220,
     BIJOU: 221,
   };
+  // ─── L24 matériaux (SPEC-CONSTR-005/007) : objets 500-599 ──────────────────
+  var I24 = { DYE_BLACK: 500, DYE_WHITE: 501, DYE_GRAY: 502, BRIQUET: 503 };
+  for (var clefI24 in I24) I[clefI24] = I24[clefI24];
 
   /* Ancienne frontière (format de sauvegarde 8 bits, avant SPEC-SAVE-017) :
      les objets démarraient à 128, dans un espace d'ids partagé avec les
@@ -596,6 +616,71 @@
                                   hardness: 2.0, tool: 'pickaxe', needsTool: true,
                                   transparent: true, pass: 'cutout', forme: 'rambarde', mat: B.STONE_BRICK });
 
+  // ─── L24 matériaux (SPEC-CONSTR-005/006) : verre teinté, béton, laine, terre cuite ───
+  // sept teintures communes : quatre végétales/minérales déjà là, plus noir
+  // (encre de calmar), blanc (poudre d'os) et gris (charbon) — voir inventory.js.
+  var TEINTES_L24 = [
+    { id: 'ROUGE' }, { id: 'JAUNE' }, { id: 'BLEU' }, { id: 'VERT' },
+    { id: 'NOIR' }, { id: 'BLANC' }, { id: 'GRIS' },
+  ];
+  TEINTES_L24.forEach(function (t, i) {
+    var tVerre = 520 + i, tPoudre = 527 + i, tBeton = 534 + i;
+    defBlock(B['VERRE_' + t.id], { name: 'Verre teinté', tiles: [tVerre, tVerre, tVerre],
+                                   hardness: 0.4, transparent: true, pass: 'blend', drops: [] });
+    // le béton en poudre tombe comme le sable/gravier : une pelle suffit
+    defBlock(B['BETON_POUDRE_' + t.id], { name: 'Béton en poudre', tiles: [tPoudre, tPoudre, tPoudre],
+                                          hardness: 0.5, tool: 'shovel' });
+    defBlock(B['BETON_' + t.id], { name: 'Béton', tiles: [tBeton, tBeton, tBeton],
+                                   hardness: 1.8, tool: 'pickaxe', needsTool: true });
+  });
+  // laine : trois teintes de plus (les quatre premières existaient déjà, SPEC-MINERAI-*)
+  defBlock(B.WOOL_BLACK, { name: 'Laine noire', tiles: [541, 541, 541], hardness: 0.8, inflammable: true });
+  defBlock(B.WOOL_WHITE, { name: 'Laine blanche', tiles: [542, 542, 542], hardness: 0.8, inflammable: true });
+  defBlock(B.WOOL_GRAY,  { name: 'Laine grise', tiles: [543, 543, 543], hardness: 0.8, inflammable: true });
+  // terre cuite : cinq teintes de plus (rouge et jaune existaient déjà)
+  defBlock(B.TERRACOTTA_BLUE,  { name: 'Terre cuite bleue', tiles: [544, 544, 544], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_GREEN, { name: 'Terre cuite verte', tiles: [545, 545, 545], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_BLACK, { name: 'Terre cuite noire', tiles: [546, 546, 546], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_WHITE, { name: 'Terre cuite blanche', tiles: [547, 547, 547], hardness: 1.2, tool: 'pickaxe' });
+  defBlock(B.TERRACOTTA_GRAY,  { name: 'Terre cuite grise', tiles: [548, 548, 548], hardness: 1.2, tool: 'pickaxe' });
+
+  // ─── L24 matériaux (SPEC-CONSTR-006) : marbre, chaume, poutres ────────────
+  // le marbre et l'ardoise (bloc existant) se trouvent aussi naturellement en
+  // sous-sol (voir world.js:filon) ; le marbre se taille aussi à l'établi.
+  defBlock(B.MARBRE, { name: 'Marbre', tiles: [549, 549, 549], hardness: 1.5, tool: 'pickaxe', needsTool: true });
+  // chaume : une toiture légère et inflammable, comme le foin
+  defBlock(B.CHAUME, { name: 'Chaume', tiles: [550, 550, 550], hardness: 0.5, tool: 'axe', inflammable: true });
+  var POUTRES_L24 = [
+    { id: 'CHENE', nom: 'de chêne' }, { id: 'SAPIN', nom: 'de sapin' }, { id: 'BOULEAU', nom: 'de bouleau' },
+    { id: 'ACACIA', nom: "d'acacia" }, { id: 'JUNGLE', nom: 'de jungle' },
+  ];
+  POUTRES_L24.forEach(function (p, i) {
+    var tp = 551 + i;
+    defBlock(B['POUTRE_' + p.id], { name: 'Poutre ' + p.nom, tiles: [tp, tp, tp],
+                                    hardness: 2.0, tool: 'axe', inflammable: true });
+  });
+
+  // ─── L24 matériaux (SPEC-CONSTR-007) : le feu ──────────────────────────────
+  // `inflammable` : ce que le feu peut consumer (voir feu.js). `fumee` :
+  // source qui fait fumer (torches, foyer, cheminée, et le feu lui-même).
+  defBlock(B.FEU, { name: 'Feu', tiles: [556, 556, 556], hardness: 0, transparent: true, plant: true,
+                    pass: 'lumineux', light: 14, hurts: 1, fumee: true, sansLampe: false, drops: [] });
+  defBlock(B.FOYER, { name: 'Foyer', tiles: [557, 558, 558], hardness: 3.5, tool: 'pickaxe', needsTool: true,
+                      light: 10, fumee: true });
+  defBlock(B.CHEMINEE, { name: 'Cheminée', tiles: [559, 559, 559], hardness: 2.0, tool: 'pickaxe',
+                        light: 3, fumee: true });
+  BLOCKS[B.TORCH].fumee = true;
+  // bois et végétaux existants qui prennent feu (leur nouveau lot fixe le
+  // reste : poutres, chaume, laines noire/blanche/grise ci-dessus)
+  [B.LOG, B.BIRCH_LOG, B.SPRUCE_LOG, B.JUNGLE_LOG, B.ACACIA_LOG,
+   B.LEAVES, B.BIRCH_LEAVES, B.SPRUCE_LEAVES, B.JUNGLE_LEAVES, B.ACACIA_LEAVES,
+   B.PLANKS, B.PLANCHES_SAPIN, B.PLANCHES_BOULEAU, B.PLANCHES_ACACIA, B.PLANCHES_JUNGLE,
+   B.WOOL, B.WOOL_RED, B.WOOL_BLUE, B.WOOL_YELLOW, B.WOOL_GREEN,
+   B.HAY, B.BOOKSHELF, B.TALL_GRASS, B.DEAD_BUSH, B.COBWEB,
+  ].forEach(function (id) { BLOCKS[id].inflammable = true; });
+  function isInflammable(id) { var d = BLOCKS[id]; return !!d && !!d.inflammable; }
+  function estFumigene(id) { var d = BLOCKS[id]; return !!d && !!d.fumee; }
+
   // ─── définitions des objets ────────────────────────────────────────────────
   // tool : classe, tier : 1 bois, 2 pierre, 3 fer. food : points de faim rendus.
   var ITEMS = [];
@@ -738,6 +823,14 @@
                            damage: 6, durability: 190, maxStack: 1 });
   // bijou : parure de luxe, sans usage d'outil — un objet de commerce
   defItem(I.BIJOU, { name: 'Bijou', tile: 252 });
+
+  // ─── L24 matériaux (SPEC-CONSTR-005/007) : teintures et briquet ──────────
+  defItem(I.DYE_BLACK, { name: 'Teinture noire', tile: 512 });
+  defItem(I.DYE_WHITE, { name: 'Teinture blanche', tile: 513 });
+  defItem(I.DYE_GRAY, { name: 'Teinture grise', tile: 514 });
+  // silex et acier : allume un feu sur un bloc plein ou un matériau
+  // inflammable visé (voir player.js:utiliserBriquet) — pas de recette d'usure.
+  defItem(I.BRIQUET, { name: 'Briquet', tile: 515, briquet: true, maxStack: 1 });
 
   /* ─── variantes de tuiles ──────────────────────────────────────────────────
      Une même tuile répétée sur un grand sol dessine un quadrillage. Les tuiles
@@ -1078,6 +1171,7 @@
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
     isLog: isLog, isLeaves: isLeaves, isConifere: isConifere, isWater: isWater, isLava: isLava, TIER_NAME: TIER_NAME,
+    isInflammable: isInflammable, estFumigene: estFumigene,
     TUILES_VARIABLES: TUILES_VARIABLES, INDEX_VARIANTES: INDEX_VARIANTES, tuileVariante: tuileVariante,
     PREMIERE_VARIANTE: PREMIERE_VARIANTE,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,
