@@ -58,6 +58,27 @@
       criteres: { types: ['e2e'] },
     },
     {
+      /* SPEC-BANC-025 : une poignée d'e2e rapides et représentatifs
+         (démarrage, transition menu → partie, déplacement, inventaire,
+         minage), choisis par NOM EXACT pour rester < 2 min même exécutés
+         un par un dans le navigateur sans fenêtre (tools/e2e-headless.js
+         relance runE2E une fois par nom — voir son en-tête). Sélection par
+         `tests` plutôt que par étiquette : tests/e2e.js n'est pas modifié
+         par ce lot, donc aucun test n'y porte encore d'étiquette @fumee. */
+      nom: 'e2e-fumee',
+      description: 'Quelques e2e rapides et représentatifs (< 2 min), sans fenêtre — greffé sur pre-push via le préréglage pr',
+      pour: ['crochet'],
+      criteres: {
+        tests: [
+          'le jeu démarre sur le menu principal, monde déjà généré',
+          'passer en partie masque le menu',
+          'avancer déplace le joueur dans la direction du regard',
+          'E ouvre l\'inventaire et libère la souris',
+          'maintenir le clic gauche mine le bloc visé',
+        ],
+      },
+    },
+    {
       nom: 'integration',
       description: 'Tests d\'intégration seulement (vrais sockets, vrai serveur)',
       pour: ['testeur', 'crochet'],

@@ -15,9 +15,11 @@
      node tests/run.js --lister                  affiche la sélection et les fiches, n'exécute rien
    Options d'exécution, conservées : --delai N, --silencieux.
 
-   Les tests de type e2e sont LISTÉS (ils comptent dans le catalogue) mais
-   jamais exécutés ici : ils exigent un navigateur (SPEC-BANC-005). run.js le
-   signale plutôt que de les ignorer en silence.
+   Les tests de type e2e SONT exécutés ici (SPEC-BANC-023/024/025) : dans un
+   navigateur Edge/Chrome installé, sans fenêtre, piloté par CDP — voir
+   tools/e2e-headless.js. Sans navigateur installé, ils sont ignorés avec un
+   avertissement plutôt que de faire échouer la campagne (comportement
+   nécessaire au préréglage `e2e-fumee`, ajouté au crochet pre-push).
 
    Préréglage `en-cours` (voir l'en-tête de tests/presets.js) : ses critères
    de base sont vides ; c'est CE fichier, seul à avoir accès à git et à
@@ -79,7 +81,7 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
 
 const SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'vehicules',
              'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'ambiance', 'audio', 'qualite'];
-const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-secu', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-routes', 'spec-histoire', 'spec-succes', 'spec-ombres', 'spec-population', 'spec-hud', 'spec-couverture', 'spec-recits', 'spec-commandes', 'spec-portes', 'spec-eau', 'spec-vent', 'spec-loin', 'spec-donjons', 'spec-audio', 'spec-options', 'spec-souterrain', 'spec-apparence', 'spec-saisons', 'spec-parametres', 'spec-admin', 'spec-densite', 'spec-volcans', 'spec-caravanes', 'spec-zones', 'spec-blocs16', 'spec-politique', 'spec-guildes', 'spec-materiaux', 'spec-circuits', 'spec-objets', 'spec-formes', 'spec-recifs', 'spec-interieur', 'spec-batiments', 'spec-banc',
+const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-secu', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-routes', 'spec-histoire', 'spec-succes', 'spec-ombres', 'spec-population', 'spec-hud', 'spec-couverture', 'spec-recits', 'spec-commandes', 'spec-portes', 'spec-eau', 'spec-vent', 'spec-loin', 'spec-donjons', 'spec-audio', 'spec-options', 'spec-souterrain', 'spec-apparence', 'spec-saisons', 'spec-parametres', 'spec-admin', 'spec-densite', 'spec-volcans', 'spec-caravanes', 'spec-zones', 'spec-blocs16', 'spec-politique', 'spec-guildes', 'spec-materiaux', 'spec-circuits', 'spec-objets', 'spec-formes', 'spec-recifs', 'spec-interieur', 'spec-batiments', 'spec-banc', 'spec-banc-headless',
              // exploration (lot perf) : sondes non bloquantes, @exploration — voir tests/catalogue.js
              'spec-perf', 'limites-sondes', 'spec-limites', 'spec-rendu'];
 
@@ -159,6 +161,8 @@ const FICHE_INTEGRATION = {
   'integration-charge.js': { teste: 'Le banc de charge, à petite échelle, pour vérifier qu\'il fonctionne.', pourquoi: 'Un banc de charge cassé donnerait une fausse confiance sur les performances mesurées ailleurs.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
   'integration-cahiers.js': { teste: 'La bibliothèque des cahiers de test (SPEC-BANC-018 à 022) sur un vrai serveur : enregistrement, liste, comparaison, export HTML/.docx.', pourquoi: 'Les routes /tests/cahiers combinent serveur HTTP, disque et rendu ; seul un vrai processus vérifie qu\'elles fonctionnent ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
   'integration-secu.js': { teste: 'La fiabilité et la sécurité du transport réseau (SPEC-SECU-001 à 007, SPEC-SERVEUR-003/004) sur de vrais processus server.js : pannes non fatales, trames non masquées, anti-flood, sauvegarde atomique sous coupure.', pourquoi: 'Try/catch autour des handlers, anti-flood et écriture atomique ne se vérifient qu\'avec un vrai serveur, de vraies sockets et de vraies interruptions de processus.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
+  'integration-cdp-fake.js': { teste: 'Le client CDP minimal (SPEC-BANC-023, tools/cdp.js) contre un faux serveur WebSocket local : découverte, requête/réponse par id, événements relayés, délai, erreur CDP.', pourquoi: 'tests/harness.js (describe/it) est délibérément synchrone : une assertion qui échouerait dans un .then() ne serait jamais rapportée comme un échec de test. Le protocole CDP a besoin de vraies requêtes HTTP/WebSocket asynchrones, donc d\'un vrai script Node avec await, comme les autres tests/integration-*.js.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
+  'integration-e2e-headless.js': { teste: 'Une vraie campagne e2e sans fenêtre (SPEC-BANC-023/024/025) : navigateur Edge/Chrome réel en mode sans interface, deux e2e exécutés, cahier écrit avec captures lisibles, aucun processus restant.', pourquoi: 'CDP, la détection du navigateur et le nettoyage garanti ne se vérifient qu\'avec un vrai navigateur lancé et arrêté pour de vrai — voir tools/cdp.js, tools/navigateur.js, tools/e2e-headless.js.', attendu: 'le script se termine sans échec (code de sortie 0) ; sans aucun Edge/Chrome installé, il s\'ignore avec un avertissement (code de sortie 0 aussi).' },
   'charge.js': { teste: 'Le banc de charge complet (1 à 100 joueurs simulés).', pourquoi: 'Mesure la tenue en charge réelle du serveur — voir docs/charge.md.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
 };
 function integrationListeDepuisFichiers() {
@@ -291,9 +295,9 @@ if (drapeau('--lister')) {
 const e2eSelectionnes = selection.filter(t => t.type === 'e2e');
 const integrationSelectionnes = selection.filter(t => t.type === 'integration' || t.type === 'charge');
 const aExecuter = selection.filter(t => t.type !== 'e2e' && t.type !== 'integration' && t.type !== 'charge');
-if (e2eSelectionnes.length && !silencieux) {
-  fs.writeSync(2, `(${e2eSelectionnes.length} test(s) end-to-end sélectionné(s) ignoré(s) : ils s'exécutent dans le navigateur, pas sous Node — tests/index.html)\n`);
-}
+let ignoresE2E = 0;
+let environnementE2E = null;
+let capturesGlobalesE2E = [];
 
 // ── exécution ────────────────────────────────────────────────────────────
 const ecrire = (t) => { if (!silencieux) fs.writeSync(2, t + '\n'); };
@@ -368,6 +372,62 @@ integrationSelectionnes.forEach((t) => {
   ecrireInstantane();
 });
 
+// ── tests e2e : navigateur sans fenêtre, piloté par CDP (SPEC-BANC-023) ────
+/* Délégué à tools/e2e-headless.js, en SOUS-PROCESSUS (comme les scripts
+   tests/integration-*.js ci-dessus) : ce module a besoin d'async/await
+   (WebSocket CDP) que ce fichier, synchrone de bout en bout, n'a pas.
+   Absence de navigateur (SPEC-BANC-025, préréglage e2e-fumee) : les e2e
+   sont IGNORÉS avec un avertissement, sans faire échouer la campagne —
+   même comportement que l'ancien repli « ils s'exécutent dans le
+   navigateur, pas sous Node ». Toute autre panne d'infrastructure (serveur
+   de test, navigateur qui plante) est en revanche un échec réel. */
+if (e2eSelectionnes.length) {
+  const os = require('os');
+  ecrire('▶ end-to-end (' + e2eSelectionnes.length + ' test(s), navigateur sans fenêtre)');
+  const tmpEntree = path.join(os.tmpdir(), 'mc-e2e-entree-' + process.pid + '.json');
+  const tmpSortie = path.join(os.tmpdir(), 'mc-e2e-sortie-' + process.pid + '.json');
+  fs.writeFileSync(tmpEntree, JSON.stringify(e2eSelectionnes.map(t => (
+    { id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche }
+  ))));
+  const delaiTestE2eMs = 45000;
+  const delaiGlobalE2eMs = Math.max(60000, e2eSelectionnes.length * (delaiTestE2eMs + 3000));
+  const t0e2e = Date.now();
+  const rE2E = require('child_process').spawnSync(process.execPath, [
+    path.join(root, 'tools', 'e2e-headless.js'),
+    '--entree', tmpEntree, '--sortie', tmpSortie,
+    '--delai-demarrage', '25000', '--delai-test', String(delaiTestE2eMs), '--delai-global', String(delaiGlobalE2eMs),
+  ], { cwd: root, stdio: silencieux ? 'ignore' : ['ignore', 'inherit', 'inherit'] });
+  let resultatE2E = null;
+  try { resultatE2E = JSON.parse(fs.readFileSync(tmpSortie, 'utf8')); } catch (e) { /* rien : voir la branche d'échec plus bas */ }
+  try { fs.unlinkSync(tmpEntree); } catch (e) { /* rien */ }
+  try { fs.unlinkSync(tmpSortie); } catch (e) { /* rien */ }
+
+  if (resultatE2E && resultatE2E.ok) {
+    resultatE2E.tests.forEach((t) => {
+      if (t.etat === 'ok') res.passed++; else res.failed++;
+      testsResultats.push(t);
+    });
+    capturesGlobalesE2E = resultatE2E.captures || [];
+    if (resultatE2E.environnement) environnementE2E = resultatE2E.environnement;
+    ecrire('  fin end-to-end en ' + secondes(Date.now() - t0e2e));
+  } else if (resultatE2E && resultatE2E.motif === 'navigateur_introuvable') {
+    if (!silencieux) fs.writeSync(2, '(aucun navigateur Edge/Chrome installé — end-to-end ignoré(s), sans échec : voir tools/navigateur.js)\n');
+    ignoresE2E = e2eSelectionnes.length;
+  } else {
+    const motif = resultatE2E ? resultatE2E.motif : ('code de sortie ' + rE2E.status);
+    ecrire('  ✗ end-to-end : infrastructure indisponible (' + motif + ')');
+    e2eSelectionnes.forEach((t) => {
+      res.failed++;
+      testsResultats.push({
+        id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
+        etat: 'echec', duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 1 },
+        message: 'campagne e2e sans fenêtre indisponible : ' + motif,
+      });
+    });
+  }
+  ecrireInstantane();
+}
+
 const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', x: '\x1b[0m' };
 let line = '';
 for (const s of res.suites) {
@@ -389,19 +449,30 @@ testsResultats.forEach((t) => {
   (t.domaines.length ? t.domaines : ['(sans domaine)']).forEach(d => { parDomaine[d] = (parDomaine[d] || 0) + 1; });
 });
 const lents = testsResultats.filter(t => t.duree_ms > SEUIL_LENT * 1000).map(t => t.nom);
+// environnement() décrit le processus Node qui orchestre la campagne ;
+// quand des e2e ont réellement tourné, on y ajoute (sans l'écraser) ce que
+// tools/e2e-headless.js a observé du navigateur sans fenêtre (SPEC-BANC-012 :
+// « environnement : navigateur, carte graphique, résolution… »)
+const environnementFinal = environnement();
+if (environnementE2E) {
+  environnementFinal.navigateur = environnementE2E.navigateur;
+  environnementFinal.gpu = environnementE2E.gpu;
+  environnementFinal.resolution = environnementE2E.resolution;
+  environnementFinal.accelerationMaterielle = environnementE2E.accelerationMaterielle;
+}
 const resultatsFinaux = {
   schema: 1,
   campagne: {
     preset: etiquetteCampagne, criteres, debut: debutISO, fin: finISO, duree_ms: Date.now() - debut,
-    interrompue: false, environnement: environnement(),
-    totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: e2eSelectionnes.length, parType, parDomaine },
+    interrompue: false, environnement: environnementFinal,
+    totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E, parType, parDomaine },
     lents,
   },
   tests: testsResultats,
 };
 try {
   const RT = require('../tools/resultats-tests.js');
-  const r = RT.ecrireCahier(resultatsFinaux);
+  const r = RT.ecrireCahier(resultatsFinaux, { captures: capturesGlobalesE2E });
   ecrire('cahier de test : ' + r.rapport);
 } catch (e) { ecrire('(cahier de test non écrit : ' + e.message + ')'); }
 

@@ -102,7 +102,11 @@
       // 'limites' dépend des fichiers d'exploration du lot perf (spec-perf.js,
       // limites-sondes.js, spec-limites.js), chargés s'ils existent (voir
       // tests/run.js) : vide tant que ce lot n'est pas fusionné
-      var IGNORES = { bugs: true, integration: true, limites: true, visuel: true };
+      // 'e2e-fumee' (SPEC-BANC-025) sélectionne par NOM EXACT une poignée de
+      // vrais e2e de tests/e2e.js — jamais présents dans ce catalogue
+      // synthétique à un seul faux test ; vérifié séparément, sur un
+      // catalogue réaliste, dans tests/spec-banc-headless.js.
+      var IGNORES = { bugs: true, integration: true, limites: true, visuel: true, 'e2e-fumee': true };
       MC_TESTS.PRESETS.forEach(function (p) {
         if (p.dynamique || IGNORES[p.nom]) return;
         var sel = MC_TESTS.selection(cat, p.criteres);
