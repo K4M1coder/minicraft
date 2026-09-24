@@ -653,8 +653,77 @@
       return [0, 0];
     }
 
+    /* SPEC-SAISON-006 : la croissance suit la saison — vite l'été (base),
+       deux fois plus lentement au printemps et à l'automne, jamais l'hiver.
+       Sans `opts.temps` (appelants qui ignorent l'heure, ou tests existants),
+       la croissance garde son rythme d'origine. */
+    function multCroissance(temps) {
+      if (!MC.DayCycle || temps === undefined) return 1;
+      var nom = MC.DayCycle.saison(temps).nom;
+      if (nom === 'hiver') return null;
+      return nom === 'ete' ? 1 : 2;
+    }
+
+    /* SPEC-SAISON-003 et SPEC-SAISON-005 : effets de surface de la saison —
+       gel des eaux dormantes (les lacs, jamais la mer, l'océan ni l'eau
+       courante) dans les régions froides, et couverture neigeuse du sol dans
+       les régions tempérées — tous deux réversibles au printemps.
+       Progressif et bon marché : à chaque appel on n'examine qu'UN chunk
+       chargé (roulement), quel que soit le nombre de chunks en mémoire. On ne
+       défait que ce qu'on a nous-même posé : banquise ou neige générées avec
+       le monde, comme la glace ou la neige du joueur, restent intactes. */
+    var GEL_CLIMAT_SEUIL = 0.38;           // plus froid que ça : les lacs y gèlent en hiver
+    var NEIGE_CLIMAT_MIN = 0.26, NEIGE_CLIMAT_MAX = 0.55;   // bande tempérée : la neige s'y dépose
+    var gelSaisonnier = new Map();         // key3 -> true (glace posée par la saison)
+    var neigeSaisonniere = new Map();      // key3 -> id d'origine (sous la neige posée par la saison)
+    var gelCurseur = 0;
+    function tickSaisonSurface(hiver) {
+      if (!chunks.size) return;
+      var cles = Array.from(chunks.keys());
+      var c = chunks.get(cles[gelCurseur % cles.length]);
+      gelCurseur++;
+      if (!c) return;
+      for (var col = 0; col < CX * CZ; col++) {
+        var lx = col % CX, lz = (col / CX) | 0;
+        var wx = c.cx * CX + lx, wz = c.cz * CZ + lz;
+        var nat = c.eau && c.eau.nature[col];
+        if (MC.Eau && nat === MC.Eau.TYPES.lac) {
+          if (Bio.climat(wx, wz).t >= GEL_CLIMAT_SEUIL) continue;
+          var y = WH - 1;
+          while (y > 0 && getBlock(wx, y, wz) === 0) y--;
+          var id = getBlock(wx, y, wz);
+          var k3 = key3(wx, y, wz);
+          if (hiver) {
+            if (id === B.WATER && getBlock(wx, y + 1, wz) === 0) {
+              setBlock(wx, y, wz, B.ICE);
+              gelSaisonnier.set(k3, true);
+            }
+          } else if (id === B.ICE && gelSaisonnier.has(k3)) {
+            setBlock(wx, y, wz, B.WATER);
+            gelSaisonnier.delete(k3);
+          }
+        } else if (!nat) {
+          var cl = Bio.climat(wx, wz).t;
+          if (cl < NEIGE_CLIMAT_MIN || cl > NEIGE_CLIMAT_MAX) continue;
+          var y2 = WH - 1;
+          while (y2 > 0 && getBlock(wx, y2, wz) === 0) y2--;
+          var id2 = getBlock(wx, y2, wz);
+          var k3n = key3(wx, y2, wz);
+          if (hiver) {
+            if (id2 === B.GRASS) {
+              setBlock(wx, y2, wz, B.SNOW);
+              neigeSaisonniere.set(k3n, id2);
+            }
+          } else if (id2 === B.SNOW && neigeSaisonniere.has(k3n)) {
+            setBlock(wx, y2, wz, neigeSaisonniere.get(k3n));
+            neigeSaisonniere.delete(k3n);
+          }
+        }
+      }
+    }
+
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
-    var eauT = 0;
+    var eauT = 0, gelT = 0;
     function tick(dt, stageTime, rand, opts) {
       var st = stageTime || 14;
       var r = rand || Math.random;
@@ -664,9 +733,12 @@
         eauT += dt;
         if (eauT >= 0.25) { eauT = 0; coulerEau(96); }
       }
+      var temps = opts && opts.temps;
+      var mult = multCroissance(temps);
       crops.forEach(function (c2) {
+        if (mult === null) return;                    // pas l'hiver
         c2.t += dt;
-        if (c2.t < st) return;
+        if (c2.t < st * mult) return;
         c2.t = 0;
         // la culture ne pousse que sur de la terre labourée
         if (getBlock(c2.x, c2.y - 1, c2.z) !== B.FARMLAND) return;
@@ -677,6 +749,10 @@
         setBlock(c2.x, c2.y, c2.z, C.WHEAT_STAGES[s + 1]);
         grown.push([c2.x, c2.y, c2.z, s + 1]);
       });
+      if (MC.DayCycle && temps !== undefined) {
+        gelT += dt;
+        if (gelT >= 1) { gelT = 0; tickSaisonSurface(MC.DayCycle.saison(temps).nom === 'hiver'); }
+      }
       return grown;
     }
 

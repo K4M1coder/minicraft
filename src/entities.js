@@ -926,18 +926,21 @@
         if (e.pos.y < -20) remove(e);
       }
       separerEntites(dt);
-      reproduire(dt, rand, events);
+      reproduire(dt, rand, events, !!opts.hiver);
       return events;
     }
 
     /* Reproduction : deux adultes de la même espèce, proches l'un de l'autre et
        reposés, donnent un petit — tant que leur espèce reste sous son plafond
        dans les environs. Le petit grandit en quelques minutes. De quoi garder
-       une population vivante sans la laisser envahir le monde. */
+       une population vivante sans la laisser envahir le monde.
+       SPEC-SAISON-006 : l'hiver, plus aucune nouvelle naissance — mais un
+       petit déjà né continue de grandir, et les cooldowns continuent de
+       s'écouler, pour reprendre net au printemps. */
     var ESPECES = { sheep: 1, pig: 1, chicken: 1, goat: 1, polar_bear: 1, wolf: 1 };
     var REPRO = { rayon: 5, delai: 90, croissance: 180, plafond: 8, zone: 48, cadence: 4 };
     var reproT = 0;
-    function reproduire(dt, rand, events) {
+    function reproduire(dt, rand, events, hiver) {
       for (var i = 0; i < list.length; i++) {
         var p = list[i];
         if (p.bebe) { p.croissance = (p.croissance || 0) + dt; if (p.croissance >= REPRO.croissance) { p.bebe = false; } }
@@ -946,6 +949,7 @@
       reproT -= dt;
       if (reproT > 0) return;
       reproT = REPRO.cadence;
+      if (hiver) return;
       for (var a = 0; a < list.length; a++) {
         var e = list[a];
         if (!ESPECES[e.type] || e.dead || e.bebe || e.reproCd > 0 || !zoneChargee(e)) continue;

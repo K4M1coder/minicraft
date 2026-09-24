@@ -614,6 +614,7 @@
         'XYZ <b>' + p.pos.x.toFixed(1) + ' / ' + p.pos.y.toFixed(1) + ' / ' + p.pos.z.toFixed(1) + '</b>' +
         ' · cap <b>' + o.cap + '°</b> ' + o.cardinal + ' · inclinaison <b>' + o.inclinaison + '°</b><br>' +
         DC.clockString(g.time) + ' <b>' + (DC.isNight(g.time) ? 'nuit' : 'jour') + '</b>' +
+        (DC.saison ? (function (sa) { return ' · ' + sa.nom + ' <b>j' + sa.jour + '</b> an <b>' + sa.annee + '</b>'; })(DC.saison(g.time)) : '') +
         ' · ' + (p.flying ? 'vol' : p.swimming ? 'nage' : p.onGround ? "au sol" : "en l" + String.fromCharCode(39) + "air") +
         (g.regles && g.regles.mode ? ' · ' + g.regles.mode.nom : '') +
         // à bord : l'engin, sa vitesse, et comment en descendre

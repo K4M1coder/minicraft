@@ -406,7 +406,7 @@
        `lieu` : { ySol, fond (le point bas alentour, ou l'eau), humidite 0..1 }. */
     function brume(temps, et, lieu) {
       et = et || etat(temps);
-      var jour = MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 420;
+      var jour = MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200;
       var p = ((temps % jour) + jour) % jour / jour;
       // l'aube (0,92 → 1) et le petit matin (0 → 0,15), le cœur du jour la lève
       var matin = p >= 0.85 ? smoothstep(0.85, 0.95, p) : 1 - smoothstep(0.05, 0.16, p);
@@ -467,8 +467,13 @@
     }
 
     /* Température en °C d'un point : climat (0 glacial … 1 torride), altitude,
-       heure du jour, temps qu'il fait. Les déserts sont brûlants le jour et
-       froids la nuit. */
+       heure du jour, temps qu'il fait, saison. Les déserts sont brûlants le
+       jour et froids la nuit.
+       SPEC-SAISON-003 : l'écart été/hiver est progressif (une fonction continue
+       de l'heure du monde) et le plus marqué aux climats tempérés (climatT
+       proche de 0,5) — les extrêmes (glacial ou torride) varient déjà tant
+       avec l'heure et le climat qu'une saison y change peu de choses. */
+    var SAISON_AMPL = 11;   // écart maximal (°C) entre le cœur de l'été et de l'hiver, en climat tempéré
     function temperature(climatT, altitude, temps, et, biomeId) {
       et = et || etat(temps);
       var soleil = MC.DayCycle ? MC.DayCycle.sunIntensity(temps) : 1;
@@ -476,6 +481,10 @@
       if (altitude > 40) t -= (altitude - 40) * 0.3;
       t += soleil * 4 - (1 - soleil) * 3;
       t += et.chaleur * (0.4 + 0.6 * soleil);
+      if (MC.DayCycle) {
+        var tempere = 4 * climatT * (1 - climatT);           // 0 aux extrêmes, 1 à climatT = 0,5
+        t += MC.DayCycle.facteurSaison(temps) * SAISON_AMPL * tempere;
+      }
       if (SECS[biomeId]) t += soleil * 8 - (1 - soleil) * 8;
       if (biomeId === 'volcan') t += 10;
       return Math.round(t * 10) / 10;

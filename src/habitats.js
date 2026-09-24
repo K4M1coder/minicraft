@@ -806,7 +806,9 @@
      nom : le lieu garde sa population sans ressusciter personne. Le remplaçant
      porte un nouvel identifiant (`id+1`, `id+2`…) ; tué à son tour, il sera
      remplacé de la même façon. */
-  var DELAI_REMPLACEMENT = 420;          // une journée de jeu
+  // une journée de jeu (SPEC-SAISON-001 : 1200 s) ; MC.DayCycle n'est pas
+  // garanti chargé avant ce module, d'où la valeur de repli littérale.
+  var DELAI_REMPLACEMENT = (typeof MC !== 'undefined' && MC.DayCycle && MC.DayCycle.DAY_LENGTH) || 1200;
   function pnjsManquants(lieux, entites, morts, temps, delai) {
     var presents = new Set();
     entites.forEach(function (e) { if (e.pnj) presents.add(e.pnj); });

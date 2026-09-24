@@ -331,7 +331,15 @@
 
     it('SPEC-METEO-002 : il fait froid en altitude et aux pôles, chaud au désert le jour, froid la nuit', function () {
       var m = ME.creer(5), et = m.etat(0);
-      var jour = MC.DayCycle.DAY_LENGTH * 0.2, nuit = MC.DayCycle.DAY_LENGTH * 0.7;
+      // SPEC-SAISON-003 : la température varie désormais aussi avec la saison —
+      // on choisit un jour au cœur de l été pour que ce test, qui ne porte que
+      // sur l altitude, la latitude et le jour/nuit, ne se heurte pas par
+      // hasard à un creux hivernal (facteurSaison négatif) sur un point choisi
+      // au jour 0 de l année.
+      // alignée sur un début de journée, pour que + 0.2/0.7 jour retombe bien
+      // en plein jour / en pleine nuit, comme le voulait ce test à l origine
+      var ETE = Math.round(MC.DayCycle.YEAR_LENGTH * 0.375 / MC.DayCycle.DAY_LENGTH) * MC.DayCycle.DAY_LENGTH;
+      var jour = ETE + MC.DayCycle.DAY_LENGTH * 0.2, nuit = ETE + MC.DayCycle.DAY_LENGTH * 0.7;
       var plaine = m.temperature(0.5, 30, jour, et, 'plaines');
       var sommet = m.temperature(0.5, 110, jour, et, 'montagnes');
       var pics = m.temperature(0.03, 40, jour, et, 'pics_glaces');

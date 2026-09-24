@@ -100,6 +100,13 @@
        comme une lueur chaude par-dessus l'éclairage du ciel. Plus discrète en
        plein jour, où le soleil domine, qu'au cœur de la nuit ou d'une grotte. */
     var forceTorches = { value: 1 };
+    /* SPEC-SAISON-004 : teintes saisonnières du feuillage et de l'herbe, mises
+       à jour une fois par image (majCiel) à partir de MC.DayCycle.teinteSaison —
+       un calcul CPU bon marché, partagé par tous les chunks via ces uniforms. */
+    var saisonCaduc = { value: new THREE.Color(0.5, 0.8, 0.4) };
+    var saisonConifere = { value: new THREE.Color(0.24, 0.5, 0.28) };
+    var saisonHerbe = { value: new THREE.Color(0.48, 0.75, 0.34) };
+    var saisonDensite = { value: 1 };
     /* Eau : vent de surface et passe de réfraction (le décor vu à travers la
        surface, sans l'eau). Les paramètres d'onde arrivent par sommet. */
     var ventEau = { value: new THREE.Vector2(1, 0) };
@@ -117,10 +124,12 @@
         /* Le vent au sol fait ployer herbes, fleurs, cultures et feuillages
            (attribut souple : pied fixe, sommet mobile) ; la phase dépend de la
            position, donc deux blocs voisins bougent ensemble, sans fissure. */
-        sh.vertexShader = 'attribute float immerge;\nattribute float souple;\nvarying float vImmerge;\n' +
+        sh.vertexShader = 'attribute float immerge;\nattribute float souple;\nattribute float feuillage;\n' +
+          'varying float vImmerge;\nvarying float vFeuillage;\n' +
           'uniform float tempsEau; uniform vec2 ventEau;\n' +
           sh.vertexShader.replace('#include <begin_vertex>', ['#include <begin_vertex>',
             '  vImmerge = immerge;',
+            '  vFeuillage = feuillage;',
             '  if (souple > 0.0) {',
             '    vec4 wpS = modelMatrix * vec4(transformed, 1.0);',
             '    float fS = length(ventEau);',
@@ -129,7 +138,22 @@
             '    float ampS = (0.05 + 0.16 * fS) * souple;',
             '    transformed.xz += dS * ampS * (0.65 + 0.35 * sin(phS)) + vec2(-dS.y, dS.x) * ampS * 0.3 * sin(phS * 1.7 + 0.8);',
             '  }'].join('\n'));
-        sh.fragmentShader = 'uniform float tempsEau;\nvarying float vImmerge;\n' + GLSL_CAUSTIQUES + sh.fragmentShader;
+        sh.uniforms.saisonCaduc = saisonCaduc; sh.uniforms.saisonConifere = saisonConifere;
+        sh.uniforms.saisonHerbe = saisonHerbe; sh.uniforms.saisonDensite = saisonDensite;
+        /* SPEC-SAISON-004 : teinte du feuillage caduc, du conifère et de
+           l'herbe selon la saison (uniform, aucune reconstruction de chunk).
+           Le feuillage caduc se clairsème l'hiver : un hachage stable par
+           sommet (indépendant de l'image) le retire d'une fraction du chunk. */
+        sh.fragmentShader = 'uniform float tempsEau;\nvarying float vImmerge;\nvarying float vFeuillage;\n' +
+          'uniform vec3 saisonCaduc; uniform vec3 saisonConifere; uniform vec3 saisonHerbe; uniform float saisonDensite;\n' +
+          GLSL_CAUSTIQUES + sh.fragmentShader.replace('#include <map_fragment>',
+            ['#include <map_fragment>',
+             '  if (vFeuillage > 0.5 && vFeuillage < 1.5) {',
+             '    float hF = fract(sin(dot(vUv, vec2(12.9898, 78.233))) * 43758.5453);',
+             '    if (hF > saisonDensite) discard;',
+             '    diffuseColor.rgb *= saisonCaduc;',
+             '  } else if (vFeuillage > 1.5 && vFeuillage < 2.5) { diffuseColor.rgb *= saisonConifere; }',
+             '  else if (vFeuillage > 2.5) { diffuseColor.rgb *= saisonHerbe; }'].join('\n'));
         if (eau) {
           sh.uniforms.refractionTex = refractionTex; sh.uniforms.refractionActive = refractionActive;
           sh.uniforms.tailleEcran = tailleEcran;
@@ -239,6 +263,10 @@
                                                                    : new Float32Array(nv), 1));
       g.setAttribute('souple', new THREE.Float32BufferAttribute(raw.souples && raw.souples.length === nv ? raw.souples
                                                                   : new Float32Array(nv), 1));
+      // SPEC-SAISON-004 : classe de teinte saisonnière par sommet (0 rien, 1
+      // caduc, 2 conifère, 3 dessus d'herbe) — voir avecLumiereDesBlocs.
+      g.setAttribute('feuillage', new THREE.Float32BufferAttribute(raw.feuillages && raw.feuillages.length === nv ? raw.feuillages
+                                                                     : new Float32Array(nv), 1));
       g.setIndex(raw.indices);
       g.computeBoundingSphere();
       return g;
@@ -1543,6 +1571,15 @@
     }
     function majCiel(time) {
       UN.temps.value = time;
+      // SPEC-SAISON-004 : teintes du feuillage et de l'herbe, recalculées une
+      // fois par image — bon marché, et sans reconstruire aucun chunk.
+      if (DC.teinteSaison) {
+        var ts = DC.teinteSaison(time);
+        saisonCaduc.value.setRGB(ts.caduc.r, ts.caduc.g, ts.caduc.b);
+        saisonConifere.value.setRGB(ts.conifere.r, ts.conifere.g, ts.conifere.b);
+        saisonHerbe.value.setRGB(ts.herbe.r, ts.herbe.g, ts.herbe.b);
+        saisonDensite.value = ts.densiteCaduc;
+      }
       var a = DC.astres(time);
       if (a.phaseLune !== phaseDessinee) dessinerLune(a.phaseLune);
       etoilesMat.opacity = a.etoiles;

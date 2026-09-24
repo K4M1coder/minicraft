@@ -109,6 +109,11 @@
        d'une fleur ou d'une culture (pied fixe à 0), 0,2 pour tout le feuillage,
        0 pour le reste (blocs pleins, torches, échelles, toiles…) */
     var souples = [];
+    /* feuillage : classe par sommet pour la teinte saisonnière du rendu
+       (SPEC-SAISON-004) — 0 rien, 1 feuillage caduc, 2 conifère, 3 dessus
+       d'herbe. Un uniform de saison (calculé une fois par image) suffit alors
+       à tout teinter, sans reconstruire les chunks à chaque changement. */
+    var feuillages = [];
     function plantePliable(d2) { return !!d2.plant && !d2.light && !d2.grimpable && !d2.ralentit && !d2.plat && !d2.needsSupportMur; }
     var cacheEau = {};
     function paramsEau(lx, y, lz) {
@@ -219,6 +224,7 @@
           pushUV(uvs, d.tiles[0], p[2], p[3]);
           colors.push(1, 1, 1);
           ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(0); souples.push(0);
+          feuillages.push(0);
           lums.push(lumEn(x, y, z));
           ciels.push(cielEn(x, y + 1, z));
         });
@@ -246,7 +252,7 @@
             var pc2 = pface.shade;
             colors.push(pc2, pc2, pc2);
             ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0);
-            immerges.push(0); souples.push(0);
+            immerges.push(0); souples.push(0); feuillages.push(0);
             lums.push(niv ? lumEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 0);
             ciels.push(nivC ? cielEn(x + pface.dir[0], y + pface.dir[1], z + pface.dir[2]) : 1);
           }
@@ -267,6 +273,7 @@
             colors.push(1, 1, 1);
             ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); immerges.push(profondeurEau(x, y + 1, z));
             souples.push(plantePliable(d) && p[1] > 0.5 ? 1 : 0);
+            feuillages.push(0);
             lums.push(Math.max(lumEn(x, y, z), d.light ? d.light / 15 : 0));
             ciels.push(cielEn(x, y, z));
           }
@@ -304,6 +311,8 @@
         var chuteFace = estEau && f.dir[1] === 0 && !C.isWater(nb) && chuteBloc;
         var immFace = d.liquid ? 0 : profondeurEau(nx, ny, nz);
         var feuillage = C.isLeaves(b);
+        // classe de teinte saisonnière de cette face (SPEC-SAISON-004)
+        var classeFeuillage = feuillage ? (C.isConifere(b) ? 2 : 1) : (b === C.B.GRASS && f.dir[1] === 1 ? 3 : 0);
         var tg = tangents(f.dir), U = tg[0], V = tg[1];
         // l'occlusion ne s'applique pas aux surfaces liquides : elle y produit
         // des taches sombres alors que l'eau n'a pas d'angles rentrants nets
@@ -338,6 +347,7 @@
           } else { ondes.push(0, 0, 0, 0); ondes2.push(0, 0, 0, 0); }
           immerges.push(immFace);
           souples.push(feuillage ? 0.2 : 0);
+          feuillages.push(classeFeuillage);
           if (niv) {
             var suL = (q2[0] * U[0] + q2[1] * U[1] + q2[2] * U[2]) === 1 ? 1 : -1;
             var svL = (q2[0] * V[0] + q2[1] * V[1] + q2[2] * V[2]) === 1 ? 1 : -1;
@@ -363,7 +373,8 @@
 
     if (!indices.length) return null;
     return { positions: positions, normals: normals, uvs: uvs,
-             colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, ondes2: ondes2, immerges: immerges, souples: souples };
+             colors: colors, indices: indices, lums: lums, ciels: ciels, ondes: ondes, ondes2: ondes2, immerges: immerges, souples: souples,
+             feuillages: feuillages };
   }
 
   MC.Mesher = { buildChunk: buildChunk, FACES: FACES, pushUV: pushUV, hachePos: hachePos, MARGE_UV: MARGE_UV,
