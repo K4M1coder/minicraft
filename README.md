@@ -145,6 +145,8 @@ node tests/gates.js               # les portes de qualité automatiques (G1–G6
 node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
 node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
 node tests/integration-paquet.js  # tests d'intégration de l'empaquetage
+node tests/integration-charge.js  # banc de charge, à petite échelle (vérifie qu'il fonctionne)
+node tests/charge.js              # banc de charge complet (1 à 100 joueurs) — voir docs/charge.md
 ```
 
 `tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~115 tests

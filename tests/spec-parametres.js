@@ -41,6 +41,13 @@
       A.equal(r.config.admin, 'secret123');
     });
 
+    it('SPEC-SERVEUR-002 : --max-joueurs accepte jusqu\'à 100 (borne du banc de charge)', function () {
+      var r = P.analyser(['--max-joueurs', '100']);
+      A.ok(r.ok, r.message);
+      A.equal(r.config.maxJoueurs, 100);
+      A.equal(P.analyser(['--max-joueurs', '101']).ok, false, 'au-delà de 100 : refusé');
+    });
+
     it('SPEC-PACK-002 : --pvp et --liste-blanche', function () {
       var r = P.analyser(['--pvp', 'on', '--liste-blanche']);
       A.ok(r.ok);
