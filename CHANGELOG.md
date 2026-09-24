@@ -14,6 +14,38 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+### Sécurité
+
+- Fiabilité du transport réseau (L44, sous-lot A1 — SPEC-SECU-001 à 008,
+  SPEC-SERVEUR-003/004) :
+  - une exception pendant le traitement d'un message (`traiter(c, m)`) ne
+    ferme plus que la connexion fautive — les autres clients restent en
+    ligne et le processus continue ; `uncaughtException`/`unhandledRejection`
+    sont désormais journalisés avec une sauvegarde de secours plutôt que de
+    laisser le processus s'arrêter silencieusement ;
+  - le tampon de réception par connexion est borné (`NP.TAMPON_MAX`, 1 Mo) :
+    un en-tête de trame annonçant une longueur énorme, jamais complétée, ne
+    peut plus faire grossir la mémoire indéfiniment — la connexion est fermée ;
+  - une trame client non masquée (bit MASK à 0) est désormais rejetée et la
+    connexion fermée, conformément à la RFC 6455 ;
+  - anti-flood par client : messages/s (hors `ENTREE`, cadencé par ailleurs)
+    et chat sont limités séparément par une fenêtre glissante ; les messages
+    en trop sont ignorés, une inondation qui persiste sur plusieurs secondes
+    consécutives entraîne une expulsion journalisée ;
+  - la portée d'un joueur est vérifiée AVANT toute génération de chunk lors
+    d'un `BLOC` (et non plus seulement avant l'application du bloc) : un
+    client ne peut plus forcer le serveur à générer du terrain arbitrairement
+    loin ;
+  - les coordonnées reçues (`BLOC`, `BOUGE`, `DISTRIB`) sont désormais bornées
+    par `NP.valider()` à une plage plausible (±10 000 000, très en-dessous de
+    2³¹ où `valeur | 0` tronque) et, pour `y`, à la hauteur réelle du monde ;
+  - la sauvegarde du monde (périodique et à l'arrêt) écrit désormais dans un
+    fichier `.tmp` puis renomme atomiquement vers le fichier final — jamais de
+    fichier tronqué au chemin final — et la sauvegarde périodique est
+    asynchrone (elle ne bloque plus le tic ni les clients connectés) ; une
+    seule sauvegarde à la fois.
+
 ### Ajouté
 - Taille de l'interface dans les options : automatique (réduite dans les petites
   fenêtres, jamais sous 60 %) ou de 60 à 150 % ; les options se rangent sur

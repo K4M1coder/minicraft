@@ -170,10 +170,50 @@ function appliquerEtatMonde(data) {
   }
   return true;
 }
-function sauvegarderMonde() {
+/* Sauvegarde atomique (SPEC-SERVEUR-003) : on écrit dans un fichier `.tmp`
+   PUIS on renomme vers le chemin final — `rename` est atomique au niveau du
+   système de fichiers, donc le fichier final est TOUJOURS soit l'ancienne
+   version complète, soit la nouvelle version complète, jamais un mélange
+   tronqué. Écrire directement dans le fichier final exposerait une lecture
+   (ou un arrêt brutal du processus) au milieu de l'écriture. */
+const FICHIER_TMP = () => CONF.mondeFichier + '.tmp';
+let sauvegardeEnCours = false;
+
+/* Version asynchrone (SPEC-SERVEUR-004) : utilisée par la sauvegarde
+   périodique, elle ne bloque JAMAIS la boucle de jeu — `fs.writeFile`/
+   `fs.rename` rendent la main immédiatement, le tic et les messages des
+   clients continuent d'être traités pendant l'écriture disque. Une seule
+   sauvegarde à la fois : si la précédente n'est pas terminée, celle-ci est
+   ignorée plutôt que d'écrire deux fichiers `.tmp` en parallèle. */
+function sauvegarderMondeAsync() {
+  if (!CONF.mondeFichier) return;
+  if (sauvegardeEnCours) return;                      // pas de sauvegarde concurrente
+  sauvegardeEnCours = true;
+  let data;
+  try { data = JSON.stringify(etatMonde()); }
+  catch (e) { sauvegardeEnCours = false; journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
+  fs.writeFile(FICHIER_TMP(), data, (err) => {
+    if (err) {
+      sauvegardeEnCours = false;
+      journal('échec de la sauvegarde du monde (écriture) : ' + err.message);
+      return;
+    }
+    fs.rename(FICHIER_TMP(), CONF.mondeFichier, (err2) => {
+      sauvegardeEnCours = false;
+      if (err2) journal('échec de la sauvegarde du monde (renommage) : ' + err2.message);
+    });
+  });
+}
+
+/* Version synchrone (toujours atomique elle aussi, mêmes tmp+rename) :
+   réservée à l'arrêt du processus et aux gestionnaires de panne, où il n'y a
+   plus de prochain tour de boucle d'évènements pour attendre une écriture
+   asynchrone. */
+function sauvegarderMondeSync() {
   if (!CONF.mondeFichier) return false;
   try {
-    fs.writeFileSync(CONF.mondeFichier, JSON.stringify(etatMonde()));
+    fs.writeFileSync(FICHIER_TMP(), JSON.stringify(etatMonde()));
+    fs.renameSync(FICHIER_TMP(), CONF.mondeFichier);
     return true;
   } catch (e) { journal('échec de la sauvegarde du monde : ' + e.message); return false; }
 }
@@ -192,7 +232,7 @@ if (CONF.mondeFichier) {
   // disque négligeable. Réglable (MC_SAUVEGARDE_MS) : les tests d'intégration
   // en ont besoin d'un intervalle court pour vérifier la sauvegarde périodique
   // sans attendre deux minutes.
-  setInterval(sauvegarderMonde, parseInt(process.env.MC_SAUVEGARDE_MS, 10) || 120000);
+  setInterval(sauvegarderMondeAsync, parseInt(process.env.MC_SAUVEGARDE_MS, 10) || 120000);
 }
 /* Les habitants des villes et villages proches des joueurs : le serveur les
    fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
@@ -418,10 +458,19 @@ serveur.on('upgrade', (req, socket) => {
   let tampon = Buffer.alloc(0);
   socket.on('data', (bloc) => {
     tampon = Buffer.concat([tampon, bloc]);
+    // SPEC-SECU-003 : un client qui annonce une trame énorme sans jamais la
+    // compléter ferait grossir ce tampon indéfiniment — on borne AVANT de
+    // tenter le moindre décodage.
+    if (tampon.length > NP.TAMPON_MAX) { fermer(c, 'tampon de reception trop volumineux'); return; }
     for (;;) {
       const d = NP.decoder(tampon);
       if (!d) break;                                 // trame incomplète : on attend
       tampon = tampon.slice(d.consomme);
+
+      // SPEC-SECU-004 (RFC 6455) : le client DOIT toujours masquer ses
+      // trames ; en accepter une non masquée reviendrait à décoder du texte
+      // en clair comme s'il avait été masqué — jamais silencieusement.
+      if (!d.masque) { fermer(c, 'trame non masquee (RFC 6455)'); return; }
 
       if (d.opcode === NP.OP.FERME) { fermer(c, 'fermeture demandee'); return; }
       if (d.opcode === NP.OP.PING) {
@@ -432,7 +481,16 @@ serveur.on('upgrade', (req, socket) => {
 
       let msg;
       try { msg = JSON.parse(NP.utf8Decoder(d.charge)); } catch (e) { continue; }
-      traiter(c, NP.valider(msg));
+      // SPEC-SECU-001 : une exception pendant le traitement NE DOIT fermer
+      // QUE cette connexion fautive — jamais arrêter le processus ni couper
+      // les autres clients déjà connectés.
+      try {
+        traiter(c, NP.valider(msg));
+      } catch (e) {
+        journal(`x exception en traitant un message de ${c.nom} (#${c.id}) : ${(e && e.stack) || e}`);
+        fermer(c, 'exception de traitement');
+        return;
+      }
     }
   });
 
@@ -440,9 +498,64 @@ serveur.on('upgrade', (req, socket) => {
   socket.on('close', () => fermer(c, 'socket fermee'));
 });
 
+// ── anti-flood par client (SPEC-SECU-005/006) ────────────────────────────────
+/* Fenêtre glissante par connexion : un tableau d'horodatages par compteur,
+   purgé à chaque appel. `ENTREE` est cadencé par ailleurs (le budget d'entrées
+   de synchro.js) et n'entre jamais dans ces compteurs. Un dépassement
+   n'ignore que le message en trop — jamais de fermeture immédiate — mais une
+   inondation qui se poursuit sur plusieurs secondes CONSÉCUTIVES entraîne une
+   expulsion, journalisée comme toute action notable. */
+const FLOOD_MSG_FENETRE_MS = 1000, FLOOD_MSG_MAX = 30;     // ex. de la spec : 30/s
+const FLOOD_CHAT_FENETRE_MS = 10000, FLOOD_CHAT_MAX = 5;   // ~1 message toutes les 2 s en rafale
+const FLOOD_SECONDES_AVANT_EXPULSION = 5;
+
+function floodDepasse(c, cle, fenetreMs, max) {
+  const maintenant = Date.now();
+  const histo = c[cle] || (c[cle] = []);
+  while (histo.length && maintenant - histo[0] >= fenetreMs) histo.shift();
+  if (histo.length >= max) return true;
+  histo.push(maintenant);
+  return false;
+}
+function signalerFlood(c, type) {
+  const sec = Math.floor(Date.now() / 1000);
+  const cleSec = '_floodSec_' + type, cleSuite = '_floodSuite_' + type;
+  if (c[cleSec] === sec) return;                          // déjà compté cette seconde-ci
+  const consecutive = c[cleSec] === sec - 1;
+  c[cleSuite] = consecutive ? (c[cleSuite] || 0) + 1 : 1;
+  c[cleSec] = sec;
+  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'flood_' + type, cible: c.ip, details: c[cleSuite], heure });
+  if (c[cleSuite] >= FLOOD_SECONDES_AVANT_EXPULSION) {
+    journal(`x ${c.nom} (#${c.id}) expulsé — inondation ${type} persistante`);
+    fermer(c, 'inondation persistante : ' + type);
+  }
+}
+function antiFloodOk(c, m) {
+  if (m.t === NP.MSG.CHAT && floodDepasse(c, '_floodHistoChat', FLOOD_CHAT_FENETRE_MS, FLOOD_CHAT_MAX)) {
+    signalerFlood(c, 'chat');
+    return false;
+  }
+  if (floodDepasse(c, '_floodHistoMsg', FLOOD_MSG_FENETRE_MS, FLOOD_MSG_MAX)) {
+    signalerFlood(c, 'messages');
+    return false;
+  }
+  return true;
+}
+
 // ── traitement des messages ──────────────────────────────────────────────────
+/* Bascules de test réservées aux suites d'intégration (désactivées par
+   défaut, jamais en exploitation normale) : elles provoquent volontairement
+   une exception dans `traiter()` pour vérifier SPEC-SECU-001, exactement
+   comme MC_SAUVEGARDE_MS ou MC_MESURES réduisent un intervalle pour les
+   tests plutôt que d'exposer un chemin de code séparé et non testé. */
+const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
+
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
+  if (MC_TEST_PANNE && m.t === NP.MSG.CHAT && m.texte === '__panne_test_secu_001__') {
+    throw new Error('panne de test SPEC-SECU-001');
+  }
+  if (m.t !== NP.MSG.ENTREE && !antiFloodOk(c, m)) return;   // SPEC-SECU-005/006
   switch (m.t) {
     case NP.MSG.REJOINDRE: {
       // liste noire, liste blanche, bannissement, e-mail exigé (SPEC-ADMIN-004)
@@ -588,16 +701,24 @@ function traiter(c, m) {
     case NP.MSG.BLOC: {
       /* Le serveur fait autorité : il applique, PUIS diffuse à tous — y
          compris à l'émetteur, dont la prédiction locale est ainsi confirmée
-         ou corrigée. */
-      const cx = Math.floor(m.x / 16), cz = Math.floor(m.z / 16);
-      monde.getChunk(cx, cz, true);
-      const avant = monde.getBlock(m.x, m.y, m.z);
+         ou corrigée.
+
+         SPEC-SECU-007 : la portée est vérifiée AVANT toute génération de
+         chunk — `monde.getBlock` ne force jamais la génération (il renvoie 0
+         si le chunk n'est pas chargé), donc `blocAutorise` peut s'exécuter
+         sans jamais appeler `monde.getChunk(…, true)`. Un client hors de
+         portée ne peut ainsi jamais forcer le serveur à générer du terrain
+         arbitrairement loin — seul un BLOC autorisé, donc proche d'un joueur
+         déjà présent, déclenche `getChunk(cx, cz, true)` plus bas. */
       const js = c.joueurs && c.joueurs[m.j];
+      const avant = monde.getBlock(m.x, m.y, m.z);
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
         break;
       }
+      const cx = Math.floor(m.x / 16), cz = Math.floor(m.z / 16);
+      monde.getChunk(cx, cz, true);
       monde.setBlock(m.x, m.y, m.z, m.id);
       // état du bloc posé (orientation, niveau… — SPEC-SAVE-017) : 0 par
       // défaut, comme un bloc cassé ou sans état particulier
@@ -1132,11 +1253,13 @@ serveur.listen(PORT, () => {
 
 /* SIGINT (Ctrl+C) ET SIGTERM (arrêt par un gestionnaire de services) doivent
    tous deux sauvegarder : un serveur seul persistant tourne typiquement sous
-   un tel gestionnaire, qui n'envoie jamais SIGINT. */
+   un tel gestionnaire, qui n'envoie jamais SIGINT. À l'arrêt, la sauvegarde
+   DOIT être synchrone (SPEC-SERVEUR-003/004) : le processus va se terminer
+   juste après, une écriture asynchrone en cours serait perdue. */
 function arreter(signal) {
   journal(`arrêt demandé (${signal})`);
   if (CONF.mondeFichier) {
-    const ok = sauvegarderMonde();
+    const ok = sauvegarderMondeSync();
     journal(ok ? `monde sauvegardé dans ${CONF.mondeFichier}` : 'sauvegarde finale échouée');
   }
   clients.forEach(c => { try { c.socket.destroy(); } catch (e) {} });
@@ -1146,4 +1269,29 @@ function arreter(signal) {
 process.on('SIGINT', () => arreter('SIGINT'));
 process.on('SIGTERM', () => arreter('SIGTERM'));
 
-module.exports = { serveur, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMonde, appliquerEtatMonde, etatMonde };
+// ── résilience du processus (SPEC-SECU-002) ─────────────────────────────────
+/* Une exception hors d'un handler de message (minuteur, promesse, callback
+   d'E/S…) ne doit ni arrêter le serveur ni laisser une sauvegarde en cours
+   à moitié écrite : on journalise, on tente une sauvegarde de secours
+   (synchrone et atomique, comme à l'arrêt — l'état du processus n'inspire
+   plus confiance, autant écrire vite et proprement plutôt qu'attendre le
+   prochain tour de la boucle d'évènements), puis on continue de tourner. */
+process.on('uncaughtException', (e) => {
+  journal(`EXCEPTION NON RATTRAPÉE (le serveur continue) : ${(e && e.stack) || e}`);
+  try { sauvegarderMondeSync(); } catch (e2) { journal('échec de la sauvegarde de secours : ' + e2.message); }
+});
+process.on('unhandledRejection', (raison) => {
+  journal(`PROMESSE REJETÉE SANS GESTIONNAIRE (le serveur continue) : ${(raison && raison.stack) || raison}`);
+});
+
+/* Bascules de test réservées aux suites d'intégration (voir MC_TEST_PANNE
+   plus haut) : provoquent une exception ASYNCHRONE, hors de tout handler de
+   message, pour vérifier que les gestionnaires ci-dessus tiennent le coup. */
+if (process.env.MC_TEST_PANNE_ASYNC === '1') {
+  setTimeout(() => { throw new Error('panne asynchrone de test SPEC-SECU-002'); }, 200);
+}
+if (process.env.MC_TEST_PANNE_REJET === '1') {
+  setTimeout(() => { Promise.reject(new Error('rejet de test SPEC-SECU-002')); }, 200);
+}
+
+module.exports = { serveur, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };

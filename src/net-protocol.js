@@ -34,6 +34,25 @@
            !!(entetes['sec-websocket-key'] || entetes['Sec-WebSocket-Key']);
   }
 
+  // ─── bornes de sécurité (SPEC-SECU-003/008) ────────────────────────────────
+  /* TAMPON_MAX : taille maximale du tampon de réception PAR CONNEXION, côté
+     serveur (server.js s'en sert dans son handler `data`). Le plus gros
+     message légitime client → serveur est ADMIN, borné à 4000 caractères de
+     JSON (voir plus bas) ; 1 Mo laisse une marge très large sans permettre à
+     un client d'accumuler indéfiniment un tampon jamais complété. */
+  var TAMPON_MAX = 1024 * 1024;
+  /* COORD_MAX : plage plausible pour une coordonnée reçue d'un client (ex.
+     ±10 000 000, comme documenté dans SPEC-SECU-008). Elle reste TRÈS
+     inférieure à 2^31 : `valeur | 0` (utilisé partout pour entiériser) tronque
+     silencieusement au-delà de 2^31, ce qui rendrait une borne plus large
+     inefficace — un audit exploratoire du serveur a mesuré que la
+     troncature commence dès 2^31. */
+  var COORD_MAX = 10000000;
+  /* Hauteur du monde (voir core.js `WORLD_H`) : dupliquée ici plutôt
+     qu'importée, pour que ce module reste chargeable seul (comme le font déjà
+     tests/spec-net.js ou tests/integration-*.js) sans dépendre de core.js. */
+  var WORLD_H = 128;
+
   // ─── trames ────────────────────────────────────────────────────────────────
   var OP = { CONT: 0x0, TEXTE: 0x1, BINAIRE: 0x2, FERME: 0x8, PING: 0x9, PONG: 0xA };
 
@@ -178,7 +197,9 @@
                  email: msg.email ? String(msg.email).trim().slice(0, 120) : null,
                  invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null };
       case MSG.BLOC:
-        if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
+        // SPEC-SECU-008 : bornes absolues AVANT toute logique de jeu — x/z
+        // dans ±COORD_MAX, y dans la hauteur réelle du monde.
+        if (!estCoordHorizontale(msg.x) || !estCoordVerticale(msg.y) || !estCoordHorizontale(msg.z)) return null;
         // ids sur 16 bits (SPEC-SAVE-017) : jusqu'à 65535, blocs comme objets.
         if (!estEntier(msg.id) || msg.id < 0 || msg.id > 65535) return null;
         // `outil` : ce que le joueur tient, pour que le serveur calcule le butin
@@ -225,7 +246,11 @@
                  genre: genres.indexOf(msg.genre) >= 0 ? msg.genre : 'fleche' };
       }
       case MSG.BOUGE:
+        // SPEC-SECU-008 : la position n'est plus autoritaire (SPEC-NET-026)
+        // mais reste bornée — un flottant énorme ne doit jamais atteindre la
+        // logique de jeu, même pour une valeur qui ne sera pas utilisée.
         if (!estFini(msg.x) || !estFini(msg.y) || !estFini(msg.z)) return null;
+        if (Math.abs(msg.x) > COORD_MAX || Math.abs(msg.y) > COORD_MAX || Math.abs(msg.z) > COORD_MAX) return null;
         return { t: msg.t, i: (msg.i | 0), x: +msg.x, y: +msg.y, z: +msg.z,
                  yaw: estFini(msg.yaw) ? +msg.yaw : 0,
                  pitch: estFini(msg.pitch) ? +msg.pitch : 0 };
@@ -243,7 +268,8 @@
       }
 
       case MSG.DISTRIB: {
-        if (!estEntier(msg.x) || !estEntier(msg.y) || !estEntier(msg.z)) return null;
+        // SPEC-SECU-008 : même borne qu'un BLOC — un distributeur est un bloc posé.
+        if (!estCoordHorizontale(msg.x) || !estCoordVerticale(msg.y) || !estCoordHorizontale(msg.z)) return null;
         if (!Array.isArray(msg.slots)) return null;
         var slots = msg.slots.slice(0, 9).map(function (s) {
           if (!s || !estEntier(s.id) || s.id <= 0 || !estEntier(s.n) || s.n <= 0) return null;
@@ -265,9 +291,13 @@
   // indice du joueur local sur le poste (écran partagé) : 0 à 3
   function joueurLocal(j) { return estEntier(j) && j >= 0 && j < 4 ? j : 0; }
   function estEntier(v) { return estFini(v) && Math.floor(v) === v; }
+  // SPEC-SECU-008 : x/z dans ±COORD_MAX, y dans la hauteur réelle du monde.
+  function estCoordHorizontale(v) { return estEntier(v) && Math.abs(v) <= COORD_MAX; }
+  function estCoordVerticale(v) { return estEntier(v) && v >= 0 && v <= WORLD_H - 1; }
 
   MC.NetProtocol = {
     GUID: GUID, OP: OP, MSG: MSG,
+    TAMPON_MAX: TAMPON_MAX, COORD_MAX: COORD_MAX, WORLD_H: WORLD_H,
     accepteCle: accepteCle, reponseHandshake: reponseHandshake,
     estRequeteWebSocket: estRequeteWebSocket,
     encoder: encoder, decoder: decoder,
