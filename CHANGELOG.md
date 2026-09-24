@@ -13,6 +13,11 @@ porte G10 le vérifie.
 
 ## [Non publié]
 
+## [0.0.84] - 2026-09-24
+### Ajouté
+
+- Volcans actifs vivants : panache de fumée qui dérive avec le vent de son altitude, grondements, éruptions déterministes (les mêmes pour tous), bombes incandescentes, coulées de lave qui descendent la plus forte pente puis se figent en basalte (RELIEF-011).
+
 ## [0.0.83] - 2026-09-24
 ### Modifié
 
@@ -99,6 +104,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.0.84]: #
 [0.0.83]: #
 [0.0.82]: #
 [0.0.81]: #

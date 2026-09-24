@@ -8,7 +8,7 @@
   // ─── versions ──────────────────────────────────────────────────────────────
   // version du jeu en cours ; la génération de terrain a changé 5 fois
   // (une vieille sauvegarde garde la version d'origine de sa carte, voir saves.js)
-  var VERSION_JEU = '0.0.83';
+  var VERSION_JEU = '0.0.84';
   var VERSION_GENERATION = 5;
 
   // ─── géométrie du monde ────────────────────────────────────────────────────

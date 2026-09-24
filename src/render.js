@@ -489,7 +489,7 @@
     }
 
     /* Projectiles : la flèche est un trait, les sortilèges des globes. */
-    var COULEURS_PROJECTILES = { neige: 0xf4f8ff, sortilege: 0xc040ff, feu: 0xff6020, laser: 0x60ffe0 };
+    var COULEURS_PROJECTILES = { neige: 0xf4f8ff, sortilege: 0xc040ff, feu: 0xff6020, laser: 0x60ffe0, bombe: 0xff5a10 };
     function projectileMesh(genre) {
       if (!genre || genre === 'fleche') {
         var g2 = new THREE.Group();
@@ -1546,6 +1546,53 @@
       return f;
     }
 
+    /* ── Volcans (SPEC-RELIEF-011) : un panache de fumée au-dessus de chaque
+       cratère actif proche, qui monte, s'étale et dérive avec le vent de son
+       altitude ; rougeoyant et épais pendant une éruption. */
+    var NB_FUMEE = 220, panaches = [];
+    var texFumee = (function () {
+      var cv = document.createElement('canvas'); cv.width = cv.height = 64;
+      var c = cv.getContext('2d'), gr = c.createRadialGradient(32, 32, 2, 32, 32, 32);
+      gr.addColorStop(0, 'rgba(255,255,255,0.9)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+      c.fillStyle = gr; c.fillRect(0, 0, 64, 64);
+      var t = new THREE.CanvasTexture(cv); t.magFilter = THREE.LinearFilter; return t;
+    })();
+    function panache() {
+      var g = new THREE.BufferGeometry(), pos = new Float32Array(NB_FUMEE * 3);
+      g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      var m = new THREE.Points(g, new THREE.PointsMaterial({ size: 14, map: texFumee, transparent: true, depthWrite: false,
+                                                             opacity: 0.5, color: 0x6a6660, sizeAttenuation: true }));
+      m.frustumCulled = false; m.renderOrder = 4;
+      m.userData = { ages: new Float32Array(NB_FUMEE).map(function () { return Math.random() * 40; }), panache: true };
+      scene.add(m);
+      return m;
+    }
+    /* `liste` : [{ x, y (sommet), z, fumee 0..1, eruption bool }] ; `vent`(y) → {x, z}. */
+    function majVolcans(liste, dt, vent) {
+      while (panaches.length < liste.length) panaches.push(panache());
+      panaches.forEach(function (m, i) {
+        var v = liste[i];
+        m.visible = !!v && v.fumee > 0.02;
+        if (!m.visible) return;
+        var p = m.geometry.attributes.position.array, ages = m.userData.ages;
+        var vie = 40, montee = 3 + v.fumee * 4 + (v.eruption ? 6 : 0);
+        for (var k = 0; k < NB_FUMEE; k++) {
+          ages[k] += dt * (0.6 + v.fumee);
+          if (ages[k] > vie) ages[k] -= vie;
+          var a = ages[k], h = a * montee, w = vent ? vent(v.y + h) : { x: 0, z: 0 };
+          var r = 2 + a * 0.9, ang = k * 2.39996;
+          p[k * 3] = v.x + Math.cos(ang) * r * 0.6 + w.x * a * 1.4;
+          p[k * 3 + 1] = v.y + 2 + h;
+          p[k * 3 + 2] = v.z + Math.sin(ang) * r * 0.6 + w.z * a * 1.4;
+        }
+        m.geometry.attributes.position.needsUpdate = true;
+        m.material.opacity = 0.25 + 0.45 * v.fumee;
+        m.material.size = 10 + 10 * v.fumee;
+        m.material.color.setHex(v.eruption ? 0x8a4a30 : 0x6a6660);
+      });
+      return panaches.filter(function (m) { return m.visible; }).length;
+    }
+
     /* Un éclair : un trait brisé du nuage au sol, et un flash qui blanchit
        ciel et lumière un instant. */
     function eclair(x, ySol, z, force) {
@@ -1995,6 +2042,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
+      majVolcans: majVolcans, panaches: panaches,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
       get resolution() { return resolutionVoulue; }, get disposition() { return dispositionVue; }, get ombresActives() { return ombresActives; },
       formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },

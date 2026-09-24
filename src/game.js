@@ -435,6 +435,48 @@
     }
     g.abri = abri;
 
+    /* Volcans actifs (SPEC-RELIEF-011) : panaches, grondements, bombes et
+       coulées qui se figent. Tout se déduit de l'heure (MC.Volcanisme) : hors
+       ligne le jeu pose la lave et le basalte, en ligne le serveur fait foi. */
+    var volcansT = 0, tVolcans = null, coulees = new Map(), etatsVolcans = new Map();
+    function volcans(me, p1, dt) {
+      var V = MC.Volcanisme, bio = world.bio;
+      if (!V || !bio.volcansDansZone) return;
+      var proches = bio.volcansDansZone(p1.x - 300, p1.z - 300, p1.x + 300, p1.z + 300).filter(function (v) { return v.actif; });
+      var t = g.time, t0 = tVolcans === null ? t : tVolcans;
+      tVolcans = t;
+      var vues = proches.map(function (v) {
+        var a = V.activite(v, t, world.seed);
+        var cle = v.x + ',' + v.z, avant = etatsVolcans.get(cle) || {};
+        if (a.grondement && !avant.grondement) { ui.toast('Le volcan gronde…', 'warn'); audio.jouer(MC.Ambiance.sonEvenement('eruption'), { categorie: 'evenement', x: v.x, y: v.sommet, z: v.z, portee: 400 }); }
+        if (a.eruption && !avant.eruption) { chat.systeme('Éruption !'); audio.jouer(MC.Ambiance.sonEvenement('eruption'), { categorie: 'evenement', x: v.x, y: v.sommet, z: v.z, portee: 600 }); }
+        etatsVolcans.set(cle, { grondement: a.grondement, eruption: !!a.eruption });
+        if (!net.enLigne()) {
+          V.projectiles(v, t0, t, world.seed).forEach(function (b) {
+            var n = Math.hypot(b.vx, b.vy, b.vz) || 1;
+            var e = entities.tirer({ x: b.x, y: b.y, z: b.z }, { x: b.vx / n, y: b.vy / n, z: b.vz / n }, n, 4, null, 'bombe');
+            if (e) e.vie = 9;
+          });
+        }
+        return { v: v, a: a, x: v.x + 0.5, y: v.sommet, z: v.z + 0.5, fumee: a.fumee, eruption: !!a.eruption };
+      });
+      if (render.majVolcans) render.majVolcans(vues, dt, me.ventEn ? function (y) { return me.ventEn(t, y); } : null);
+      volcansT += dt;
+      if (volcansT < 0.5 || net.enLigne()) return;
+      volcansT = 0;
+      vues.forEach(function (w) {
+        var e = w.a.prochaine;
+        if (!e || t < e.debut) return;
+        var c = coulees.get(e.id);
+        if (!c) { c = V.coulee(w.v, e, world.heightAt); coulees.set(e.id, c); }
+        c.forEach(function (cel) {
+          var s = V.etatCellule(cel, e, t), b = world.getBlock(cel.x, cel.y, cel.z), d = C.BLOCKS[b];
+          if (s === 'lave' && (b === 0 || (d && d.plant))) world.setBlock(cel.x, cel.y, cel.z, C.B.LAVA);
+          else if (s === 'basalte' && b === C.B.LAVA) world.setBlock(cel.x, cel.y, cel.z, C.B.BASALT);
+        });
+      });
+    }
+
     /* Brume (SPEC-VENT-003) : le point bas alentour dit où elle se pose ;
        échantillonné toutes les deux secondes, le relief ne change pas si vite. */
     var brumeT = 99, brumeLieu = null;
@@ -511,6 +553,7 @@
       g.ventLocal = ventLocal;
       render.majMeteo(et, me.derive(g.time), { me: me, temps: g.time, vent: ventLocal, sol: world.heightAt });
       majBrume(me, et, p1, dt);
+      volcans(me, p1, dt);
       if (!net.enLigne()) tornadesAuSol(me, dt);
       // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
       var tj = equipe[0] && equipe[0].temperature;

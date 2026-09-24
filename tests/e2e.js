@@ -2115,6 +2115,34 @@
     }
   });
 
+  e2e('SPEC-RELIEF-011 : un panache monte du cratère, dérive au vent, rougeoie en éruption ; les bombes tombent', async function (g) {
+    await reset(g);
+    var p = g.player.state.pos, bio = g.world.bio, dz0 = bio.volcansDansZone;
+    var faux = { x: Math.floor(p.x) + 40, z: Math.floor(p.z), sommet: Math.floor(p.y) + 20, R: 30, cratere: 6, actif: true };
+    try {
+      bio.volcansDansZone = function () { return [faux]; };
+      await frames(3);
+      var m = g.render.panaches[0];
+      A.ok(m && m.visible, 'un panache au-dessus du cratère');
+      var pos = m.geometry.attributes.position.array, haut = -1e9;
+      for (var i = 1; i < pos.length; i += 3) haut = Math.max(haut, pos[i]);
+      A.gt(haut, faux.sommet + 30, 'il monte haut');
+      // en éruption : panache épais et rougeoyant, bombes lancées
+      var a0 = MC.Volcanisme.activite;
+      MC.Volcanisme.activite = function () { return { fumee: 1, grondement: false, eruption: { debut: 0, fin: 1e9 }, prochaine: null }; };
+      var p0 = MC.Volcanisme.projectiles;
+      MC.Volcanisme.projectiles = function () { return [{ t: 0, x: faux.x, y: faux.sommet + 2, z: faux.z, vx: 2, vy: 20, vz: 0 }]; };
+      await frames(3);
+      A.equal(m.material.color.getHex(), 0x8a4a30, 'rougeoyant');
+      A.ok(g.entities.list.some(function (e) { return e.type === 'arrow' && e.genre === 'bombe'; }), 'des bombes volcaniques');
+      MC.Volcanisme.activite = a0; MC.Volcanisme.projectiles = p0;
+    } finally {
+      bio.volcansDansZone = dz0;
+      for (var j = g.entities.list.length - 1; j >= 0; j--) if (g.entities.list[j].genre === 'bombe') g.entities.list.splice(j, 1);
+      await frames(2);
+    }
+  });
+
   e2e('SPEC-VUE-005 : une perspective atmospherique commune voile tout ce qui s eloigne, sans rupture', async function (g) {
     await reset(g);
     g.time = MC.DayCycle.DAY_LENGTH * 0.2;

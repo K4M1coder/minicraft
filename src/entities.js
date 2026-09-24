@@ -245,7 +245,8 @@
        la fleche part de la tete du joueur et le traverse pendant un instant. */
     /* `genre` : 'fleche' (par défaut), 'neige', 'sortilege', 'feu', 'laser'.
        Seules la flèche et la boule de neige retombent. */
-    var GRAVITE_PROJECTILE = { fleche: 1, neige: 0.7, sortilege: 0, feu: 0, laser: 0 };
+    // 'bombe' : bombe volcanique, lourde (SPEC-RELIEF-011)
+    var GRAVITE_PROJECTILE = { fleche: 1, neige: 0.7, sortilege: 0, feu: 0, laser: 0, bombe: 1 };
     function tirer(origine, direction, vitesse, degats, tireur, genre) {
       var e = spawn('arrow', origine.x, origine.y, origine.z, {
         degats: degats === undefined ? SPECS.arrow.damage : degats,
