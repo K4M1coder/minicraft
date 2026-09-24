@@ -117,6 +117,17 @@
     return distance <= DETAIL.complet ? 'complet' : distance <= DETAIL.simple ? 'simple' : 'cache';
   }
 
+  /* Couleur d'une pièce d'armure équipée (SPEC-OBJET-001), lue depuis sa
+     définition (`couleurArmure`, core.js) : render.js n'a pas à connaître la
+     matière, seulement la teinte à appliquer sur l'avatar. `null` si l'objet
+     n'est pas une armure ou si l'emplacement est vide. */
+  function couleurArmure(stack) {
+    if (!stack || !MC.Core) return null;
+    var d = MC.Core.ITEMS[stack.id];
+    return (d && d.couleurArmure !== undefined) ? d.couleurArmure : null;
+  }
+
   MC.Apparence = { variante: variante, teinter: teinter, allure: allure, avancerPhase: avancerPhase, pose: pose,
-                   regard: regard, niveauDetail: niveauDetail, graineDe: graineDe, METIERS: METIERS, DETAIL: DETAIL };
+                   regard: regard, niveauDetail: niveauDetail, graineDe: graineDe, METIERS: METIERS, DETAIL: DETAIL,
+                   couleurArmure: couleurArmure };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

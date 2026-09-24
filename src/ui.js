@@ -1255,6 +1255,22 @@
       }
     }
 
+    /* Équipement (SPEC-OBJET-001/003) : même modèle « pile en main » que
+       clickSlot, mais un emplacement refuse tout objet dont l'`equipSlot`
+       ne correspond pas — casque, plastron, jambières, bottes ou bijou. */
+    var EQUIP_SLOTS = [
+      { cle: 'casque', label: 'Casque' }, { cle: 'plastron', label: 'Plastron' },
+      { cle: 'jambieres', label: 'Jambières' }, { cle: 'bottes', label: 'Bottes' },
+      { cle: 'bijou', label: 'Bijou' },
+    ];
+    function equipClick(equip, cle) {
+      var cur = equip[cle];
+      if (!heldStack) { if (cur) { heldStack = cur; equip[cle] = null; } return; }
+      var d = C.def(heldStack.id);
+      if (!d || d.equipSlot !== cle) return;   // objet incompatible : on ne pose rien
+      equip[cle] = heldStack; heldStack = cur;
+    }
+
     /* La grille de fabrication fait 3x3 partout, inventaire compris : limiter
        l inventaire a 2x2 obligeait a poser un etabli pour fabriquer l etabli
        lui-meme des lors qu on avait perdu le premier, et rendait le coffre
@@ -1569,6 +1585,19 @@
       }
       box.appendChild(top);
 
+      // ── équipement (SPEC-OBJET-001/003) : casque, plastron, jambières, bottes, bijou
+      if (container.equip) {
+        var eqRow = el('div', 'inv-grid inv-equip');
+        EQUIP_SLOTS.forEach(function (s) {
+          var slot = slotEl('', container.equip[s.cle],
+            function () { equipClick(container.equip, s.cle); },
+            function () { equipClick(container.equip, s.cle); });
+          slot.title = s.label + (container.equip[s.cle] ? '' : ' (vide)');
+          eqRow.appendChild(slot);
+        });
+        box.appendChild(eqRow);
+      }
+
       // ── inventaire principal + hotbar
       var main = el('div', 'inv-grid');
       for (var k = Inv.HOTBAR_SIZE; k < inv.size; k++) {
@@ -1616,6 +1645,8 @@
                     furnace: kind === 'furnace' ? extra : null,
                     chest: kind === 'chest' ? extra : null,
                 pnj: kind === 'trade' ? extra : null,
+                    // équipement (SPEC-OBJET-001/003) : seul l'inventaire du joueur en a un
+                    equip: kind === 'inv' ? extra : null,
                     livre: false, livreFiltre: '',
                     pos: pos };
       renderContainer();

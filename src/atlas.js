@@ -1066,6 +1066,174 @@
       }
     });
 
+    // ═══════════════════════════════════════════════════════════════════════
+    // ─── L25 objets (SPEC-OBJET-001 à 005) : tuiles 640-721 ─────────────────
+    // Icônes procédurales génériques (silhouettes simples, tuiles réutilisées
+    // par des dizaines d'objets) plutôt qu'un dessin par pièce : ce sont les
+    // couleurs (matière, gemme) qui distinguent chaque variante.
+    // ═══════════════════════════════════════════════════════════════════════
+    (function () {
+      var Core = MC.Core, I = Core.I, B = Core.B;
+      function hex(c) { return 'rgb(' + ((c >> 16) & 255) + ',' + ((c >> 8) & 255) + ',' + (c & 255) + ')'; }
+
+      // tissu, cuir : un carré de matière brute
+      (function () {
+        var o = grain(Core.def(I.TISSU).tile, [216, 208, 176], 14);
+        g.strokeStyle = 'rgba(0,0,0,.3)'; g.strokeRect(o[0] + .5, o[1] + .5, TILE - 1, TILE - 1);
+      })();
+      (function () {
+        var o = grain(Core.def(I.CUIR).tile, [138, 90, 42], 18);
+        g.strokeStyle = 'rgba(0,0,0,.3)'; g.strokeRect(o[0] + .5, o[1] + .5, TILE - 1, TILE - 1);
+      })();
+
+      // ─── armures : silhouette de la pièce, teintée par sa matière ─────────
+      function iconeArmure(i, couleur, slot) {
+        var o = clear(i);
+        g.fillStyle = hex(couleur);
+        if (slot === 'casque') {
+          g.beginPath(); g.arc(o[0] + 8, o[1] + 8, 5, Math.PI, 0); g.fill();
+          g.fillRect(o[0] + 3, o[1] + 8, 10, 3);
+        } else if (slot === 'plastron') {
+          g.fillRect(o[0] + 4, o[1] + 2, 8, 11);
+          g.fillRect(o[0] + 1, o[1] + 3, 2, 6); g.fillRect(o[0] + 13, o[1] + 3, 2, 6);
+        } else if (slot === 'jambieres') {
+          g.fillRect(o[0] + 4, o[1] + 1, 3, 13); g.fillRect(o[0] + 9, o[1] + 1, 3, 13);
+        } else {
+          g.fillRect(o[0] + 3, o[1] + 9, 4, 5); g.fillRect(o[0] + 9, o[1] + 9, 4, 5);
+          g.fillRect(o[0] + 3, o[1] + 12, 10, 2);
+        }
+      }
+      ['TISSU', 'CUIR', 'MAILLES', 'BRONZE', 'FER', 'OR', 'DIAMANT'].forEach(function (fam) {
+        ['CASQUE', 'PLASTRON', 'JAMBIERES', 'BOTTES'].forEach(function (slot) {
+          var d = Core.def(I[fam + '_' + slot]);
+          iconeArmure(d.tile, d.couleurArmure, slot.toLowerCase());
+        });
+      });
+
+      // ─── armes de mêlée : manche commun, lame selon la famille ─────────────
+      var TEINTE_TIER = { BOIS: '#8a6a3c', PIERRE: '#9a9aa2', FER: '#d8d8e0', DIAMANT: '#8ff0f0' };
+      function iconeArme(i, couleurLame, forme) {
+        var o = clear(i);
+        g.fillStyle = '#6a4a28'; g.fillRect(o[0] + 7, o[1] + 8, 2, 7);
+        g.fillStyle = couleurLame;
+        if (forme === 'DAGUE') g.fillRect(o[0] + 6, o[1] + 4, 4, 5);
+        else if (forme === 'EPEE_LONGUE') g.fillRect(o[0] + 6, o[1] + 1, 4, 9);
+        else if (forme === 'HACHE_GUERRE') g.fillRect(o[0] + 8, o[1] + 2, 6, 6);
+        else if (forme === 'MASSE') { g.beginPath(); g.arc(o[0] + 8, o[1] + 5, 4, 0, 7); g.fill(); }
+        else g.fillRect(o[0] + 7, o[1] + 1, 2, 8);       // lance
+      }
+      ['DAGUE', 'EPEE_LONGUE', 'HACHE_GUERRE', 'MASSE', 'LANCE'].forEach(function (fam) {
+        ['BOIS', 'PIERRE', 'FER', 'DIAMANT'].forEach(function (tier) {
+          var d = Core.def(I[fam + '_' + tier]);
+          iconeArme(d.tile, TEINTE_TIER[tier], fam);
+        });
+      });
+
+      // ─── armes à distance et fronde ────────────────────────────────────────
+      (function () {                                                  // arc long
+        var o = clear(Core.def(I.ARC_LONG).tile);
+        g.strokeStyle = '#8a6a3c'; g.lineWidth = 2;
+        g.beginPath(); g.arc(o[0] + 9, o[1] + 8, 6, -1.3, 1.3); g.stroke();
+        g.strokeStyle = '#d8d8d8'; g.lineWidth = 1;
+        g.beginPath(); g.moveTo(o[0] + 4, o[1] + 3); g.lineTo(o[0] + 4, o[1] + 13); g.stroke();
+      })();
+      (function () {                                                  // arbalète lourde
+        var o = clear(Core.def(I.ARBALETE_LOURDE).tile);
+        g.fillStyle = '#6a4a28'; g.fillRect(o[0] + 7, o[1] + 4, 2, 10);
+        g.fillStyle = '#9a9aa2'; g.fillRect(o[0] + 2, o[1] + 3, 12, 2);
+        g.fillStyle = '#5a5c64'; g.fillRect(o[0] + 6, o[1] + 6, 4, 2);
+      })();
+      (function () {                                                  // fronde
+        var o = clear(Core.def(I.FRONDE).tile);
+        g.strokeStyle = '#8a6a3c'; g.lineWidth = 1.5;
+        g.beginPath(); g.moveTo(o[0] + 3, o[1] + 3); g.lineTo(o[0] + 8, o[1] + 13); g.lineTo(o[0] + 13, o[1] + 3); g.stroke();
+      })();
+      (function () {                                                  // galet
+        var o = clear(Core.def(I.GALET).tile);
+        g.fillStyle = '#8a8a90';
+        g.beginPath(); g.ellipse(o[0] + 8, o[1] + 8, 4, 3, 0.4, 0, 7); g.fill();
+      })();
+
+      // ─── gemmes taillées et bijoux (SPEC-OBJET-003) ───────────────────────
+      var GEMME_COULEUR = {
+        RUBIS: ['#d81030', '#ff6a86'], SAPHIR: ['#1560d8', '#7ec0ff'],
+        EMERAUDE: ['#20a850', '#7af0a0'], DIAMANT: ['#60d8e0', '#c8fbff'],
+      };
+      gemme(Core.def(I.RUBIS_TAILLE).tile, GEMME_COULEUR.RUBIS[0], GEMME_COULEUR.RUBIS[1]);
+      gemme(Core.def(I.SAPHIR_TAILLE).tile, GEMME_COULEUR.SAPHIR[0], GEMME_COULEUR.SAPHIR[1]);
+      gemme(Core.def(I.EMERAUDE_TAILLEE).tile, GEMME_COULEUR.EMERAUDE[0], GEMME_COULEUR.EMERAUDE[1]);
+      gemme(Core.def(I.DIAMANT_TAILLE).tile, GEMME_COULEUR.DIAMANT[0], GEMME_COULEUR.DIAMANT[1]);
+
+      var MONTURE_COULEUR = { ANNEAU: '#c8c8d0', AMULETTE: '#e8c860', DIADEME: '#f0e0a0' };
+      function iconeBijou(i, montureCouleur, c1, c2, forme) {
+        var o = clear(i);
+        g.fillStyle = montureCouleur;
+        if (forme === 'ANNEAU') {
+          g.lineWidth = 2; g.strokeStyle = montureCouleur;
+          g.beginPath(); g.arc(o[0] + 8, o[1] + 10, 4, 0, 7); g.stroke();
+        } else if (forme === 'AMULETTE') {
+          g.fillRect(o[0] + 6, o[1] + 2, 4, 3); g.fillRect(o[0] + 7, o[1] + 5, 2, 3);
+        } else {
+          g.fillRect(o[0] + 3, o[1] + 11, 10, 2); g.fillRect(o[0] + 7, o[1] + 8, 2, 4);
+        }
+        g.fillStyle = c1;
+        g.beginPath(); g.moveTo(o[0] + 8, o[1] + 4); g.lineTo(o[0] + 11, o[1] + 9);
+        g.lineTo(o[0] + 8, o[1] + 14); g.lineTo(o[0] + 5, o[1] + 9); g.closePath(); g.fill();
+        g.fillStyle = c2; g.fillRect(o[0] + 7, o[1] + 6, 3, 3);
+      }
+      ['ANNEAU', 'AMULETTE', 'DIADEME'].forEach(function (fam) {
+        Object.keys(GEMME_COULEUR).forEach(function (gem) {
+          var d = Core.def(I[fam + '_' + gem]);
+          iconeBijou(d.tile, MONTURE_COULEUR[fam], GEMME_COULEUR[gem][0], GEMME_COULEUR[gem][1], fam);
+        });
+      });
+
+      // ─── nourriture et cuisine (SPEC-OBJET-004) ───────────────────────────
+      function iconeNourriture(i, couleur, forme) {
+        var o = clear(i);
+        g.fillStyle = couleur;
+        if (forme === 'rond') { g.beginPath(); g.arc(o[0] + 8, o[1] + 8, 6, 0, 7); g.fill(); }
+        else if (forme === 'triangle') {
+          g.beginPath(); g.moveTo(o[0] + 8, o[1] + 3); g.lineTo(o[0] + 14, o[1] + 13);
+          g.lineTo(o[0] + 2, o[1] + 13); g.closePath(); g.fill();
+        } else if (forme === 'bol') {
+          g.beginPath(); g.ellipse(o[0] + 8, o[1] + 10, 6, 4, 0, 0, 7); g.fill();
+          g.fillStyle = 'rgba(255,255,255,.5)'; g.fillRect(o[0] + 4, o[1] + 6, 8, 2);
+        } else { g.fillRect(o[0] + 2, o[1] + 4, 12, 9); }
+      }
+      iconeNourriture(Core.def(I.FROMAGE).tile, '#f0d040', 'bloc');
+      iconeNourriture(Core.def(I.SOUPE_LEGUMES).tile, '#e08030', 'bol');
+      iconeNourriture(Core.def(I.RAGOUT).tile, '#a05828', 'bol');
+      iconeNourriture(Core.def(I.TARTE_POMME).tile, '#c88848', 'triangle');
+      iconeNourriture(Core.def(I.GATEAU).tile, '#e8c8a0', 'bloc');
+      iconeNourriture(Core.def(I.BAIES).tile, '#602878', 'rond');
+
+      // ─── kit de désamorçage (SPEC-OBJET-005) ──────────────────────────────
+      (function () {
+        var o = clear(Core.def(I.KIT_DESAMORCAGE).tile);
+        g.fillStyle = '#5a5c64'; g.fillRect(o[0] + 3, o[1] + 3, 10, 4);
+        g.fillStyle = '#c8c8d0'; g.fillRect(o[0] + 6, o[1] + 7, 4, 7);
+      })();
+
+      // ─── coffres piégé et surprise (SPEC-OBJET-005) ───────────────────────
+      (function () {
+        var tiles = Core.BLOCKS[B.COFFRE_PIEGE].tiles;
+        var oS = grain(tiles[1], [150, 60, 50], 16);
+        g.strokeStyle = 'rgba(120,20,20,.85)'; g.strokeRect(oS[0] + .5, oS[1] + .5, TILE - 1, TILE - 1);
+        g.fillStyle = '#e04040'; g.fillRect(oS[0] + 7, oS[1] + 6, 2, 2);
+        var oT = grain(tiles[0], [160, 70, 55], 16);
+        g.strokeStyle = 'rgba(120,20,20,.85)'; g.strokeRect(oT[0] + .5, oT[1] + .5, TILE - 1, TILE - 1);
+      })();
+      (function () {
+        var tiles = Core.BLOCKS[B.COFFRE_SURPRISE].tiles;
+        var oS = grain(tiles[1], [150, 110, 58], 16);
+        g.fillStyle = '#e8c860'; g.fillRect(oS[0] + 1, oS[1] + 5, TILE - 2, 1); g.fillRect(oS[0] + 7, oS[1] + 6, 2, 2);
+        g.strokeStyle = 'rgba(150,110,20,.85)'; g.strokeRect(oS[0] + .5, oS[1] + .5, TILE - 1, TILE - 1);
+        var oT = grain(tiles[0], [162, 120, 64], 16);
+        g.strokeStyle = 'rgba(150,110,20,.85)'; g.strokeRect(oT[0] + .5, oT[1] + .5, TILE - 1, TILE - 1);
+      })();
+    })();
+
     var tex = new THREE.CanvasTexture(cv);
     tex.magFilter = THREE.NearestFilter;
     tex.minFilter = THREE.NearestFilter;      // pas de mipmap : évite le bleed entre tuiles

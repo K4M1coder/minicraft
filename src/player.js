@@ -10,6 +10,7 @@
   var GRAVITY = 30, JUMP = 9.2, WALK = 4.8, RUN = 7.4, FLY = 12, ACCEL = 14;
   var SWIM_GRAVITY = 0.28, SWIM_SINK_MAX = 3.2, SWIM_UP = 4.2, SWIM_DRAG = 0.62;
   var MAX_HP = 20, MAX_HUNGER = 20, MAX_AIR = 10, REACH = 5;
+  var CHANCE_MALADIE = 1 / 3;   // SPEC-OBJET-004 : viande ou poisson cru
 
   /* `regles` provient de Modes.regles(mode, difficulte). Le joueur ne connaît
      ni le mode ni la difficulté : il ne voit que des règles déjà résolues,
@@ -29,6 +30,9 @@
       inv: Inv.create(Inv.TOTAL), selected: 0,
       mining: null, attackCd: 0, regenT: 0, hurtFlash: 0,
       fallFrom: null, dead: false,
+      // équipement (SPEC-OBJET-001/003) : quatre pièces d'armure et un bijou
+      equip: { casque: null, plastron: null, jambieres: null, bottes: null, bijou: null },
+      tirCd: 0, malade: 0, malaiseT: 0,
       w: PW, h: PH, eye: EYE, reach: REACH, regles: R,
     };
 
@@ -63,6 +67,7 @@
       pl.dansLave = !!P.dansLave(world, pl.pos, PW, PH);
       if (pl.dansLave) speed *= 0.35;
       if (pl.hunger <= 0) speed *= 0.6;              // affamé, on traîne
+      speed *= vitesseBijou();                       // SPEC-OBJET-003 : bijou de saphir
 
       pl.vel.x = P.approach(pl.vel.x, wish.x * speed, ACCEL, dt);
       pl.vel.z = P.approach(pl.vel.z, wish.z * speed, ACCEL, dt);
@@ -126,11 +131,51 @@
       if (before !== pl.pos.y) { /* rien : placeholder pour la lisibilité */ }
     }
 
+    // ─── armure et bijou (SPEC-OBJET-001/003) ─────────────────────────────────
+    var ARMOR_SLOTS = ['casque', 'plastron', 'jambieres', 'bottes'];
+    /* Fraction de dégâts absorbée par l'armure et la résistance d'un bijou,
+       plafonnée à 80 % : un joueur en diamant complet garde toujours une
+       vulnérabilité. */
+    function armureReduction() {
+      var def = 0;
+      ARMOR_SLOTS.forEach(function (k) {
+        var s = pl.equip[k], d = s && C.def(s.id);
+        if (d && d.defense) def += d.defense;
+      });
+      var bijou = pl.equip.bijou, bd = bijou && C.def(bijou.id);
+      var bonus = (bd && bd.effet && bd.effet.type === 'resistance') ? bd.effet.valeur : 0;
+      return Math.min(0.8, def * 0.04 + bonus);
+    }
+    // chaque coup encaissé use d'un point de durabilité chaque pièce portée
+    function userArmure() {
+      ARMOR_SLOTS.forEach(function (k) {
+        var s = pl.equip[k];
+        if (!s) return;
+        var max = C.durabilityOf(s.id);
+        if (!max) return;
+        s.dmg = (s.dmg || 0) + 1;
+        if (s.dmg >= max) pl.equip[k] = null;
+      });
+    }
+    // vitesse (SPEC-OBJET-003) : un bijou de saphir presse le pas
+    function vitesseBijou() {
+      var bijou = pl.equip.bijou, bd = bijou && C.def(bijou.id);
+      return (bd && bd.effet && bd.effet.type === 'vitesse') ? 1 + bd.effet.valeur : 1;
+    }
+    // chance au butin (SPEC-OBJET-003) : un bijou d'émeraude porte chance
+    function chanceBijou() {
+      var bijou = pl.equip.bijou, bd = bijou && C.def(bijou.id);
+      return (bd && bd.effet && bd.effet.type === 'chance') ? bd.effet.valeur : 0;
+    }
+
     // ─── survie ──────────────────────────────────────────────────────────────
     function hurt(n) {
       if (n <= 0 || pl.dead) return;
       if (R.invulnerable) return;          // créatif : rien ne blesse
-      pl.hp = Math.max(0, pl.hp - n);
+      var reduc = armureReduction();
+      var n2 = Math.max(0, Math.round(n * (1 - reduc)));
+      userArmure();
+      pl.hp = Math.max(0, pl.hp - n2);
       pl.hurtFlash = 0.4;
       if (pl.hp === 0) pl.dead = true;
     }
@@ -178,6 +223,15 @@
 
       if (pl.hurtFlash > 0) pl.hurtFlash -= dt;
       if (pl.attackCd > 0) pl.attackCd -= dt;
+      if (pl.tirCd > 0) pl.tirCd -= dt;
+
+      // malaise (nourriture crue, gaz d'un piège — SPEC-OBJET-004/005) :
+      // de petites brûlures régulières tant que l'effet dure
+      if (pl.malade > 0) {
+        pl.malade -= dt;
+        pl.malaiseT += dt;
+        if (pl.malaiseT >= 4) { pl.malaiseT = 0; hurt(1); }
+      } else pl.malaiseT = 0;
     }
 
     /* Le climat sur le corps. Un froid mordant (≤ -10 °C) blesse peu à peu,
@@ -308,7 +362,7 @@
     // ─── poser / utiliser ────────────────────────────────────────────────────
     /* Renvoie une chaîne décrivant ce qui s'est passé : 'place', 'till',
        'plant', 'open:craft', 'open:furnace', 'eat', ou null. */
-    function useOn(target) {
+    function useOn(target, rand) {
       if (!target) return null;
       var stack = held();
       var id = stack ? stack.id : 0;
@@ -428,6 +482,10 @@
         if (pl.hunger >= MAX_HUNGER && !(idef.soin && pl.hp < MAX_HP)) return null;
         pl.hunger = Math.min(MAX_HUNGER, pl.hunger + idef.food);
         if (idef.soin) heal(idef.soin);
+        // cru (SPEC-OBJET-004) : un tiers du temps, ça rend malade un moment
+        if (idef.cru && (rand || Math.random)() < CHANCE_MALADIE) {
+          pl.malade += 20; pl.malaiseT = 0;
+        }
         pl.inv.consumeAt(pl.selected, 1);
         // la soupe rend son bol
         if (idef.rend) {
@@ -464,14 +522,21 @@
     // ─── frapper ─────────────────────────────────────────────────────────────
     function attack(entity) {
       if (!entity || pl.attackCd > 0) return null;
-      pl.attackCd = 0.45;
       var s = held();
       var d = s ? C.def(s.id) : null;
+      // cadence et recul propres à l'arme (SPEC-OBJET-002), 0.45s/×1 sinon
+      pl.attackCd = (d && d.cadence !== undefined) ? d.cadence : 0.45;
       var dmg = (d && d.damage) ? d.damage : 1;
+      var reculMul = (d && d.recul !== undefined) ? d.recul : 1;
       pl.exhaustion += 0.1;
-      var killed = entities.damage(entity, dmg, pl.pos, pl);
+      var killed = entities.damage(entity, dmg, pl.pos, pl, reculMul);
       var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
       return { damage: dmg, killed: killed, toolBroke: casse };
+    }
+    // portée de visée de l'arme en main (SPEC-OBJET-002), REACH sinon
+    function reachArme() {
+      var s = held(), d = s && C.def(s.id);
+      return (d && d.portee) || REACH;
     }
 
     /* Tir a l'arc. Renvoie {entity, munition} ou null si l'on n'a pas
@@ -481,6 +546,8 @@
       if (!st) return null;
       var d = C.def(st.id);
       if (!d || !d.ranged) return null;
+      // cadence de tir (SPEC-OBJET-002) : l'arbalète lourde recharge lentement
+      if (pl.tirCd > 0) return null;
 
       var dir = lookDir();
       var o = eyePos();
@@ -490,20 +557,23 @@
         // bâton : un sortilège, sans rien consommer
         e = entities.tirer(depart, dir, d.vitesseTir || 30, d.degatsTir || 6, pl, d.ranged);
       } else {
-        // munition : on cherche la premiere pile marquee `ammo`
+        // munition : on cherche la premiere pile dont l'`ammoType` correspond
+        // a l'arme (fleche pour l'arc/l'arbalete, galet pour la fronde)
         var iMun = -1;
         for (var i = 0; i < pl.inv.slots.length; i++) {
           var s2 = pl.inv.slots[i];
-          if (s2 && C.def(s2.id) && C.def(s2.id).ammo) { iMun = i; break; }
+          var d2 = s2 && C.def(s2.id);
+          if (d2 && d2.ammo && (!d2.ammoType || d2.ammoType === d.ranged)) { iMun = i; break; }
         }
         if (iMun < 0 && !R.blocsIllimites) return null;
         var munId = iMun >= 0 ? pl.inv.slots[iMun].id : I.FLECHE;
         if (iMun >= 0 && !R.blocsIllimites) pl.inv.consumeAt(iMun, 1);
-        // arbalète et arc de la jungle : plus rapides, plus forts
+        // arbalète, arc de la jungle, fronde… : plus rapides, plus forts
         e = entities.tirer(depart, dir, d.vitesseTir || 34,
-                           ((C.def(munId) && C.def(munId).damage) || 5) + (d.bonusTir || 0), pl);
+                           ((C.def(munId) && C.def(munId).damage) || 5) + (d.bonusTir || 0), pl, d.ranged);
       }
 
+      pl.tirCd = d.cadenceTir || 0;
       var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
       pl.exhaustion += 0.05;
       return { entity: e, munition: d.sansMunition ? 0 : munId, toolBroke: casse };
@@ -534,6 +604,7 @@
       hurt: hurt, heal: heal, respawn: respawn, aim: aim,
       mineTick: mineTick, cancelMining: cancelMining, useOn: useOn,
       attack: attack, tirer: tirer, pickUp: pickUp, dropSelected: dropSelected,
+      reachArme: reachArme, armureReduction: armureReduction, chanceBijou: chanceBijou,
       regles: R, MAX_HP: MAX_HP, MAX_HUNGER: MAX_HUNGER, MAX_AIR: MAX_AIR,
       PW: PW, PH: PH, EYE: EYE, REACH: REACH,
     };

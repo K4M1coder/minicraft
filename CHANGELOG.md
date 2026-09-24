@@ -15,6 +15,14 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+### Ajouté
+
+- Tissu et cuir, sept matières d'armure (tissu, cuir, mailles, bronze, fer, or, diamant) en quatre pièces chacune — casque, plastron, jambières, bottes —, réduisant les dégâts encaissés selon la matière portée, s'usant à chaque coup et se réparant à l'établi ; visibles sur l'avatar (SPEC-OBJET-001).
+- Cinq nouvelles armes de mêlée (dague, épée longue, hache de guerre, masse, lance) en quatre matières, plus l'arc long, l'arbalète lourde et la fronde (et ses galets), chacune avec sa portée, sa cadence, ses dégâts et son recul propres (SPEC-OBJET-002).
+- Gemmes taillées et bijoux (anneaux, amulettes, diadèmes) portés dans un emplacement dédié, donnant résistance, vitesse, chance au butin ou lumière portée selon la gemme sertie ; recherchés par les marchands (SPEC-OBJET-003).
+- Fromage, soupe de légumes, ragoût, tarte aux pommes, gâteau et baies ; la viande et le poisson mangés crus rendent parfois malade, un effet temporaire (SPEC-OBJET-004).
+- Coffres piégés (flèches, explosion, alarme qui appelle des gardes, gaz) et coffres surprises (butin rare ou mimic hostile), désamorçables avec un kit dédié (SPEC-OBJET-005).
+
 ### Modifié
 
 - L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.
