@@ -1279,6 +1279,122 @@
     key('Escape'); fakeLock(g, true); await frames(3);
   });
 
+  e2e('SPEC-OPTION-001 : les options s appliquent aussitôt et se conservent', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    try {
+      await reset(g);
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      A.ok(document.querySelector('.options'), 'l écran des options');
+      function glisser(k, v) {
+        var i = document.querySelector('input[data-opt="' + k + '"]');
+        i.value = v; i.dispatchEvent(new Event('input'));
+      }
+      glisser('champ', 90);
+      A.equal(g.render.camera.fov, 90, 'champ de vision appliqué');
+      glisser('sensibilite', 2);
+      A.close(g.input.SENS, 0.0044, 1e-9, 'sensibilité appliquée');
+      glisser('volume', 0.5);
+      A.close(g.audio.volume, 0.5, 1e-9, 'volume appliqué');
+      glisser('vueMax', 6);
+      A.ok(g.render.RENDER_DIST <= 6, 'distance de vue bornée');
+      var ombres = document.querySelector('input[data-opt="ombres"]');
+      ombres.checked = false; ombres.dispatchEvent(new Event('change'));
+      A.equal(g.render.ombresActives, false, 'ombres coupées');
+      var real = document.querySelector('input[data-opt="realiste"]');
+      real.checked = false; real.dispatchEvent(new Event('change'));
+      A.equal(g.render.loin.options.realiste, false, 'rendu lointain simple');
+      // conservées : relues du stockage
+      var lu = MC.Options.charger(localStorage);
+      A.equal(lu.champ, 90); A.equal(lu.vueMax, 6); A.equal(lu.ombres, false);
+      document.querySelector('#btn-opt-defaut').click(); await frames(2);
+      A.equal(g.render.camera.fov, 72, 'les défauts reviennent');
+      document.querySelector('#btn-retour').click(); await frames(2);
+      A.ok(document.querySelector('#btn-resume'), 'retour à la pause');
+    } finally {
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      key('Escape'); fakeLock(g, true); await frames(3);
+    }
+  });
+
+  e2e('SPEC-OPTION-003 : une touche se remappe, un conflit est signalé, l aide suit', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    function presser(code) { document.dispatchEvent(new KeyboardEvent('keydown', { code: code, bubbles: true, cancelable: true })); }
+    try {
+      await reset(g);
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      document.querySelector('.lier[data-action="inventaire"]').click();
+      presser('KeyI'); await frames(2);
+      A.equal(MC.Options.actionDe(g.options.touches, 'KeyI'), 'inventaire', 'I ouvre l inventaire');
+      A.ok(/enregistrée/.test(document.querySelector('#opt-msg').textContent));
+      document.querySelector('.lier[data-action="carte"]').click();
+      presser('KeyI'); await frames(2);
+      A.ok(/Conflit/.test(document.querySelector('#opt-msg').textContent), 'conflit signalé');
+      A.equal(MC.Options.actionDe(g.options.touches, 'KeyC'), 'carte', 'la carte garde sa touche');
+      document.querySelector('.lier[data-action="avancer"]').click();
+      presser('KeyU'); await frames(2);
+      A.equal(g.input.BINDINGS.forward.join(','), 'KeyU', 'avancer se fait avec U');
+      A.equal(MC.Options.charger(localStorage).touches.inventaire.join(','), 'KeyI', 'conservé');
+      document.querySelector('#btn-retour').click(); await frames(2);
+      var aide = document.querySelector('table.keys').textContent;
+      A.ok(aide.indexOf('U') >= 0 && aide.indexOf('I') >= 0, 'l aide de la pause montre les touches en vigueur');
+      key('Escape'); fakeLock(g, true); await frames(3);
+      key('KeyI'); await frames(2);
+      A.equal(g.input.state, 'ui', 'la nouvelle touche ouvre l inventaire');
+      key('KeyI'); await frames(2);
+    } finally {
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      g.input.setTouches(avant.touches);
+      if (g.input.state === 'ui') { key('Escape'); await frames(2); }
+    }
+  });
+
+  e2e('SPEC-OPTION-002 : chaque bouton des menus fait ce qu il annonce', async function (g) {
+    videParties(); g.afficherMenu(); await frames(2);
+    document.querySelector('#btn-aide').click(); await frames(2);
+    A.ok(document.querySelector('table.keys'), 'l aide');
+    document.querySelector('#btn-retour').click(); await frames(2);
+    A.ok(document.querySelector('#btn-nouvelle'), 'retour à l accueil');
+    document.querySelector('#btn-options').click(); await frames(2);
+    A.ok(document.querySelector('.options'), 'options depuis l accueil');
+    document.querySelector('#btn-retour').click(); await frames(2);
+    A.ok(document.querySelector('#btn-nouvelle'), 'retour à l accueil depuis les options');
+    document.querySelector('#btn-multi').click(); await frames(2);
+    A.ok(document.querySelector('#f-hote'), 'multijoueur');
+    document.querySelector('#btn-retour').click(); await frames(2);
+    document.querySelector('#btn-nouvelle').click(); await frames(2);
+    A.ok(document.querySelector('#btn-creer'), 'l écran de création');
+    var ret = document.querySelector('#btn-retour');
+    A.ok(ret, 'la création a un retour');
+    ret.click(); await frames(2);
+    A.ok(document.querySelector('#btn-nouvelle'), 'retour depuis la création');
+    // pause : affichage, options, succès, sauvegarder, reprendre, menu principal
+    await reset(g);
+    key('Escape'); await frames(3);
+    document.querySelector('#btn-affichage').click(); await frames(2);
+    A.ok(document.querySelector('.aff-liste'), 'affichage');
+    document.querySelector('#btn-retour').click(); await frames(2);
+    document.querySelector('#btn-options').click(); await frames(2);
+    A.ok(document.querySelector('.options'), 'options depuis la pause');
+    document.querySelector('#btn-retour').click(); await frames(2);
+    document.querySelector('#btn-succes').click(); await frames(2);
+    A.equal(g.input.state, 'ui', 'le panneau des succès');
+    key('Escape'); await frames(3);
+    if (g.input.state !== 'paused') { key('Escape'); await frames(3); }
+    A.equal(g.input.state, 'paused');
+    // sauvegarder rend compte de la sauvegarde (ou de son impossibilité, partie sans nom)
+    document.querySelector('#btn-save').click(); await frames(3);
+    A.ok(/sauvegard/i.test(document.body.textContent), 'sauvegarder annonce son résultat');
+    document.querySelector('#btn-resume').click(); fakeLock(g, true); await frames(3);
+    A.equal(g.input.state, 'playing', 'reprendre relance la partie');
+    key('Escape'); await frames(3);
+    document.querySelector('#btn-quit').click(); await frames(3);
+    A.ok(document.querySelector('#btn-nouvelle'), 'menu principal');
+    videParties();
+    await reset(g);
+  });
+
   e2e('SPEC-MENU-010 : la graine courante est affichee en pause', async function (g) {
     await reset(g);
     key('Escape');

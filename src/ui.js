@@ -647,29 +647,82 @@
     }
     function hideScreen() { overlay.style.display = 'none'; overlay.innerHTML = ''; }
 
-    var COMMANDES =
-      '<table class="keys">' +
-      '<tr><td>ZQSD / WASD</td><td>se déplacer</td></tr>' +
-      '<tr><td>souris</td><td>regarder</td></tr>' +
-      '<tr><td>clic gauche</td><td>miner (maintenir) · frapper</td></tr>' +
-      '<tr><td>clic droit</td><td>poser · utiliser · interagir</td></tr>' +
-      '<tr><td>espace</td><td>sauter · nager · 2× = vol</td></tr>' +
-      '<tr><td>maj</td><td>courir · descendre</td></tr>' +
-      '<tr><td>E</td><td>inventaire et craft 2×2</td></tr>' +
-      '<tr><td>G</td><td>jeter un objet</td></tr>' +
-      '<tr><td>clic droit sur un véhicule</td><td>monter · Maj + clic : soute du camion</td></tr>' +
-      '<tr><td>F</td><td>descendre du véhicule</td></tr>' +
-      '<tr><td>C</td><td>carte et points de repère</td></tr>' +
-      '<tr><td>J</td><td>factions et réputation</td></tr>' +
-      '<tr><td>K</td><td>succès et progression</td></tr>' +
-      '<tr><td>H</td><td>journal de l\'histoire (mode histoire)</td></tr>' +
-      '<tr><td>M</td><td>couper ou remettre le son</td></tr>' +
-      '<tr><td>T</td><td>ouvrir le chat (Entree envoie, Echap annule)</td></tr>' +
-      '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
-      '<tr><td>F5</td><td>sauvegarder</td></tr>' +
-      '<tr><td>F1</td><td>afficher ou masquer tout le HUD</td></tr>' +
-      '<tr><td>échap</td><td>pause</td></tr>' +
-      '</table>';
+    /* L'aide des commandes suit les touches en vigueur (SPEC-OPTION-003). */
+    var touchesAide = MC.Options ? MC.Options.defauts().touches : null;
+    function majTouches(t) { touchesAide = t; }
+    function commandes() {
+      var lignes = (MC.Options ? MC.Options.aide(touchesAide) : []).map(function (l) {
+        return '<tr><td>' + ech(l.touches) + '</td><td>' + ech(l.nom) + '</td></tr>';
+      }).join('');
+      return '<table class="keys">' + lignes +
+        '<tr><td>souris</td><td>regarder</td></tr>' +
+        '<tr><td>clic gauche</td><td>miner (maintenir) · frapper</td></tr>' +
+        '<tr><td>clic droit</td><td>poser · utiliser · interagir</td></tr>' +
+        '<tr><td>clic droit sur un véhicule</td><td>monter · Maj + clic : soute du camion</td></tr>' +
+        '<tr><td>1 – 9 / molette</td><td>choisir un objet</td></tr>' +
+        '<tr><td>échap</td><td>pause</td></tr>' +
+        '</table>';
+    }
+
+    /* ── Options (SPEC-OPTION-001, 003) : chaque réglage s'applique aussitôt ;
+       une touche se remappe en cliquant son bouton puis en pressant la
+       nouvelle touche ; un conflit est signalé et rien ne change. */
+    function ecranOptions(retour) {
+      var o = hooks.options ? hooks.options() : null;
+      if (!o) return;
+      var R = MC.Options.REGLAGES;
+      var reglages = Object.keys(R).map(function (k) {
+        var r = R[k];
+        if (typeof r.defaut === 'boolean') {
+          return '<label class="opt-ligne"><input type="checkbox" data-opt="' + k + '"' + (o[k] ? ' checked' : '') + '> ' + ech(r.nom) + '</label>';
+        }
+        return '<label class="opt-ligne">' + ech(r.nom) + ' <input type="range" data-opt="' + k + '" min="' + r.min +
+               '" max="' + r.max + '" step="' + r.pas + '" value="' + o[k] + '"> <span class="opt-val" data-val="' + k + '">' +
+               o[k] + '</span></label>';
+      }).join('');
+      var touches = MC.Options.aide(o.touches).map(function (l) {
+        return '<div class="opt-touche"><span>' + ech(l.nom) + '</span><button class="lier" data-action="' + l.action + '">' +
+               ech(l.touches) + '</button></div>';
+      }).join('');
+      showScreen(
+        '<div class="panel large options">' +
+        '<h1>Options</h1>' +
+        '<div class="opt-liste">' + reglages + '</div>' +
+        '<h2>Touches</h2><div class="opt-touches">' + touches + '</div>' +
+        '<p class="hint" id="opt-msg"></p>' +
+        '<div class="row"><button id="btn-opt-defaut">Valeurs par défaut</button>' +
+        '<button id="btn-retour" class="primary">Retour</button></div></div>');
+      var msg = overlay.querySelector('#opt-msg');
+      Array.prototype.forEach.call(overlay.querySelectorAll('[data-opt]'), function (inp) {
+        inp.addEventListener(inp.type === 'checkbox' ? 'change' : 'input', function () {
+          var k = inp.getAttribute('data-opt');
+          var v = hooks.onOption(k, inp.type === 'checkbox' ? inp.checked : parseFloat(inp.value));
+          var s = overlay.querySelector('[data-val="' + k + '"]');
+          if (s) s.textContent = v;
+        });
+      });
+      Array.prototype.forEach.call(overlay.querySelectorAll('.lier'), function (b) {
+        b.onclick = function () {
+          var action = b.getAttribute('data-action');
+          b.textContent = '…';
+          msg.textContent = 'Pressez la nouvelle touche (Échap annule)';
+          function capter(e) {
+            e.preventDefault(); e.stopPropagation();
+            document.removeEventListener('keydown', capter, true);
+            if (e.code === 'Escape') { ecranOptions(retour); return; }
+            var conflit = hooks.onLier(action, e.code);
+            ecranOptions(retour);
+            var m = overlay.querySelector('#opt-msg');
+            if (conflit) m.textContent = 'Conflit : ' + MC.Options.nomTouche(e.code) + ' sert déjà à « ' + conflit + ' »';
+            else m.textContent = 'Touche enregistrée.';
+            if (conflit) m.classList.add('conflit');
+          }
+          document.addEventListener('keydown', capter, true);
+        };
+      });
+      overlay.querySelector('#btn-opt-defaut').onclick = function () { hooks.onOptionsDefaut && hooks.onOptionsDefaut(); ecranOptions(retour); };
+      overlay.querySelector('#btn-retour').onclick = function () { (retour || function () { hooks.onRetourMenu && hooks.onRetourMenu(); })(); };
+    }
 
     /* ── Menus ──────────────────────────────────────────────────────────────
        Tous les ecrans passent par showScreen : un seul calque, un seul
@@ -709,8 +762,10 @@
         '<button id="btn-nouvelle" class="primary">Nouvelle partie</button>' +
         '<button id="btn-multi">Multijoueur</button>' +
         '<button id="btn-aide">Commandes</button>' +
+        '<button id="btn-options">Options</button>' +
         '</div>' +
         '<p class="hint" id="lock-hint"></p></div>');
+      overlay.querySelector('#btn-options').onclick = function () { ecranOptions(); };
 
       overlay.querySelector('#btn-nouvelle').onclick = function () { hooks.onNouvelle && hooks.onNouvelle(); };
       overlay.querySelector('#btn-multi').onclick = function () { hooks.onMulti && hooks.onMulti(); };
@@ -916,7 +971,7 @@
     }
 
     function ecranAide() {
-      showScreen('<div class="panel large"><h1>Commandes</h1>' + COMMANDES +
+      showScreen('<div class="panel large"><h1>Commandes</h1>' + commandes() +
         '<p class="hint">Dans le chat : /aide donne la liste des commandes.</p>' +
         '<div class="row"><button id="btn-retour" class="primary">Retour</button></div></div>');
       overlay.querySelector('#btn-retour').onclick = function () { hooks.onRetourMenu && hooks.onRetourMenu(); };
@@ -927,7 +982,7 @@
         '<div class="panel">' +
         '<h1>MiniCraft</h1>' +
         '<p class="sub">prototype voxel — miner, construire, cultiver, survivre</p>' +
-        COMMANDES +
+        commandes() +
         '<div class="row">' +
         '<button id="btn-play" class="primary">' + (hasSave ? 'Reprendre la partie' : 'Nouvelle partie') + '</button>' +
         (hasSave ? '<button id="btn-new">Nouvelle partie</button>' : '') +
@@ -951,11 +1006,12 @@
         (infos.mode || '') + (infos.difficulte ? ' · ' + infos.difficulte : '') +
         (infos.graine !== undefined ? ' · graine <code>' + infos.graine + '</code>' : '') +
         (infos.enLigne ? ' · <b>en ligne</b>' : '') + '</p>' +
-        COMMANDES +
+        commandes() +
         '<div class="row">' +
         '<button id="btn-resume" class="primary">Reprendre</button>' +
         '<button id="btn-save">Sauvegarder</button>' +
         '<button id="btn-affichage">Affichage</button>' +
+        '<button id="btn-options">Options</button>' +
         '<button id="btn-succes">Succès</button>' +
         '<button id="btn-quit">Menu principal</button>' +
         '</div>' +
@@ -964,6 +1020,7 @@
       overlay.querySelector('#btn-resume').onclick = function () { hooks.onResume && hooks.onResume(); };
       overlay.querySelector('#btn-save').onclick = function () { hooks.onSave && hooks.onSave(); };
       overlay.querySelector('#btn-affichage').onclick = function () { ecranAffichage(); };
+      overlay.querySelector('#btn-options').onclick = function () { ecranOptions(function () { menuPause(); }); };
       overlay.querySelector('#btn-succes').onclick = function () { hooks.onSucces && hooks.onSucces(); };
       overlay.querySelector('#btn-quit').onclick = function () { hooks.onQuit && hooks.onQuit(); };
     }
@@ -1500,6 +1557,7 @@
       panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
+      ecranOptions: ecranOptions, majTouches: majTouches,
       ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
       hideScreen: hideScreen, setLockHint: setLockHint,
       openContainer: openContainer, closeContainer: closeContainer,

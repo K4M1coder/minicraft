@@ -19,7 +19,7 @@
         if (!AC) { enabled = false; return null; }
         ctx = new AC();
         master = ctx.createGain();
-        master.gain.value = 0.28;
+        master.gain.value = 0.28 * volumeGeneral;
         master.connect(ctx.destination);
       } catch (e) { enabled = false; ctx = null; }
       return ctx;
@@ -332,6 +332,13 @@
       return joue;
     }
 
+    /* Volume général 0..1 (SPEC-OPTION-001) : 0,28 est le niveau d'origine. */
+    var volumeGeneral = 1;
+    function setVolume(v) {
+      volumeGeneral = Math.max(0, Math.min(1, v));
+      if (master) master.gain.value = 0.28 * volumeGeneral;
+      return volumeGeneral;
+    }
     function setEnabled(v) {
       enabled = !!v;
       if (!enabled && ctx && ctx.state === 'running') { try { ctx.suspend(); } catch (e) {} }
@@ -340,7 +347,8 @@
     }
 
     return {
-      play: play, jouer: jouer, resume: resume, setEnabled: setEnabled, tonnerre: tonnerre,
+      play: play, jouer: jouer, resume: resume, setEnabled: setEnabled, tonnerre: tonnerre, setVolume: setVolume,
+      get volume() { return volumeGeneral; },
       ambiance: ambiance, majNappes: majNappes,
       positionAuditeur: positionAuditeur, volumeCategorie: volumeCategorie,
       get enabled() { return enabled; },

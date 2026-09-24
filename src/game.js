@@ -149,6 +149,11 @@
       onFabrique: function (id) { signalerSucces({ type: 'fabriquer', id: id }); },
       onEchange: function () { signalerSucces({ type: 'echange' }); },
       onSucces: function () { ui.panneauSucces(g.succes); input.setState('ui'); },
+      // SPEC-OPTION-001 et 003 : réglages et touches
+      options: function () { return g.options; },
+      onOption: function (cle, v) { return reglerOption(cle, v); },
+      onLier: function (action, code) { return lierTouche(action, code); },
+      onOptionsDefaut: function () { g.options = MC.Options.defauts(); MC.Options.sauver(hudStockage, g.options); appliquerOptions(); },
     }, hud);
 
     var input = MC.createInput(canvas, {
@@ -193,6 +198,39 @@
     });
     g.input = input;
     g.ui = ui;
+
+    /* Réglages du joueur (SPEC-OPTION-001, 003) : lus au démarrage, appliqués
+       aussitôt qu'on les change, conservés avec l'affichage du HUD. */
+    g.options = MC.Options.charger(hudStockage);
+    function appliquerOptions() {
+      var o = g.options;
+      input.setSensibilite(o.sensibilite);
+      input.setTouches(o.touches);
+      audio.setVolume(o.volume);
+      render.setChamp(o.champ);
+      render.setOmbres(o.ombres);
+      render.reglerRealiste(o.realiste);
+      if (render.RENDER_DIST > o.vueMax) render.setDistance(o.vueMax);
+      ui.majTouches && ui.majTouches(o.touches);
+    }
+    function reglerOption(cle, v) {
+      g.options = MC.Options.regler(g.options, cle, v);
+      MC.Options.sauver(hudStockage, g.options);
+      appliquerOptions();
+      return g.options[cle];
+    }
+    function lierTouche(action, code) {
+      var r = MC.Options.lier(g.options.touches, action, code);
+      if (!r.conflit) {
+        g.options = Object.assign({}, g.options, { touches: r.touches });
+        MC.Options.sauver(hudStockage, g.options);
+        appliquerOptions();
+      }
+      return r.conflit;
+    }
+    g.reglerOption = reglerOption;
+    g.lierTouche = lierTouche;
+    appliquerOptions();
 
     // ─── états ───────────────────────────────────────────────────────────────
     function onStateChange(next) {
@@ -813,7 +851,8 @@
       vueT += dt;
       if (vueT < 2) return;
       vueT = 0;
-      var r = MC.Lointain.ajusterDistance(render.RENDER_DIST, g.fps, g.enAttente || 0);
+      var bornes = Object.assign({}, MC.Lointain.VUE, { max: Math.min(MC.Lointain.VUE.max, g.options.vueMax) });
+      var r = MC.Lointain.ajusterDistance(render.RENDER_DIST, g.fps, g.enAttente || 0, bornes);
       if (r !== render.RENDER_DIST) render.setDistance(r);
     }
 
@@ -1359,20 +1398,21 @@
     }
 
     function onKey(code) {
-      if (code === 'KeyE') {
+      var act = MC.Options.actionDe(g.options.touches, code);
+      if (act === 'inventaire') {
         ui.openContainer('inv', player.state.inv);
         input.setState('ui');
-      } else if (code === 'KeyL') {
+      } else if (act === 'livre') {
         ui.openContainer('inv', player.state.inv);
         ui.toggleLivre();
         input.setState('ui');
-      } else if (code === 'F5') {
+      } else if (act === 'sauvegarder') {
         doSave(true);
-      } else if (code === 'F1') {
+      } else if (act === 'hud') {
         // bascule générale du HUD (SPEC-HUD-001)
         hud.basculerTout();
         ui.appliquerHud();
-      } else if (code === 'KeyT') {
+      } else if (act === 'chat') {
         // même masqué, T doit rouvrir le chat pour pouvoir y écrire (SPEC-HUD-008)
         if (!hud.visible('chat')) hud.regler('chat', true);
         chat.ouvrir();
@@ -1381,23 +1421,23 @@
         if (!hud.visible('chat')) hud.regler('chat', true);
         chat.ouvrir(); chat.saisie = '/';
         input.setSaisie(true);
-      } else if (code === 'KeyM') {
+      } else if (act === 'son') {
         ui.toast(audio.setEnabled(!audio.enabled) ? 'Son activé' : 'Son coupé');
-      } else if (code === 'KeyC') {
+      } else if (act === 'carte') {
         if (aUneCarte(player)) ouvrirCarte();
         else ui.toast('Il faut une carte dans l\'inventaire', 'warn');
-      } else if (code === 'KeyH') {
+      } else if (act === 'journal') {
         if (g.histoire) { ui.journalHistoire(g.histoire, g.finHistoire); input.setState('ui'); }
         else ui.toast('Le journal n\'existe qu\'en mode histoire', 'warn');
-      } else if (code === 'KeyJ') {
+      } else if (act === 'factions') {
         ui.panneauFactions(world.reputation);
         input.setState('ui');
-      } else if (code === 'KeyK') {
+      } else if (act === 'succes') {
         ui.panneauSucces(g.succes);
         input.setState('ui');
-      } else if (code === 'KeyF') {
+      } else if (act === 'descendre') {
         descendreDe(equipe[0]);
-      } else if (code === 'KeyG') {
+      } else if (act === 'jeter') {
         // G et non Q : sur AZERTY, Q est déjà la touche « aller à gauche »
         var d = player.dropSelected(1);
         if (d) { ui.toast('Jeté : ' + C.nameOf(d.id)); audio.play('poser'); }
@@ -1406,12 +1446,13 @@
 
     function onKeyAnyState(code) {
       if (input.state !== 'ui') return;
-      if (code === 'KeyE') closeUI();
-      else if (code === 'KeyC' && ui.carteOuverte()) closeUI();
-      else if (code === 'KeyJ' && ui.factionsOuvertes()) closeUI();
-      else if (code === 'KeyH' && ui.journalOuvert()) closeUI();
-      else if (code === 'KeyK' && ui.succesOuverts()) closeUI();
-      else if (code === 'KeyL') ui.toggleLivre();
+      var act = MC.Options.actionDe(g.options.touches, code);
+      if (act === 'inventaire') closeUI();
+      else if (act === 'carte' && ui.carteOuverte()) closeUI();
+      else if (act === 'factions' && ui.factionsOuvertes()) closeUI();
+      else if (act === 'journal' && ui.journalOuvert()) closeUI();
+      else if (act === 'succes' && ui.succesOuverts()) closeUI();
+      else if (act === 'livre') ui.toggleLivre();
     }
 
     function onEscape() {

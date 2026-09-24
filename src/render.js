@@ -1245,6 +1245,18 @@
       return RENDER_DIST;
     }
 
+    /* Réglages du joueur (SPEC-OPTION-001) : champ de vision et ombres. */
+    var ombresActives = true;
+    function setChamp(fov) {
+      cameras.concat([camera]).forEach(function (c) { c.fov = fov; c.updateProjectionMatrix(); });
+      return fov;
+    }
+    function setOmbres(v) {
+      ombresActives = !!v;
+      if (!ombresActives) sun.castShadow = false;
+      return ombresActives;
+    }
+
     /* Météo transmise par le jeu : état du ciel et dérive des nuages. */
     var meteoCiel = null, flash = 0;
     /* `ciel` (facultatif) : { me: l'instance Meteo, temps, vent local (cyclone
@@ -1607,7 +1619,7 @@
       if (cadre) {
         sun.position.set(cadre[0].position.x, cadre[0].position.y, cadre[0].position.z);
         sun.target.position.set(cadre[0].centre.x, cadre[0].centre.y, cadre[0].centre.z);
-        sun.castShadow = !submerged;
+        sun.castShadow = !submerged && ombresActives;
       } else {
         sun.position.set(camera.position.x, camera.position.y + 100, camera.position.z);
         sun.target.position.copy(camera.position);
@@ -1803,6 +1815,7 @@
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes,
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
+      setChamp: setChamp, setOmbres: setOmbres, get ombresActives() { return ombresActives; },
       formations: { derivesCouches: derivesCouches, cyclones: UN.cyc, forcesCyclones: UN.cycF, tornades: tornadesM, brume: plansBrume },
       majSilhouettes: majSilhouettes, reglerRealiste: reglerRealiste,
       loin: { options: optionsLointain, get arbres() { return arbresLointains; }, get silhouettes() { return silhouettesLointaines; },

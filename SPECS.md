@@ -612,9 +612,9 @@ passe de ⏳ à ✅ dans le même commit que son implémentation — jamais avan
 | SPEC-RECETTE-007 | Chaque recette est faisable : ses ingrédients s'obtiennent (butin, fabrication, échange, génération) et son résultat existe | graphe des recettes | ✅ |
 | SPEC-DROP-001 | Chaque bloc cassable rend son butin, chaque créature le sien ; aucun butin n'est un identifiant inconnu | butins | ✅ |
 | SPEC-SUCCES-001 | Des succès récompensent des étapes (premier bloc, premier outil, premier gardien, première ville…) : annoncés une fois, sauvegardés, listés dans un panneau | déclenchement, unicité, sauvegarde | ✅ |
-| SPEC-OPTION-001 | Un menu d'options règle sensibilité de la souris, volume du son, champ de vision, distance de vue maximale, rendu réaliste lointain et ombres ; chaque réglage s'applique aussitôt et est conservé | options appliquées et conservées | ⏳ |
-| SPEC-OPTION-002 | Chaque bouton et chaque option des menus (principal, parties, création, multijoueur, pause, options, affichage, aide) fait ce qu'il annonce | parcours de tous les menus | ⏳ |
-| SPEC-OPTION-003 | Les touches se reconfigurent (déplacements, actions, panneaux) ; un conflit est signalé ; le choix est conservé et l'aide affiche les touches en vigueur | remappage, conflit, conservation, aide | ⏳ |
+| SPEC-OPTION-001 | Un menu d'options règle sensibilité de la souris, volume du son, champ de vision, distance de vue maximale, rendu réaliste lointain et ombres ; chaque réglage s'applique aussitôt et est conservé | options appliquées et conservées | ✅ |
+| SPEC-OPTION-002 | Chaque bouton et chaque option des menus (principal, parties, création, multijoueur, pause, options, affichage, aide) fait ce qu'il annonce | parcours de tous les menus | ✅ |
+| SPEC-OPTION-003 | Les touches se reconfigurent (déplacements, actions, panneaux) ; un conflit est signalé ; le choix est conservé et l'aide affiche les touches en vigueur | remappage, conflit, conservation, aide | ✅ |
 | SPEC-CMD-001 | Chaque commande du chat fait ce qu'elle annonce (/aide, /heure, /jour, /nuit, /ou, /graine, /vider, /qui, /meteo, /succes) | toutes les commandes | ✅ |
 
 ## HUD — affichage tête haute

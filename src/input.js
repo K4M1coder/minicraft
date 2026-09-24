@@ -28,9 +28,23 @@
       sprint: ['ShiftLeft', 'ShiftRight'],
     };
     var CODE_TO_ACTION = {};
-    Object.keys(BINDINGS).forEach(function (a) {
-      BINDINGS[a].forEach(function (c) { CODE_TO_ACTION[c] = a; });
-    });
+    function indexer() {
+      CODE_TO_ACTION = {};
+      Object.keys(BINDINGS).forEach(function (a) {
+        BINDINGS[a].forEach(function (c) { CODE_TO_ACTION[c] = a; });
+      });
+    }
+    indexer();
+    /* Touches remappées (SPEC-OPTION-003) : `t` suit MC.Options (avancer,
+       reculer, gauche, droite, sauter, courir). */
+    var DEPLACEMENTS = { forward: 'avancer', back: 'reculer', left: 'gauche', right: 'droite', jump: 'sauter', sprint: 'courir' };
+    function setTouches(t) {
+      Object.keys(DEPLACEMENTS).forEach(function (a) {
+        if (t && t[DEPLACEMENTS[a]]) BINDINGS[a] = t[DEPLACEMENTS[a]].slice();
+      });
+      indexer();
+      clearKeys();
+    }
 
     function actions() {
       return {
@@ -137,7 +151,8 @@
 
     // ─── souris ──────────────────────────────────────────────────────────────
     var MAX_DELTA = 180;   // au-delà, c'est un artefact d'acquisition du verrou
-    var SENS = 0.0022;
+    var SENS_BASE = 0.0022, SENS = SENS_BASE;
+    function setSensibilite(k) { SENS = SENS_BASE * (k > 0 ? k : 1); return SENS; }
 
     document.addEventListener('mousemove', function (e) {
       if (saisieActive) return;
@@ -246,7 +261,8 @@
       get saisieActive() { return saisieActive; },
       mouse: mouse, clearKeys: clearKeys, requestLock: requestLock, exitLock: exitLock,
       get lockError() { return lockError; },
-      BINDINGS: BINDINGS, SENS: SENS, MAX_DELTA: MAX_DELTA,
+      BINDINGS: BINDINGS, get SENS() { return SENS; }, MAX_DELTA: MAX_DELTA,
+      setTouches: setTouches, setSensibilite: setSensibilite,
     };
   }
 
