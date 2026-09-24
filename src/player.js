@@ -39,6 +39,44 @@
     function held() { return pl.inv.slots[pl.selected]; }
     function heldId() { var s = held(); return s ? s.id : 0; }
 
+    /* ─── journal d'inventaire (B1, docs/vague-2/B1.md § 6) ──────────────────
+       En ligne, `pl.journalInv` est un tableau fourni par game.js : chaque
+       diminution prédite (pose, usure, munition, engrais, transformation du
+       seau…) y est poussée AU MOMENT MÊME où elle a lieu — jamais reconstituée
+       après coup, ce qu'un INV_MAJ arrivé entre-temps rendrait faux. Hors
+       ligne, `journalInv` est absent : ces fonctions ne font alors que muter
+       `pl.inv`, exactement comme avant. Le repas (`useOn` → 'eat') ne
+       journalise PAS : c'est le message MANGER, envoyé à part par game.js,
+       qui porte cette information au serveur. */
+    function journaliser(op) {
+      if (Array.isArray(pl.journalInv)) pl.journalInv.push(op);
+    }
+    // consomme n exemplaires de la case i (pose de bloc, engrais, munition…)
+    function consommerCase(i, n) {
+      var s = pl.inv.slots[i];
+      var id = s && s.id;
+      var pris = pl.inv.consumeAt(i, n);
+      if (pris > 0 && id) journaliser({ i: i, id: id, n: pris });
+      return pris;
+    }
+    // use l'outil de la case i d'un point (minage, coup porté, tir)
+    function userCase(i) {
+      var s = pl.inv.slots[i];
+      var id = s && s.id;
+      var r = pl.inv.wearTool(i);
+      if (r && id) journaliser({ i: i, id: id, usure: 1 });
+      return r;
+    }
+    // transforme la pile de la case i en `vers` (seau plein <-> vide)
+    function transformerCase(i, vers) {
+      var s = pl.inv.slots[i];
+      if (!s) return null;
+      var id = s.id;
+      s.id = vers;
+      journaliser({ i: i, id: id, vers: vers });
+      return s;
+    }
+
     function lookDir() {
       var cp = Math.cos(pl.pitch);
       return { x: -Math.sin(pl.yaw) * cp, y: Math.sin(pl.pitch), z: -Math.cos(pl.yaw) * cp };
@@ -329,7 +367,7 @@
       // sinon faucher de l'herbe userait une pioche
       var casse = false;
       if (R.useDurabilite && C.BLOCKS[id] && C.BLOCKS[id].hardness > 0) {
-        casse = pl.inv.wearTool(pl.selected) === 'broken';
+        casse = userCase(pl.selected) === 'broken';
       }
 
       // une torche perd son support quand le bloc qui la portait disparait
@@ -358,7 +396,7 @@
       if (etat === 'vide') {
         if (hit.block !== B.WATER) return null;
         world.setBlock(hit.x, hit.y, hit.z, 0);
-        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        if (!R.blocsIllimites) consommerCase(pl.selected, 1);
         var reste = pl.inv.add(I.SEAU_EAU, 1);
         return reste ? 'seau_perdu' : 'puise';
       }
@@ -367,7 +405,7 @@
       var ici = world.getBlock(x, y, z);
       if (!C.isReplaceable(ici)) return null;
       world.setBlock(x, y, z, B.WATER);
-      if (!R.blocsIllimites) pl.inv.slots[pl.selected] = { id: I.SEAU, n: 1 };
+      if (!R.blocsIllimites) transformerCase(pl.selected, I.SEAU);
       return 'verse';
     }
 
@@ -455,7 +493,7 @@
         var idPorte = C.PORTE_FERMEE_LIST[mur];
         world.setBlock(bxp, byp, bzp, idPorte);
         world.setBlock(bxp, byp + 1, bzp, idPorte);
-        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        if (!R.blocsIllimites) consommerCase(pl.selected, 1);
         return 'place';
       }
       if (idef && idef.trappe) {
@@ -464,7 +502,7 @@
         if (!C.isReplaceable(world.getBlock(bxt, byt, bzt))) return null;
         if (P.boxOverlap(bxt + 0.5, byt, bzt + 0.5, 1, 1, pl.pos.x, pl.pos.y, pl.pos.z, PW, PH)) return null;
         world.setBlock(bxt, byt, bzt, B.TRAPPE_FERMEE);
-        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        if (!R.blocsIllimites) consommerCase(pl.selected, 1);
         return 'place';
       }
 
@@ -492,7 +530,7 @@
           world.setBlock(mx, my, mz, id);
           world.setEtat(mx, my, mz, MC.Formes.packMeuble(orientM, false));
         }
-        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        if (!R.blocsIllimites) consommerCase(pl.selected, 1);
         return 'place';
       }
 
@@ -510,7 +548,7 @@
         if (decision.action === 'fusion') {
           world.setBlock(target.x, target.y, target.z, tdef.mat);
           world.setEtat(target.x, target.y, target.z, 0);
-          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          if (!R.blocsIllimites) consommerCase(pl.selected, 1);
           // la case modifiée est celle visée (target), pas la case adjacente
           // où un bloc se pose d'ordinaire — SPEC-CONSTR-002 : à distinguer
           // pour que la synchronisation réseau annonce la bonne position.
@@ -530,7 +568,7 @@
           if (moitieCible !== dec2.moitie) {
             world.setBlock(bxd, byd, bzd, idef.mat);
             world.setEtat(bxd, byd, bzd, 0);
-            if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+            if (!R.blocsIllimites) consommerCase(pl.selected, 1);
             return 'place';
           }
           return null;
@@ -538,7 +576,7 @@
         if (!C.isReplaceable(cible)) return null;
         world.setBlock(bxd, byd, bzd, id);
         world.setEtat(bxd, byd, bzd, MC.Formes.packDalle(dec2.moitie === 'haut'));
-        if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+        if (!R.blocsIllimites) consommerCase(pl.selected, 1);
         return 'place';
       }
 
@@ -548,7 +586,7 @@
         var tst = C.BLOCKS[tb] && C.BLOCKS[tb].stage;
         if (tst !== undefined && tst < 3) {
           world.setBlock(target.x, target.y, target.z, C.WHEAT_STAGES[3]);
-          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          if (!R.blocsIllimites) consommerCase(pl.selected, 1);
           return 'grow';
         }
         if (tb === B.GRASS) {
@@ -561,7 +599,7 @@
             world.setBlock(target.x + gx, target.y + 1, target.z + gz, fl);
             n++;
           }
-          if (n && !R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          if (n && !R.blocsIllimites) consommerCase(pl.selected, 1);
           return n ? 'grow' : null;
         }
         return null;
@@ -584,7 +622,7 @@
         if (tb === B.FARMLAND && target.ny === 1
             && C.isReplaceable(world.getBlock(px, py, pz))) {
           world.setBlock(px, py, pz, idef.plantable);
-          if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+          if (!R.blocsIllimites) consommerCase(pl.selected, 1);
           return 'plant';
         }
         return null;
@@ -648,7 +686,7 @@
         var stPose = held();
         world.setEtat(bx, by, bz, (stPose && stPose.data && stPose.data.niveau) || 0);
       }
-      if (!R.blocsIllimites) pl.inv.consumeAt(pl.selected, 1);
+      if (!R.blocsIllimites) consommerCase(pl.selected, 1);
       return 'place';
     }
 
@@ -663,7 +701,7 @@
       var reculMul = (d && d.recul !== undefined) ? d.recul : 1;
       pl.exhaustion += 0.1;
       var killed = entities.damage(entity, dmg, pl.pos, pl, reculMul);
-      var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
+      var casse = R.useDurabilite && userCase(pl.selected) === 'broken';
       return { damage: dmg, killed: killed, toolBroke: casse };
     }
     // portée de visée de l'arme en main (SPEC-OBJET-002), REACH sinon
@@ -700,14 +738,14 @@
         }
         if (iMun < 0 && !R.blocsIllimites) return null;
         var munId = iMun >= 0 ? pl.inv.slots[iMun].id : I.FLECHE;
-        if (iMun >= 0 && !R.blocsIllimites) pl.inv.consumeAt(iMun, 1);
+        if (iMun >= 0 && !R.blocsIllimites) consommerCase(iMun, 1);
         // arbalète, arc de la jungle, fronde… : plus rapides, plus forts
         e = entities.tirer(depart, dir, d.vitesseTir || 34,
                            ((C.def(munId) && C.def(munId).damage) || 5) + (d.bonusTir || 0), pl, d.ranged);
       }
 
       pl.tirCd = d.cadenceTir || 0;
-      var casse = R.useDurabilite && pl.inv.wearTool(pl.selected) === 'broken';
+      var casse = R.useDurabilite && userCase(pl.selected) === 'broken';
       pl.exhaustion += 0.05;
       return { entity: e, munition: d.sansMunition ? 0 : munId, toolBroke: casse };
     }

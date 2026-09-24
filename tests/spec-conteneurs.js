@@ -7,6 +7,71 @@
   var describe = T.describe, it = T.it, A = T.assert;
   var K = MC.ContratsV2;
   var I = MC.Core.I, B = MC.Core.B;
+  var flatWorld = G.flatWorld;
+
+  describe('Conteneurs — journal client (B1, étape 6, docs/vague-2/B1.md § 6)', {
+    teste: 'player.js consommerCase/userCase/transformerCase mutent pl.inv exactement comme avant, ET, si pl.journalInv est un tableau, y poussent l\'opération déclarée (INV_CONSOMMER).',
+    pourquoi: 'la prédiction client (game.js, étape 6) ne peut envoyer que ce que player.js a réellement journalisé au moment de l\'action ; en solo (journalInv absent), rien ne doit changer.',
+    attendu: 'hors ligne (sans journalInv), le comportement est identique à avant ; en ligne (journalInv = []), poser un bloc, user un outil et vider un seau y ajoutent chacun une entrée correcte.',
+  }, function () {
+    function partie() {
+      var w = flatWorld(10, B.STONE);
+      var ents = MC.createEntities(w);
+      var pl = MC.createPlayer(w, ents, MC.Modes.regles('survie', 'facile'));
+      pl.state.pos = { x: 0.5, y: 11, z: 0.5 };
+      pl.state.onGround = true; pl.state.yaw = 0; pl.state.pitch = 0;
+      return { w: w, ents: ents, pl: pl, s: pl.state };
+    }
+
+    it('SPEC-SYNC-007 : hors ligne (journalInv absent), poser un bloc consomme comme avant, sans journal', function () {
+      var p = partie();
+      p.s.inv.slots[0] = { id: B.PLANKS, n: 5 };
+      var target = { x: 3, y: 10, z: 3, nx: 0, ny: 1, nz: 0, t: 1 };
+      var res = p.pl.useOn(target);
+      A.equal(res, 'place');
+      A.equal(p.s.inv.slots[0].n, 4, 'une planche consommée');
+      A.equal(p.s.journalInv, undefined, 'aucun journal créé si absent au départ');
+    });
+
+    it('SPEC-SYNC-007 : en ligne (journalInv = []), poser un bloc journalise { i, id, n }', function () {
+      var p = partie();
+      p.s.journalInv = [];
+      p.s.inv.slots[0] = { id: B.PLANKS, n: 5 };
+      var target = { x: 3, y: 10, z: 3, nx: 0, ny: 1, nz: 0, t: 1 };
+      p.pl.useOn(target);
+      A.equal(p.s.inv.slots[0].n, 4, 'la consommation reste identique en ligne');
+      A.equal(p.s.journalInv.length, 1);
+      A.deep(p.s.journalInv[0], { i: 0, id: B.PLANKS, n: 1 });
+    });
+
+    it('SPEC-SYNC-007 : userCase journalise { i, id, usure } sans changer l\'usure réelle', function () {
+      var p = partie();
+      p.s.journalInv = [];
+      p.s.inv.slots[0] = { id: I.WOOD_PICKAXE, n: 1 };
+      p.s.selected = 0;
+      var target = { x: 0, y: 10, z: 0, block: B.STONE };
+      var bt = MC.Core.breakTime(B.STONE, I.WOOD_PICKAXE);
+      // on casse directement via mineTick en avançant le temps requis
+      var res = null;
+      for (var i = 0; i < 200 && !res; i++) res = p.pl.mineTick(bt.seconds / 199 + 0.001, target, function () { return 0; });
+      A.ok(res && res.broken, 'le bloc a cédé');
+      A.ok(p.s.journalInv.some(function (o) { return o.usure === 1 && o.id === I.WOOD_PICKAXE; }),
+           'l\'usure de l\'outil est journalisée');
+    });
+
+    it('SPEC-SYNC-007 : transformerCase (seau) journalise { i, id, vers } — piège documenté (B1.md § 12)', function () {
+      var p = partie();
+      p.w.setBlock(0, 10, 0, B.WATER);
+      p.s.journalInv = [];
+      p.s.inv.slots[0] = { id: I.SEAU, n: 1 };
+      p.s.selected = 0;
+      p.s.pos = { x: 0.5, y: 11, z: 0.5 }; p.s.yaw = 0; p.s.pitch = -Math.PI / 2;
+      var r = p.pl.useOn({ x: 3, y: 10, z: 3, nx: 0, ny: 1, nz: 0, t: 1 });
+      A.equal(r, 'puise', 'le seau puise bien l\'eau visée');
+      A.ok(p.s.journalInv.some(function (o) { return o.n === 1 && o.id === I.SEAU; }),
+           'le seau vidé (consommé) est journalisé');
+    });
+  });
 
   describe('Conteneurs — raccordement au protocole (B1, étape 1)', {
     teste: 'NP.valider délègue les nouveaux types de message (vague 2) à MC.ContratsV2, et MANGER passe par validerManger.',

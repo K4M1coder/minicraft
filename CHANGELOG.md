@@ -48,6 +48,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   messages c→s. `tests/integration-inventaire.js` (nouveau, 29 tests) prouve
   ce comportement sur un vrai serveur. Le registre des conteneurs posés
   (coffres, fourneaux…) et la persistance disque (`--monde`) restent à venir.
+- Vague 2 (B1, SPEC-SYNC-007 — amorce étape 6, client) : `src/player.js`
+  gagne trois fonctions de journal (`consommerCase`, `userCase`,
+  `transformerCase`) qui mutent l'inventaire EXACTEMENT comme avant, et, si
+  `pl.journalInv` est un tableau (fourni par `game.js` une fois en ligne — à
+  venir), y poussent l'opération déclarée (`{ i, id, n|usure|vers }`) au
+  moment même de la consommation. Tous les points d'appel qui diminuaient
+  directement l'inventaire (pose de bloc, porte, trappe, mobilier, dalle,
+  engrais, houe+graines, minage, coup porté, tir, seau) passent désormais par
+  ces fonctions ; le repas (`useOn` → `'eat'`) ne journalise pas, comme prévu
+  (c'est le message `MANGER` qui porte l'information). Solo inchangé (aucun
+  journal sans `journalInv`). Le raccordement réseau (`game.js` `operer`,
+  `onInvMaj`, prédiction/réconciliation, UI) reste à faire (docs/vague-2/B1.md
+  § 9, étape 6, suite).
 - Génération et maillage de chunks en Web Workers (L47, SPEC-PERF-004 à
   010, 014) : un ordonnateur pur (`src/file-chunks.js`) priorise par
   distance, borne les intégrations par image et rejette les résultats
