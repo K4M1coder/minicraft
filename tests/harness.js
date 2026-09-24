@@ -70,15 +70,24 @@
     },
   };
 
-  function run(filter) {
+  /* `filter` : ne garde que les groupes — ou, à défaut, les tests — dont le nom
+     le contient. `suivi` (facultatif) : { debutGroupe(nom, n), debutTest(groupe,
+     nom), finTest(groupe, nom, ok, ms), finGroupe(nom, passes, echecs, ms) },
+     pour afficher la progression pendant l'exécution. */
+  function run(filter, suivi) {
     T.passed = 0; T.failed = 0; T.failures = [];
     var out = [];
+    var maintenant = function () { return typeof performance !== 'undefined' ? performance.now() : Date.now(); };
     for (var i = 0; i < T.suites.length; i++) {
       var s = T.suites[i];
-      if (filter && s.name.indexOf(filter) < 0) continue;
-      var sp = 0, sf = 0, lines = [];
-      for (var j = 0; j < s.tests.length; j++) {
-        var t = s.tests[j];
+      var groupeRetenu = !filter || s.name.indexOf(filter) >= 0;
+      var tests = groupeRetenu ? s.tests : s.tests.filter(function (t) { return t.name.indexOf(filter) >= 0; });
+      if (!tests.length) continue;
+      var sp = 0, sf = 0, lines = [], t0g = maintenant();
+      if (suivi && suivi.debutGroupe) suivi.debutGroupe(s.name, tests.length);
+      for (var j = 0; j < tests.length; j++) {
+        var t = tests[j], t0 = maintenant(), ok = true;
+        if (suivi && suivi.debutTest) suivi.debutTest(s.name, t.name);
         try {
           t.fn();
           T.passed++; sp++;
@@ -89,8 +98,11 @@
           if (!e.isAssertion && e.stack) msg += '\n      ' + e.stack.split('\n')[1].trim();
           T.failures.push({ suite: s.name, test: t.name, message: msg });
           lines.push({ ok: false, name: t.name, message: msg });
+          ok = false;
         }
+        if (suivi && suivi.finTest) suivi.finTest(s.name, t.name, ok, maintenant() - t0);
       }
+      if (suivi && suivi.finGroupe) suivi.finGroupe(s.name, sp, sf, maintenant() - t0g);
       out.push({ name: s.name, passed: sp, failed: sf, lines: lines });
     }
     return { suites: out, passed: T.passed, failed: T.failed, failures: T.failures };

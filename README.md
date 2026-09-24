@@ -140,7 +140,9 @@ npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NOD
 ## Tests
 
 ```bash
-node tests/run.js                # ~920 tests unitaires et fonctionnels
+node tests/run.js                # ~950 tests unitaires et fonctionnels (progression sur stderr)
+node tests/run.js climat          # seulement les groupes (ou tests) dont le nom contient « climat »
+node tests/run.js --delai 900     # arrêt au bout de 900 s, en nommant le test en cours
 node tests/gates.js               # les portes de qualité automatiques (G1–G6, G10, G11)
 node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
 node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
