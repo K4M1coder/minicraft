@@ -140,20 +140,21 @@ npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob --sentinel-fuse NOD
 ## Tests
 
 ```bash
-node tests/run.js                # ~790 tests unitaires et fonctionnels
-node tests/gates.js               # les portes de qualité automatiques (G1–G6, G10)
+node tests/run.js                # ~920 tests unitaires et fonctionnels
+node tests/gates.js               # les portes de qualité automatiques (G1–G6, G10, G11)
 node tests/integration-net.js     # tests d'intégration réseau (vraies sockets)
 node tests/integration-admin.js   # tests d'intégration de l'administration et de la persistance
 node tests/integration-paquet.js  # tests d'intégration de l'empaquetage
+node tests/integration-pvp.js     # PvP, zones et factions sur un vrai serveur
 node tests/integration-charge.js  # banc de charge, à petite échelle (vérifie qu'il fonctionne)
 node tests/charge.js              # banc de charge complet (1 à 100 joueurs) — voir docs/charge.md
 ```
 
-`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~115 tests
+`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~117 tests
 end-to-end qui pilotent une vraie partie ; `window.runE2E(ensureGame(), null, 'SPEC-XXX')`
 n'en lance qu'une partie, filtrée par nom.
 
-Plus de 900 tests au total (unitaires/fonctionnels + end-to-end + intégration),
+Plus de 1100 tests au total (unitaires/fonctionnels + end-to-end + intégration),
 toutes les specs non-⏳ de SPECS.md couvertes (`node tests/gates.js`, porte G1).
 
 ---
@@ -231,6 +232,29 @@ propre à chaque individu, des vêtements et accessoires selon le métier, et un
 silhouette simplifiée au loin. Les habitants tués restent morts ; la
 population se renouvelle et les animaux se reproduisent. Ambiance sonore
 spatialisée : lieux, créatures, matières, interactions, événements.
+
+**Les sociétés.** Des factions autonomes (royaumes, guildes marchandes,
+ordres, bandits, cultes) naissent du monde, poursuivent leurs objectifs,
+nouent alliances et guerres et confient des quêtes. Les joueurs fondent leurs
+propres factions (`/faction …` : rangs, candidatures, invitations, une
+faction principale et des secondaires, canal de discussion, diplomatie).
+Caravanes, voyageurs et bateaux circulent sur les routes et les fleuves.
+Le monde est découpé en **zones de jeu** — PvP et PvE, PvP seul, PvE seul,
+sûre — qui suivent la densité ; le point d'apparition est toujours sûr.
+
+**Construire et fabriquer.** Escaliers et dalles orientés à angles
+automatiques, clôtures, murets, vitres et rambardes qui se raccordent ; verre
+teinté, colorants, béton, marbre, ardoise, chaume, poutres ; le feu se propage,
+s'éteint sous la pluie et fume au vent. Armures (tissu à diamant) visibles sur
+l'avatar, armes variées, gemmes et bijoux à effets, cuisine et maladie du cru,
+coffres piégés et surprises. Mécanismes : portes logiques, répéteurs,
+bascules, compteurs, détecteurs, générateurs éolien, hydraulique et
+thermique, câbles, batteries, lampes, pistons, blocs de commande.
+
+**Les profondeurs.** Flore sous-marine selon la profondeur, la température
+et la lumière ; récifs frangeants, barrières, atolls et lagons ; volcans
+actifs qui fument, grondent, crachent des bombes et laissent des coulées
+figées en basalte.
 
 **Modes.** *Survie* : faim, dégâts, usure des outils, blocs consommés.
 *Créatif* : vol, invulnérabilité, casse instantanée, blocs illimités.
@@ -533,7 +557,6 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - Pas de greedy meshing ; tout tourne sur le thread principal.
 - Les sauvegardes solo sont locales au navigateur ; le serveur persiste son monde
   avec `--monde <fichier>`.
-- Les identifiants de bloc sont limités à 128 tant que le passage aux blocs sur
-  16 bits (L40) n'est pas livré : escaliers, dalles, mécanismes (L24, L29) en
-  dépendent.
 - Le journal d'administration ne couvre pas encore coffres et échanges.
+- Le PvP ne s'applique qu'en ligne : en écran partagé, les joueurs locaux ne se
+  combattent pas.
