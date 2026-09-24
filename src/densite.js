@@ -102,8 +102,29 @@
     /* SPEC-DENSITE-002 : trois poids de transition, chacun 0 avant sa
        frontière et 1 bien après, en douceur — ce que `habitats.js` combine
        pour moduler la probabilité d'un lieu plutôt que trancher net. */
+    /* La densité varie à l'échelle de plusieurs centaines de blocs, mais la
+       calculer coûte des dizaines d'appels au bruit (biomes et relief tout
+       autour). Les routes et les zones la demandent à chaque nœud de tracé :
+       sans cache, générer les chunks d'une ville prenait plus d'une minute.
+       On la calcule donc une fois par coin d'une grille de PAS blocs et l'on
+       interpole entre les quatre coins — écart négligeable à cette échelle. */
+    var PAS = 16, coins = new Map();
+    function valeurCoin(i, j) {
+      var k = i + ',' + j, v = coins.get(k);
+      if (v === undefined) {
+        if (coins.size > 200000) coins.clear();
+        v = valeurEn(i * PAS, j * PAS);
+        coins.set(k, v);
+      }
+      return v;
+    }
+    function valeurLisse(x, z) {
+      var fx = x / PAS, fz = z / PAS, i = Math.floor(fx), j = Math.floor(fz), u = fx - i, w = fz - j;
+      var a = valeurCoin(i, j), b = valeurCoin(i + 1, j), c = valeurCoin(i, j + 1), d = valeurCoin(i + 1, j + 1);
+      return (a * (1 - u) + b * u) * (1 - w) + (c * (1 - u) + d * u) * w;
+    }
     function classeEn(x, z) {
-      var v = valeurEn(x, z);
+      var v = valeurLisse(x, z);
       return {
         classe: classeDe(v), valeur: v,
         versRurale: smoothstep(0, SEUILS.rurale, v),

@@ -14,6 +14,10 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+### Corrigé
+
+- Génération des chunks autour des villes douze fois plus rapide (110 s → 9 s pour 49 chunks) : la densité humaine, demandée à chaque nœud de route pour les bornes de zones, est désormais mise en cache sur une grille de 16 blocs et interpolée ; la suite de tests passe de 543 s à 239 s.
 ### Ajouté
 
 - Mobilier d'intérieur (SPEC-INTERIEUR-002) : lit (on y dort, la nuit passe, la
