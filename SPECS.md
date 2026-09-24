@@ -716,13 +716,13 @@ Dépend de SPEC-SAVE-017 (états de bloc : allumé, niveau d'énergie, orientati
 | ID | Spec | Vérification | État |
 |---|---|---|---|
 | SPEC-MECA-001 | Distributeurs (lâchent ou lancent un objet de leur contenu) et pistons (poussent jusqu'à douze blocs, les pistons collants tirent) s'actionnent sur signal | actionnement, poussée, traction, limites | ⏳ |
-| SPEC-MECA-002 | Des générateurs électriques produisent selon leur milieu : éolienne (selon le vent de son altitude, SPEC-VENT-001), roue ou turbine hydraulique (selon le courant, SPEC-EAU-002), générateur thermique (lave, combustible) ; des câbles transportent l'énergie avec des pertes | production selon le milieu, transport, pertes | ⏳ |
+| SPEC-MECA-002 | Des générateurs électriques produisent selon leur milieu : éolienne (selon le vent de son altitude, SPEC-VENT-001), roue ou turbine hydraulique (selon le courant, SPEC-EAU-002), générateur thermique (lave, combustible) ; des câbles transportent l'énergie avec des pertes | production selon le milieu, transport, pertes | ✅ |
 | SPEC-MECA-003 | Des batteries rechargeables stockent l'énergie, se chargent et se déchargent à débit borné, affichent leur niveau et le gardent une fois ramassées | charge, décharge, niveau, conservation | ⏳ |
-| SPEC-MECA-004 | Des circuits logiques : fils de signal et toutes les portes — OUI, NON, ET, OU, OU exclusif, NON-ET, NON-OU, NON-OU exclusif — plus répéteur à délai, bascule (mémoire), compteur et comparateur ; la propagation se fait par tics, de façon déterministe, sans boucle infinie | table de vérité de chaque porte, délais, mémoire, stabilité | ⏳ |
-| SPEC-MECA-005 | Des détecteurs et commandes émettent un signal : bouton, levier, plaque de pression, détecteur de présence (joueur, créature), capteur de lumière, de jour et de nuit, de pluie et de vent, horloge, détecteur de niveau d'eau | signal selon le déclencheur | ⏳ |
-| SPEC-MECA-006 | Des appareils consomment énergie ou signal : lampes, portes et trappes motorisées, tapis roulants, ascenseurs, alarmes ; sans énergie, ils s'arrêtent | fonctionnement selon l'alimentation | ⏳ |
+| SPEC-MECA-004 | Des circuits logiques : fils de signal et toutes les portes — OUI, NON, ET, OU, OU exclusif, NON-ET, NON-OU, NON-OU exclusif — plus répéteur à délai, bascule (mémoire), compteur et comparateur ; la propagation se fait par tics, de façon déterministe, sans boucle infinie | table de vérité de chaque porte, délais, mémoire, stabilité | ✅ |
+| SPEC-MECA-005 | Des détecteurs et commandes émettent un signal : bouton, levier, plaque de pression, détecteur de présence (joueur, créature), capteur de lumière, de jour et de nuit, de pluie et de vent, horloge, détecteur de niveau d'eau | signal selon le déclencheur | ✅ |
+| SPEC-MECA-006 | Des appareils consomment énergie ou signal : lampes, portes et trappes motorisées, tapis roulants, ascenseurs, alarmes ; sans énergie, ils s'arrêtent | fonctionnement selon l'alimentation | ✅ |
 | SPEC-MECA-007 | Des blocs de commande exécutent une commande du jeu sur signal ; seuls les administrateurs (ou le mode créatif hors ligne) peuvent les poser ou les modifier | exécution, permissions | ⏳ |
-| SPEC-MECA-008 | Circuits et machines se simulent dans les chunks chargés, sont sauvegardés avec leur état, et en ligne le serveur fait foi | persistance, autorité du serveur | ⏳ |
+| SPEC-MECA-008 | Circuits et machines se simulent dans les chunks chargés, sont sauvegardés avec leur état, et en ligne le serveur fait foi | persistance, autorité du serveur | ✅ |
 
 ## L38 — densité, mégapoles et zones de jeu
 

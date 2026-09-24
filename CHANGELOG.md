@@ -15,6 +15,10 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 
+### Ajouté
+
+- L29 mécanismes (SPEC-MECA-002, 004, 005, 006, 008) : `src/circuits.js` (`MC.Circuits`), un moteur de circuits logiques et d'énergie — fils, portes OUI/NON/ET/OU/OU exclusif/NON-ET/NON-OU/NON-OU exclusif, répéteur à délai, bascule, compteur, comparateur, avec propagation par tics déterministe et détection de cycle instable ; générateurs (éolienne selon le vent de son altitude, roue hydraulique selon le courant, générateur thermique selon la lave voisine ou un combustible), câbles avec pertes, batteries bornées ; détecteurs (bouton, levier, plaque, présence, lumière, jour/nuit, météo, horloge, niveau d'eau) ; appareils qui s'arrêtent sans énergie (lampes avec lumière, portes/trappes motorisées, tapis, ascenseurs, alarmes) ; pistons (poussée jusqu'à douze blocs, collant qui tire) testés sur un petit monde réel ; permissions des blocs de commande. Simulation posée sur les blocs `circuit` des chunks chargés (`world.js`), sauvegardée avec leur état (SPEC-SAVE-017), et le serveur en ligne fait autorité (`server.js` diffuse ses changements comme pour l'eau). Pistons, portes/trappes motorisées et blocs de commande posables uniquement par un administrateur en ligne (`server.js`) ou en créatif hors ligne (`player.js`) sont branchés jusqu'au placement réel. Distributeurs (choix de l'objet) et blocs de commande (permissions) sont posés en tant que blocs mais leur effet plein (éjection réelle, exécution d'une commande stockée) et la conservation du niveau d'une batterie ramassée restent à câbler (SPEC-MECA-001, 003, 007 en ⏳ partielle).
+
 ### Modifié
 
 - L'atlas de textures passe de 16×24 à 16×64 tuiles (1024), de quoi accueillir les blocs de L24, L25 et L29.
