@@ -26,6 +26,7 @@
 'use strict';
 const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const { domainesTouches } = require('../domaines-touches.js');
 
 const erreurs = [];
 let indexes = [];
@@ -70,22 +71,6 @@ try {
   const r = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), ...args], { encoding: 'utf8', cwd: racine });
   if (r.status !== 0) erreurs.push('préréglage `commit` en échec (node tests/run.js ' + args.join(' ') + ') :\n' + (r.stdout || '').split('\n').slice(-25).join('\n'));
 } catch (e) { erreurs.push('préréglage `commit` : ' + e.message); }
-
-/* Domaines touchés avec CONFIANCE : seulement si TOUS les fichiers indexés
-   sont dans src/ (rien dans tools/, server.js ou tests/, dont la portée peut
-   dépasser un seul domaine) et qu'on reconnaît le domaine d'au moins un
-   fichier src/ touché. Sinon, null (repli sur `commit` complet). */
-function domainesTouches(fichiers, racine) {
-  const path = require('path');
-  if (!fichiers.length || fichiers.some(f => !/^src\//.test(f))) return null;
-  let specsTexte;
-  try { specsTexte = fs.readFileSync(path.join(racine, 'SPECS.md'), 'utf8'); } catch (e) { return null; }
-  const domainesConnus = Array.from(new Set((specsTexte.match(/SPEC-([A-Z0-9]+)-\d+/g) || [])
-    .map(id => id.replace(/^SPEC-/, '').replace(/-\d+$/, ''))));
-  const bases = fichiers.map(f => path.basename(f, '.js').toUpperCase().replace(/[^A-Z0-9]/g, ''));
-  const trouves = domainesConnus.filter(d => bases.some(b => b.indexOf(d) >= 0 || d.indexOf(b) >= 0));
-  return trouves.length ? trouves : null;
-}
 
 if (erreurs.length) {
   console.error('\n✗ commit refusé (tools/hooks/pre-commit.js) :');
