@@ -220,6 +220,15 @@ respecter (voir PLAN.md, « Commits et versions »).
 - `tests/harness.js` : un test Node qui retourne une `Promise` échoue
   désormais explicitement (garde anti-faux-positif) plutôt que d'être compté
   vert sans que ses assertions asynchrones aient réellement été attendues.
+- Crochets git (SPEC-BANC-010 révisée) : `tools/hooks/pre-commit.js` et
+  `tools/hooks/pre-push.js` partagent désormais un seul filet anti-blocage de
+  15 min (`--delai 900`, constante `DELAI_FILET_S` dans le nouveau
+  `tools/hooks/delai-filet.js`) au lieu de fixer chacun le sien (240 s, puis
+  600 s et 150 s) — un crochet qui finit par réussir n'est plus coupé plus tôt
+  qu'un lancement manuel du même préréglage. Nouveau test
+  `tests/spec-crochets.js` (ajouté à la liste `TESTS` de `tests/run.js`,
+  hors `tests/spec-banc.js` qui n'en avait pas encore) qui vérifie qu'aucun
+  crochet ne passe un délai différent de 900.
 
 ### Corrigé
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.

@@ -94,7 +94,9 @@ const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', '
              // vague 2 : contrats figés partagés par B1 à B4 (docs/vague-2/)
              'spec-contrats-vague2', 'spec-workers',
              // vague 2 : B1 — inventaire et conteneurs serveur (SPEC-SYNC-007 à 017)
-             'spec-conteneurs'];
+             'spec-conteneurs',
+             // SPEC-BANC-010 (filet anti-blocage unifié) : crochets git, hors spec-banc.js
+             'spec-crochets'];
 
 /* `require`, `process`, `__dirname` : exposés UNIQUEMENT pour que
    tests/spec-banc.js (Node-only, voir son en-tête) puisse vérifier
