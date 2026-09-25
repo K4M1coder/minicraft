@@ -200,6 +200,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- Transport (SPEC-TRANSPORT-001, L45) : chaque véhicule (`src/vehicules.js`)
+  a désormais une jauge de carburant (`e.carburant`, capacité propre à
+  chaque type dans `DEFS`), consommée proportionnellement à la distance
+  parcourue par `conduire()`/`rouler()` ; à sec, les commandes du pilote
+  sont ignorées et le véhicule freine/retombe exactement comme un véhicule
+  abandonné (SPEC-VEHIC-009). Persistée par `serialiser()`/`restaurer()`
+  (anciennes sauvegardes : plein par défaut). Partie pure seulement — jauge
+  affichée au HUD et ravitaillement restent à faire côté `game.js`/`ui.js`.
 
 ### Modifié
 

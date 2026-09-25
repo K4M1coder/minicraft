@@ -166,6 +166,39 @@
       A.ok(ents.list.some(function (x) { return x.type === 'item' && x.item === I.MOTO; }), 'la moto redevient objet');
       A.equal(V.defDe(e).nom, 'Moto');
     });
+
+    it('SPEC-TRANSPORT-001 : a sec, un vehicule s arrete et redevient comme abandonne', function () {
+      var w = flatWorld(10, B.STONE), ents = MC.createEntities(w);
+      var e = V.poser(ents, 'voiture', 0.5, 11, 0.5, 0);
+      var plein = V.DEFS.voiture.carburant;
+      A.ok(plein > 0, 'jauge de carburant définie pour la voiture');
+      A.equal(e.carburant, plein, 'plein au départ');
+
+      rouler(e, w, { avant: 1 }, 1);
+      A.ok(e.carburant < plein, 'la jauge descend en roulant (reste ' + e.carburant.toFixed(1) + ')');
+      A.ok(e.carburant > 0, 'pas encore a sec');
+
+      // on continue de rouler jusqu'à vider complètement le réservoir
+      rouler(e, w, { avant: 1 }, 15);
+      A.equal(e.carburant, 0, 'a sec');
+
+      // pied au plancher malgré tout : plus aucun effet sur la vitesse,
+      // exactement comme un véhicule abandonné (VEHIC-009)
+      rouler(e, w, { avant: 1 }, 3);
+      A.ok(Math.abs(e.vitesse) < 1, 'il s arrete de lui-meme (v=' + e.vitesse.toFixed(2) + ')');
+      A.ok(e.pos.y < 11.1, 'et reste pose au sol, comme un vehicule abandonne');
+
+      // la même mécanique s'applique à `rouler()` (wagonnet sur rail)
+      var w2 = flatWorld(10, B.STONE);
+      for (var z = 0; z >= -60; z--) w2.setBlock(0, 11, z, B.RAIL);
+      var ents2 = MC.createEntities(w2);
+      var wg = V.poser(ents2, 'wagonnet', 0.5, 11, 0.5, 0);
+      var pleinWg = V.DEFS.wagonnet.carburant;
+      A.equal(wg.carburant, pleinWg, 'le wagonnet part le plein fait');
+      for (var i = 0; i < 15 * 30; i++) V.rouler(wg, 1 / 30, w2, { avant: 1 }, V.DEFS.wagonnet);
+      A.equal(wg.carburant, 0, 'le wagonnet aussi tombe a sec en roulant');
+      A.ok(Math.abs(wg.vitesse) < 1, 'et s arrete, moteur coupe (v=' + wg.vitesse.toFixed(2) + ')');
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════
