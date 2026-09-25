@@ -85,11 +85,12 @@ const CONF = {
 /* Sans --admin, le serveur tire un jeton et l'affiche UNE fois au démarrage :
    jamais de console laissée sans protection, jamais de secret par défaut
    devinable. */
-const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-');
+const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-', crypto.randomBytes);
 const admin = MC.Admin.creerEtat({
   motDePasseAdmin: ADMIN_SECRET,
   listeBlancheActive: PARAMS.listeBlanche,
   emailObligatoire: false,
+  generateurAleatoire: crypto.randomBytes,  // SPEC-SECU-009 : entropie cryptographique injectée, jamais Math.random
 });
 if (!PARAMS.admin) {
   journal(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);

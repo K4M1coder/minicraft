@@ -30,14 +30,27 @@
   function canon(nom) { return String(nom || '').trim().toLowerCase(); }
 
   // ── jetons ──────────────────────────────────────────────────────────────────
-  /* Pas de `crypto` ici (module pur, sans dépendance Node) : on mélange
-     horodatage, compteur et hasard, suffisant pour un jeton d'invitation ou
-     de modérateur qui vit derrière une connexion et peut être révoqué. */
+  /* Pas de `require('crypto')` ICI (module pur, chargé aussi bien dans le
+     bac à sable Node de server.js que dans un navigateur) : la source
+     d'entropie cryptographique est INJECTÉE par l'appelant plutôt
+     qu'importée (SPEC-SECU-009). server.js passe `crypto.randomBytes` à la
+     création de l'état (`generateurAleatoire`) ; un test peut y injecter
+     n'importe quelle source déterministe. Sans générateur fourni (vieux
+     appels internes qui n'ont besoin que d'unicité, pas de secret), on
+     retombe sur l'ancien mélange horodatage/compteur/hasard. */
   var compteurJeton = 0;
-  function nouveauJeton(prefixe) {
+  function octetsVersJeton(octets) {
+    var CHARS = '0123456789abcdefghijklmnopqrstuvwxyz';
+    var s = '';
+    for (var i = 0; i < octets.length; i++) s += CHARS[octets[i] % 36];
+    return s;
+  }
+  function nouveauJeton(prefixe, generateurAleatoire) {
     compteurJeton = (compteurJeton + 1) % 46656;
-    var alea = Math.floor(Math.random() * 60466176).toString(36);
-    return (prefixe || 'j') + Date.now().toString(36) + compteurJeton.toString(36) + alea;
+    var suffixe = typeof generateurAleatoire === 'function'
+      ? octetsVersJeton(generateurAleatoire(20))
+      : Math.floor(Math.random() * 60466176).toString(36);
+    return (prefixe || 'j') + Date.now().toString(36) + compteurJeton.toString(36) + suffixe;
   }
 
   // ── état ─────────────────────────────────────────────────────────────────
@@ -47,6 +60,9 @@
       motDePasseAdmin: opts.motDePasseAdmin || null,
       emailObligatoire: !!opts.emailObligatoire,
       listeBlancheActive: !!opts.listeBlancheActive,
+      // SPEC-SECU-009 : source d'entropie injectée (typiquement crypto.randomBytes,
+      // passée par server.js) pour tout jeton de rôle/invitation créé sur cet état.
+      generateurAleatoire: typeof opts.generateurAleatoire === 'function' ? opts.generateurAleatoire : null,
       roles: new Map(),                 // canon(nom) -> { role, token, nommePar, depuis }
       listeBlancheNoms: new Set(),
       listeBlancheEmails: new Set(),
@@ -107,7 +123,7 @@
       journaliser(etat, { auteur: auteur, action: 'role_retire', cible: nom, heure: heure });
       return { ok: existait, jeton: null };
     }
-    var jeton = nouveauJeton('mod-');
+    var jeton = nouveauJeton('mod-', etat.generateurAleatoire);
     etat.roles.set(cle, { role: role, token: jeton, nommePar: auteur, depuis: heure });
     journaliser(etat, { auteur: auteur, action: 'role_nomme', cible: nom, details: role, heure: heure });
     return { ok: true, jeton: jeton };
@@ -174,7 +190,7 @@
   // ── invitations (SPEC-ADMIN-005) ───────────────────────────────────────────
   function creerInvitation(etat, opts, auteur, heure) {
     opts = opts || {};
-    var jeton = nouveauJeton('inv-');
+    var jeton = nouveauJeton('inv-', etat.generateurAleatoire);
     var duree = Math.max(0, +opts.expireDansMs || 0) || (24 * 3600 * 1000);
     etat.invitations.set(jeton, {
       expire: heure + duree,
@@ -251,10 +267,14 @@
   }
 
   // ── sanctions (SPEC-ADMIN-008) ──────────────────────────────────────────────
-  function sanctionDe(etat, nom) {
+  function sanctionDe(etat, nom, heure) {
     var cle = canon(nom);
     var s = etat.sanctions.get(cle);
-    if (!s) { s = { sourdineJusque: 0, banniJusque: 0, avertissements: 0 }; etat.sanctions.set(cle, s); }
+    // `maj` (SPEC-SERVEUR-005) : horodatage de la dernière sanction touchant ce
+    // nom — c'est l'ancienneté que purger() compare à son seuil, distincte des
+    // échéances sourdineJusque/banniJusque qui, elles, disent si la sanction
+    // est encore EN COURS.
+    if (!s) { s = { sourdineJusque: 0, banniJusque: 0, avertissements: 0, maj: heure || 0 }; etat.sanctions.set(cle, s); }
     return s;
   }
   function estBanni(etat, nom, heure) {
@@ -278,7 +298,8 @@
     opts = opts || {};
     var nom = opts.nom, type = opts.type, auteur = opts.auteur;
     if (canon(nom) === canon(auteur)) return { ok: false, motif: 'soi_meme' };
-    var s = sanctionDe(etat, nom);
+    var s = sanctionDe(etat, nom, heure);
+    s.maj = heure || 0;
     var duree = Math.max(0, +opts.dureeMs || 0);
     switch (type) {
       case 'avertir': s.avertissements++; break;
@@ -296,6 +317,104 @@
     }
     journaliser(etat, { auteur: auteur, action: 'sanction_' + type, cible: nom, details: duree || null, heure: heure });
     return { ok: true };
+  }
+
+  // ── purge bornée (SPEC-SERVEUR-005) ─────────────────────────────────────────
+  /* `admin.sessions`, `admin.invitations` et `admin.sanctions` grandissent sans
+     fin tant que le serveur tourne (une session par connexion, une entrée de
+     sanction par nom déjà averti…) : sans purge, un serveur qui vit des mois
+     finirait par tout garder en mémoire et dans la sauvegarde. On borne donc
+     CHAQUE structure en taille ET en ancienneté, mais une entrée encore ACTIVE
+     n'est jamais candidate à la purge, quel que soit son âge ou le nombre
+     d'entrées :
+       - une session encore ouverte (`deconnecteLe === null`) ;
+       - une invitation ni révoquée, ni expirée, ni épuisée ;
+       - une sanction dont le bannissement ou la sourdine est encore en cours.
+     Au-delà de ces entrées actives, on retire d'abord les entrées obsolètes
+     trop vieilles, puis, si la structure dépasse encore le seuil de taille,
+     les entrées obsolètes les plus anciennes jusqu'à repasser sous ce seuil —
+     jamais une entrée active, même si `max` est plus petit que leur nombre. */
+  var PURGE_DEFAUT = {
+    sessionsMax: 5000, sessionsAgeMs: 90 * 24 * 3600 * 1000,
+    invitationsMax: 2000, invitationsAgeMs: 30 * 24 * 3600 * 1000,
+    sanctionsMax: 5000, sanctionsAgeMs: 90 * 24 * 3600 * 1000,
+  };
+  function purger(etat, heure, opts) {
+    var o = {};
+    for (var cle in PURGE_DEFAUT) o[cle] = PURGE_DEFAUT[cle];
+    if (opts) for (var k in opts) if (opts[k] !== undefined) o[k] = opts[k];
+    var stats = { sessions: 0, invitations: 0, sanctions: 0 };
+
+    // sessions : seules les FERMÉES sont candidates, jamais une ouverte
+    var sessions = etat.sessions;
+    var fermeesIdx = [];
+    for (var i = 0; i < sessions.length; i++) if (sessions[i].deconnecteLe !== null) fermeesIdx.push(i);
+    var virerIdx = {};
+    var nVirer = 0;
+    fermeesIdx.forEach(function (i) {
+      if (heure - sessions[i].deconnecteLe > o.sessionsAgeMs) { virerIdx[i] = true; nVirer++; }
+    });
+    var restantes = sessions.length - nVirer;
+    if (restantes > o.sessionsMax) {
+      var aRetirer = restantes - o.sessionsMax;
+      var candidates = fermeesIdx.filter(function (i) { return !virerIdx[i]; })
+        .sort(function (a, b) { return sessions[a].connecteLe - sessions[b].connecteLe; });
+      for (var ci = 0; ci < candidates.length && aRetirer > 0; ci++, aRetirer--) {
+        virerIdx[candidates[ci]] = true; nVirer++;
+      }
+    }
+    if (nVirer > 0) {
+      etat.sessions = sessions.filter(function (_, i) { return !virerIdx[i]; });
+      stats.sessions = nVirer;
+    }
+
+    // invitations : seules celles révoquées, expirées ou épuisées sont candidates
+    var invInvalides = [];
+    etat.invitations.forEach(function (inv, token) {
+      var valide = !inv.revoque && heure <= inv.expire && inv.usages < inv.usagesMax;
+      if (!valide) invInvalides.push([token, inv]);
+    });
+    var invVirer = {};
+    var nVirerInv = 0;
+    invInvalides.forEach(function (p) {
+      if (heure - p[1].cree > o.invitationsAgeMs) { invVirer[p[0]] = true; nVirerInv++; }
+    });
+    var restantesInv = etat.invitations.size - nVirerInv;
+    if (restantesInv > o.invitationsMax) {
+      var aRetirerInv = restantesInv - o.invitationsMax;
+      var candidatsInv = invInvalides.filter(function (p) { return !invVirer[p[0]]; })
+        .sort(function (a, b) { return a[1].cree - b[1].cree; });
+      for (var ii = 0; ii < candidatsInv.length && aRetirerInv > 0; ii++, aRetirerInv--) {
+        invVirer[candidatsInv[ii][0]] = true; nVirerInv++;
+      }
+    }
+    Object.keys(invVirer).forEach(function (token) { etat.invitations.delete(token); });
+    stats.invitations = nVirerInv;
+
+    // sanctions : seules celles sans bannissement ni sourdine EN COURS sont candidates
+    var sancInactives = [];
+    etat.sanctions.forEach(function (s, nom) {
+      var enCours = (s.banniJusque && heure < s.banniJusque) || (s.sourdineJusque && heure < s.sourdineJusque);
+      if (!enCours) sancInactives.push([nom, s]);
+    });
+    var sancOublier = {};
+    var nOublier = 0;
+    sancInactives.forEach(function (p) {
+      if (heure - (p[1].maj || 0) > o.sanctionsAgeMs) { sancOublier[p[0]] = true; nOublier++; }
+    });
+    var restantesSanc = etat.sanctions.size - nOublier;
+    if (restantesSanc > o.sanctionsMax) {
+      var aRetirerSanc = restantesSanc - o.sanctionsMax;
+      var candidatsSanc = sancInactives.filter(function (p) { return !sancOublier[p[0]]; })
+        .sort(function (a, b) { return (a[1].maj || 0) - (b[1].maj || 0); });
+      for (var si = 0; si < candidatsSanc.length && aRetirerSanc > 0; si++, aRetirerSanc--) {
+        sancOublier[candidatsSanc[si][0]] = true; nOublier++;
+      }
+    }
+    Object.keys(sancOublier).forEach(function (nom) { etat.sanctions.delete(nom); });
+    stats.sanctions = nOublier;
+
+    return stats;
   }
 
   // ── journal (SPEC-ADMIN-002 / 007) ──────────────────────────────────────────
@@ -418,6 +537,7 @@
     estBanni: estBanni,
     estSourdine: estSourdine,
     sanctionner: sanctionner,
+    purger: purger,
     journaliser: journaliser,
     vueJoueurs: vueJoueurs,
     vueSessions: vueSessions,
