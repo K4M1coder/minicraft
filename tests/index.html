@@ -8,6 +8,7 @@
 <link rel="icon" href="data:,">
 <link rel="stylesheet" href="../src/ui.css">
 <link rel="stylesheet" href="banc.css">
+<link rel="stylesheet" href="historique.css">
 </head>
 <body>
 
@@ -15,6 +16,7 @@
   <header id="entete">
     <h1>MiniCraft — banc de test</h1>
     <button id="btn-menu" class="primary">Sélection ▾</button>
+    <button id="btn-historique">Historique</button>
     <a id="lien-cahiers" href="/tests/cahiers" target="_blank">Cahiers</a>
     <label class="seuil">Seuil lent (s) <input id="seuil-lent" type="number" value="8" min="1" step="1"></label>
 
@@ -55,6 +57,47 @@
       <div id="surface-agrandie" hidden></div>
     </section>
   </main>
+
+  <!-- Historique global (SPEC-BANC-033 à 040, docs/banc/historique-global.md
+       §3.1) : zone du banc au même titre que le rendu 3D, le rapport, les
+       tests lents et la sélection — cachée par défaut, recouvre #corps quand
+       ouverte (voir tests/historique.css). Logique dans tests/historique.js,
+       lui-même client des routes /tests/historique/* de server.js. -->
+  <div id="zone-historique" hidden>
+    <div class="hist-barre">
+      <h2>Historique global</h2>
+      <div class="hist-rapides">
+        <label><input type="checkbox" id="hist-rapide-inscrits" checked> Inscrits seulement</label>
+        <button type="button" data-rapide="tous">Tous les runs</button>
+        <button type="button" data-rapide="echecs">Échecs</button>
+        <button type="button" data-rapide="lents">Lents</button>
+      </div>
+      <span class="hist-spacer"></span>
+      <div class="hist-colonnes">
+        <button type="button" id="hist-colonnes-btn">Colonnes ▾</button>
+        <div id="hist-colonnes-menu" class="hist-menu" hidden></div>
+      </div>
+      <button type="button" id="hist-export-csv">Export CSV</button>
+      <button type="button" id="hist-export-html">Export HTML</button>
+      <button type="button" id="hist-fermer">Fermer ✕</button>
+    </div>
+    <div class="hist-table-wrap">
+      <table id="hist-table"><thead><tr></tr></thead><tbody></tbody></table>
+    </div>
+    <div class="hist-pagination">
+      <span id="hist-page-info"></span>
+      <button type="button" id="hist-page-prec">◀ précédent</button>
+      <button type="button" id="hist-page-suiv">suivant ▶</button>
+      <label>Taille de page
+        <select id="hist-taille">
+          <option value="25">25</option>
+          <option value="50" selected>50</option>
+          <option value="100">100</option>
+          <option value="250">250</option>
+        </select>
+      </label>
+    </div>
+  </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
@@ -99,7 +142,7 @@ document.write(fichiersTests.map(function (f) {
 }).join('') + '<scr' + 'ipt>T.fichierCourant=null;</scr' + 'ipt>');
 </script>
 <script>
-document.write(['e2e.js', 'banc-ui.js'].map(balise).join(''));
+document.write(['e2e.js', 'banc-ui.js', 'historique.js'].map(balise).join(''));
 </script>
 </body>
 </html>

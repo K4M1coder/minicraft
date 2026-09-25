@@ -1,0 +1,61 @@
+/* historique.css — zone « Historique global » (SPEC-BANC-033 à 040,
+   docs/banc/historique-global.md §3.1). Recouvre #corps quand ouverte,
+   même politique de non-débordement de page que banc.css (SPEC-BANC-008) :
+   c'est le tableau qui défile, jamais la page. */
+#btn-historique { white-space: nowrap; }
+
+/* #banc (banc.css) n'est pas positionné : on le devient ici pour que la zone
+   Historique (position absolute) se cale sur TOUTE la page du banc, header
+   compris, plutôt que de deviner sa hauteur en pixels. */
+#banc { position: relative; }
+#zone-historique {
+  position: absolute; inset: 0; z-index: 30;
+  background: #0b0e13; display: flex; flex-direction: column; min-height: 0;
+}
+#zone-historique[hidden] { display: none; }
+
+.hist-barre {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  padding: 8px 12px; border-bottom: 1px solid rgba(255,255,255,.1); background: #10151d;
+}
+.hist-barre h2 { font-size: 14px; margin: 0; opacity: .85; white-space: nowrap; }
+.hist-rapides { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; opacity: .9; }
+.hist-rapides label { display: flex; align-items: center; gap: 4px; font-size: 12px; }
+.hist-spacer { flex: 1 1 auto; }
+.hist-colonnes { position: relative; }
+.hist-menu {
+  position: absolute; right: 0; top: 100%; z-index: 31; min-width: 220px; max-height: 60vh; overflow-y: auto;
+  background: #151b25; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; padding: 6px;
+  box-shadow: 0 12px 28px rgba(0,0,0,.5);
+}
+.hist-menu[hidden] { display: none; }
+.hist-menu label { display: flex; align-items: center; gap: 6px; padding: 3px 6px; font-size: 12px; white-space: nowrap; }
+.hist-menu label:hover { background: rgba(255,255,255,.05); border-radius: 4px; }
+
+.hist-table-wrap { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 0 10px; }
+#hist-table { border-collapse: collapse; width: max-content; min-width: 100%; font-size: 12px; }
+#hist-table thead th {
+  position: sticky; top: 0; background: #10151d; text-align: left; padding: 6px 8px;
+  border-bottom: 1px solid rgba(255,255,255,.16); cursor: pointer; white-space: nowrap; user-select: none;
+}
+#hist-table thead th:hover { background: #1a212c; }
+#hist-table thead th .fleche { opacity: .7; margin-left: 3px; }
+#hist-table thead tr.hist-filtres th { position: sticky; top: 27px; background: #0d1219; padding: 3px 6px; cursor: default; }
+#hist-table thead tr.hist-filtres input, #hist-table thead tr.hist-filtres select { width: 100%; font-size: 11px; padding: 2px 4px; }
+#hist-table tbody td { padding: 5px 8px; border-bottom: 1px solid rgba(255,255,255,.05); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; }
+#hist-table tbody tr:hover { background: rgba(255,255,255,.03); }
+#hist-table tbody tr.etat-echec { color: #ff8f89; }
+#hist-table tbody tr.etat-avertissement { color: #f0c419; }
+#hist-table tbody tr.etat-ignore { opacity: .55; }
+#hist-table .badge-arbre-modifie { color: #ff9a3c; margin-left: 4px; }
+
+.hist-pagination {
+  flex: 0 0 auto; display: flex; align-items: center; gap: 10px; padding: 6px 12px;
+  border-top: 1px solid rgba(255,255,255,.1); background: #10151d; font-size: 12px;
+}
+.hist-pagination #hist-page-info { opacity: .75; }
+.hist-pagination label { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+
+@media (max-width: 900px) {
+  .hist-barre h2 { display: none; }
+}

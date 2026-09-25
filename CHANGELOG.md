@@ -395,9 +395,10 @@ respecter (voir PLAN.md, « Commits et versions »).
     runs/échecs/lents), pagination et export CSV/HTML de la vue filtrée
     courante — sans bibliothèque externe.
   - Tests : `tests/spec-historique.js` (18 tests Node purs, ajouté à la
-    liste `TESTS` de `tests/run.js`) et un test e2e (`tests/e2e.js`) qui
-    ouvre la zone dans le vrai banc, trie une colonne, applique un filtre
-    rapide et vérifie l'export CSV. Reste hors de ce lot (prochains lots,
+    liste `TESTS` de `tests/run.js`) et un test e2e (`tests/e2e.js`,
+    SPEC-BANC-033/035/036/037/038) qui ouvre la zone dans le vrai banc,
+    trie une colonne, applique un filtre rapide et vérifie l'export CSV.
+    Reste hors de ce lot (prochains lots,
     docs/banc/historique-global.md §5) : graphiques timeline (§3.2), panneau
     « test » avec diaporamas par image (§3.3, SPEC-BANC-039/046 et
     suivantes), intégration du clic depuis l'arbre de sélection.

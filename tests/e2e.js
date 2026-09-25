@@ -3665,6 +3665,107 @@
     A.equal(B2.refs.panneauSel.hidden, true, 'refermerSelection() referme bien le panneau');
   });
 
+  /* SPEC-BANC-033/035/036/037/038/040 (docs/banc/historique-global.md §3.1) :
+     ouvre la zone Historique global, vérifie qu'un tri et un filtre rapide
+     changent réellement l'affichage (donc que les routes serveur
+     /tests/historique/* répondent et que tests/historique.js les exploite),
+     puis que l'export CSV produit un fichier cohérent avec les colonnes
+     affichées. `attendreCondition` poll une petite fonction plutôt qu'un
+     délai fixe : le temps de réponse réseau n'est pas garanti d'une machine
+     à l'autre. */
+  function attendreCondition(fn, timeoutMs) {
+    var t0 = ahora();
+    function boucle() {
+      if (fn()) return Promise.resolve();
+      if (ahora() - t0 > (timeoutMs || 8000)) return Promise.reject(new Error('condition non atteinte à temps'));
+      return wait(60).then(boucle);
+    }
+    return boucle();
+  }
+  e2e('SPEC-BANC-033/035/036/037/038 : la zone Historique s\'ouvre, trie, filtre et exporte la vue filtrée',
+    { teste: 'la zone « Historique global » du banc (tableau, tri, filtres rapides, export)',
+      pourquoi: 'sans un vrai test qui clique dans la page, une régression dans le câblage DOM ↔ routes serveur (tests/historique.js ↔ tools/historique.js/server.js) passerait inaperçue malgré des tests Node purs tous verts',
+      attendu: 'le bouton "Historique" ouvre la zone et charge des lignes ; cliquer un en-tête trie (flèche affichée) ; le filtre rapide "Échecs" ne garde que des lignes d\'état échec (ou aucune) ; l\'export CSV produit un texte dont l\'en-tête correspond aux colonnes affichées' },
+    async function () {
+      if (!window.MC_HISTORIQUE) { A.ok(false, 'window.MC_HISTORIQUE absent — tests/historique.js non chargé par tests/index.html'); return; }
+      var zone = document.getElementById('zone-historique');
+      A.equal(zone.hidden, true, 'la zone est fermée par défaut (aucun diaporama/tableau ouvert sans action)');
+
+      var btn = document.getElementById('btn-historique');
+      A.ok(btn, 'bouton « Historique » présent dans l\'en-tête du banc');
+      btn.click();
+      A.equal(zone.hidden, false, 'la zone s\'ouvre après le clic');
+
+      // La vue officielle démarre sur « inscrits seulement » (SPEC-BANC-037) :
+      // un dépôt de développement peut n'avoir AUCUNE entrée encore promue au
+      // registre versionné (seulement des cahiers locaux) — ce test bascule
+      // donc sur « tous les runs » pour garantir des données, plutôt que de
+      // supposer le registre non vide (ce qui varie d'un poste à l'autre).
+      var btnTous = zone.querySelector('[data-rapide="tous"]');
+      A.ok(btnTous, 'bouton de filtre rapide « Tous les runs » présent');
+      btnTous.click();
+      try {
+        await attendreCondition(function () {
+          var tbody = zone.querySelector('#hist-table tbody');
+          return !!(tbody && tbody.children.length && tbody.textContent.trim() !== '' && tbody.textContent.indexOf('aucune ligne') < 0);
+        }, 8000);
+      } catch (e) {
+        var diag = null;
+        try { diag = await (await fetch('/tests/historique/lignes?rapide=tous&filtre=%7B%7D&page=1&taille=5')).text(); } catch (e2) { diag = 'fetch a échoué : ' + e2.message; }
+        A.ok(false, 'délai dépassé en attendant des lignes — tbody=' + JSON.stringify((zone.querySelector('#hist-table tbody') || {}).innerHTML || '').slice(0, 400) + ' ; requête directe=' + String(diag).slice(0, 400));
+      }
+      var lignesInitiales = zone.querySelectorAll('#hist-table tbody tr').length;
+      A.gt(lignesInitiales, 0, 'le tableau affiche au moins une ligne une fois « tous les runs » actif (cahiers locaux au moins)');
+
+      // ── tri (SPEC-BANC-035) : cliquer l'en-tête « État », visible par défaut.
+      // Chaque rafraîchissement RECONSTRUIT le <thead> (rendreEntetes()) : les
+      // <th> sont donc remplacés à chaque clic — on les requiert à chaque fois
+      // depuis le DOM plutôt que de garder une référence, sous peine d'inspecter
+      // un nœud détaché qui ne verra jamais la flèche apparaître.
+      function entetesTri() { return Array.prototype.slice.call(zone.querySelectorAll('#hist-table thead tr:first-child th')); }
+      function entete(nom) { return entetesTri().filter(function (th) { return th.textContent.indexOf(nom) === 0; })[0]; }
+      A.ok(entete('État'), 'colonne « État » visible par défaut : ' + entetesTri().map(function (t) { return t.textContent; }).join(' | '));
+      entete('État').click();
+      await attendreCondition(function () { var th = entete('État'); return !!th && /▲/.test(th.textContent); }, 5000);
+      A.ok(/▲/.test(entete('État').textContent), 'flèche de tri croissant affichée après le premier clic');
+
+      // ── filtre rapide (SPEC-BANC-037) : « Échecs » ne garde que des lignes d'état échec
+      var btnEchecs = zone.querySelector('[data-rapide="echecs"]');
+      A.ok(btnEchecs, 'bouton de filtre rapide « Échecs » présent');
+      var pageInfoAvant = zone.querySelector('#hist-page-info').textContent;
+      btnEchecs.click();
+      await attendreCondition(function () { return zone.querySelector('#hist-page-info').textContent !== pageInfoAvant; }, 8000);
+      var lignesApres = Array.prototype.slice.call(zone.querySelectorAll('#hist-table tbody tr'));
+      var toutesEchecOuVide = lignesApres.length === 0 || lignesApres.every(function (tr) {
+        return tr.className.indexOf('etat-echec') >= 0 || tr.textContent.indexOf('aucune ligne') >= 0;
+      });
+      A.ok(toutesEchecOuVide, 'après le filtre rapide « Échecs », toutes les lignes affichées sont en échec (ou la liste est vide)');
+
+      // ── export CSV (SPEC-BANC-038) : intercepte le Blob avant le téléchargement
+      // réel pour vérifier que son en-tête correspond aux colonnes affichées,
+      // sans dépendre d'un répertoire de téléchargement particulier.
+      var blobCapture = null;
+      var ancienCreateObjectURL = URL.createObjectURL;
+      URL.createObjectURL = function (blob) { blobCapture = blob; return ancienCreateObjectURL.call(URL, blob); };
+      try {
+        var btnCsv = document.getElementById('hist-export-csv');
+        A.ok(btnCsv, 'bouton « Export CSV » présent');
+        btnCsv.click();
+        await attendreCondition(function () { return blobCapture !== null; }, 8000);
+        var texte = await blobCapture.text();
+        var premiereLigne = texte.split('\n')[0];
+        A.ok(/État/.test(premiereLigne) || /Nom du test/.test(premiereLigne), 'l\'en-tête CSV contient des libellés de colonnes affichées : ' + premiereLigne);
+      } finally {
+        URL.createObjectURL = ancienCreateObjectURL;
+      }
+
+      // remise à zéro pour ne pas laisser la zone ouverte ni filtrée (SPEC-BANC-016)
+      document.getElementById('hist-rapide-inscrits').checked = true;
+      document.getElementById('hist-rapide-inscrits').dispatchEvent(new Event('change'));
+      document.getElementById('hist-fermer').click();
+      A.equal(zone.hidden, true, 'la zone se referme');
+    });
+
   // ══════════════════════════════════════════════════════════════════════════
   // B3 — génération et maillage en Web Workers (SPEC-PERF-004 à 010, 014)
   // ══════════════════════════════════════════════════════════════════════════
