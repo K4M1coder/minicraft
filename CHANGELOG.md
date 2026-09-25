@@ -223,6 +223,22 @@ respecter (voir PLAN.md, « Commits et versions »).
   `etatMonde`/`appliquerEtatMonde` (`conteneurs`, `MC.ContratsV2.validerConteneurPersiste`),
   donc retrouvé après un arrêt puis une relance `--monde` (SYNC-021, partie
   conteneurs).
+- Vague 2 (B1, étape 8, docs/vague-2/B1.md § 6/8) : `ui.js`/`game.js` —
+  coffre, armoire, étagère, bibliothèque, fourneau, distributeur et banque
+  passent au modèle référencé EN LIGNE (`container.cont`, le miroir réseau
+  posé par `game.js` à l'ouverture — `clickSlotRef`, `game.operer`), au lieu
+  d'une copie locale (`chests[k]`/`furnaces[k]`/`distributeurs[k]`) que deux
+  joueurs sur le même conteneur pouvaient chacun modifier sans jamais se
+  synchroniser (risque de duplication documenté). `net.js` gagne
+  `ouvrirConteneur`/`fermerConteneur` et les hooks `onConteneurEtat`/
+  `onConteneurMaj` ; l'ouverture devient asynchrone (l'écran ne s'affiche
+  qu'à la réponse du serveur). `clickSlotLegacy` (`ui.js`) est désormais
+  STRICTEMENT réservé au solo (`container.cont` absent) ; les deux modèles ne
+  coexistent jamais sur un même écran. Les fourneaux locaux (`furnaces[k]`)
+  ne sont plus tic-tés côté client en ligne (double cuisson corrigée, piège
+  documenté B1.md § 12) — c'est désormais le serveur seul qui fait autorité.
+  Hors périmètre : l'échange avec un PNJ marchand ordinaire (`TROC`, pas un
+  conteneur) reste tel quel.
 
 ### Modifié
 

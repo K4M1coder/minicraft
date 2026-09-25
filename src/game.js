@@ -184,6 +184,15 @@
     // SPEC-MECA-001 : petit conteneur (9 cases) d'un distributeur, indexé
     // comme les coffres — hors ligne uniquement (voir server.js en ligne).
     var distributeurs = Object.create(null);
+    /* B1 (étape 8, docs/vague-2/B1.md § 6) : miroir client du conteneur posé
+       (ou de la banque) actuellement ouvert EN LIGNE — { cle, mirror } où
+       `mirror` est un conteneur `{ type, rev, slots, four? }`, la MÊME
+       référence que `ui.container.cont` (jamais remplacée, seulement
+       mutée : `operer` y applique la prédiction, `onConteneurEtat`/
+       `onConteneurMaj`/`onInvMaj` la corrigent). `null` hors ligne ou entre
+       deux ouvertures. Un seul conteneur ouvert à la fois (même règle que le
+       serveur, § 7). */
+    var conteneurOuvert = null;
     var audio = MC.createAudio();
     var chat = MC.Chat.creer();
 
@@ -301,8 +310,45 @@
         j.predInv.confirmer(v.ack);
         j.predInv.rejouer(st, {}, { regles: regles });
         if (v.gain && j.index === 0) { ui.toast('+' + v.gain.n + ' ' + C.nameOf(v.gain.id)); audio.play('ramasser'); }
+        // B1 (étape 8) : le delta d'un conteneur touché par NOTRE propre
+        // opération voyage dans CE message (SYNC-015) — jamais un CONTENEUR_MAJ
+        // séparé pour l'auteur, qui clignoterait.
+        (v.conteneurs || []).forEach(appliquerDeltaConteneur);
+      },
+      /* B1 (étape 7-8, SPEC-SYNC-012/013) : le serveur vient d'accepter notre
+         CONTENEUR_OUVRIR — état complet, c'est maintenant qu'on ouvre l'écran
+         (jamais avant : rien à afficher tant qu'on ne sait pas ce qu'il y a
+         dedans, docs/vague-2/B1.md § 6). */
+      onConteneurEtat: function (m) {
+        var v = MC.ContratsV2.validerConteneurEtat(m);
+        if (!v || v.j !== 0) return;
+        var mirror = { cle: v.cle, type: v.type, rev: v.rev,
+                       slots: v.slots.map(MC.ContratsV2.caseVersPile) };
+        if (v.four) mirror.four = { burn: v.four.burn, cook: v.four.cook };
+        conteneurOuvert = { cle: v.cle, mirror: mirror };
+        var kindUi = v.type === 'furnace' ? 'furnace' : v.type === 'distributeur' ? 'distributeur' : 'chest';
+        ui.openContainer(kindUi, player.state.inv, null, v.cle, undefined, mirror);
+        input.setState('ui');
+      },
+      // delta d'un conteneur touché par un AUTRE joueur (SYNC-015) — écrit en
+      // place dans le miroir déjà affiché par l'UI, jamais un nouvel objet.
+      onConteneurMaj: function (m) {
+        var v = MC.ContratsV2.validerConteneurMaj(m);
+        if (v) appliquerDeltaConteneur(v);
       },
     });
+    /* Applique un delta serveur (`{ cle, rev, maj, four? }`, INV_MAJ.conteneurs
+       ou CONTENEUR_MAJ) au miroir du conteneur EN LIGNE actuellement ouvert —
+       ignoré s'il ne concerne pas ce conteneur, ou si son `rev` est périmé. */
+    function appliquerDeltaConteneur(d) {
+      if (!conteneurOuvert || conteneurOuvert.cle !== d.cle) return;
+      var m = conteneurOuvert.mirror;
+      if (d.rev <= m.rev) return;
+      d.maj.forEach(function (e) { m.slots[e[0]] = MC.ContratsV2.caseVersPile(e[1]); });
+      if (d.four) m.four = d.four;
+      m.rev = d.rev;
+      ui.refreshFurnace();
+    }
 
     // registre d'affichage du HUD (SPEC-HUD-001) : conservé d'une partie à
     // l'autre via localStorage, quand il est disponible
@@ -977,7 +1023,18 @@
         pvMax: player.MAX_HP || 20,
       });
       if (r.temps !== undefined && !net.enLigne()) g.time = r.temps;
-      if (r.ouvrir === 'banque') ouvrirBanque();
+      if (r.ouvrir === 'banque') {
+        // B1 (étape 8, SPEC-SYNC-013) : un banquier ouvre la MÊME banque
+        // serveur qu'un coffre-fort — jamais `world.banque` (copie locale
+        // solo) une fois en ligne, sinon deux joueurs qui parlent au même
+        // banquier dupliqueraient chacun leur inventaire dans leur propre
+        // copie, sans jamais se synchroniser.
+        if (net.enLigne() && ent) {
+          net.ouvrirConteneur({ eid: ent.eid }, 0);
+          input.setState('ui');
+          signalerSucces({ type: 'banque' });
+        } else ouvrirBanque();
+      }
       // un panneau d'information rappelle aussi la zone de jeu ici (SPEC-ZONE-003) :
       // utile en particulier aux bornes posées aux frontières le long des routes
       if (service === 'info' && r.ok && world.zoneEn) {
@@ -2083,6 +2140,22 @@
       if (res.indexOf('open:') === 0) {
         var kind = res.slice(5);
         var k = target.x + ',' + target.y + ',' + target.z;
+        // B1 (étape 8, docs/vague-2/B1.md § 6/8) : EN LIGNE, un conteneur posé
+        // (coffre, armoire, étagère, bibliothèque, fourneau, distributeur) ou
+        // la banque (bloc coffre-fort) ne s'affiche plus qu'après accord du
+        // serveur — jamais une copie locale qui pourrait diverger d'un autre
+        // joueur sur le même bloc (voir onConteneurEtat, game.js).
+        var CONTENEURS_POSES = { furnace: 1, chest: 1, armoire: 1, etagere: 1, bibliotheque: 1, distributeur: 1, banque: 1 };
+        if (net.enLigne() && CONTENEURS_POSES[kind]) {
+          net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
+          audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
+          // L'écran s'affiche vraiment à la réponse du serveur (onConteneurEtat,
+          // CONTENEUR_ETAT) — un refus (portée, etc.) laisse l'écran vide,
+          // Échap referme normalement (closeUI/forceCloseContainer tolèrent
+          // l'absence de conteneur ouvert).
+          input.setState('ui');
+          return;
+        }
         if (kind === 'furnace') {
           if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
           ui.openContainer('furnace', player.state.inv, furnaces[k], k);
@@ -2245,7 +2318,15 @@
        consomme un `seq` que si l'opération a réellement pris effet, pour que
        les compteurs client/serveur restent alignés un-message-un-seq. */
     function operer(j, op, msgBase) {
-      var ctx = { joueur: j.player.state, conteneur: function () { return null; }, regles: regles };
+      // B1 (étape 8) : un conteneur posé/banque ouvert EN LIGNE est résolu par
+      // sa clé — c'est le MÊME objet que celui affiché par l'UI (`ui.container.cont`),
+      // donc la prédiction s'y voit tout de suite ; il est corrigé plus tard
+      // par un delta serveur (INV_MAJ.conteneurs ou CONTENEUR_MAJ, jamais
+      // remplacé). Hors ligne, aucun conteneur posé ne passe par ici (coffre,
+      // fourneau, distributeur restent en modèle legacy, B1.md § 8).
+      var ctx = { joueur: j.player.state, conteneur: function (cle) {
+        return (conteneurOuvert && conteneurOuvert.cle === cle) ? conteneurOuvert.mirror : null;
+      }, regles: regles };
       var r = MC.Conteneurs.appliquer(ctx, op);
       if (r.ok && net.enLigne() && j.predInv) {
         var seq = j.predInv.suivant(op);
@@ -2359,11 +2440,16 @@
     }
 
     function forceCloseContainer() {
-      // SPEC-MECA-001 en ligne : le serveur fait foi sur ce qu'un distributeur
-      // éjecte — on lui envoie le contenu dès qu'on ferme l'interface, sinon
-      // son tick de circuits n'aurait jamais rien à distribuer.
       var cont = ui.container;
-      if (cont && cont.kind === 'distributeur' && cont.pos && net.enLigne() && net.distribuerMaj) {
+      if (cont && cont.cont && net.enLigne()) {
+        // B1 (étape 8) : un conteneur posé/banque EN LIGNE (modèle référence) —
+        // tout y est déjà réellement rangé (chaque clic était déjà une
+        // opération) : fermer ne fait que se désabonner, rien à déclarer.
+        net.fermerConteneur(cont.cont.cle, 0);
+        conteneurOuvert = null;
+      } else if (cont && cont.kind === 'distributeur' && cont.pos && net.enLigne() && net.distribuerMaj) {
+        // SPEC-MECA-001, solo/legacy : le serveur fait foi sur ce qu'un
+        // distributeur éjecte — on lui envoie le contenu à la fermeture.
         var p = cont.pos.split(',');
         net.distribuerMaj(+p[0], +p[1], +p[2], cont.distributeur.slots);
       }
@@ -2699,6 +2785,14 @@
 
     function ouvrirConteneur(kind, target) {
       var k = target.x + ',' + target.y + ',' + target.z;
+      // B1 (étape 8) : même bascule en ligne que dans onUse (§ le premier
+      // manieur de « open: » plus haut) — ce chemin ne sert qu'au joueur 1.
+      if (net.enLigne() && (kind === 'furnace' || kind === 'chest' || kind === 'distributeur')) {
+        net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
+        audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
+        input.setState('ui');
+        return;
+      }
       if (kind === 'furnace') {
         if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
         ui.openContainer('furnace', player.state.inv, furnaces[k], k);
@@ -2720,6 +2814,10 @@
       }
       input.setState('ui');
     }
+    // exposé pour les tests (comme g.coffreDe, g.parlerA…) : ouvre un
+    // conteneur (posé) au même chemin que le clic droit dessus, en ligne
+    // comme hors ligne — évite d'avoir à simuler visée + clic en e2e.
+    g.ouvrirConteneur = ouvrirConteneur;
 
     // ─── boucle ──────────────────────────────────────────────────────────────
     var last = performance.now(), acc = 0, frames = 0, spawnT = 0, autoSaveT = 0;
@@ -2799,8 +2897,13 @@
           if (!DC.isNight(g.time)) entities.burnUndead(false);
         }
 
-        for (var fk in furnaces) {
-          if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
+        // B1 (étape 8, B1.md § 12) : en ligne, c'est le SERVEUR qui fait
+        // cuire les fourneaux posés (registre `conteneursPoses`) — les
+        // simuler aussi ici les ferait cuire deux fois plus vite.
+        if (!net.enLigne()) {
+          for (var fk in furnaces) {
+            if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
+          }
         }
 
         autoSaveT += dt;
@@ -2817,7 +2920,9 @@
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
         world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time,
                                     circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
-        for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
+        if (!net.enLigne()) {
+          for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
+        }
         render.setHighlight(null);
       } else {
         render.setHighlight(null);

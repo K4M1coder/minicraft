@@ -35,6 +35,13 @@
       // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille —
       // seule source de vérité en ligne (docs/vague-2/B1.md § 6)
       onInvMaj: opts.onInvMaj || function () {},
+      // B1 (étape 7-8, SPEC-SYNC-012/013/015) : contenu d'un conteneur posé
+      // (coffre, fourneau, armoire, étagère, bibliothèque, distributeur) ou
+      // de la banque, ouvert en ligne — état complet à l'ouverture, deltas
+      // ensuite (aux AUTRES abonnés seulement, voir INV_MAJ.conteneurs pour
+      // l'auteur d'un transfert).
+      onConteneurEtat: opts.onConteneurEtat || function () {},
+      onConteneurMaj: opts.onConteneurMaj || function () {},
     };
 
     function statut(e, info) {
@@ -130,6 +137,14 @@
         // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille
         case NP.MSG.INV_MAJ:
           hooks.onInvMaj(m);
+          break;
+
+        // B1 (étape 7-8) : contenu (complet, ou delta) d'un conteneur posé/banque
+        case NP.MSG.CONTENEUR_ETAT:
+          hooks.onConteneurEtat(m);
+          break;
+        case NP.MSG.CONTENEUR_MAJ:
+          hooks.onConteneurMaj(m);
           break;
 
         case NP.MSG.REFUS:
@@ -252,10 +267,29 @@
       return envoyer({ t: NP.MSG.CHAT, texte: texte });
     }
     /* SPEC-MECA-001 : le contenu d'un distributeur, envoyé quand on ferme son
-       interface — le serveur en a besoin pour savoir quoi éjecter sur signal. */
+       interface — le serveur en a besoin pour savoir quoi éjecter sur signal.
+       Conservé pour un appelant solo/historique ; le client en ligne à jour
+       préfère `ouvrirConteneur`/`fermerConteneur` + transferts (B1, étape 8). */
     function distribuerMaj(x, y, z, slots) {
       return envoyer({ t: NP.MSG.DISTRIB, x: x, y: y, z: z,
                         slots: (slots || []).map(function (s) { return s ? { id: s.id, n: s.n } : null; }) });
+    }
+    /* B1 (étape 7-8, SPEC-SYNC-012/013) : s'abonner à un conteneur posé, par
+       position (coffre, fourneau, armoire, étagère, bibliothèque,
+       distributeur, ou le bloc coffre-fort d'une banque) ou par `eid`
+       (banquier, banque sans coffre-fort) — réponse `CONTENEUR_ETAT`
+       (`hooks.onConteneurEtat`) si acceptée, refus silencieux sinon. */
+    function ouvrirConteneur(cible, j) {
+      var m = { t: NP.MSG.CONTENEUR_OUVRIR, j: j || 0 };
+      if (cible && cible.eid !== undefined) m.eid = cible.eid;
+      else { m.x = cible.x; m.y = cible.y; m.z = cible.z; }
+      return envoyer(m);
+    }
+    /* `seq` requis seulement pour `cle:'grille'` (rend son contenu). */
+    function fermerConteneur(cle, j, seq) {
+      var m = { t: NP.MSG.CONTENEUR_FERMER, j: j || 0, cle: cle };
+      if (seq !== undefined) m.seq = seq;
+      return envoyer(m);
     }
     /* Panneau admin en jeu (SPEC-ADMIN-006) : une seule voie d'accès, l'action
        porte le détail. Le serveur revérifie toujours le rôle qu'il a
@@ -276,6 +310,7 @@
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
       envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,
