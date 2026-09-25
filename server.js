@@ -110,6 +110,18 @@ const economie = MC.Economie.creerEtat(CONF.graine);
 // SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
 // s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
 const distributeurs = new Map();
+// B1 (SPEC-SYNC-007 à 017) : registre des joueurs nommés et banques — déclarés
+// ICI (avant `appliquerEtatMonde`, qui les lit dès la reprise `--monde` au
+// démarrage, plus bas dans ce fichier) et non près du reste de la section
+// inventaire/conteneurs (server.js § « inventaire et conteneurs ») pour éviter
+// une zone morte temporelle (`const` lu avant sa déclaration lexicale).
+const joueursRegistre = new Map();   // cleRegistre(nom, j) → enregistrement { v:1, inv, equip, banque }
+const banques = new Map();           // cleRegistre(nom, j) → conteneur 'banque' (API figée, § 5 du plan)
+function banqueDe(cleReg) {
+  let b = banques.get(cleReg);
+  if (!b) { b = MC.Conteneurs.creerConteneur('banque'); banques.set(cleReg, b); }
+  return b;
+}
 let heure = 60;
 let meteoT = null;
 let accEau = 0;
@@ -146,7 +158,29 @@ function etatMonde() {
     politique: MC.Politique.serialiser(politique),
     guildes: MC.Guildes.serialiser(guildes),
     economie: MC.Economie.serialiser(economie),
+    // B1 (docs/vague-2/B1.md § 7-8) : le registre des joueurs nommés
+    // (inventaire, équipement, banque — `MC.Conteneurs.versEnregistrement`
+    // inclut déjà la banque) ; un joueur ENCORE connecté à l'instant de la
+    // sauvegarde est capturé à jour, pas seulement celui déjà écrit au
+    // dernier `fermer()`. Le registre des conteneurs POSÉS (coffres,
+    // fourneaux…) n'existe pas encore ici (étape 7) : rien à en sauver.
+    joueurs: Array.from(snapshotRegistreJoueurs().entries()),
   };
+}
+/* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
+   l'état courant de chaque joueur local ENCORE connecté et nommé — sans
+   muter `joueursRegistre` lui-même (une vraie déconnexion, plus tard,
+   écrira la version définitive via `fermer`). */
+function snapshotRegistreJoueurs() {
+  const out = new Map(joueursRegistre);
+  clients.forEach(c => {
+    if (!c.joueurs) return;
+    c.joueurs.forEach(js => {
+      if (!js.cleReg) return;
+      out.set(js.cleReg, MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg)));
+    });
+  });
+  return out;
 }
 function appliquerEtatMonde(data) {
   if (!data || (data.v !== 1 && data.v !== 2)) return false;   // format inconnu : refusé proprement
@@ -186,6 +220,20 @@ function appliquerEtatMonde(data) {
     economie.jour = eco.jour; economie.lieux = eco.lieux;
     economie.joueurs = eco.joueurs; economie.departs = eco.departs;
   }
+  // B1 (docs/vague-2/B1.md § 7-8) : registre des joueurs nommés — absent
+  // d'un fichier plus ancien (v1/v2, ou v2 d'avant cette section), donc
+  // simplement vide, comme aujourd'hui. La banque d'un joueur repris n'est
+  // PAS reconnectée : `versEnregistrement`/`banqueDe` recréent un conteneur
+  // vivant tout de suite (B1.md § 5), sans attendre que le joueur revienne.
+  joueursRegistre.clear();
+  banques.clear();
+  (data.joueurs || []).forEach(entree => {
+    if (!Array.isArray(entree) || typeof entree[0] !== 'string' || !MC.ContratsV2) return;
+    const v = MC.ContratsV2.validerEnregistrementJoueur(entree[1]);
+    if (!v) return;
+    joueursRegistre.set(entree[0], v);
+    banqueDe(entree[0]).slots = v.banque.map(MC.ContratsV2.caseVersPile);
+  });
   return true;
 }
 /* Sauvegarde atomique (SPEC-SERVEUR-003) : on écrit dans un fichier `.tmp`
@@ -1081,9 +1129,25 @@ function traiter(c, m) {
       break;
     }
 
+    /* SPEC-SYNC-017 (B1, docs/vague-2/B1.md § 9 étape 9) : DISTRIB est une
+       DÉCLARATION, pas un dépôt aveugle — `m.slots` (déjà borné et normalisé
+       par net-protocol.js) est ce que le joueur VEUT voir dans le
+       distributeur ; `MC.Conteneurs.declarer` ne prélève dans son inventaire
+       serveur que ce qu'il possède réellement (tronqué), et rend ce qu'un
+       retrait n'a pas pu récupérer (Σ inv + distributeur conservée par id).
+       Le registre des distributeurs posés (étape 7) n'existe pas encore :
+       `distributeurs` reste la Map brute cle → slots, ici enveloppée le
+       temps de l'appel pour offrir la forme `{ slots }` que `declarer`
+       attend (mutation en place : aucune réécriture séparée nécessaire). */
     case NP.MSG.DISTRIB: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || monde.getBlock(m.x, m.y, m.z) !== C.B.DISTRIBUTEUR) break;
       const kd = `${m.x},${m.y},${m.z}`;
-      if (monde.getBlock(m.x, m.y, m.z) === C.B.DISTRIBUTEUR) distributeurs.set(kd, m.slots);
+      const TAILLE_DISTRIB = 9;
+      const cont = { slots: distributeurs.get(kd) || new Array(TAILLE_DISTRIB).fill(null) };
+      MC.Conteneurs.declarer(js.joueur.state.inv, cont, m.slots);
+      distributeurs.set(kd, cont.slots);
+      envoyerInvMaj(c, m.j, {});
       break;
     }
 
@@ -1143,6 +1207,15 @@ function traiter(c, m) {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
       traiterOp(c, m, js, { k: 'transfert', de: m.de, vers: m.vers, n: m.n });
+      break;
+    }
+    // fermer la grille rend son contenu à l'inventaire (SPEC-SYNC-007, B1.md
+    // § 6) — un vrai conteneur posé (coffre, fourneau…) n'existe pas encore
+    // ici (étape 7) : rien d'autre à faire pour l'instant.
+    case NP.MSG.CONTENEUR_FERMER: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js) break;
+      if (m.cle === 'grille') traiterOp(c, m, js, { k: 'rendreGrille' });
       break;
     }
     case NP.MSG.INV_CONSOMMER: {
@@ -1314,9 +1387,9 @@ function executerActionAdmin(role, nomActeur, action, args) {
    et la grille de fabrication : le même module pur MC.Conteneurs que le solo
    et la prédiction client (docs/vague-2/B1.md § 3). Cette section ne connaît
    ENCORE PAS le registre des conteneurs posés (coffres, fourneaux… — étape 7) :
-   seule la banque, par joueur nommé, existe déjà comme conteneur vivant. */
-const joueursRegistre = new Map();   // cleRegistre(nom, j) → enregistrement { v:1, inv, equip, banque }
-const banques = new Map();           // cleRegistre(nom, j) → conteneur 'banque' (API figée, § 5 du plan)
+   seule la banque, par joueur nommé, existe déjà comme conteneur vivant.
+   `joueursRegistre`, `banques` et `banqueDe` sont déclarés plus haut (voir
+   commentaire à leur définition). */
 /* MC_TEST_INV='[[id,n],…]' : inventaire initial d'un joueur SANS enregistrement
    (jamais rejoint sous ce nom auparavant) — lu une fois au démarrage, comme
    MC_TEST_PANNE ; réservé aux suites d'intégration, jamais en exploitation. */
@@ -1324,11 +1397,6 @@ let MC_TEST_INV = null;
 try { MC_TEST_INV = process.env.MC_TEST_INV ? JSON.parse(process.env.MC_TEST_INV) : null; }
 catch (e) { MC_TEST_INV = null; }
 
-function banqueDe(cleReg) {
-  let b = banques.get(cleReg);
-  if (!b) { b = MC.Conteneurs.creerConteneur('banque'); banques.set(cleReg, b); }
-  return b;
-}
 // une clé de registre déjà tenue par un joueur CONNECTÉ (écran partagé
 // compris) : la seconde connexion sous le même nom reste éphémère (jamais
 // restaurée, jamais réécrite dans le registre à sa fermeture).

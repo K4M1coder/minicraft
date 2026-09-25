@@ -492,9 +492,9 @@
   });
 
   e2e('le clic droit prend la moitié d\'une pile', {
-        "teste": "que le clic droit sur une pile n'en prend que la moitié, en laissant l'autre moitié en place",
-        "pourquoi": "c'est le comportement standard attendu pour scinder une pile",
-        "attendu": "5 pris en main et 5 restants sur une pile de 10"
+        "teste": "que le clic droit sur une pile n'en prend que la moitié, en laissant l'autre moitié affichée en place",
+        "pourquoi": "c'est le comportement standard attendu pour scinder une pile ; depuis B1 (docs/vague-2/B1.md § 6), la pile n'est jamais réellement retirée de sa case avant qu'une opération de transfert n'ait réellement abouti — seul l'AFFICHAGE de l'origine est réduit",
+        "attendu": "5 « tenus » (heldStack) et 5 affichés sur la case d'origine, sans que la case ait réellement bougé tant que rien n'a été déposé ailleurs"
   }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.COBBLE, 10);
@@ -502,16 +502,25 @@
     await frames(2);
     var slots = document.querySelectorAll('.inv-screen .hb-row .slot');
     slots[0].dispatchEvent(new MouseEvent('mousedown', { button: 2, bubbles: true, cancelable: true }));
-    A.equal(g.ui.heldStack.n, 5, 'moitié prise');
-    A.equal(s.inv.slots[0].n, 5, 'moitié laissée');
+    A.equal(g.ui.heldStack.n, 5, 'moitié prise (visuellement)');
+    A.equal(s.inv.slots[0].n, 10, 'la case réelle n\'a pas encore bougé (rien n\'a été déposé)');
+    A.equal(document.querySelectorAll('.inv-screen .hb-row .slot')[0].querySelector('.n').textContent, '5',
+      'l\'affichage de l\'origine est bien réduit de moitié');
+    // clic droit ailleurs : dépose une unité pour de vrai (transfert n=1)
+    slots[3].dispatchEvent(new MouseEvent('mousedown', { button: 2, bubbles: true, cancelable: true }));
+    A.equal(s.inv.slots[0].n, 9, 'une unité réellement partie de l\'origine');
+    A.equal(s.inv.slots[3].n, 1, 'une unité réellement arrivée à la cible');
+    A.equal(g.ui.heldStack.n, 4, 'reste 4 en main');
     slots[0].dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }));
+    A.notOk(g.ui.heldStack, 'reclic sur l\'origine : annulé');
+    A.equal(s.inv.slots[0].n, 9, 'rien de plus n\'a bougé lors de l\'annulation');
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
   e2e('crafter des planches depuis un tronc, via l\'interface', {
-        "teste": "le circuit complet de craft à travers l'UI : poser un tronc dans la grille de craft, obtenir des planches, les récupérer dans l'inventaire",
-        "pourquoi": "vérifie que la reconnaissance de recette et le remplissage d'inventaire fonctionnent bout en bout via les vrais clics UI",
-        "attendu": "une recette reconnue donnant 4 planches, récupérées en main puis retrouvées dans l'inventaire après fermeture"
+        "teste": "le circuit complet de craft à travers l'UI : poser un tronc dans la grille de craft, obtenir des planches",
+        "pourquoi": "vérifie que la reconnaissance de recette et le remplissage d'inventaire fonctionnent bout en bout via les vrais clics UI ; depuis B1 (docs/vague-2/B1.md § 6), un craft (opération `MC.Conteneurs`) va TOUJOURS directement dans l'inventaire, jamais dans la main",
+        "attendu": "une recette reconnue donnant 4 planches, rentrées directement dans l'inventaire (jamais tenues en main)"
   }, async function (g) {
     var s = await reset(g);
     s.inv.add(B.LOG, 1);
@@ -528,11 +537,10 @@
     // prendre le résultat
     document.querySelector('.inv-screen .slot.result')
       .dispatchEvent(new MouseEvent('mousedown', { button: 0, bubbles: true, cancelable: true }));
-    A.ok(g.ui.heldStack, 'résultat en main');
-    A.equal(g.ui.heldStack.id, B.PLANKS);
-    A.equal(g.ui.heldStack.n, 4, '4 planches');
+    A.notOk(g.ui.heldStack, 'rien en main : le craft va direct à l\'inventaire');
+    A.equal(s.inv.count(B.PLANKS), 4, '4 planches rentrées à l\'inventaire aussitôt');
     key('Escape'); fakeLock(g, true); await frames(3);
-    A.equal(s.inv.count(B.PLANKS), 4, 'les planches sont rentrées à l\'inventaire');
+    A.equal(s.inv.count(B.PLANKS), 4, 'toujours là après fermeture');
   });
 
   e2e('fermer l\'inventaire rend les objets restés dans la grille', {
@@ -564,7 +572,7 @@
     g.world.setBlock(bx, by, bz, B.CRAFTING_TABLE);
     var res = g.player.useOn({ x: bx, y: by, z: bz, block: B.CRAFTING_TABLE, nx: 0, ny: 1, nz: 0 });
     A.equal(res, 'open:craft', 'l\'établi demande son interface');
-    g.ui.openContainer('craft', s.inv);
+    g.ui.openContainer('craft', s.inv, null, undefined, s.grille);
     g.input.setState('ui');
     await frames(2);
     A.equal(document.querySelectorAll('.inv-screen .craft-grid .slot').length, 9, 'grille 3×3');

@@ -16,6 +16,43 @@ respecter (voir PLAN.md, « Commits et versions »).
 ## [Non publié]
 ### Ajouté
 
+- Vague 2 (B1, SPEC-SYNC-007/010/011, docs/vague-2/B1.md § 6, fin) :
+  `ui.js` route désormais l'inventaire, l'équipement et la grille de
+  fabrication du joueur (établi compris — `player.js` gagne `pl.grille`,
+  toujours présente, jamais persistée) à travers `game.operer` : `clickSlotRef`
+  et `equipClick` ne mutent plus jamais un objet réellement « tenu en main » —
+  `heldStack` ne porte qu'une référence à l'emplacement d'origine et un
+  nombre soustrait visuellement (`pileEmplacement`) ; poser/fusionner/
+  échanger devient une opération `transfert` (ou `equip` dès qu'un
+  emplacement d'équipement participe), envoyée à `MC.Conteneurs.appliquer`
+  hors ligne comme en ligne (avec `seq` de prédiction). Un clic sur le
+  résultat de craft envoie désormais `{k:'craft',fois}` et rentre TOUJOURS
+  directement dans l'inventaire (jamais en main, hors ligne compris — la clic
+  droit fabrique le maximum possible). Fermer l'écran envoie `CONTENEUR_FERMER
+  {cle:'grille'}` (`rendreGrille`) plutôt que de rendre le contenu à la main
+  soi-même. `poserRecette` (livre) devient une suite de `transfert` inv →
+  grille (`Livre.disposition`, nouveau, calcule la disposition sans prélever).
+  Les conteneurs pas encore networkés (coffre, fourneau, distributeur,
+  échange — étape 7/8) gardent l'ancien modèle (`clickSlotLegacy`), les deux
+  ne pouvant pas se mélanger sans risque de duplication. `server.js` route
+  `CONTENEUR_FERMER {cle:'grille'}` vers `rendreGrille`. `tests/e2e.js` mis à
+  jour pour le nouveau modèle (pickup visuel avant tout transfert réel, craft
+  direct-inventaire).
+- Vague 2 (B1, SPEC-SYNC-017, B1.md § 9 étape 9) : `DISTRIB` (`server.js`)
+  n'écrase plus aveuglément le contenu déclaré par le client — c'est
+  désormais une déclaration passée à `MC.Conteneurs.declarer` contre
+  l'inventaire serveur réel du joueur, tronquée à ce qu'il possède, somme
+  conservée par objet ; une redéclaration identique ne débite rien de plus.
+- Vague 2 (B1, SPEC-SYNC-020/021 partielles, B1.md § 8-9) : le registre des
+  joueurs nommés (`joueursRegistre`) et les banques (`banques`) survivent
+  désormais à un arrêt puis relance du serveur avec `--monde`
+  (`etatMonde`/`appliquerEtatMonde`, champ `joueurs`) — y compris un joueur
+  ENCORE connecté à l'instant de la sauvegarde périodique
+  (`snapshotRegistreJoueurs`), pas seulement celui déjà écrit par `fermer()`.
+  `save.js` (solo, v3 inchangée) persiste maintenant `player.equip`, absent
+  d'une ancienne sauvegarde → équipement vide comme avant cette section. Le
+  registre des conteneurs POSÉS (coffres, fourneaux…) reste hors périmètre
+  (étape 7, pas encore commencée).
 - Vague 2 (B1, SPEC-SYNC-007/008 — client, docs/vague-2/B1.md § 6 suite) :
   `game.js` gagne `j.predInv` (une prédiction `MC.Conteneurs.creerPrediction()`
   par joueur local, activée par `rejoindreServeur`), `operer(j, op, msgBase)`

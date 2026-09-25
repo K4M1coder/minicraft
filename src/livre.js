@@ -75,11 +75,15 @@
      Renvoie la grille (tableau de 9 piles) ou null si irréalisable.
      On ne prélève QU'APRÈS avoir vérifié : un prélèvement partiel laisserait
      le joueur sans ses ressources et sans son objet. */
-  function remplirGrille(recette, inv, taille) {
+  /* Disposition PURE de la recette dans une grille n×n (aucun prélèvement) :
+     { id, n:1 } par case occupée, `null` ailleurs. Base commune à
+     `remplirGrille` (solo historique) et à `ui.js` `poserRecette`, qui,
+     depuis B1 (docs/vague-2/B1.md § 6), pose une suite d'opérations
+     `transfert` inv → grille plutôt que de muter directement les tableaux —
+     la grille est désormais une zone au même titre que l'inventaire. */
+  function disposition(recette, taille) {
     var n = taille || 3;
-    if (!faisable(recette, inv)) return null;
     var grille = new Array(n * n).fill(null);
-
     if (recette.type === 'shaped') {
       // on centre la recette en haut à gauche de la grille
       for (var y = 0; y < recette.h; y++) {
@@ -96,7 +100,18 @@
         grille[i] = { id: id, n: 1 };
       });
     }
+    return grille;
+  }
 
+  /* Dispose la recette dans une grille 3×3 et prélève les ingrédients.
+     Renvoie la grille (tableau de 9 piles) ou null si irréalisable.
+     On ne prélève QU'APRÈS avoir vérifié : un prélèvement partiel laisserait
+     le joueur sans ses ressources et sans son objet.
+     Conservée pour d'éventuels appelants directs (hors UI) ; `ui.js` ne
+     l'utilise plus (voir `disposition` ci-dessus). */
+  function remplirGrille(recette, inv, taille) {
+    if (!faisable(recette, inv)) return null;
+    var grille = disposition(recette, taille);
     // prélèvement effectif, une fois la grille sûre
     besoins(recette).forEach(function (b) { inv.remove(b.id, b.n); });
     return grille;
@@ -143,7 +158,7 @@
 
   MC.Livre = {
     besoins: besoins, manques: manques, faisable: faisable,
-    catalogue: catalogue, remplirGrille: remplirGrille,
+    catalogue: catalogue, remplirGrille: remplirGrille, disposition: disposition,
     catalogueObjets: catalogueObjets, donner: donner,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

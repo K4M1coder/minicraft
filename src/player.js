@@ -28,6 +28,10 @@
       yaw: 0, pitch: 0, onGround: false, flying: !!R.vole, swimming: false,
       hp: MAX_HP, hunger: MAX_HUNGER, air: MAX_AIR, exhaustion: 0,
       inv: Inv.create(Inv.TOTAL), selected: 0,
+      // grille de fabrication 3×3 (B1, docs/vague-2/B1.md § 3) : partout la
+      // même forme que le serveur ({ inv, equip, grille }), même hors ligne —
+      // jamais persistée (transitoire), toujours vidée à la fermeture de l'UI.
+      grille: Inv.create(9),
       mining: null, attackCd: 0, regenT: 0, hurtFlash: 0,
       fallFrom: null, dead: false,
       // équipement (SPEC-OBJET-001/003) : quatre pièces d'armure et un bijou

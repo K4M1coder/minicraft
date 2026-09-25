@@ -364,6 +364,11 @@
       onRejoindre: rejoindreServeur,
       onFabrique: function (id) { signalerSucces({ type: 'fabriquer', id: id }); },
       onEchange: function () { signalerSucces({ type: 'echange' }); },
+      // B1 (docs/vague-2/B1.md § 6) : chaque interaction de l'écran
+      // inventaire/établi (transfert, équipement, craft, fermeture de la
+      // grille) passe par ici — toujours le joueur local 0, seul à avoir un
+      // écran ouvert (voir `player` = equipe[0].player plus bas).
+      onOperer: function (op, msgBase) { return operer(equipe[0], op, msgBase); },
       onSucces: function () { ui.panneauSucces(g.succes); input.setState('ui'); },
       // SPEC-OPTION-001 et 003 : réglages et touches
       options: function () { return g.options; },
@@ -2125,7 +2130,7 @@
           ouvrirBlocCommande(target);
           return;
         } else {
-          ui.openContainer('craft', player.state.inv);
+          ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
           audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
         }
         input.setState('ui');
@@ -2266,10 +2271,10 @@
     function onKey(code) {
       var act = MC.Options.actionDe(g.options.touches, code);
       if (act === 'inventaire') {
-        ui.openContainer('inv', player.state.inv, player.state.equip);
+        ui.openContainer('inv', player.state.inv, player.state.equip, undefined, player.state.grille);
         input.setState('ui');
       } else if (act === 'livre') {
-        ui.openContainer('inv', player.state.inv, player.state.equip);
+        ui.openContainer('inv', player.state.inv, player.state.equip, undefined, player.state.grille);
         ui.toggleLivre();
         input.setState('ui');
       } else if (act === 'sauvegarder') {
@@ -2707,7 +2712,7 @@
         ouvrirBlocCommande(target);
         return;
       } else {
-        ui.openContainer('craft', player.state.inv);
+        ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
         audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
       }
       input.setState('ui');
