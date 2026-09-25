@@ -612,7 +612,14 @@
     it('SPEC-BANC-029 : historiqueTest trie par commit réel (git rev-list --topo-order) sur le registre officiel, par lancement avec --manuel', function () {
       var racineResultats = tmpDir('reg-resultats3'), dossierRegistre = tmpDir('reg-registre3');
       try {
-        var log = cp.execFileSync('git', ['log', '--format=%H', '-n', '3'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
+        // `git rev-list --topo-order`, PAS `git log` (ordre chronologique) :
+        // les deux divergent dès que HEAD est un merge de deux lignées dont
+        // les commits ont été écrits à des instants différents (exactement
+        // le cas courant avec des agents en worktrees séparés) — le test
+        // doit dériver ses étiquettes recent/milieu/ancien avec le MÊME
+        // algorithme que celui vérifié (`historiqueTest`), sous peine de
+        // comparer deux ordres différents par construction.
+        var log = cp.execFileSync('git', ['rev-list', '--topo-order', '-n', '3', 'HEAD'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
         A.equal(log.length, 3, 'au moins 3 commits disponibles dans ce dépôt pour le test');
         var recent = log[0], milieu = log[1], ancien = log[2];
         var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
