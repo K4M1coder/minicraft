@@ -48,8 +48,10 @@ Exécutées par `node tests/gates.js`. Toute porte rouge bloque le commit.
 | **G10** | La version suit le versionnage sémantique et CHANGELOG.md la publie | oui (et crochet pre-commit) |
 | **G11** | Les crochets git sont branchés et la règle du cran est juste | oui |
 | **G12** | Budget de performance de la génération (lot perf, `tests/bench-generation.js`) | oui |
-| **G13** | Les crochets git citent un préréglage du catalogue de tests, existant et non vide (SPEC-BANC-006) | oui |
-| **G14** | 100 % des tests, y compris les end-to-end, ont une fiche déclarée ou déduite d'une spec citée (SPEC-BANC-002) | oui |
+| **G13** | Les crochets git citent un préréglage du catalogue de tests, existant et non vide (SPEC-BANC-006) ; étendue par le lot BANC (historique global, §3.6) : `pre-commit` calcule un périmètre non vide, `pre-push` et `pre-merge-commit` citent la suite complète (SPEC-BANC-075) | oui |
+| **G14** | 100 % des tests, y compris les end-to-end, ont une fiche déclarée ou déduite d'une spec citée (SPEC-BANC-002) ; étendue par le lot BANC : 100 % des tests ont aussi au moins un domaine et une fonction, déclarée ou observée (SPEC-BANC-066) | oui |
+| **G15** | Chaque test e2e du cahier produit au moins deux captures réelles, début et fin (SPEC-BANC-026/027) | oui |
+| **G16** | *(prévue, lot BANC — historique global, §3.14)* Aucun `console.*` direct dans `src/` ou `server.js` hors de `src/journal.js` : tout passe par `MC.Journal` (SPEC-BANC-110) | prévue |
 
 ### Commits et versions
 
@@ -118,6 +120,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L40** | Technique (préalable à L24, L29, MER-010/011) : blocs sur 16 bits avec états (orientation, moitié, angles, connexions, énergie) et migration des sauvegardes — les 128 identifiants de bloc sont épuisés | `SAVE` | à faire |
 | **L41** | Options d'affichage : choix du GPU, résolutions (800×600 à 4K, native), plein écran, choix de l'écran, affichage étendu sur deux ou trois écrans horizontaux ou verticaux | `OPTION` | à faire |
 | **L42** | Outillage de test : catalogue classé (type, domaine, groupe, étiquettes) et fiche de chaque test (quoi, pourquoi, attendu), sélection combinable, préréglages partagés par le banc, la ligne de commande et les crochets (commit, pr, régression, bugs, en cours), progression en temps réel, banc navigateur en quadrants avec résumé fixe, captures clés, métriques et cahier de test conservé | `BANC` | à faire |
+| **BANC** | Historique global, périmètre, diagnostics, journal (docs/banc/historique-global.md, prolonge L42) : zone « Historique » du banc (tableau, tri multi-clés, filtres par type, colonnes choisies, pagination serveur, export), graphiques timeline, diaporama par image ouvert au clic, témoin et comparaison, inscription manuelle depuis le banc, fiche avant résultats et répartitions, périmètre d'exécution (carte d'impact, `tools/perimetre.js`, crochets, trous de périmètre, G13 étendue), étapes et triplets d'images, rendu reproductible et moteur de rendu, métriques de performance, score d'instabilité, raison obligatoire, rétention, diagnostics d'échec/lenteur (CPU, GPU en couches), journal `MC.Journal` (G16), campagnes sur l'historique des merges/PR/releases — voir découpage détaillé ci-dessous | `BANC` | à faire |
 | **L24** | Construction fine et intérieurs (validé) : escaliers, dalles, toitures à angles automatiques, raccords, verre, colorants, matériaux, feu et fumée, intérieurs meublés, mobilier à fabriquer, livres et notes — après L40 | `CONSTR` `INTERIEUR` | à faire |
 | **L25** | Objets (validé) : tissu et armures, armes, gemmes et bijoux, nourriture et cuisine, coffres piégés et surprises | `OBJET` | à faire |
 | **L29** | Mécanismes et électricité (validé) : distributeurs, pistons, générateurs éolien/hydro/thermique, câbles, batteries, portes logiques, détecteurs, appareils, blocs de commande — après L40 | `MECA` | à faire |
@@ -199,6 +202,31 @@ le modifier. En bref :
   ECO-001, 003 à 006 ; PVP-001 à 006 ; PERF-004 à 010, 014) et deux trous
   ajoutés pour la vague 3 : SPEC-SYNC-027 (présentoirs visibles de tous) et
   SPEC-SYNC-028 (pose et tir validés contre l'inventaire serveur).
+
+### Découpage du lot BANC — historique global, périmètre, diagnostics, journal
+
+Conception validée dans `docs/banc/historique-global.md`, découpage repris
+tel quel de son §5 ; chaque étape cite ses fiches SPEC-BANC (SPECS.md, L42).
+Dépendances : l'étape 0a (format de données) conditionne tout le reste et
+passe en premier ; le journal (étape 8) ne dépend d'aucune autre étape et
+démarre en parallèle dès le début ; les campagnes sur l'historique des
+merges/PR/releases (étape 10) passent en dernier, une fois le moteur
+stabilisé par toutes les étapes précédentes.
+
+| Étape | Contenu | Fiches SPEC-BANC | Dépend de |
+|---|---|---|---|
+| **0a** | Format de données complet : instantané fiche+tags, étapes et triplets d'images, moteur de rendu, métriques, raison obligatoire | 059, 060, 077 à 087, 089 | — (en premier) |
+| **0b** | Catalogue : champ `fonctions` déclaré, observation Node, instantané fiche+tags dans cahiers/registre, fiche affichée avant résultats, G14 étendue | 059, 061, 062, 066 | 0a |
+| **1** | Routes serveur et index en mémoire, avec tests Node | 040 | 0a, 0b |
+| **2** | Tableau : colonnes, tri, filtres, pagination, export | 033 à 039, 063 à 065 | 1 |
+| **3** | Graphiques timeline | 041 à 045 | 1, 2 |
+| **4** | Panneau test : un diaporama par image, témoin, comparaison | 046 à 052 | 1, 2 |
+| **5** | Intégration dans le banc (bouton, clic depuis la sélection), inscription manuelle en fin de campagne, test e2e | 033, 053 à 058 | 2, 3, 4 |
+| **6** | Périmètre d'exécution : carte d'impact, `tools/perimetre.js`, crochets pre-commit/pre-push/pre-merge-commit, sélection dans le banc, contrôle des trous de périmètre, G13 étendue | 004 (révisée), 006 (révisée), 010 (révisée), 067 à 076 | 0b (fonctions observées) |
+| **7** | Rétention (branchée sur `tools/version.js --publier`) et score d'instabilité des tests | 088, 090, 091 | 6 (carte d'impact pour l'instabilité), 5 (registre) |
+| **8** | Journal `MC.Journal` et migration des `console.*`, G16 | 104 à 110 | — (démarre en parallèle dès le début, aucune dépendance) |
+| **9** | Diagnostics d'échec et de lenteur, profil CPU et GPU, sur le journal | 092 à 103 | 8 |
+| **10** | En dernier, moteur stabilisé : campagnes sur l'historique des merges, PR et releases | 111 à 116 | 1 à 9 (toutes les étapes précédentes) |
 
 ---
 
