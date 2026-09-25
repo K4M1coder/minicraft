@@ -182,9 +182,26 @@
     s.selected = 0; s.exhaustion = 0; s.vel.x = s.vel.y = s.vel.z = 0;
     g.entities.list.length = 0;
     var col = g.world.findSpawnColumn();
+    /* Le chunk du point d'apparition doit être VRAIMENT chargé avant qu'on y
+       lise le sol : `groundAt` s'appuie sur `getBlock`, qui rend 0 (rien de
+       solide) pour un chunk absent — le sol tomberait alors au bedrock (0),
+       loin sous le vrai terrain, et tout bloc posé ensuite près du départ
+       (setBlock) échouerait en silence (chunk absent) sur les chunks pas
+       encore revenus. Ça ne pouvait pas arriver tant que la génération
+       restait synchrone ; devenue asynchrone par workers (L47), un test qui
+       vient de téléporter loin (donjon, etc.) puis de faire `reset()` peut
+       repartir d'ici AVANT que les chunks d'origine ne soient revenus.
+       `getChunk(..., true)` génère d'abord le chunk exact (sol correct),
+       puis `streamChunks(true)` — synchrone, sans worker (SPEC-PERF-006) —
+       recharge tout son voisinage avant de rendre la main, comme le font
+       déjà les tests qui téléportent eux-mêmes (SPEC-DONJON-004, EAU-008).
+       Sans nouveau chunk à générer, son coût reste négligeable (Map.has). */
+    var scx = Math.floor(col[0] / MC.Core.CHUNK_X), scz = Math.floor(col[1] / MC.Core.CHUNK_Z);
+    g.world.getChunk(scx, scz, true);
     var gy = g.world.groundAt(col[0], col[1], true);
     s.pos.x = col[0] + 0.5; s.pos.y = gy + 1.2; s.pos.z = col[1] + 0.5;
     s.yaw = 0; s.pitch = 0;
+    g.streamChunks(true);
     await frames(3);
     return s;
   }

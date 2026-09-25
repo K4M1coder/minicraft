@@ -224,6 +224,27 @@ respecter (voir PLAN.md, « Commits et versions »).
 ### Corrigé
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 
+- Aide de test partagée `reset()` (tests/e2e.js, ~140 tests e2e) : elle
+  repositionnait le joueur au point d'apparition puis n'attendait que 3
+  images avant de rendre la main, en supposant le chunk d'origine déjà
+  chargé — vrai tant que la génération restait synchrone. Devenue
+  asynchrone par workers (L47, `feat(workers)`/`fix(workers)`), un test qui
+  vient de téléporter loin (un donjon à 900 blocs, par ex.) puis de faire
+  `reset()` pouvait repartir AVANT que les chunks d'origine ne soient
+  revenus : `groundAt` (qui lit `getBlock`) rendait alors 0 (rien de solide
+  dans un chunk absent) au lieu du vrai sol, faisant réapparaître le joueur
+  au bedrock, et tout `setBlock` posé ensuite près du départ échouait en
+  silence sur les chunks pas encore revenus (`world.setBlock` rend `false`
+  sans écrire si le chunk est absent) — cause commune, identifiée par
+  `git bisect` ciblé, des échecs de SPEC-EAU-008, SPEC-PERF-012 et d'une
+  partie de ceux de SPEC-VEHIC-006 (faussement qualifiés d'intermittents :
+  persistants dès qu'un test téléportant au loin précédait l'un de ceux-ci).
+  `reset()` force maintenant la génération du chunk d'origine
+  (`world.getChunk(..., true)`) avant d'y lire le sol, puis recharge tout
+  son voisinage de façon synchrone (`streamChunks(true)`, sans worker,
+  SPEC-PERF-006) avant de rendre la main — sans coût notable quand tout est
+  déjà chargé (Map.has), comme le faisaient déjà à la main les quelques
+  tests qui téléportent eux-mêmes (SPEC-DONJON-004, SPEC-EAU-008).
 - Test e2e SPEC-VEHIC-006/002 (« monter en voiture, rouler au clavier »),
   faussement qualifié d'intermittent — échouait en fait de façon persistante :
   le test attendait 120 IMAGES RÉELLES en supposant qu'elles représentent
