@@ -236,6 +236,40 @@
       onChat: function (m) { chat.recevoir(m); },
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
       onQuitte: function (m) { chat.systeme((m.nom || 'Un joueur') + ' est parti'); },
+      /* B4 (SPEC-PVP-001 à 006) : le serveur fait foi sur tous les enjeux
+         PvP — ce hook ne fait qu'afficher, jamais recalculer. `victoire`
+         alimente les succès (SPEC-SUCCES-001), les autres évènements sont de
+         simples messages système dans le chat. */
+      onPvp: function (m) {
+        switch (m.evt) {
+          case 'victoire':
+            chat.systeme('Victoire contre ' + (m.contre || '?') + ' (' + (m.n || 0) + ' au total).');
+            signalerSucces({ type: 'pvp_victoire', n: m.n });
+            break;
+          case 'defaite': {
+            var perte = (m.perte || []).reduce(function (a, p) { return a + p.n; }, 0);
+            chat.systeme('Vaincu par ' + (m.de || '?') + (perte ? ' — ' + perte + ' objet(s) perdu(s)' : '') + '.');
+            if (perte) ui.toast('-' + perte + ' objet(s) (défaite PvP)', 'warn');
+            break;
+          }
+          case 'duel_propose':
+            chat.systeme((m.de || '?') + ' vous propose un duel — /duel accepter ou /duel refuser (30 s).');
+            break;
+          case 'duel_debut':
+            chat.systeme('Duel commencé contre ' + (m.contre || '?') + '.');
+            break;
+          case 'duel_fin':
+            chat.systeme('Duel terminé avec ' + (m.contre || '?') + '.');
+            break;
+          case 'reputation':
+            chat.systeme('Réputation politique dégradée : ' + (m.factions || []).map(function (f) { return f.id + ' (' + f.valeur + ')'; }).join(', '));
+            break;
+          case 'hors_la_loi':
+            ui.toast('Hors-la-loi : embargo commercial sur le territoire concerné', 'warn');
+            chat.systeme('Vous êtes désormais hors-la-loi auprès de : ' + (m.factions || []).map(function (f) { return f.id; }).join(', '));
+            break;
+        }
+      },
       onEtat: function (m) { if (typeof m.heure === 'number') g.time = m.heure; },
       /* Le serveur fait autorité : pour chacun de nos joueurs, on adopte sa
          position et ses statistiques, puis on rejoue les entrées qu'il n'a
@@ -2548,6 +2582,11 @@
           chat.systeme(rf.message);
           break;
         case 'admin': net.admin(a.action, a.args); break;
+        // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)
+        case 'duel':
+          if (net.enLigne()) { net.envoyerChat('/duel ' + (a.brut || '')); break; }
+          chat.systeme('Le duel exige d\'être en ligne.');
+          break;
       }
     }
     function executerCommande(cmd) {

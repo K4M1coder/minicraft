@@ -250,6 +250,23 @@ respecter (voir PLAN.md, « Commits et versions »).
   120 s dans un rayon de 32 blocs autour du point médian à l'acceptation),
   victoires comptées par joueur nommé, persistance (meurtres/victoires/
   réputations ; duels et propositions éphémères, jamais sérialisés).
+- Vague 2 (B4, suite) : branchement réseau/serveur. `src/entities.js`
+  (`stepArrow`) porte désormais l'auteur du coup (`degatsPar[].par`) et
+  consulte `opts.peutBlesser(tireur, cible)` — une flèche entre deux membres
+  d'une même faction (SPEC-FACTION-012) n'inflige plus de dégâts (bogue
+  corrigé : seul le corps à corps était protégé), et un duel autorise un tir
+  même hors zone PvP/sans `--pvp`, jugé à l'IMPACT (pas au tir : un duel qui
+  expire pendant le vol d'un projectile protège la cible). `src/succes.js`
+  gagne trois succès (`pvp_victoire`, seuils 1/5/25). `src/commandes.js`
+  gagne `/duel`. `src/net.js`/`src/game.js` gagnent le hook `onPvp` (message
+  `PVP`, toasts/chat, succès sur `victoire`). Zones B4 de `server.js` :
+  `case ATTAQUE` (duel OU PvP+faction autorisés), interception `/duel` avant
+  `/faction`, `ev.degatsPar` (issue PvP commune corps-à-corps/flèche,
+  `regles.degatsMob` n'est plus appliqué à un coup de joueur — bogue
+  documenté par le plan, corrigé au passage), embargo dans `case TROC`,
+  persistance (`pvp:` dans `etatMonde`). `tests/integration-pvp.js` étendu
+  (butin, flèche entre membres de faction, `/duel` de bout en bout, message
+  `PVP` de victoire/défaite).
 
 ### Modifié
 
