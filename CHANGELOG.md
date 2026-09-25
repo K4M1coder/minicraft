@@ -200,6 +200,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- Factions politiques et quêtes (SPEC-FACTION-016, SPEC-QUETE-001/002,
+  `src/politique.js`) : un raid ou un avant-poste (`tourUnJour`) prélève
+  désormais un coût fixe (`or`/`nourriture`) sur son auteur qu'il réussisse
+  ou non, l'avant-poste gagnant lui aussi un risque d'échec (jet déterministe
+  par graine) qui ne coûte que les ressources, sans gain de territoire ;
+  raid et quête d'élimination partagent le même effet de succès
+  (`appliquerGainElimination`). `questesDe` ne propose plus une quête de
+  livraison que si la ressource visée (`or`/`nourriture`) est réellement
+  sous le seuil bas (`SEUIL_RESSOURCE_BAS`, 20), sa réussite (`livrerQuete`)
+  relevant ce niveau du montant fourni, plafonné au manque réel ; une quête
+  d'élimination n'apparaît qu'en relation `guerre` active, ciblant le membre
+  désigné par `ciblePourRaid`, et sa réussite (`reussirQueteElimination`)
+  applique exactement le gain d'un raid gagné avec la même graine.
 
 ### Modifié
 
