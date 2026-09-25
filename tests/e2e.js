@@ -2052,7 +2052,33 @@
     // un toit de pierre juste au-dessus du joueur
     var bx = Math.floor(s.pos.x), by = Math.floor(s.pos.y) + 4, bz = Math.floor(s.pos.z);
     for (var dx = -3; dx <= 3; dx++) for (var dz = -3; dz <= 3; dz++) g.world.setBlock(bx + dx, by, bz + dz, B.STONE);
-    await frames(40);
+    /* Chaque goutte garde son « sol » (hauteur d'abri) en cache tant qu'elle
+       ne change pas de colonne (render.js, animer_ — un cache par particule,
+       jamais invalidé par un setBlock), lui-même dérivé d'un second cache
+       (game.js, `abri()`) volontairement vidé une fois par seconde SIMULÉE
+       seulement (« un bloc posé... pris en compte sans balayer chaque
+       image », commentaire d'origine) : une goutte déjà en chute pile
+       au-dessus de la colonne qu'on vient de couvrir continue de traverser
+       le nouveau toit jusqu'à sa PROCHAINE renaissance naturelle (colonne
+       changée par la dérive du vent, ou trop basse), qui n'arrive pas
+       forcément dans les 40 premières images ni avant que le cache d'une
+       seconde n'ait tourné. 40 images est une durée fixe qui suppose ce
+       recalage déjà fait ; on attend plutôt le recalage LUI-MÊME (le vrai
+       critère), avec un garde-fou généreux (400 images) au cas où une
+       goutte s'attarderait plus longtemps. */
+    var __garde = 0;
+    while (__garde++ < 400) {
+      await frames(1);
+      var __sysAvant = g.precipitation && g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;
+      if (!__sysAvant) break;
+      var __encoreStale = false;
+      for (var __i = 0; __i < __sysAvant.actifs; __i++) {
+        if (!__sysAvant.vivant[__i]) continue;
+        if (Math.abs(__sysAvant.x[__i] - (bx + 0.5)) < 3 && Math.abs(__sysAvant.z[__i] - (bz + 0.5)) < 3 &&
+            __sysAvant.sol[__i] < by - 1) { __encoreStale = true; break; }
+      }
+      if (!__encoreStale && __garde >= 40) break;
+    }
     var biome = g.world.biomeAt(bx, bz).id;
     if (g.precipitation && g.precipitation.forme) {
       var sys = g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;

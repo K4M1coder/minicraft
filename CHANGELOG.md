@@ -245,6 +245,25 @@ respecter (voir PLAN.md, « Commits et versions »).
   SPEC-PERF-006) avant de rendre la main — sans coût notable quand tout est
   déjà chargé (Map.has), comme le faisaient déjà à la main les quelques
   tests qui téléportent eux-mêmes (SPEC-DONJON-004, SPEC-EAU-008).
+- Test e2e SPEC-METEO-007 (« la pluie tombe dehors et s'arrête aux toits »),
+  vraiment intermittent celui-là (~1 échec sur 4 en local, hors de toute
+  autre cause) : il posait un toit puis attendait un nombre FIXE de 40
+  images avant de vérifier qu'aucune goutte ne le traverse. Or chaque
+  goutte garde son « sol » (hauteur d'abri) en cache tant qu'elle ne change
+  pas de colonne (render.js, `animer_`), lui-même dérivé d'un second cache
+  (game.js, `abri()`) délibérément vidé une fois par seconde SIMULÉE
+  seulement (perf assumée, commentaire d'origine : « un bloc posé ou cassé
+  est pris en compte sans balayer chaque image ») — une goutte déjà en
+  chute juste au-dessus de la colonne qu'on vient de couvrir continue donc
+  de traverser le nouveau toit jusqu'à sa PROCHAINE renaissance naturelle,
+  qui n'arrive pas toujours dans les 40 premières images ni avant que le
+  cache de la seconde n'ait tourné. Comportement du jeu inchangé (un délai
+  jusqu'à ~1 s avant qu'un toit tout juste posé n'arrête vraiment la pluie
+  est un compromis de perf assumé, documenté, antérieur à ce lot) : seule
+  l'hypothèse du test (40 images toujours suffisantes) était fausse. Le
+  test attend maintenant le recalage réel (plus aucune goutte vivante sous
+  le toit avec un « sol » caché encore périmé), au moins 40 images, avec un
+  garde-fou à 400 — sans rien affaiblir de ce qu'il vérifie.
 - Test e2e SPEC-VEHIC-006/002 (« monter en voiture, rouler au clavier »),
   faussement qualifié d'intermittent — échouait en fait de façon persistante :
   le test attendait 120 IMAGES RÉELLES en supposant qu'elles représentent
