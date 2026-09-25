@@ -538,6 +538,23 @@ respecter (voir PLAN.md, « Commits et versions »).
   désigner l'ancien maillage éloigné (« l'eau est maintenant à portée : 77.35
   >= 40 »). Comportement du jeu inchangé ; le test force maintenant le même
   rechargement synchrone qu'à l'aller avant de vérifier la distance.
+- Test e2e SPEC-SUCCES-001 (« casser un bloc débloque « Premier bloc » »),
+  intermittent dans le contexte des ~110 tests qui le précèdent (reproduit,
+  cause identifiée par instrumentation ciblée) : le bloc réellement visé
+  sous le joueur dépend du MONDE hérité de tests antérieurs sans rapport
+  (une graine tirée au hasard par SPEC-MENU-003/004, ou le monde « Autre
+  carte », graine 777, chargé par SPEC-TERRAIN-007 et jamais restauré
+  ensuite) — un sol qui peut être de la pierre, du grès… n'importe quel
+  bloc que la pelle en fer tenue par le test ne « harvest » pas (tier 0,
+  vitesse ×1 au lieu de ×8), prenant alors jusqu'à ~1,5-2,2 s de minage
+  SIMULÉ. Le test attendait déjà le vrai critère (le bloc change) mais le
+  bornait à 240 images RÉELLES, une hypothèse implicite d'au moins ~150 fps
+  pour ces blocs-là — fausse sous charge partagée (constaté : ~600 ms isolé,
+  jusqu'à ~4,2 s dans le contexte, selon la graine tirée par les tests
+  précédents). Le test force désormais un bloc CONNU et cassable
+  INSTANTANÉMENT à la pelle (terre) sous le joueur avant de miner : le
+  résultat reste déterministe et rapide quel que soit le monde hérité, sans
+  affaiblir ce qu'il vérifie.
 
 ### Sécurité
 
