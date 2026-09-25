@@ -59,6 +59,14 @@
     return METIER_DE_RESSOURCE[offre.give[0].id] || null;
   }
 
+  /* SPEC-ENV-003 : seule ressource vendue par un métier AGRICOLE (fermier,
+     METIER-001) — sert à economie.js:tickJour à repérer, sans dupliquer
+     METIER_DE_RESSOURCE, quelle offre perd de la pousse en hiver. */
+  var METIERS_AGRICOLES = { fermier: true };
+  function estRessourceAgricole(objetId) {
+    return !!METIERS_AGRICOLES[METIER_DE_RESSOURCE[objetId]];
+  }
+
   /* SPEC-METIER-004 : une remise de REMISE une fois SEUIL_STATUT ventes
      atteintes pour ce métier. `etatJoueur` : { collecte: { [metier]: n } }. */
   function remise(etatJoueur, role) {
@@ -71,5 +79,6 @@
     OFFRES_BONUS: OFFRES_BONUS,
     offresActives: offresActives, mineraiRequis: mineraiRequis,
     metierDeCollecte: metierDeCollecte, remise: remise,
+    estRessourceAgricole: estRessourceAgricole,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

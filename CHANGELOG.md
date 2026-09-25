@@ -16,6 +16,23 @@ respecter (voir PLAN.md, « Commits et versions »).
 ## [Non publié]
 ### Ajouté
 
+- Sécurité serveur (SPEC-SECU-010/011, SPEC-SERVEUR-007) : les réponses de
+  fichiers statiques (`servir()`) portent désormais `X-Content-Type-Options:
+  nosniff` et une `Content-Security-Policy` minimale (calcul pur,
+  `NP.entetesSecuriteStatiques()`, src/net-protocol.js) compatible avec
+  three.js chargé depuis cdnjs.cloudflare.com et avec le bootstrap inline du
+  jeu comme du banc de test (`tests/index.html`, `document.write` compris) ;
+  jamais de `X-Powered-By`. La poignée de main WebSocket vérifie désormais
+  l'en-tête `Origin` contre une liste blanche configurable par
+  `--origines a,b,...` (décision pure `NP.origineAutorisee`) — sans ce
+  paramètre (défaut), aucune restriction n'est appliquée, choix explicite et
+  documenté qui laisse le jeu servi par ce même serveur fonctionner comme
+  avant. Le plafond de `ETAT.mobs` (80) est désormais un invariant nommé et
+  testé (`NP.MAX_MOBS_DIFFUSES`, `NP.selectionnerMobsProches`, fonction pure)
+  au lieu d'un littéral inline, et la cadence de diffusion de l'état
+  (`etatHz`) s'adapte maintenant à la charge — nombre de clients connectés et
+  file d'envoi TCP la plus encombrée (`NP.calculerEtatHz`) — plutôt que de
+  rester fixe, recalculée à chaque tic.
 - Vague 2 (B1, SPEC-SYNC-007/010/011, docs/vague-2/B1.md § 6, fin) :
   `ui.js` route désormais l'inventaire, l'équipement et la grille de
   fabrication du joueur (établi compris — `player.js` gagne `pl.grille`,
@@ -267,6 +284,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   persistance (`pvp:` dans `etatMonde`). `tests/integration-pvp.js` étendu
   (butin, flèche entre membres de faction, `/duel` de bout en bout, message
   `PVP` de victoire/défaite).
+- SPEC-ENV-003 (`src/metiers.js`, `src/economie.js`) : l'offre du fermier
+  (blé, seul métier agricole, METIER-001) ne se contente plus de geler en
+  hiver (`tickJour`, mult de pousse nul, SAISON-006) — elle diminue à son
+  tour, faute de récolte, jusqu'à épuisement, puis se restaure normalement
+  dès le retour d'une pousse au printemps (branche déjà existante, inchangée
+  pour toute ressource non agricole). Nouveau `Metiers.estRessourceAgricole`
+  (pure, dérivée de `METIER_DE_RESSOURCE` sans le dupliquer) distingue cette
+  seule ressource des autres stocks de lieu.
+- Diplomatie joueurs ↔ PNJ (SPEC-FACTION-017) : `guildes.js:declarerRelation`
+  accepte désormais un état politique (`MC.Politique`) optionnel en dernier
+  argument ; quand `cibleId` ne désigne pas une autre faction de joueurs, la
+  relation n'est acceptée que si cet identifiant correspond à une faction PNJ
+  réellement connue de cet état (sinon `{ ok:false, motif:'cible_introuvable' }`,
+  rien n'est enregistré), et la relation posée est répercutée côté PNJ, sur
+  l'échelle guerre/rivalité/neutre/alliance de `politique.js` (alliée→alliance,
+  ennemie→guerre), avec la même clé triée que `cleRelation` afin que
+  `MC.Politique.relationEntre` la relise à l'identique. `appliquerAction`
+  (commande `/faction relation`) transmet ce même état politique, désormais
+  en 4e argument optionnel ; le câblage réel de l'état politique du monde à
+  travers `server.js`/`game.js` reste à faire (fichiers hors périmètre de
+  cette tâche).
 
 ### Modifié
 
@@ -289,6 +327,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
+- SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
+  relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
+  mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
+  Or `politique.js:tourUnJour` balayait ensuite TOUTES les clés de
+  `etat.relations` sans filtre (contrairement à `ciblePourRaid`, qui filtre
+  déjà avec `etat.factions.has`) pour leur appliquer une dérive aléatoire
+  journalière et générer des annonces via `nomDe` : une relation déclarée par
+  un joueur envers une faction PNJ dérivait donc spontanément au fil des
+  jours simulés, et les annonces pouvaient afficher l'id brut de la faction
+  de joueurs (`nomDe` retombe sur l'id quand il n'est pas dans
+  `etat.factions`) au lieu d'un nom lisible. `tourUnJour` applique désormais
+  la même garde que `ciblePourRaid` : une clé de relation dont l'une des deux
+  parts n'est pas une faction PNJ connue n'est ni dérivée ni annoncée.
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 - Vague 2 (B1, revue adversariale, gravité élevée, SPEC-SYNC-012/013/014) :
   `validerEmplacement` (contrats-vague2.js, figé) plafonne génériquement `i`
@@ -463,6 +514,29 @@ respecter (voir PLAN.md, « Commits et versions »).
   route n'existait pas encore provoquait un 405 (le serveur n'accepte que
   `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
   désormais stable dans le noyau.
+
+### Sécurité
+
+- Jetons d'administration et d'invitation à entropie cryptographique
+  (SPEC-SECU-009) : `src/admin.js` (module pur, sans dépendance Node)
+  accepte désormais une source aléatoire INJECTÉE (`generateurAleatoire`,
+  posée par `creerEtat()`) pour `nouveauJeton()` — server.js lui passe
+  `crypto.randomBytes`, jamais `Math.random`, aussi bien pour le jeton
+  d'administration tiré au démarrage sans `--admin` que pour les jetons de
+  modérateur et d'invitation. Sans générateur injecté, l'ancien repli
+  (horodatage + compteur + hasard, suffisant pour la seule unicité) reste
+  disponible pour la rétrocompatibilité.
+- `src/admin.js` (module pur) expose désormais `MC.Admin.purger()`
+  (SPEC-SERVEUR-005, toujours ⏳) : bornage de `admin.sessions`,
+  `admin.invitations` et `admin.sanctions` en taille ET en ancienneté, sans
+  jamais retirer une entrée encore active (session ouverte, invitation ni
+  révoquée ni expirée ni épuisée, bannissement ou sourdine en cours) — les
+  entrées obsolètes les plus vieilles sont retirées d'abord, puis les plus
+  anciennes au-delà du seuil de taille si besoin. La fonction est testée en
+  isolation (`tests/spec-admin.js`) mais n'est PAS ENCORE invoquée par
+  `server.js` : aucune purge n'a lieu sur un serveur qui tourne réellement
+  tant qu'elle n'est pas branchée sur la boucle périodique existante
+  (tâche de suivi explicitement à part, hors du périmètre autorisé ici).
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité

@@ -223,12 +223,17 @@
       appliquerAction(etat, f, choisirAction(f, h01(etat.seed, id, 'action', jour)), jour);
     });
     Array.from(etat.relations.keys()).sort().forEach(function (cle) {
+      var parts = cle.split('~');
+      // même garde que ciblePourRaid : une clé impliquant une faction absente
+      // de etat.factions (ex. une faction de joueurs posée par guildes.js via
+      // declarerRelation, SPEC-FACTION-017) n'est ni dérivée ni annoncée ici —
+      // etat.relations sert aussi de mémoire à ce genre de relation externe.
+      if (!etat.factions.has(parts[0]) || !etat.factions.has(parts[1])) return;
       var hd = h01(etat.seed, cle, 'derive', jour);
       if (hd >= 0.04) return;
       var avant = etat.relations.get(cle), apres = hd < 0.02 ? degrader(avant) : ameliorer(avant);
       if (apres === avant) return;
       etat.relations.set(cle, apres);
-      var parts = cle.split('~');
       annoncer(etat, nomDe(etat, parts[0]) + ' et ' + nomDe(etat, parts[1]) + ' ' + (LIBELLES_RELATION[apres] || 'changent de relation') + '.', parts);
     });
     etat.jour = jour + 1;
