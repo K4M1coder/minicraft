@@ -182,9 +182,26 @@
     s.selected = 0; s.exhaustion = 0; s.vel.x = s.vel.y = s.vel.z = 0;
     g.entities.list.length = 0;
     var col = g.world.findSpawnColumn();
+    /* Le chunk du point d'apparition doit être VRAIMENT chargé avant qu'on y
+       lise le sol : `groundAt` s'appuie sur `getBlock`, qui rend 0 (rien de
+       solide) pour un chunk absent — le sol tomberait alors au bedrock (0),
+       loin sous le vrai terrain, et tout bloc posé ensuite près du départ
+       (setBlock) échouerait en silence (chunk absent) sur les chunks pas
+       encore revenus. Ça ne pouvait pas arriver tant que la génération
+       restait synchrone ; devenue asynchrone par workers (L47), un test qui
+       vient de téléporter loin (donjon, etc.) puis de faire `reset()` peut
+       repartir d'ici AVANT que les chunks d'origine ne soient revenus.
+       `getChunk(..., true)` génère d'abord le chunk exact (sol correct),
+       puis `streamChunks(true)` — synchrone, sans worker (SPEC-PERF-006) —
+       recharge tout son voisinage avant de rendre la main, comme le font
+       déjà les tests qui téléportent eux-mêmes (SPEC-DONJON-004, EAU-008).
+       Sans nouveau chunk à générer, son coût reste négligeable (Map.has). */
+    var scx = Math.floor(col[0] / MC.Core.CHUNK_X), scz = Math.floor(col[1] / MC.Core.CHUNK_Z);
+    g.world.getChunk(scx, scz, true);
     var gy = g.world.groundAt(col[0], col[1], true);
     s.pos.x = col[0] + 0.5; s.pos.y = gy + 1.2; s.pos.z = col[1] + 0.5;
     s.yaw = 0; s.pitch = 0;
+    g.streamChunks(true);
     await frames(3);
     return s;
   }
@@ -2035,7 +2052,33 @@
     // un toit de pierre juste au-dessus du joueur
     var bx = Math.floor(s.pos.x), by = Math.floor(s.pos.y) + 4, bz = Math.floor(s.pos.z);
     for (var dx = -3; dx <= 3; dx++) for (var dz = -3; dz <= 3; dz++) g.world.setBlock(bx + dx, by, bz + dz, B.STONE);
-    await frames(40);
+    /* Chaque goutte garde son « sol » (hauteur d'abri) en cache tant qu'elle
+       ne change pas de colonne (render.js, animer_ — un cache par particule,
+       jamais invalidé par un setBlock), lui-même dérivé d'un second cache
+       (game.js, `abri()`) volontairement vidé une fois par seconde SIMULÉE
+       seulement (« un bloc posé... pris en compte sans balayer chaque
+       image », commentaire d'origine) : une goutte déjà en chute pile
+       au-dessus de la colonne qu'on vient de couvrir continue de traverser
+       le nouveau toit jusqu'à sa PROCHAINE renaissance naturelle (colonne
+       changée par la dérive du vent, ou trop basse), qui n'arrive pas
+       forcément dans les 40 premières images ni avant que le cache d'une
+       seconde n'ait tourné. 40 images est une durée fixe qui suppose ce
+       recalage déjà fait ; on attend plutôt le recalage LUI-MÊME (le vrai
+       critère), avec un garde-fou généreux (400 images) au cas où une
+       goutte s'attarderait plus longtemps. */
+    var __garde = 0;
+    while (__garde++ < 400) {
+      await frames(1);
+      var __sysAvant = g.precipitation && g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;
+      if (!__sysAvant) break;
+      var __encoreStale = false;
+      for (var __i = 0; __i < __sysAvant.actifs; __i++) {
+        if (!__sysAvant.vivant[__i]) continue;
+        if (Math.abs(__sysAvant.x[__i] - (bx + 0.5)) < 3 && Math.abs(__sysAvant.z[__i] - (bz + 0.5)) < 3 &&
+            __sysAvant.sol[__i] < by - 1) { __encoreStale = true; break; }
+      }
+      if (!__encoreStale && __garde >= 40) break;
+    }
     var biome = g.world.biomeAt(bx, bz).id;
     if (g.precipitation && g.precipitation.forme) {
       var sys = g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;
@@ -2378,8 +2421,17 @@
     A.equal(s.monture, auto, 'le joueur est au volant');
     var z0 = auto.pos.z;
     key('KeyW');
-    // 7 m/s² d'accélération : deux secondes donnent une bonne dizaine de blocs
-    await frames(120);
+    // 7 m/s² d'accélération : deux secondes de temps SIMULÉ (g.duree) donnent
+    // une bonne dizaine de blocs. On attend ce temps simulé, pas un nombre
+    // fixe d'images réelles : poser la piste ci-dessus dirtie plusieurs
+    // chunks d'un coup, et remeshDirtyNear() les reconstruit ensuite au fil
+    // des images (jusqu'à 3 par image, maillage fusionné — coûteux) ; le
+    // clamp dt (SPEC-BANC-010, 0.05 s/image, filet anti-explosion) réduit
+    // alors le temps simulé sous ce que 120 images laissaient supposer,
+    // d'autant plus qu'une image tarde. 120 images réelles n'ont donc plus
+    // rien de garanti côté horloge simulée — seul g.duree en fait foi.
+    var dureeCible = g.duree + 2, garde = 0;
+    while (g.duree < dureeCible && garde++ < 600) await frames(1);
     key('KeyW', 'keyup');
     A.ok(auto.pos.z < z0 - 5, 'la voiture a avancé (' + (z0 - auto.pos.z).toFixed(1) + ' blocs)');
     A.ok(Math.abs(s.pos.z - auto.pos.z) < 0.01, 'le conducteur a suivi');
