@@ -86,6 +86,74 @@
       A.equal(N.utf8Decoder(d.charge), 'bonjour', 'démasquée correctement');
     });
 
+    // ── SPEC-SECU-010 : en-têtes de sécurité des fichiers statiques ────────
+    it('SPEC-SECU-010 : entetesSecuriteStatiques() pose nosniff et une CSP compatible three.js/cdnjs', function () {
+      var h = N.entetesSecuriteStatiques();
+      A.equal(h['X-Content-Type-Options'], 'nosniff');
+      var csp = h['Content-Security-Policy'];
+      A.ok(csp && csp.indexOf('https://cdnjs.cloudflare.com') >= 0, 'cdnjs autorisé (three.js)');
+      A.ok(csp.indexOf("default-src 'self'") >= 0, 'défaut restreint à soi-même');
+      A.ok(csp.indexOf("object-src 'none'") >= 0, 'aucun plugin');
+      A.notOk('X-Powered-By' in h, 'jamais de X-Powered-By');
+    });
+
+    // ── SPEC-SECU-011 : décision d'autorisation d'Origin ───────────────────
+    it('SPEC-SECU-011 : sans liste configurée, aucune restriction (choix explicite par défaut)', function () {
+      A.ok(N.origineAutorisee('http://evil.example', null), 'pas de liste = pas de restriction');
+      A.ok(N.origineAutorisee(undefined, undefined), 'même sans Origin du tout');
+      A.ok(N.origineAutorisee('http://localhost:8080', []), 'liste vide = pas de restriction');
+    });
+    it('SPEC-SECU-011 : avec une liste configurée, seule une origine listée passe', function () {
+      var liste = ['http://localhost:8080', 'http://127.0.0.1:8080'];
+      A.ok(N.origineAutorisee('http://localhost:8080', liste), 'origine attendue acceptée');
+      A.notOk(N.origineAutorisee('http://ailleurs.example', liste), 'origine absente de la liste refusée');
+      A.notOk(N.origineAutorisee(undefined, liste), 'Origin absent alors qu une liste est exigée : refusé');
+    });
+
+    // ── SPEC-SERVEUR-007 : plafond de ETAT.mobs et cadence adaptative ──────
+    it('SPEC-SERVEUR-007 : MAX_MOBS_DIFFUSES est l invariant documenté (80)', function () {
+      A.equal(N.MAX_MOBS_DIFFUSES, 80);
+    });
+    it('SPEC-SERVEUR-007 : selectionnerMobsProches ne dépasse jamais le plafond, trie par distance, filtre la portée', function () {
+      var entites = [];
+      for (var i = 0; i < 250; i++) entites.push({ pos: { x: i * 4, z: 0 }, id: i });
+      var res = N.selectionnerMobsProches(entites, [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_MOBS_DIFFUSES);
+      A.ok(res.length <= N.MAX_MOBS_DIFFUSES, 'jamais plus de ' + N.MAX_MOBS_DIFFUSES + ' (obtenu ' + res.length + ')');
+      res.forEach(function (e) { A.ok(Math.abs(e.pos.x) < N.PORTEE_MOBS_DIFFUSES, 'hors de portée : ' + e.pos.x); });
+      for (var k = 1; k < res.length; k++) A.ok(res[k].pos.x >= res[k - 1].pos.x, 'trié par distance croissante');
+      // 250 entités espacées de 4, portée 96 : seules celles à |x|<96 (24 dans
+      // ce test unilatéral, x>=0) qualifient — bien en dessous du plafond ici,
+      // le plafond est vérifié séparément ci-dessous avec un lot plus dense.
+    });
+    it('SPEC-SERVEUR-007 : le plafond agit même quand plus de 80 entités sont à portée', function () {
+      var entites = [];
+      for (var i = 0; i < 200; i++) entites.push({ pos: { x: i * 0.1, z: 0 }, id: i }); // toutes à |x|<20, donc à portée
+      var res = N.selectionnerMobsProches(entites, [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_MOBS_DIFFUSES);
+      A.equal(res.length, N.MAX_MOBS_DIFFUSES, 'exactement ' + N.MAX_MOBS_DIFFUSES + ' malgré 200 entités à portée');
+    });
+    it('SPEC-SERVEUR-007 : calculerEtatHz reste à la cadence configurée pour peu de clients', function () {
+      A.equal(N.calculerEtatHz(60, { nbClients: 1 }), 60);
+      A.equal(N.calculerEtatHz(60, { nbClients: 2 }), 60);
+      A.equal(N.calculerEtatHz(60, {}), 60, 'aucune charge fournie : pas de restriction');
+    });
+    it('SPEC-SERVEUR-007 : calculerEtatHz diminue progressivement (jamais en dessous d un plancher) quand les clients augmentent', function () {
+      var precedent = N.calculerEtatHz(60, { nbClients: 1 });
+      [5, 15, 30, 45, 70, 100].forEach(function (n) {
+        var hz = N.calculerEtatHz(60, { nbClients: n });
+        A.ok(hz <= precedent, 'nbClients=' + n + ' : ' + hz + ' devrait être <= précédent ' + precedent);
+        A.ok(hz >= N.ETAT_HZ_MIN, 'jamais sous le plancher (' + hz + ' < ' + N.ETAT_HZ_MIN + ')');
+        precedent = hz;
+      });
+      A.lt(N.calculerEtatHz(60, { nbClients: 100 }), N.calculerEtatHz(60, { nbClients: 2 }),
+           'avec beaucoup de clients, la cadence est strictement inférieure à celle avec peu de clients');
+    });
+    it('SPEC-SERVEUR-007 : une file d envoi encombrée réduit encore la cadence, jamais sous le plancher', function () {
+      var normal = N.calculerEtatHz(60, { nbClients: 5, fileMax: 0 });
+      var encombre = N.calculerEtatHz(60, { nbClients: 5, fileMax: N.SEUIL_FILE_OCTETS + 1 });
+      A.lt(encombre, normal, 'la file encombrée réduit la cadence par rapport à une file vide');
+      A.ok(encombre >= N.ETAT_HZ_MIN, 'jamais sous le plancher');
+    });
+
     // ── décodeur : robustesse générale (complète SPEC-NET-002/003) ─────────
     it('SPEC-NET-002/003 : un tampon vide ou tronqué ne fait jamais planter le décodeur', function () {
       A.equal(N.decoder(null), null);
