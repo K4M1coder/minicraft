@@ -444,6 +444,29 @@ respecter (voir PLAN.md, « Commits et versions »).
   `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
   désormais stable dans le noyau.
 
+### Sécurité
+
+- Jetons d'administration et d'invitation à entropie cryptographique
+  (SPEC-SECU-009) : `src/admin.js` (module pur, sans dépendance Node)
+  accepte désormais une source aléatoire INJECTÉE (`generateurAleatoire`,
+  posée par `creerEtat()`) pour `nouveauJeton()` — server.js lui passe
+  `crypto.randomBytes`, jamais `Math.random`, aussi bien pour le jeton
+  d'administration tiré au démarrage sans `--admin` que pour les jetons de
+  modérateur et d'invitation. Sans générateur injecté, l'ancien repli
+  (horodatage + compteur + hasard, suffisant pour la seule unicité) reste
+  disponible pour la rétrocompatibilité.
+- `src/admin.js` (module pur) expose désormais `MC.Admin.purger()`
+  (SPEC-SERVEUR-005, toujours ⏳) : bornage de `admin.sessions`,
+  `admin.invitations` et `admin.sanctions` en taille ET en ancienneté, sans
+  jamais retirer une entrée encore active (session ouverte, invitation ni
+  révoquée ni expirée ni épuisée, bannissement ou sourdine en cours) — les
+  entrées obsolètes les plus vieilles sont retirées d'abord, puis les plus
+  anciennes au-delà du seuil de taille si besoin. La fonction est testée en
+  isolation (`tests/spec-admin.js`) mais n'est PAS ENCORE invoquée par
+  `server.js` : aucune purge n'a lieu sur un serveur qui tourne réellement
+  tant qu'elle n'est pas branchée sur la boucle périodique existante
+  (tâche de suivi explicitement à part, hors du périmètre autorisé ici).
+
 ## [0.4.0] - 2026-09-24
 ### Sécurité
 

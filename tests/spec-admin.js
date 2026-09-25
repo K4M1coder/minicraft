@@ -262,5 +262,120 @@
       A.equal(Adm.historiqueSessions(repris, 'Bob').length, 1, 'session reprise');
       A.equal(Adm.appliquer(repris, null), false, 'des données absentes ne cassent rien');
     });
+
+    // ── SPEC-SECU-009 : entropie cryptographique injectée ────────────────────
+    it('SPEC-SECU-009 : nouveauJeton() n\'appelle jamais Math.random quand un générateur est injecté', function () {
+      var appelsMathRandom = 0;
+      var original = Math.random;
+      Math.random = function () { appelsMathRandom++; return 0.5; };
+      try {
+        var compteur = 0;
+        // simule une source cryptographique (crypto.randomBytes en vrai,
+        // injectée par server.js) : déterministe ici, mais change à chaque appel
+        var genere = function (n) {
+          var octets = [];
+          for (var i = 0; i < n; i++) octets.push((compteur * 7 + i * 13) % 256);
+          compteur++;
+          return octets;
+        };
+        var a = Adm.nouveauJeton('t-', genere);
+        var b = Adm.nouveauJeton('t-', genere);
+        A.equal(appelsMathRandom, 0, 'Math.random n\'est jamais appelé quand un générateur est injecté');
+        A.notEqual(a, b, 'deux appels successifs au générateur injecté donnent des jetons différents');
+        A.ok(a.indexOf('t-') === 0 && b.indexOf('t-') === 0, 'préfixe respecté');
+      } finally {
+        Math.random = original;
+      }
+    });
+
+    it('SPEC-SECU-009 : le générateur est un paramètre injectable, propagé par creerEtat() aux jetons de rôle et d\'invitation', function () {
+      var appels = 0;
+      var faux = function (n) { appels++; var o = []; for (var i = 0; i < n; i++) o.push((appels * 3 + i) % 256); return o; };
+      var etat = Adm.creerEtat({ generateurAleatoire: faux });
+
+      var r = Adm.nommerRole(etat, 'Modo', Adm.ROLES.MODERATEUR, 'AdminA', 1);
+      A.ok(r.ok);
+      A.equal(appels, 1, 'nommerRole() utilise le générateur injecté dans l\'état pour produire le jeton de modérateur');
+
+      var inv = Adm.creerInvitation(etat, {}, 'AdminA', 1);
+      A.ok(inv.ok);
+      A.equal(appels, 2, 'creerInvitation() utilise lui aussi le générateur injecté dans l\'état');
+
+      // sans générateur injecté, le repli existant reste disponible (rétrocompatible)
+      var sansGenerateur = Adm.creerEtat({});
+      var r2 = Adm.nommerRole(sansGenerateur, 'Autre', Adm.ROLES.MODERATEUR, 'AdminA', 1);
+      A.ok(r2.ok, 'nommerRole() fonctionne toujours sans générateur injecté');
+    });
+
+    // ── SPEC-SERVEUR-005 : purge bornée sans perte des entrées actives ──────
+    it('SPEC-SERVEUR-005 : purger() borne les sessions en taille sans jamais retirer une session ouverte', function () {
+      var etat = Adm.creerEtat({});
+      Adm.ouvrirSession(etat, { nom: 'Ouvert', ip: '1.1.1.1' }, 0);   // reste ouverte
+      for (var i = 0; i < 5; i++) {
+        var id = Adm.ouvrirSession(etat, { nom: 'Ferme' + i, ip: '2.2.2.2' }, i);
+        Adm.fermerSession(etat, id, i + 1);
+      }
+      A.equal(etat.sessions.length, 6);
+
+      var stats = Adm.purger(etat, 1000, { sessionsMax: 2 });
+      A.ok(stats.sessions > 0, 'la purge rapporte le nombre de sessions retirées');
+      A.ok(etat.sessions.length < 6, 'la structure est réduite');
+      var ouverte = etat.sessions.filter(function (s) { return s.nom === 'Ouvert'; })[0];
+      A.ok(ouverte && ouverte.deconnecteLe === null, 'la session encore ouverte survit toujours à la purge');
+    });
+
+    it('SPEC-SERVEUR-005 : purger() retire les sessions fermées trop anciennes, jamais une session ouverte, même ancienne', function () {
+      var etat = Adm.creerEtat({});
+      Adm.ouvrirSession(etat, { nom: 'VieilleOuverte', ip: '1.1.1.1' }, 0);
+      var idFermee = Adm.ouvrirSession(etat, { nom: 'VieilleFermee', ip: '2.2.2.2' }, 0);
+      Adm.fermerSession(etat, idFermee, 1);
+
+      Adm.purger(etat, 100000, { sessionsAgeMs: 10, sessionsMax: 100 });
+      A.ok(etat.sessions.some(function (s) { return s.nom === 'VieilleOuverte'; }), 'une session ouverte n\'est jamais purgée, quel que soit son âge');
+      A.notOk(etat.sessions.some(function (s) { return s.nom === 'VieilleFermee'; }), 'une session fermée trop ancienne est purgée');
+    });
+
+    it('SPEC-SERVEUR-005 : purger() borne les invitations sans jamais retirer une invitation encore valide', function () {
+      var etat = Adm.creerEtat({});
+      var valide = Adm.creerInvitation(etat, { expireDansMs: 100000 }, 'AdminA', 0).token;
+      for (var i = 0; i < 5; i++) Adm.creerInvitation(etat, { expireDansMs: 1 }, 'AdminA', 0);   // expirent vite
+      A.equal(etat.invitations.size, 6);
+
+      var stats = Adm.purger(etat, 50000, { invitationsMax: 2, invitationsAgeMs: 0 });
+      A.ok(stats.invitations > 0, 'la purge rapporte le nombre d\'invitations retirées');
+      A.ok(etat.invitations.has(valide), 'une invitation encore valide (non expirée, non épuisée, non révoquée) n\'est jamais purgée');
+      A.ok(etat.invitations.size < 6, 'la structure est réduite');
+    });
+
+    it('SPEC-SERVEUR-005 : purger() borne aussi les invitations invalides par le nombre, même quand elles ne sont pas encore assez vieilles', function () {
+      var etat = Adm.creerEtat({});
+      var valide = Adm.creerInvitation(etat, { expireDansMs: 100000 }, 'AdminA', 0).token;
+      for (var i = 0; i < 5; i++) Adm.creerInvitation(etat, { expireDansMs: 1 }, 'AdminA', 0);
+      Adm.purger(etat, 50000, { invitationsMax: 2, invitationsAgeMs: 999999999 });   // ancienneté jamais atteinte
+      A.ok(etat.invitations.has(valide), 'la seule invitation encore valide n\'est jamais retirée par le seul seuil de taille');
+      A.ok(etat.invitations.size <= 3, 'les invitations invalides sont réduites vers le seuil de taille malgré leur jeunesse');
+    });
+
+    it('SPEC-SERVEUR-005 : purger() ne retire pas une invitation révoquée trop récente pour l\'ancienneté seuil', function () {
+      var etat = Adm.creerEtat({});
+      var r = Adm.creerInvitation(etat, {}, 'AdminA', 1000);
+      Adm.revoquerInvitation(etat, r.token, 'AdminA', 1001);
+      Adm.purger(etat, 1002, { invitationsAgeMs: 100000, invitationsMax: 100 });
+      A.ok(etat.invitations.has(r.token), 'trop récente pour le seuil d\'ancienneté : pas encore purgée');
+    });
+
+    it('SPEC-SERVEUR-005 : purger() borne les sanctions sans jamais retirer un bannissement ou une sourdine en cours', function () {
+      var etat = Adm.creerEtat({});
+      Adm.sanctionner(etat, { nom: 'Banni', type: 'bannir', dureeMs: 100000, auteur: 'AdminA' }, 0);
+      Adm.sanctionner(etat, { nom: 'Sourdine', type: 'sourdine', dureeMs: 100000, auteur: 'AdminA' }, 0);
+      for (var i = 0; i < 5; i++) Adm.sanctionner(etat, { nom: 'Vieux' + i, type: 'avertir', auteur: 'AdminA' }, 0);
+      A.equal(etat.sanctions.size, 7);
+
+      var stats = Adm.purger(etat, 50, { sanctionsMax: 2, sanctionsAgeMs: 0 });
+      A.ok(stats.sanctions > 0, 'la purge rapporte le nombre de sanctions oubliées');
+      A.equal(Adm.estBanni(etat, 'Banni', 50).ok, false, 'le bannissement en cours survit à la purge');
+      A.ok(Adm.estSourdine(etat, 'Sourdine', 50), 'la sourdine en cours survit à la purge');
+      A.ok(etat.sanctions.size < 7, 'la structure est réduite');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
