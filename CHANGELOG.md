@@ -277,6 +277,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   en 4e argument optionnel ; le câblage réel de l'état politique du monde à
   travers `server.js`/`game.js` reste à faire (fichiers hors périmètre de
   cette tâche).
+- Factions politiques et quêtes (SPEC-FACTION-016, SPEC-QUETE-001/002,
+  `src/politique.js`) : un raid ou un avant-poste (`tourUnJour`) prélève
+  désormais un coût fixe (`or`/`nourriture`) sur son auteur qu'il réussisse
+  ou non, l'avant-poste gagnant lui aussi un risque d'échec (jet déterministe
+  par graine) qui ne coûte que les ressources, sans gain de territoire ;
+  raid et quête d'élimination partagent le même effet de succès
+  (`appliquerGainElimination`). `questesDe` ne propose plus une quête de
+  livraison que si la ressource visée (`or`/`nourriture`) est réellement
+  sous le seuil bas (`SEUIL_RESSOURCE_BAS`, 20), sa réussite (`livrerQuete`)
+  relevant ce niveau du montant fourni, plafonné au manque réel ; une quête
+  d'élimination n'apparaît qu'en relation `guerre` active, ciblant le membre
+  désigné par `ciblePourRaid`, et sa réussite (`reussirQueteElimination`)
+  applique exactement le gain d'un raid gagné avec la même graine.
 
 ### Modifié
 
@@ -312,6 +325,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   `etat.factions`) au lieu d'un nom lisible. `tourUnJour` applique désormais
   la même garde que `ciblePourRaid` : une clé de relation dont l'une des deux
   parts n'est pas une faction PNJ connue n'est ni dérivée ni annoncée.
+- SPEC-QUETE-002 (`politique.js`) : `reussirQueteElimination` recevait un
+  jour et recalculait la cible via `ciblePourRaid(etat, f, jour)`, alors que
+  `ciblePourRaid` dépend du jour (candidats indexés par un hachage qui varie
+  par jour). Résolue un jour différent de celui de la proposition — le cas
+  normal une fois le suivi/l'acceptation des quêtes câblé —, la « réussite »
+  pouvait viser une AUTRE faction que celle annoncée au joueur dans la quête,
+  dès que 3 factions ou plus étaient candidates (guerre ou rivalité).
+  `reussirQueteElimination` reçoit désormais directement `cibleId`, la cible
+  réellement promise par `questesDe` à la proposition, et se contente de
+  revalider qu'elle est toujours une faction connue en guerre ou en
+  rivalité avec l'auteur, plutôt que de la recalculer au jour de résolution.
+
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 - Vague 2 (B1, revue adversariale, gravité élevée, SPEC-SYNC-012/013/014) :
   `validerEmplacement` (contrats-vague2.js, figé) plafonne génériquement `i`
