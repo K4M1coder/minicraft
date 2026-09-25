@@ -121,7 +121,10 @@
       var cw = Math.max(1, Math.round(w * echelle)), ch = Math.max(1, Math.round(h * echelle));
       var c = document.createElement('canvas');
       c.width = cw; c.height = ch;
-      c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+      // { willReadFrequently: true } dès la création : ce canvas est relu
+      // par getImageData (ecartPixelsMoyen) — l'option ne s'applique qu'au
+      // PREMIER getContext(), la reposer plus tard n'aurait aucun effet.
+      c.getContext('2d', { willReadFrequently: true }).drawImage(src, 0, 0, cw, ch);
       return c;
     } catch (e) { return null; }
   }
@@ -148,8 +151,11 @@
     try {
       var w = Math.min(cA.width, cB.width), h = Math.min(cA.height, cB.height);
       if (!w || !h) return 0;
-      var dA = cA.getContext('2d').getImageData(0, 0, w, h).data;
-      var dB = cB.getContext('2d').getImageData(0, 0, w, h).data;
+      // { willReadFrequently: true } : évite l'avertissement navigateur
+      // (Canvas2D readback lent sans cette option) — ce canvas SERT à lire
+      // ses pixels, jamais à être réaffiché.
+      var dA = cA.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
+      var dB = cB.getContext('2d', { willReadFrequently: true }).getImageData(0, 0, w, h).data;
       var somme = 0, n = 0, pas = 4 * 7;
       for (var i = 0; i < dA.length; i += pas) {
         somme += Math.abs(dA[i] - dB[i]) + Math.abs(dA[i + 1] - dB[i + 1]) + Math.abs(dA[i + 2] - dB[i + 2]);
@@ -3360,6 +3366,66 @@
       await frames(2);
       etape('vérification', 2, 2);
       A.ok(true, 'trois étapes déclarées sans lever d\'exception');
+    });
+
+  /* SPEC-BANC-077 à 081 : `T.etape('nom')` (à ne pas confondre avec `etape()`
+     ci-dessus, SPEC-BANC-009, la progression en direct) ouvre une étape et
+     ferme la précédente — un test qui en déclare DEUX doit produire TROIS
+     étapes au total dans son historique de triplets (l'implicite `test`,
+     puis les deux déclarées, la dernière fermant l'implicite). Vérifié via
+     un FAUX test imbriqué (même patron que SPEC-BANC-010 ci-dessous) : ce
+     test-ci inspecte directement `res.etapesTriplets`/`res.captures`, ce
+     qu'aucun test normal ne peut faire depuis l'intérieur de sa propre
+     fonction (le résultat n'existe qu'une fois le test terminé). */
+  e2e('SPEC-BANC-077 à 081 : T.etape() produit trois étapes (implicite + deux déclarées) avec un triplet réel à chaque bord',
+    { teste: 'l\'API T.etape() et les triplets d\'images qu\'elle capture',
+      pourquoi: 'sans vérification directe de la structure produite, une régression dans le chaînage des étapes ou la capture des triplets passerait inaperçue',
+      attendu: 'etapesTriplets = [test, a, b] ; chaque étape a un triplet de début ET de fin (sauf la dernière, fermée par la fin du test) ; chaque triplet a 3 images de numéros consécutifs' },
+    async function (g) {
+      await reset(g);
+      var enComptePrecedent = enCours;
+      var faux = {
+        id: 'demo-etapes-interne', name: 'faux test à deux étapes (interne, jamais listé dans une vraie campagne)',
+        fn: async function () {
+          await frames(2);
+          T.etape('a');
+          await frames(2);
+          T.etape('b');
+          await frames(2);
+        },
+      };
+      var res = await runUnE2E(g, faux, { delaiDefaut: 30 });
+      enCours = enComptePrecedent;
+      A.equal(res.etat, 'reussi', 'le faux test se termine normalement : ' + res.message);
+      A.equal(res.etapesTriplets.length, 3, 'trois étapes au total : ' + JSON.stringify(res.etapesTriplets.map(function (e) { return e.nom; })));
+      A.equal(res.etapesTriplets.map(function (e) { return e.nom; }).join(','), 'test,a,b', 'implicite « test » puis les deux déclarées, dans l\'ordre');
+      // les trois étapes sont FERMÉES (test par T.etape('a'), a par T.etape('b'),
+      // b par la fin du test) : chacune porte un score d'instabilité de
+      // début ET de fin (SPEC-BANC-081) — un nombre, jamais négatif.
+      res.etapesTriplets.forEach(function (e) {
+        A.ok(e.instabilite_debut && typeof e.instabilite_debut.pixels === 'number' && e.instabilite_debut.pixels >= 0,
+          'étape « ' + e.nom + ' » : instabilité de début — ' + JSON.stringify(e.instabilite_debut));
+        A.ok(e.instabilite_fin && typeof e.instabilite_fin.pixels === 'number' && e.instabilite_fin.pixels >= 0,
+          'étape « ' + e.nom + ' » : instabilité de fin — ' + JSON.stringify(e.instabilite_fin));
+        A.ok(e.metriques && typeof e.metriques.fps_moy === 'number', 'étape « ' + e.nom + ' » : métriques par étape (SPEC-BANC-087)');
+      });
+      // identité (SPEC-BANC-080) et contenu (SPEC-BANC-078/079) sur UN triplet,
+      // retrouvé dans `res.captures` — la forme réellement exposée/persistée
+      // (celle que le registre relit, tools/registre.js construireCaptures).
+      var capturesTriplet = res.captures.filter(function (c) { return c.role === 'triplet'; });
+      A.equal(capturesTriplet.length, 18, '6 étapes-bords (test, a, b, chacune début+fin) × 3 images = 18 captures triplet : ' + capturesTriplet.length);
+      var t0 = capturesTriplet.filter(function (c) { return c.etape === 'test' && c.bord === 'debut'; }).sort(function (a, b) { return a.rang - b.rang; });
+      A.equal(t0.length, 3, 'triplet « test » début : 3 images');
+      A.equal(t0.map(function (c) { return c.rang; }).join(','), '0,1,2', 'rangs 0,1,2 dans l\'ordre');
+      var numeros = t0.map(function (c) { return c.numero_image; });
+      A.ok(numeros[1] === numeros[0] + 1 && numeros[2] === numeros[1] + 1, 'numéros d\'image consécutifs : ' + numeros);
+      t0.forEach(function (c) {
+        A.ok(c.pose && c.pose.camera && typeof c.pose.camera.x === 'number', 'chaque image porte la pose de la caméra');
+        A.ok(typeof c.t_ms === 'number', 'chaque image porte son horodatage (t_ms)');
+        A.ok(typeof c.duree_image_ms === 'number', 'chaque image porte la durée depuis la précédente');
+        A.ok(c.instabilite && typeof c.instabilite.pixels === 'number' && c.instabilite.pixels >= 0, 'score d\'instabilité pixels : nombre ≥ 0');
+        A.ok(typeof c.instabilite.pose === 'number' && c.instabilite.pose >= 0, 'score d\'instabilité de pose : nombre ≥ 0');
+      });
     });
 
   /* SPEC-OPTION-008 : l'espace de rendu (rendu, HUD, menus) ne descend

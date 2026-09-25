@@ -867,7 +867,7 @@
       } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
     });
 
-    it('SPEC-BANC-085/086 : le moteur de rendu du run est enregistré, et un témoin ne se compare qu\'au même moteur', function () {
+    it('SPEC-BANC-085 / SPEC-BANC-086 : le moteur de rendu du run est enregistré, et un témoin ne se compare qu\'au même moteur', function () {
       var racineResultats = tmpDir('reg-moteur'), dossierRegistre = tmpDir('reg-moteur-reg');
       try {
         function cahierAvecMoteur(nom, commitCourt, gpu, accel, b64) {
