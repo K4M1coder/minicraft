@@ -120,6 +120,18 @@
 
       A.ok(GU.declarerRelation(e, 'Alice', f1, pnjId, 'alliee', ep).ok);
       A.equal(MC.Politique.relationEntre(ep, pnjId, f1), 'alliance', 'la mise à jour réciproque suit un nouveau changement');
+
+      // la relation réciproque posée côté PNJ (clé impliquant f1, un id de faction
+      // de joueurs) ne doit pas dériver spontanément au fil des jours simulés, ni
+      // apparaître dans les annonces sous forme d'identifiant brut : tourUnJour
+      // ne doit balayer/dériver/annoncer que les relations PNJ↔PNJ.
+      A.ok(GU.declarerRelation(e, 'Alice', f1, pnjId, 'ennemie', ep).ok);
+      var avant = MC.Politique.relationEntre(ep, pnjId, f1);
+      MC.Politique.tourDuMonde(ep, ep.jour + 250);
+      A.equal(MC.Politique.relationEntre(ep, pnjId, f1), avant,
+        'une relation déclarée par un joueur envers une faction PNJ reste stable, sans dérive de politique.js');
+      var annoncePolluee = ep.annonces.some(function (a) { return a.texte.indexOf(f1) >= 0; });
+      A.notOk(annoncePolluee, 'aucune annonce ne doit référencer l\'id brut d\'une faction de joueurs');
     });
 
     it('SPEC-FACTION-013 : persistance serveur (aller-retour) et modération admin (renommer/dissoudre)', function () {

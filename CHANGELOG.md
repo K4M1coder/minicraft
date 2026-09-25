@@ -235,6 +235,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
+- SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
+  relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
+  mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
+  Or `politique.js:tourUnJour` balayait ensuite TOUTES les clés de
+  `etat.relations` sans filtre (contrairement à `ciblePourRaid`, qui filtre
+  déjà avec `etat.factions.has`) pour leur appliquer une dérive aléatoire
+  journalière et générer des annonces via `nomDe` : une relation déclarée par
+  un joueur envers une faction PNJ dérivait donc spontanément au fil des
+  jours simulés, et les annonces pouvaient afficher l'id brut de la faction
+  de joueurs (`nomDe` retombe sur l'id quand il n'est pas dans
+  `etat.factions`) au lieu d'un nom lisible. `tourUnJour` applique désormais
+  la même garde que `ciblePourRaid` : une clé de relation dont l'une des deux
+  parts n'est pas une faction PNJ connue n'est ni dérivée ni annoncée.
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 
 - Aide de test partagée `reset()` (tests/e2e.js, ~140 tests e2e) : elle
