@@ -310,6 +310,19 @@ respecter (voir PLAN.md, « Commits et versions »).
 - `tests/harness.js` : un test Node qui retourne une `Promise` échoue
   désormais explicitement (garde anti-faux-positif) plutôt que d'être compté
   vert sans que ses assertions asynchrones aient réellement été attendues.
+- Crochets git (SPEC-BANC-010 révisée) : `tools/hooks/pre-commit.js` et
+  `tools/hooks/pre-push.js` partagent désormais un seul filet anti-blocage de
+  15 min (`--delai 900`, constante `DELAI_FILET_S` dans le nouveau
+  `tools/hooks/delai-filet.js`) au lieu de fixer chacun le sien (240 s, puis
+  600 s et 150 s) — un crochet qui finit par réussir n'est plus coupé plus tôt
+  qu'un lancement manuel du même préréglage. Nouveau test
+  `tests/spec-crochets.js` (ajouté à la liste `TESTS` de `tests/run.js`,
+  hors `tests/spec-banc.js` qui n'en avait pas encore) qui vérifie qu'aucun
+  crochet ne passe un délai différent de 900 — et affirme en plus,
+  directement, que la constante partagée `DELAI_FILET_S` vaut 900 (relecture :
+  le scan des littéraux dans le texte des crochets réussissait trivialement
+  dès lors que ceux-ci passaient une référence symbolique plutôt qu'un
+  littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
 - SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la

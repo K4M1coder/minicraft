@@ -20,7 +20,8 @@
    `--preset commit` à `--domaine <ces domaines>` — quelques secondes plutôt
    que plusieurs minutes. Dès qu'il ne peut pas conclure avec confiance
    (aucun fichier src/ touché, ou un fichier hors src/ modifié), il retombe
-   sur le préréglage `commit` complet, plus lent mais complet. `--delai 240`
+   sur le préréglage `commit` complet, plus lent mais complet. `--delai 900`
+   (le filet commun de 15 min, SPEC-BANC-010 révisée — tools/hooks/delai-filet.js)
    reste un filet de sécurité dans les deux cas : un crochet qui ne finit
    jamais serait pire qu'un crochet lent. */
 'use strict';
@@ -28,6 +29,7 @@ const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const { domainesTouches } = require('../domaines-touches.js');
+const { DELAI_FILET_S } = require('./delai-filet.js');
 
 const erreurs = [];
 
@@ -80,7 +82,7 @@ try {
   const args = ['--preset', 'commit'];
   const domaines = domainesTouches(indexes, racine);
   if (domaines) { args.push('--domaine', domaines.join(',')); }
-  args.push('--delai', '240');
+  args.push('--delai', String(DELAI_FILET_S));
   const r = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), ...args], { encoding: 'utf8', cwd: racine });
   if (r.status !== 0) erreurs.push('préréglage `commit` en échec (node tests/run.js ' + args.join(' ') + ') :\n' + (r.stdout || '').split('\n').slice(-25).join('\n'));
 } catch (e) { erreurs.push('préréglage `commit` : ' + e.message); }
