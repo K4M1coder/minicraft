@@ -366,6 +366,42 @@ respecter (voir PLAN.md, « Commits et versions »).
   (anciennes sauvegardes : plein par défaut). Partie pure seulement — jauge
   affichée au HUD et ravitaillement restent à faire côté `game.js`/`ui.js`.
 
+- Lot BANC, étapes 1/2 (docs/banc/historique-global.md §2/§3.1, SPEC-BANC-033
+  à 040) : tableau « Historique global » du banc de test.
+  - `tools/historique.js` (nouveau, pur, testable sous Node sans serveur
+    HTTP) : aplatit `tools/registre.js` `runsUnifies()` en lignes test×run
+    (`construireLignes`), tri multi-clés (`trierLignes`), filtre par colonne
+    selon son type — texte/énumération/liste/nombre/horodatage/commit
+    (`filtrerLignes`), filtres rapides (`filtreRapide`), pagination serveur
+    (`paginer`), effectifs par énumération (`effectifsEnum`/
+    `effectifsToutesEnum`), agrégation pour les futurs graphiques
+    (`serieAgregee`) et suite ordonnée des images d'un test
+    (`imagesDeTest`). `creerIndex()` : index en mémoire reconstruit
+    seulement quand `tests/registre/entrees/` ou `tests/resultats/` change
+    (signature de mtime), jamais à chaque requête.
+  - `server.js` : nouvelle section « historique global » — routes `GET
+    /tests/historique/lignes` (tri, ordre, filtre JSON, page, taille ;
+    renvoie aussi `total` et les effectifs par énumération), `GET
+    /tests/historique/series` (agrégats bruts, l'affichage en graphiques
+    est un lot ultérieur) et `GET /tests/historique/images`, toutes trois
+    réservées à la machine locale ; `GET /tests/registre/images/<sha1>.<ext>`
+    sert les images du registre (adressées par contenu) avec un cache long.
+  - `tests/index.html`/`tests/historique.js`/`tests/historique.css`
+    (nouveaux) : zone « Historique global » ouverte par un bouton dans
+    l'en-tête du banc — tableau avec colonnes choisies dynamiquement
+    (mémorisées dans `localStorage`, try/catch), tri par en-tête (clic =
+    croissant/décroissant/aucun, Maj+clic = tri secondaire), filtre par
+    colonne selon son type, filtres rapides (inscrits seulement/tous les
+    runs/échecs/lents), pagination et export CSV/HTML de la vue filtrée
+    courante — sans bibliothèque externe.
+  - Tests : `tests/spec-historique.js` (18 tests Node purs, ajouté à la
+    liste `TESTS` de `tests/run.js`) et un test e2e (`tests/e2e.js`) qui
+    ouvre la zone dans le vrai banc, trie une colonne, applique un filtre
+    rapide et vérifie l'export CSV. Reste hors de ce lot (prochains lots,
+    docs/banc/historique-global.md §5) : graphiques timeline (§3.2), panneau
+    « test » avec diaporamas par image (§3.3, SPEC-BANC-039/046 et
+    suivantes), intégration du clic depuis l'arbre de sélection.
+
 ### Modifié
 
 - Banc de test navigateur (`tests/banc-ui.js`, `tests/index.html`) : retrait

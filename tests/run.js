@@ -98,7 +98,9 @@ const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', '
              // vague 2 : B4 — PvP, enjeux et sanctions (SPEC-PVP-001 à 006)
              'spec-pvp',
              // SPEC-BANC-010 (filet anti-blocage unifié) : crochets git, hors spec-banc.js
-             'spec-crochets'];
+             'spec-crochets',
+             // historique global (SPEC-BANC-033 à 040) : logique pure de tools/historique.js
+             'spec-historique'];
 
 /* `require`, `process`, `__dirname` : exposés UNIQUEMENT pour que
    tests/spec-banc.js (Node-only, voir son en-tête) puisse vérifier

@@ -740,11 +740,103 @@ function traiterVersion(req, res) {
   return true;
 }
 
+// ── historique global (docs/banc/historique-global.md, SPEC-BANC-033 à 040) ─
+/* Toute la logique de tri/filtre/pagination/agrégation vit dans
+   tools/historique.js (pur, testable sous Node sans passer par ici — voir
+   tests/spec-historique.js) : ce module se contente de lire la requête, de
+   passer les paramètres et de répondre en JSON. L'index en mémoire
+   (`tools/historique.js` creerIndex()) est créé UNE SEULE fois pour la vie
+   du processus serveur et réutilisé d'une requête à l'autre — c'est lui,
+   pas cette fonction, qui décide de reconstruire ou non selon la mtime du
+   dossier source (§2 : le registre peut grossir, jamais de lecture complète
+   du disque à chaque appel). */
+const HIST = require('./tools/historique.js');
+let indiceHistorique = null;
+function obtenirIndiceHistorique() {
+  if (!indiceHistorique) indiceHistorique = HIST.creerIndex();
+  return indiceHistorique;
+}
+function parametresRequete(req) {
+  const q = {};
+  new URL(req.url, 'http://localhost').searchParams.forEach((v, k) => { q[k] = v; });
+  return q;
+}
+function traiterHistorique(req, res) {
+  const url = req.url.split('?')[0];
+  if (url !== '/tests/historique/lignes' && url !== '/tests/historique/series' && url !== '/tests/historique/images') return false;
+  const RT = require('./tools/resultats-tests.js');
+  if (!RT.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return true; }
+  if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const q = parametresRequete(req);
+  let filtre;
+  try { filtre = q.filtre ? JSON.parse(q.filtre) : {}; }
+  catch (e) { repondreJSON(res, 400, { ok: false, motif: 'filtre JSON invalide' }); return true; }
+  if (q.rapide) filtre = Object.assign({}, HIST.filtreRapide(q.rapide), filtre);
+
+  const toutes = obtenirIndiceHistorique().lignes();
+
+  if (url === '/tests/historique/lignes') {
+    const filtrees = HIST.filtrerLignes(toutes, filtre);
+    // tri multi-clés (SPEC-BANC-035) : "tri=etat,duree_ms&ordre=asc,desc"
+    // (les deux listes s'alignent par position) — un tri simple est le cas
+    // à une seule clé, sans rien changer côté client.
+    const champs = (q.tri || '').split(',').filter(Boolean);
+    const ordres = (q.ordre || '').split(',');
+    const tris = champs.map((champ, i) => ({ champ, ordre: ordres[i] === 'desc' ? 'desc' : 'asc' }));
+    const triees = HIST.trierLignes(filtrees, tris);
+    const page = HIST.paginer(triees, q.page, q.taille);
+    repondreJSON(res, 200, {
+      lignes: page.lignes, total: page.total, page: page.page, taille: page.taille,
+      effectifs: HIST.effectifsToutesEnum(filtrees),
+    });
+    return true;
+  }
+  if (url === '/tests/historique/series') {
+    const filtrees = HIST.filtrerLignes(toutes, filtre);
+    const props = (q.props || '').split(',').filter(Boolean);
+    repondreJSON(res, 200, { serie: HIST.serieAgregee(filtrees, { x: q.x, props: props }) });
+    return true;
+  }
+  // /tests/historique/images
+  if (!q.test) { repondreJSON(res, 400, { ok: false, motif: 'paramètre test requis' }); return true; }
+  repondreJSON(res, 200, { images: HIST.imagesDeTest(toutes, q.test, { filtre: filtre, tri: q.tri }) });
+  return true;
+}
+
+// GET /tests/registre/images/<sha1>.<ext> (SPEC-BANC-040) : images du
+// registre, adressées par contenu (tools/registre.js) — IMMUABLES (un sha1
+// donné désigne toujours le même contenu), d'où le cache long. Le chemin est
+// vérifié par une expression régulière STRICTE (sha1 + extension connue)
+// avant tout accès disque — même politique que /tests/cahiers, aucun chemin
+// construit directement depuis l'URL.
+const RE_IMAGE_REGISTRE = /^\/tests\/registre\/images\/([0-9a-f]{40})\.(jpg|jpeg|png|webp)$/;
+const MIME_IMAGE_REGISTRE = { jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp' };
+function traiterImageRegistre(req, res) {
+  const url = req.url.split('?')[0];
+  const mm = RE_IMAGE_REGISTRE.exec(url);
+  if (!mm) return false;
+  if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const REG = require('./tools/registre.js');
+  const chemin = path.join(REG.DOSSIER_IMAGES, mm[1] + '.' + mm[2]);
+  fs.stat(chemin, (err, st) => {
+    if (err || !st.isFile()) { res.writeHead(404); res.end('404 introuvable'); return; }
+    res.writeHead(200, Object.assign({
+      'Content-Type': MIME_IMAGE_REGISTRE[mm[2]] || 'application/octet-stream',
+      'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=31536000, immutable',
+    }, NP.entetesSecuriteStatiques()));
+    fs.createReadStream(chemin).pipe(res);
+  });
+  return true;
+}
+
 function servir(req, res) {
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
   if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
   if (req.url.indexOf('/tests/cahiers') === 0 && traiterCahiers(req, res)) return;
+  if (req.url.indexOf('/tests/historique/') === 0 && traiterHistorique(req, res)) return;
+  if (req.url.indexOf('/tests/registre/images/') === 0 && traiterImageRegistre(req, res)) return;
   const chemin = cheminSur(req.url);
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
   fs.stat(chemin, (err, st) => {
