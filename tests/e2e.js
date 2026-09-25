@@ -2533,6 +2533,23 @@
     await frames(2);
     var t = g.player.aim();
     A.ok(t, 'un bloc est visé sous le joueur');
+    /* Le bloc réellement visé dépend du MONDE hérité des tests précédents —
+       une graine différente à chaque run (SPEC-MENU-003 : « graine vide
+       tirée au hasard », SPEC-MENU-004), ou carrément un autre monde chargé
+       (SPEC-TERRAIN-007 charge « Autre carte », graine 777, et ne restaure
+       jamais la graine d'origine ensuite) — donc un sol qui peut être de la
+       pierre, du grès… n'importe quel bloc que la pelle en fer ne « harvest »
+       pas (tier 0, vitesse ×1 au lieu de ×8) et qui prend alors jusqu'à
+       ~1,5-2,2 s de minage SIMULÉ. Un budget FIXE de 240 images RÉELLES
+       suppose implicitement une cadence d'au moins ~150 fps pour ces
+       blocs-là — fausse hypothèse sous charge partagée (constaté : ce test
+       seul prend ~600 ms isolé mais jusqu'à ~4,2 s dans le contexte des
+       ~110 tests qui le précèdent, selon la graine tirée). On force donc ici
+       un bloc CONNU et cassable INSTANTANÉMENT à la pelle (terre) : le test
+       reste déterministe et rapide quel que soit le monde hérité, sans
+       affaiblir ce qu'il vérifie (un vrai événement de casse, dans la vraie
+       boucle de jeu, déclenche bien le succès). */
+    g.world.setBlock(t.x, t.y, t.z, B.DIRT);
     var avant = g.world.getBlock(t.x, t.y, t.z);
     mouseDown(g, 0);
     for (var i = 0; i < 240 && g.world.getBlock(t.x, t.y, t.z) === avant; i++) await frames(1);
