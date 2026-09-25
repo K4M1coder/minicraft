@@ -81,6 +81,14 @@
         hp: p.hp, hunger: p.hunger, air: +p.air.toFixed(1),
         selected: p.selected, flying: !!p.flying,
         inv: p.inv.serialize(),
+        // équipement (B1, docs/vague-2/B1.md § 8) : optionnel — absent d'une
+        // sauvegarde plus ancienne, rechargé alors comme un équipement vide
+        // (comportement d'avant cette section). Aucune montée de VERSION.
+        equip: (MC.ContratsV2 && p.equip) ? (function () {
+          var out = {};
+          MC.ContratsV2.EQUIP_SLOTS.forEach(function (s) { out[s] = MC.ContratsV2.pileVersCase(p.equip[s]); });
+          return out;
+        })() : undefined,
       },
       // le 3e champ (taille) n'existait pas avant l'armoire/étagère/bibliothèque
       // (SPEC-INTERIEUR-002, tailles différentes d'un coffre) : absent, une
@@ -233,6 +241,15 @@
     p.flying = !!d.flying;
     p.dead = p.hp <= 0;
     if (d.inv) p.inv.load(d.inv);
+    // équipement (B1.md § 8) : absent (vieille sauvegarde) → équipement vide,
+    // comportement d'avant cette section — jamais de conversion d'id ici,
+    // les migrations v1/v2 ci-dessus ne portent que sur `inv`/`chests`/`furnaces`.
+    if (MC.ContratsV2 && p.equip) {
+      var equipCharge = MC.ContratsV2.validerEquip(d.equip || {}) || {};
+      MC.ContratsV2.EQUIP_SLOTS.forEach(function (s) {
+        p.equip[s] = MC.ContratsV2.caseVersPile(equipCharge[s]);
+      });
+    }
 
     state.time = data.time || 0;
 

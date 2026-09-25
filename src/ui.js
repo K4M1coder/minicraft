@@ -1367,10 +1367,14 @@
       return s;
     }
 
-    /* Modèle d'interaction « pile en main » : clic gauche prend/pose tout,
-       clic droit prend la moitié / pose une unité. Plus fiable qu'un
-       glisser-déposer, qui casse dès que la souris sort d'une case. */
-    function clickSlot(get, set, button) {
+    /* Modèle d'interaction « pile en main », legacy — clic gauche prend/pose
+       tout, clic droit prend la moitié / pose une unité, en mutant DIRECTEMENT
+       les cases reçues (get/set). Réservé aux conteneurs pas encore
+       networkés (coffre, fourneau, distributeur — B1, étape 8) : tant qu'ils
+       n'existent pas comme conteneurs serveur, il n'y a rien d'autre à faire
+       que muter l'objet local. Pour l'inventaire, l'équipement et la grille
+       du joueur, voir `clickSlotRef` ci-dessous (B1.md § 6). */
+    function clickSlotLegacy(get, set, button) {
       var cur = get();
       if (button === 'left') {
         if (!heldStack) { if (cur) { heldStack = cur; set(null); } return; }
@@ -1397,20 +1401,98 @@
       }
     }
 
-    /* Équipement (SPEC-OBJET-001/003) : même modèle « pile en main » que
-       clickSlot, mais un emplacement refuse tout objet dont l'`equipSlot`
-       ne correspond pas — casque, plastron, jambières, bottes ou bijou. */
     var EQUIP_SLOTS = [
       { cle: 'casque', label: 'Casque' }, { cle: 'plastron', label: 'Plastron' },
       { cle: 'jambieres', label: 'Jambières' }, { cle: 'bottes', label: 'Bottes' },
       { cle: 'bijou', label: 'Bijou' },
     ];
-    function equipClick(equip, cle) {
-      var cur = equip[cle];
-      if (!heldStack) { if (cur) { heldStack = cur; equip[cle] = null; } return; }
-      var d = C.def(heldStack.id);
-      if (!d || d.equipSlot !== cle) return;   // objet incompatible : on ne pose rien
-      equip[cle] = heldStack; heldStack = cur;
+
+    /* Modèle « pile en main » référencé (B1, docs/vague-2/B1.md § 6) : pour
+       l'inventaire, l'équipement et la grille du joueur — les seules zones
+       qui passent par MC.Conteneurs (server-authoritative en ligne). Plus
+       aucun objet n'est réellement en main : `heldStack` ne porte qu'une
+       RÉFÉRENCE à l'emplacement d'origine et le nombre visuellement
+       soustrait ; toute case affichée est calculée par `pileEmplacement`.
+       Poser/fusionner/échanger = un `transfert` (ou un `equip` dès qu'un
+       emplacement d'équipement participe) envoyé à `hooks.onOperer`, qui
+       l'applique tout de suite (hors ligne comme en ligne, où il part aussi
+       en réseau avec un `seq` de prédiction — voir game.js `operer`). */
+    function memeOrigine(a, b) {
+      if (!a || !b || a.z !== b.z) return false;
+      return a.z === 'equip' ? a.slot === b.slot : a.i === b.i;
+    }
+    function lireReel(empl) {
+      if (!container || !empl) return null;
+      if (empl.z === 'inv') return container.inv.slots[empl.i] || null;
+      if (empl.z === 'grille') return (container.grid && container.grid[empl.i]) || null;
+      if (empl.z === 'equip') return (container.equip && container.equip[empl.slot]) || null;
+      return null;
+    }
+    // ce qu'affiche une case : la vraie pile, moins ce que la main y a pris
+    // visuellement (rien n'a réellement bougé tant qu'aucune opération n'a
+    // été acceptée).
+    function pileEmplacement(empl) {
+      var reel = lireReel(empl);
+      if (!heldStack || !memeOrigine(heldStack.origine, empl)) return reel;
+      if (!reel) return null;
+      var n = reel.n - heldStack.n;
+      if (n <= 0) return null;
+      var out = { id: reel.id, n: n };
+      if (reel.dmg) out.dmg = reel.dmg;
+      if (reel.data !== undefined) out.data = reel.data;
+      return out;
+    }
+    function clickSlotRef(empl, button) {
+      var CV = MC.ContratsV2;
+      if (!heldStack) {
+        var reel = lireReel(empl);
+        if (!reel) return;
+        var n = button === 'left' ? reel.n : Math.ceil(reel.n / 2);
+        heldStack = { origine: empl, n: n, id: reel.id, dmg: reel.dmg, data: reel.data };
+        return;
+      }
+      if (memeOrigine(heldStack.origine, empl)) {
+        // reclic sur l'origine : rien n'a bougé, on annule (ou on rend une
+        // unité au clic droit — symétrique de la demi-pile prise)
+        if (button === 'left') { heldStack = null; return; }
+        heldStack.n--;
+        if (heldStack.n <= 0) heldStack = null;
+        return;
+      }
+      // un emplacement d'équipement des deux côtés = `equip` (toujours total,
+      // jamais partiel — une pièce d'armure est toujours seule) ; sinon
+      // `transfert`, sur tout ou partie (clic droit : une unité).
+      var origine = heldStack.origine;
+      var r;
+      if (origine.z === 'equip' || empl.z === 'equip') {
+        var eqEmpl = origine.z === 'equip' ? origine : (empl.z === 'equip' ? empl : null);
+        var invEmpl = origine.z === 'inv' ? origine : (empl.z === 'inv' ? empl : null);
+        if (!eqEmpl || !invEmpl) return;   // ex. grille <-> équipement : non pris en charge
+        var opE = { k: 'equip', slot: eqEmpl.slot, i: invEmpl.i };
+        r = hooks.onOperer ? hooks.onOperer(opE, { t: CV.MSG.EQUIP, slot: eqEmpl.slot, i: invEmpl.i }) : { ok: false };
+        if (!r.ok) return;
+        // parti de l'équipement : les deux objets ont trouvé leur place,
+        // rien ne reste en main. Parti de l'inventaire : ce qui occupe
+        // maintenant l'origine (l'ancien équipement, s'il y en avait un)
+        // continue d'y être visuellement tenu (même règle que l'échange).
+        heldStack = origine.z === 'inv' ? reprendreOrigine(origine) : null;
+        recomputeResult();
+        return;
+      }
+      var nDeplace = button === 'left' ? heldStack.n : 1;
+      var opT = { k: 'transfert', de: origine, vers: empl, n: nDeplace };
+      r = hooks.onOperer ? hooks.onOperer(opT, { t: CV.MSG.CONTENEUR_TRANSFERT, de: origine, vers: empl, n: nDeplace }) : { ok: false };
+      if (!r.ok) return;   // refusé (plein, incompatible…) : rien n'a bougé, la main reste telle quelle
+      if (button === 'left') heldStack = reprendreOrigine(origine);
+      else { heldStack.n--; if (heldStack.n <= 0) heldStack = null; }
+      recomputeResult();
+    }
+    // après une opération réussie : ce qui occupe l'origine maintenant (cas
+    // d'un échange complet) devient la nouvelle pile tenue, même origine —
+    // sinon la main est vide (déplacement ou fusion complète).
+    function reprendreOrigine(origine) {
+      var reste = lireReel(origine);
+      return reste ? { origine: origine, n: reste.n, id: reste.id, dmg: reste.dmg, data: reste.data } : null;
     }
 
     /* La grille de fabrication fait 3x3 partout, inventaire compris : limiter
@@ -1426,42 +1508,41 @@
       container.result = Inv.matchRecipe(ids, n, n);
     }
 
-    function takeResult(inv) {
+    /* Clic sur le résultat = `craft {fois}` (B1.md § 6) : va DIRECTEMENT dans
+       l'inventaire, jamais dans la main, hors ligne comme en ligne — clic
+       droit pour fabriquer autant que possible d'un coup. */
+    function takeResult(fois) {
       if (!container || !container.result) return;
-      var r = container.result;
-      // on ne peut prendre que si la main est libre ou compatible
-      if (heldStack && (heldStack.id !== r.id || heldStack.n + r.n > C.maxStack(r.id))) return;
-      for (var i = 0; i < container.grid.length; i++) {
-        var s = container.grid[i];
-        if (!s) continue;
-        s.n--;
-        if (s.n <= 0) container.grid[i] = null;
-      }
-      if (heldStack) heldStack.n += r.n;
-      else heldStack = { id: r.id, n: r.n };
+      var CV = MC.ContratsV2;
+      var r = hooks.onOperer ? hooks.onOperer({ k: 'craft', fois: fois || 1 },
+        { t: CV.MSG.CRAFT, fois: fois || 1 }) : null;
+      if (!r || !r.ok || !r.effets || !r.effets.fois) return;
       if (hooks.onSound) hooks.onSound('craft');
-      if (hooks.onFabrique) hooks.onFabrique(r.id);
+      if (hooks.onFabrique) hooks.onFabrique(container.result.id);
       recomputeResult();
     }
 
-    /* Repose le contenu de la grille dans l'inventaire avant d'y placer une
-       recette : sans ça, choisir une recette écraserait ce qui s'y trouvait. */
-    function viderGrille(inv) {
-      for (var i = 0; i < container.grid.length; i++) {
-        var s = container.grid[i];
-        if (!s) continue;
-        var reste = inv.add(s.id, s.n);
-        container.grid[i] = reste ? { id: s.id, n: reste } : null;
-        if (reste) return false;            // plus de place : on n'écrase rien
-      }
-      return true;
-    }
-
+    /* Pose une recette du livre dans la grille (B1.md § 6) : une suite de
+       `transfert` inv → grille, jamais une mutation directe des tableaux —
+       la grille est une zone comme une autre depuis B1. On la vide d'abord
+       (une opération) pour ne rien écraser de ce qui s'y trouvait. */
     function poserRecette(entree, inv) {
-      if (!viderGrille(inv)) { toast('Inventaire plein : videz la grille', 'warn'); return; }
-      var g = Livre.remplirGrille(entree.recette, inv, craftSize());
-      if (!g) { toast('Il manque des ingrédients', 'warn'); return; }
-      container.grid = g;
+      if (!Livre.faisable(entree.recette, inv)) { toast('Il manque des ingrédients', 'warn'); return; }
+      var CV = MC.ContratsV2;
+      if (hooks.onOperer) hooks.onOperer({ k: 'rendreGrille' }, { t: CV.MSG.CONTENEUR_FERMER, cle: 'grille' });
+      var voulu = Livre.disposition(entree.recette, craftSize());
+      for (var i = 0; i < voulu.length; i++) {
+        var want = voulu[i];
+        if (!want) continue;
+        var srcIdx = -1;
+        for (var k = 0; k < inv.slots.length; k++) {
+          if (inv.slots[k] && inv.slots[k].id === want.id) { srcIdx = k; break; }
+        }
+        if (srcIdx < 0 || !hooks.onOperer) continue;   // faisable() vient de le garantir : défense en profondeur
+        hooks.onOperer(
+          { k: 'transfert', de: { z: 'inv', i: srcIdx }, vers: { z: 'grille', i: i }, n: 1 },
+          { t: CV.MSG.CONTENEUR_TRANSFERT, de: { z: 'inv', i: srcIdx }, vers: { z: 'grille', i: i }, n: 1 });
+      }
       recomputeResult();
       if (hooks.onSound) hooks.onSound('clic');
       renderContainer();
@@ -1665,9 +1746,9 @@
         for (var q = 0; q < ci.size; q++) {
           (function (si) {
             cg.appendChild(slotEl('', ci.slots[si],
-              function () { clickSlot(function () { return ci.slots[si]; },
+              function () { clickSlotLegacy(function () { return ci.slots[si]; },
                                       function (v) { ci.setAt(si, v); }, 'left'); },
-              function () { clickSlot(function () { return ci.slots[si]; },
+              function () { clickSlotLegacy(function () { return ci.slots[si]; },
                                       function (v) { ci.setAt(si, v); }, 'right'); }));
           })(q);
         }
@@ -1681,12 +1762,12 @@
         var colIn = el('div', 'fcol');
         colIn.appendChild(el('div', 'lbl', 'À cuire'));
         colIn.appendChild(slotEl('', f.input,
-          function () { clickSlot(function () { return f.input; }, function (v) { f.input = v; }, 'left'); },
-          function () { clickSlot(function () { return f.input; }, function (v) { f.input = v; }, 'right'); }));
+          function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'left'); },
+          function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'right'); }));
         colIn.appendChild(el('div', 'lbl', 'Combustible'));
         colIn.appendChild(slotEl('', f.fuel,
-          function () { clickSlot(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'left'); },
-          function () { clickSlot(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'right'); }));
+          function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'left'); },
+          function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'right'); }));
         cols.appendChild(colIn);
 
         var mid = el('div', 'fcol prog');
@@ -1719,23 +1800,18 @@
         grid.style.gridTemplateColumns = 'repeat(' + n + ', 1fr)';
         for (var i = 0; i < n * n; i++) {
           (function (gi) {
-            grid.appendChild(slotEl('', container.grid[gi],
-              function () {
-                clickSlot(function () { return container.grid[gi]; },
-                          function (v) { container.grid[gi] = v; }, 'left');
-                recomputeResult();
-              },
-              function () {
-                clickSlot(function () { return container.grid[gi]; },
-                          function (v) { container.grid[gi] = v; }, 'right');
-                recomputeResult();
-              }));
+            var empl = { z: 'grille', i: gi };
+            grid.appendChild(slotEl('', pileEmplacement(empl),
+              function () { clickSlotRef(empl, 'left'); },
+              function () { clickSlotRef(empl, 'right'); }));
           })(i);
         }
         wrap.appendChild(grid);
         wrap.appendChild(el('div', 'arrow', '→'));
         var res = container.result ? { id: container.result.id, n: container.result.n } : null;
-        wrap.appendChild(slotEl('result', res, function () { takeResult(inv); }));
+        wrap.appendChild(slotEl('result', res,
+          function () { takeResult(1); },
+          function () { takeResult(MC.ContratsV2.BORNES.FOIS_CRAFT_MAX); }));
         top.appendChild(wrap);
         if (container.kind !== 'craft')
           top.appendChild(el('p', 'hint',
@@ -1743,26 +1819,44 @@
       }
       box.appendChild(top);
 
-      // ── équipement (SPEC-OBJET-001/003) : casque, plastron, jambières, bottes, bijou
+      // ── équipement (SPEC-OBJET-001/003) : casque, plastron, jambières,
+      // bottes, bijou — seul l'écran 'inv' en a un (container.equip null
+      // sinon), toujours via le modèle référencé (B1.md § 6).
       if (container.equip) {
         var eqRow = el('div', 'inv-grid inv-equip');
         EQUIP_SLOTS.forEach(function (s) {
-          var slot = slotEl('', container.equip[s.cle],
-            function () { equipClick(container.equip, s.cle); },
-            function () { equipClick(container.equip, s.cle); });
+          var empl = { z: 'equip', slot: s.cle };
+          var slot = slotEl('', pileEmplacement(empl),
+            function () { clickSlotRef(empl, 'left'); },
+            function () { clickSlotRef(empl, 'right'); });
           slot.title = s.label + (container.equip[s.cle] ? '' : ' (vide)');
           eqRow.appendChild(slot);
         });
         box.appendChild(eqRow);
       }
 
-      // ── inventaire principal + hotbar
+      /* ── inventaire principal + hotbar : deux modèles selon l'écran.
+         'inv'/'craft' n'ouvrent qu'une zone du joueur (inv/équipement/grille,
+         toutes trois server-authoritative en ligne) : modèle référencé,
+         `game.operer`. Un conteneur posé (coffre, fourneau, distributeur,
+         échange) n'est pas encore networké (B1, étape 8) : modèle legacy,
+         mutation directe — mélanger les deux romprait l'un des deux
+         (référence stockée dans une case réelle, ou case réelle jamais
+         reversée dans l'inventaire). */
+      var refModel = (container.kind === 'inv' || container.kind === 'craft');
       var main = el('div', 'inv-grid');
       for (var k = Inv.HOTBAR_SIZE; k < inv.size; k++) {
         (function (si) {
-          main.appendChild(slotEl('', inv.slots[si],
-            function () { clickSlot(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'left'); },
-            function () { clickSlot(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'right'); }));
+          if (refModel) {
+            var empl = { z: 'inv', i: si };
+            main.appendChild(slotEl('', pileEmplacement(empl),
+              function () { clickSlotRef(empl, 'left'); },
+              function () { clickSlotRef(empl, 'right'); }));
+          } else {
+            main.appendChild(slotEl('', inv.slots[si],
+              function () { clickSlotLegacy(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'left'); },
+              function () { clickSlotLegacy(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'right'); }));
+          }
         })(k);
       }
       box.appendChild(main);
@@ -1770,9 +1864,16 @@
       var hb = el('div', 'inv-grid hb-row');
       for (var j = 0; j < Inv.HOTBAR_SIZE; j++) {
         (function (si) {
-          hb.appendChild(slotEl('', inv.slots[si],
-            function () { clickSlot(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'left'); },
-            function () { clickSlot(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'right'); }));
+          if (refModel) {
+            var empl2 = { z: 'inv', i: si };
+            hb.appendChild(slotEl('', pileEmplacement(empl2),
+              function () { clickSlotRef(empl2, 'left'); },
+              function () { clickSlotRef(empl2, 'right'); }));
+          } else {
+            hb.appendChild(slotEl('', inv.slots[si],
+              function () { clickSlotLegacy(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'left'); },
+              function () { clickSlotLegacy(function () { return inv.slots[si]; }, function (v) { inv.setAt(si, v); }, 'right'); }));
+          }
         })(j);
       }
       box.appendChild(hb);
@@ -1794,11 +1895,17 @@
       heldGhost.style.top = e.clientY + 'px';
     });
 
-    function openContainer(kind, inv, extra, pos) {
+    /* `grille` (B1.md § 6) : la grille de fabrication du joueur (toujours
+       présente, `player.state.grille`, même hors ligne) — seuls 'inv' et
+       'craft' l'utilisent ; un appelant qui l'omet encore (test, code non
+       migré) retombe sur un tableau local, cohérent pour l'affichage mais
+       jamais raccordé à `MC.Conteneurs` (aucun craft ni transfert n'y
+       fonctionnera vraiment). */
+    function openContainer(kind, inv, extra, pos, grille) {
       var n = 9;
       var sansGrille = kind === 'trade' || kind === 'furnace' || kind === 'chest' || kind === 'distributeur';
       container = { kind: kind, inv: inv,
-                    grid: sansGrille ? null : new Array(n).fill(null),
+                    grid: sansGrille ? null : (grille ? grille.slots : new Array(n).fill(null)),
                     result: null,
                     furnace: kind === 'furnace' ? extra : null,
                     chest: kind === 'chest' ? extra : null,
@@ -1808,22 +1915,32 @@
                     equip: kind === 'inv' ? extra : null,
                     livre: false, livreFiltre: '',
                     pos: pos };
+      recomputeResult();
       renderContainer();
     }
 
-    /* À la fermeture, ce qui reste dans la grille de craft et dans la main
-       doit retourner à l'inventaire — sinon les objets disparaissent. */
+    /* À la fermeture (B1.md § 6) :
+       - 'inv'/'craft' (modèle référencé) : rien n'a jamais réellement
+         quitté l'inventaire ou l'équipement — seule la grille, une vraie
+         zone, doit être rendue via une opération (`rendreGrille`, offline
+         tout de suite, en ligne par CONTENEUR_FERMER puis INV_MAJ) ;
+       - un conteneur legacy (coffre, fourneau, distributeur, échange) :
+         `heldStack` porte un objet réellement détaché de sa case — il faut
+         le rendre à l'inventaire nous-mêmes, comme avant B1. */
     function closeContainer() {
       var rendus = [];
       if (container) {
-        if (container.grid) {
-          container.grid.forEach(function (s) {
-            if (s) { var reste = container.inv.add(s.id, s.n); if (reste) rendus.push({ id: s.id, n: reste }); }
-          });
-        }
-        if (heldStack) {
-          var r = container.inv.add(heldStack.id, heldStack.n);
-          if (r) rendus.push({ id: heldStack.id, n: r });
+        var refModel = (container.kind === 'inv' || container.kind === 'craft');
+        if (refModel) {
+          if (container.grid) {
+            var r = hooks.onOperer ? hooks.onOperer({ k: 'rendreGrille' },
+              { t: MC.ContratsV2.MSG.CONTENEUR_FERMER, cle: 'grille' }) : null;
+            if (r && r.ok && r.effets && r.effets.reste) rendus = r.effets.reste;
+          }
+          heldStack = null;
+        } else if (heldStack) {
+          var rr = container.inv.add(heldStack.id, heldStack.n);
+          if (rr) rendus.push({ id: heldStack.id, n: rr });
           heldStack = null;
         }
       }

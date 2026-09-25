@@ -278,8 +278,113 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     eq(pile(majReco.equip.casque).id, I.CUIR_CASQUE, 'reconnexion : l\'équipement est retrouvé');
     eq(compte(majReco.inv, B.LOG), compte(invAvantDeco, B.LOG), 'reconnexion : le reste de l\'inventaire est retrouvé (bois)');
 
+    // ── SPEC-SYNC-017 (B1, étape 9) : DISTRIB est désormais une déclaration
+    // (MC.Conteneurs.declarer) plutôt qu'un dépôt aveugle du contenu envoyé
+    // par le client — seul ce que le joueur possède réellement est prélevé,
+    // tronqué à sa possession, et une redéclaration identique ne débite rien
+    // de plus (idempotent par construction : la cible, pas un delta).
+    const dana = await connecter(PORT);
+    dana.envoyer({ t: 'rejoindre', nom: 'Dana', locaux: 1 });
+    const bienvenueDana = await dana.attendre('bienvenue');
+    const majDana = await dana.attendre('inv_maj');
+    const posDana = bienvenueDana.toi[0];
+    const bxD = Math.floor(posDana.x), byD = Math.floor(posDana.y) + 3, bzD = Math.floor(posDana.z);
+    dana.envoyer({ t: 'bloc', x: bxD, y: byD, z: bzD, id: B.DISTRIBUTEUR, j: 0 });
+    await dana.attendre('bloc', 2000, m => m.x === bxD && m.z === bzD && m.id === B.DISTRIBUTEUR);
+    const logAvant = compte(majDana.inv, B.LOG);
+    ok(logAvant > 0, 'Dana possède du bois (MC_TEST_INV)');
+    eq(compte(majDana.inv, B.COBBLE), 0, 'Dana ne possède aucun caillou');
+    dana.envoyer({
+      t: 'distrib', j: 0, x: bxD, y: byD, z: bzD,
+      slots: [{ id: B.LOG, n: 1 }, { id: B.COBBLE, n: 5 }, null, null, null, null, null, null, null],
+    });
+    const majDistrib1 = await dana.attendre('inv_maj', 3000, m => m.rev > majDana.rev);
+    eq(compte(majDistrib1.inv, B.LOG), logAvant - 1,
+       'SPEC-SYNC-017 : un seul bois (réellement possédé) est prélevé pour le distributeur');
+    eq(compte(majDistrib1.inv, B.COBBLE), 0,
+       'SPEC-SYNC-017 : le caillou jamais possédé n\'est ni prélevé ni fait apparaître de nulle part');
+    // la même déclaration une seconde fois : rien de plus à prélever
+    dana.envoyer({
+      t: 'distrib', j: 0, x: bxD, y: byD, z: bzD,
+      slots: [{ id: B.LOG, n: 1 }, { id: B.COBBLE, n: 5 }, null, null, null, null, null, null, null],
+    });
+    const majDistrib2 = await dana.attendre('inv_maj', 3000, m => m.rev > majDistrib1.rev);
+    eq(compte(majDistrib2.inv, B.LOG), logAvant - 1,
+       'SPEC-SYNC-017 : une redéclaration identique ne débite pas une seconde fois');
+    dana.fermer();
+    await dodo(150);
+
     a2.fermer(); b.fermer();
     await dodo(200);
+
+    // ── SPEC-SYNC-021 (partie B1) : le registre des joueurs nommés (inventaire
+    // ET équipement) survit à un arrêt PUIS relance du serveur avec le même
+    // `--monde` — pas seulement à une reconnexion sur un serveur qui n'a
+    // jamais cessé de tourner (déjà couvert ci-dessus). `snapshotRegistreJoueurs`
+    // (server.js) capture même un joueur ENCORE connecté à l'instant de la
+    // sauvegarde périodique, sans attendre sa déconnexion.
+    const os = require('os');
+    const fichierMonde = path.join(os.tmpdir(), `mc-test-monde-${process.pid}-${Date.now()}.json`);
+    try { fs.unlinkSync(fichierMonde); } catch (e) {}
+    const portMonde = PORT + 1;
+    const seedMonde = JSON.stringify([[I.CUIR_CASQUE, 1]]);
+    const serveur1 = spawn(process.execPath,
+      [path.join(RACINE, 'server.js'), '--port', String(portMonde), '--serveur', '--monde', fichierMonde],
+      { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'],
+        env: Object.assign({}, process.env, { MC_TEST_INV: seedMonde, MC_SAUVEGARDE_MS: '150' }) });
+    const logs1 = [];
+    serveur1.stdout.on('data', d => logs1.push(String(d)));
+    serveur1.stderr.on('data', d => logs1.push('ERR ' + String(d)));
+    try {
+      for (let essai = 0; essai < 60; essai++) {
+        await dodo(100);
+        const sonde = await requete(portMonde, '/index.html');
+        if (sonde.code === 200) break;
+      }
+      const zoe = await connecter(portMonde);
+      zoe.envoyer({ t: 'rejoindre', nom: 'Zoe', locaux: 1 });
+      await zoe.attendre('bienvenue');
+      const majZoe = await zoe.attendre('inv_maj');
+      const iCasqueZoe = trouverIndex(majZoe.inv, I.CUIR_CASQUE);
+      ok(iCasqueZoe >= 0, 'SPEC-SYNC-021 : le casque de Zoe est bien dans son inventaire initial');
+      zoe.envoyer({ t: 'equip', j: 0, seq: 1, slot: 'casque', i: iCasqueZoe });
+      await zoe.attendre('inv_maj', 3000, m => m.ack === 1);
+      // au moins une sauvegarde périodique (MC_SAUVEGARDE_MS=150) avant l'arrêt —
+      // le joueur reste connecté : c'est bien snapshotRegistreJoueurs qui capture
+      // son état, pas seulement `fermer()`.
+      await dodo(500);
+      serveur1.kill();
+      await dodo(300);
+
+      const serveur2 = spawn(process.execPath,
+        [path.join(RACINE, 'server.js'), '--port', String(portMonde), '--serveur', '--monde', fichierMonde],
+        { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: process.env });
+      const logs2 = [];
+      serveur2.stdout.on('data', d => logs2.push(String(d)));
+      serveur2.stderr.on('data', d => logs2.push('ERR ' + String(d)));
+      try {
+        for (let essai = 0; essai < 60; essai++) {
+          await dodo(100);
+          const sonde = await requete(portMonde, '/index.html');
+          if (sonde.code === 200) break;
+        }
+        const zoe2 = await connecter(portMonde);
+        zoe2.envoyer({ t: 'rejoindre', nom: 'Zoe', locaux: 1 });
+        await zoe2.attendre('bienvenue');
+        const majZoe2 = await zoe2.attendre('inv_maj');
+        ok(majZoe2.equip && pile(majZoe2.equip.casque) && pile(majZoe2.equip.casque).id === I.CUIR_CASQUE,
+           'SPEC-SYNC-021 : l\'équipement de Zoe survit à un arrêt puis relance --monde',
+           'equip.casque = ' + JSON.stringify(majZoe2.equip && majZoe2.equip.casque));
+        eq(compte(majZoe2.inv, I.CUIR_CASQUE), 0, 'SPEC-SYNC-021 : le casque équipé n\'est pas aussi dans l\'inventaire retrouvé');
+        zoe2.fermer();
+      } finally {
+        serveur2.kill();
+        await dodo(200);
+        try { fs.unlinkSync(fichierMonde); } catch (e) {}
+      }
+    } finally {
+      try { serveur1.kill(); } catch (e) {}
+    }
 
   } catch (e) {
     echecs++;
