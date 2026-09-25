@@ -658,14 +658,107 @@
         A.equal(t0.commit, hist[0].commit, 'par défaut : la dernière entrée pre-push (la plus récente par commit)');
 
         // épingle explicitement l'entrée la plus ANCIENNE plutôt que la plus récente
-        var hashAncien = hist[hist.length - 1].captures[0].hash;
-        A.ok(REG.marquerTemoin('DEMO-004', hist[hist.length - 1].commit, hashAncien, { dossierRegistre: dossierRegistre }).ok);
+        var imageAncienne = hist[hist.length - 1].captures[0].image;
+        A.ok(REG.marquerTemoin('DEMO-004', hist[hist.length - 1].commit, imageAncienne, { dossierRegistre: dossierRegistre }).ok);
         var t1 = REG.temoinDe('DEMO-004', REG.historiqueTest('DEMO-004', { dossierRegistre: dossierRegistre, dossierRepo: RACINE }), { dossierRegistre: dossierRegistre });
         A.ok(t1.epingle, 'marqué comme épinglé');
         A.equal(t1.commit, hist[hist.length - 1].commit, 'le témoin épinglé remplace le défaut');
 
-        A.notOk(REG.marquerTemoin('DEMO-004', hist[0].commit, 'hash-qui-n-existe-pas', { dossierRegistre: dossierRegistre }).ok, 'hash inexistant : refusé');
+        A.notOk(REG.marquerTemoin('DEMO-004', hist[0].commit, 'image-qui-n-existe-pas.jpg', { dossierRegistre: dossierRegistre }).ok, 'image inexistante : refusé');
         A.ok(fs.existsSync(path.join(dossierRegistre, 'temoins.json')), 'les témoins sont persistés (versionnables avec le reste du registre)');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-032 : le schéma d\'entrée porte id/inscrit/motif/arbre_modifie/interrompu, l\'inscription est idempotente, l\'état est normalisé', function () {
+      var racineResultats = tmpDir('reg-schema'), dossierRegistre = tmpDir('reg-schema-reg');
+      try {
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        RT.ecrireCahier({
+          schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(), environnement: { commit: 'HEAD' },
+            arbreModifie: true, interrompue: true, totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 } },
+          tests: [{ id: 'DEMO-005', nom: 'demo-005', type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [],
+            etat: 'ok', duree_ms: 1, debut: '2026-01-01T00:00:00.000Z', captures: [{ libelle: 'fin', fichier: 0 }] }],
+        }, { racine: racineResultats, nom: 'run1', captures: [{ libelle: 'fin', type: 'image/jpeg', base64: b64 }] });
+
+        var r = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, motif: 'référence avant refonte' });
+        A.ok(r.ok, 'inscription acceptée : ' + JSON.stringify(r));
+        A.ok(r.id && typeof r.id === 'string', 'un identifiant de run est rendu');
+
+        var entrees = REG.lireEntrees(dossierRegistre);
+        A.equal(entrees.length, 1);
+        var e = entrees[0];
+        A.equal(e.id, r.id, 'même id relu depuis le disque');
+        A.equal(e.inscrit, true, 'inscrit=true pour une entrée du registre');
+        A.equal(e.motif, 'référence avant refonte', 'motif reporté tel quel');
+        A.equal(e.arbre_modifie, true, 'arbre_modifie repris de campagne.arbreModifie (capturé au DÉBUT de la campagne locale)');
+        A.equal(e.interrompu, true, 'interrompu repris de campagne.interrompue');
+        A.equal(e.tests[0].debut, '2026-01-01T00:00:00.000Z', 'horodatage de démarrage du test conservé');
+        A.equal(e.tests[0].etat, 'reussi', 'état normalisé (reussi|echec|ignore|avertissement)');
+        A.equal(e.tests[0].categorie.type, 'e2e', 'categorie.type (instantané du catalogue)');
+        A.deep(e.tests[0].fonctions, [], 'fonctions : présent, vide pour l\'instant');
+        A.equal(e.tests[0].captures[0].role, 'debut', 'seule capture d\'un test à une capture : rôle debut');
+        A.ok(/^[0-9a-f]{40}\.jpg$/.test(e.tests[0].captures[0].image), 'image = <sha1>.<ext> : ' + e.tests[0].captures[0].image);
+
+        // idempotence : réinscrire LE MÊME cahier est refusé
+        var r2 = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.notOk(r2.ok, 'une seconde inscription du même cahier est refusée');
+        A.ok(/idempotence|déjà inscrit/i.test(r2.motif), 'motif explicite : ' + r2.motif);
+        A.equal(REG.lireEntrees(dossierRegistre).length, 1, 'toujours une seule entrée après le refus');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-032 : etatRegistre distingue reussi/avertissement (lent ou message malgré succès)/echec/ignore', function () {
+      A.equal(REG.etatRegistre({ etat: 'ok', duree_ms: 100 }), 'reussi');
+      A.equal(REG.etatRegistre({ etat: 'reussi', duree_ms: 100 }), 'reussi', 'le vocabulaire source "reussi" (runUnE2E) compte aussi comme succès');
+      A.equal(REG.etatRegistre({ etat: 'ok', duree_ms: 100000 }), 'avertissement', 'succès mais lent (> seuil) : avertissement');
+      A.equal(REG.etatRegistre({ etat: 'ok', duree_ms: 100, message: 'un avertissement non bloquant' }), 'avertissement', 'succès avec message : avertissement');
+      A.equal(REG.etatRegistre({ etat: 'echec', duree_ms: 100 }), 'echec');
+      A.equal(REG.etatRegistre({ etat: 'delai', duree_ms: 100 }), 'echec', 'un délai dépassé compte comme un échec');
+      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100 }), 'ignore');
+    });
+
+    it('SPEC-BANC-032 : une capture manuelle nommée en cours de test (T.capture) est déjà supportée et reste stable d\'un run à l\'autre', function () {
+      // Vérification STRUCTURELLE (comme SPEC-BANC-026 le fait déjà pour
+      // tests/e2e.js) : `capture(libelle)` existe et pousse une capture
+      // NOMMÉE, prise en compte par runUnE2E au même titre que début/fin —
+      // c'est exactement ce qu'un test appelle via `capture('apres-teleportation')`.
+      var src = fs.readFileSync(path.join(RACINE, 'tests', 'e2e.js'), 'utf8');
+      A.ok(/function capture\(libelle\)/.test(src), 'capture(libelle) existe : capture manuelle nommée');
+      A.ok(/G\.capture = capture/.test(src), 'exposée globalement (utilisable depuis un test comme capture(\'...\'))');
+      A.ok(/c\.t_ms = ahora\(\) - enCours\.t0/.test(src), 'chaque capture porte désormais son t_ms (depuis le début du test)');
+      A.ok(/c\.role = \(i === 0\)/.test(src), 'le rôle (debut/intermediaire/fin) est affecté une fois le test terminé');
+    });
+
+    it('SPEC-BANC-032 : runsUnifies() fusionne le registre (inscrit=true) et les cahiers locaux (inscrit=false) sous la même forme', function () {
+      var racineResultats = tmpDir('reg-unifie'), dossierRegistre = tmpDir('reg-unifie-reg');
+      try {
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        cahierAvecCapture(racineResultats, 'run-registre', 'DEMO-006', 'pr', 'HEAD', b64);
+        REG.inscrire('run-registre', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        // un second cahier local, jamais inscrit
+        cahierAvecCapture(racineResultats, 'run-local', 'DEMO-006', 'commit', 'HEAD', b64);
+
+        var runs = REG.runsUnifies({ racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.equal(runs.length, 2, 'un run du registre + un run local');
+        var rInscrit = runs.find(function (r) { return r.inscrit; });
+        var rLocal = runs.find(function (r) { return !r.inscrit; });
+        A.ok(rInscrit, 'un run inscrit (registre)');
+        A.ok(rLocal, 'un run non inscrit (cahier local)');
+        A.equal(rLocal.dossierCahier, 'run-local', 'le run local porte le nom de son dossier (pour l\'inscrire après coup)');
+        // même forme : même test, mêmes clés de capture, quelle que soit l'origine
+        var tInscrit = rInscrit.tests.find(function (t) { return t.id === 'DEMO-006'; });
+        var tLocal = rLocal.tests.find(function (t) { return t.id === 'DEMO-006'; });
+        A.ok(tInscrit && tLocal, 'le test apparaît des deux côtés');
+        ['id', 'nom', 'categorie', 'domaines', 'specs', 'etiquettes', 'fonctions', 'fiche',
+         'debut', 'duree_ms', 'etat', 'erreur', 'captures'].forEach(function (cle) {
+          A.ok(tInscrit.hasOwnProperty(cle), 'run inscrit : porte ' + cle);
+          A.ok(tLocal.hasOwnProperty(cle), 'run local : porte ' + cle);
+        });
+        A.equal(tInscrit.categorie.type, 'e2e', 'categorie.type instantané du catalogue');
+        A.equal(tInscrit.categorie.groupe, 'end-to-end', 'categorie.groupe instantané du catalogue');
+        A.deep(tInscrit.fonctions, [], 'fonctions : liste vide pour l\'instant (observation = lot suivant)');
+        A.equal(tInscrit.captures[0].role, 'debut');
+        A.equal(tLocal.captures[0].role, 'debut', 'le rôle est déduit par position aussi pour un cahier local');
       } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
     });
 

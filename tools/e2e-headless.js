@@ -141,15 +141,20 @@ function accelerationDepuisRenderer(renderer) {
    Node de tests/run.js). */
 async function executerUnTest(session, portServeur, test, opts) {
   const debut = Date.now();
+  const debutISO = new Date(debut).toISOString();
   const captures = [];
-  async function capturer(suffixe) {
+  /* `role` : 'debut'/'fin' — pas de capture 'intermediaire' possible ici, ce
+     module pilote `window.runE2E` (non instrumenté) DE L'EXTÉRIEUR par CDP,
+     sans passer par etape()/capture() de tests/e2e.js (limite documentée en
+     tête de fichier). t_ms : depuis le début DE CE TEST, pas de la campagne. */
+  async function capturer(suffixe, role) {
     try {
       const r = await session.envoyer('Page.captureScreenshot', { format: 'jpeg', quality: 60 }, 8000);
-      if (r && r.data) captures.push({ libelle: test.nom + ' · ' + suffixe, type: 'image/jpeg', base64: r.data });
+      if (r && r.data) captures.push({ libelle: test.nom + ' · ' + suffixe, type: 'image/jpeg', base64: r.data, role, t_ms: Date.now() - debut });
     } catch (e) { /* une capture manquée n'invalide pas le résultat du test */ }
   }
 
-  await capturer('début');
+  await capturer('début', 'debut');
 
   const expression = 'window.runE2E(ensureGame(), null, ' + JSON.stringify(test.nom) + ')';
   let resultatJS = null;
@@ -175,26 +180,26 @@ async function executerUnTest(session, portServeur, test, opts) {
     }
   }
 
-  await capturer(erreur ? 'échec' : 'fin');
+  await capturer(erreur ? 'échec' : 'fin', 'fin');
   const duree_ms = Date.now() - debut;
 
   if (erreur) {
     return {
-      etat: delaiDepasse ? 'delai' : 'echec', duree_ms,
+      etat: delaiDepasse ? 'delai' : 'echec', debut: debutISO, duree_ms,
       message: delaiDepasse ? 'délai dépassé (' + opts.delaiTestMs + ' ms)' : erreur,
       assertions: { ok: 0, ko: 1 }, captures,
     };
   }
   if (!resultatJS || resultatJS.total !== 1 || !resultatJS.results || resultatJS.results.length !== 1) {
     return {
-      etat: 'echec', duree_ms,
+      etat: 'echec', debut: debutISO, duree_ms,
       message: 'sélection par nom ambiguë ou vide (runE2E a rendu ' + (resultatJS ? resultatJS.total : 0) + ' résultat(s) au lieu de 1)',
       assertions: { ok: 0, ko: 1 }, captures,
     };
   }
   const r0 = resultatJS.results[0];
   return {
-    etat: r0.ok ? 'ok' : 'echec', duree_ms,
+    etat: r0.ok ? 'ok' : 'echec', debut: debutISO, duree_ms,
     message: r0.ok ? undefined : r0.message,
     assertions: { ok: r0.ok ? 1 : 0, ko: r0.ok ? 0 : 1 }, captures,
   };
@@ -315,10 +320,10 @@ async function executerCampagne(selection, options) {
       // que tools/resultats-tests.js ne le résolve en nom de fichier.
       testsResultats.push({
         id: test.id, nom: test.nom, type: test.type || 'e2e', groupe: test.groupe,
-        domaines: test.domaines || [], specs: test.specs || [], fiche: test.fiche || null,
-        etat: r.etat, duree_ms: r.duree_ms, etapes: [], assertions: r.assertions,
+        domaines: test.domaines || [], specs: test.specs || [], fiche: test.fiche || null, etiquettes: test.etiquettes || [],
+        etat: r.etat, debut: r.debut || null, duree_ms: r.duree_ms, etapes: [], assertions: r.assertions,
         message,
-        captures: r.captures.map((c, i) => ({ libelle: c.libelle, type: c.type, fichier: capturesGlobales.length + i })),
+        captures: r.captures.map((c, i) => ({ libelle: c.libelle, type: c.type, role: c.role, t_ms: c.t_ms, fichier: capturesGlobales.length + i })),
       });
       r.captures.forEach((c) => capturesGlobales.push(c));
     }

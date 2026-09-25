@@ -375,6 +375,15 @@ const fichierPartiel = process.env.MC_RUN_PARTIEL || null;
 const debutISO = new Date().toISOString();
 const debut = Date.now();
 const secondes = (ms) => (ms / 1000).toFixed(1) + ' s';
+/* Capturé AU DÉBUT de la campagne (docs/banc/historique-global.md §3.4) :
+   si le dépôt a des modifications non commitées à cet instant, le commit
+   cité par cette campagne (HEAD) ne correspond pas exactement au code
+   réellement testé — tools/registre.js le reporte tel quel dans le registre
+   (`arbre_modifie`) au moment de l'inscription, jamais recalculé après
+   coup (l'arbre peut avoir changé entretemps). */
+let arbreModifieAuDebut = false;
+try { arbreModifieAuDebut = execSync('git status --porcelain', { cwd: root, encoding: 'utf8' }).trim().length > 0; }
+catch (e) { /* hors dépôt : tant pis, jamais bloquant */ }
 
 // entrées resultats.json construites au fil de l'eau (SPEC-BANC-014), pour
 // pouvoir écrire un instantané entre deux groupes même si la campagne est
@@ -386,7 +395,7 @@ function ecrireInstantane() {
   try {
     fs.writeFileSync(fichierPartiel, JSON.stringify({
       schema: 1,
-      campagne: { preset: etiquetteCampagne, criteres, debut: debutISO, environnement: environnement() },
+      campagne: { preset: etiquetteCampagne, criteres, debut: debutISO, arbreModifie: arbreModifieAuDebut, environnement: environnement() },
       tests: testsResultats,
     }));
   } catch (e) { /* au pire, pas d'instantané : le cahier final restera complet si la campagne va au bout */ }
@@ -411,7 +420,8 @@ const res = ctx.T.run(nomsAExecuter, {
     testsResultats.push({
       id: cat ? cat.id : nom, nom, type: cat ? cat.type : 'unitaire', groupe,
       domaines: cat ? cat.domaines : [], specs: cat ? cat.specs : [], fiche: cat ? cat.fiche : null,
-      etat: ok ? 'ok' : (detail && detail.delai ? 'delai' : 'echec'), duree_ms: Math.round(ms),
+      etiquettes: cat ? cat.etiquettes : [],
+      etat: ok ? 'ok' : (detail && detail.delai ? 'delai' : 'echec'), debut: detail && detail.debut, duree_ms: Math.round(ms),
       etapes: detail ? detail.etapes : [], assertions: detail ? detail.assertions : { ok: 0, ko: 0 },
       message: detail && detail.message, attendu: detail && detail.attendu, obtenu: detail && detail.obtenu, pile: detail && detail.pile,
     });
@@ -456,7 +466,7 @@ if (e2eSelectionnes.length) {
   const tmpEntree = path.join(os.tmpdir(), 'mc-e2e-entree-' + process.pid + '.json');
   const tmpSortie = path.join(os.tmpdir(), 'mc-e2e-sortie-' + process.pid + '.json');
   fs.writeFileSync(tmpEntree, JSON.stringify(e2eSelectionnes.map(t => (
-    { id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche }
+    { id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche, etiquettes: t.etiquettes || [] }
   ))));
   // Filet de sécurité, pas un couperet pour un test lent (SPEC-BANC-010,
   // révisé) : un test e2e réel termine typiquement en quelques secondes ;
@@ -542,7 +552,7 @@ const resultatsFinaux = {
   schema: 1,
   campagne: {
     preset: etiquetteCampagne, criteres, debut: debutISO, fin: finISO, duree_ms: Date.now() - debut,
-    interrompue: false, environnement: environnementFinal,
+    interrompue: false, arbreModifie: arbreModifieAuDebut, environnement: environnementFinal,
     totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E, parType, parDomaine },
     lents,
   },

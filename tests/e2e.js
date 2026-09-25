@@ -86,14 +86,20 @@
     enCours.etapeCourante = libelle + (total ? ' (' + n + '/' + total + ')' : '');
     enCours.etapes.push({ libelle: libelle, t_ms: ahora() - enCours.t0, n: n, total: total });
     var c = capturer(enCours.g, libelle);
-    if (c) enCours.captures.push(c);
+    if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); }
   }
 
-  /* Capture manuelle, hors étape déclarée. */
+  /* Capture manuelle, hors étape déclarée : `capture('apres-teleportation')`
+     depuis un test enregistre une capture NOMMÉE en cours de route (rôle
+     'intermediaire', posé par runUnE2E()/conclure() une fois toutes les
+     captures du test connues — voir plus bas) : le libellé, stable d'un run
+     à l'autre pour un même test, est ce que le registre (tools/registre.js)
+     et sa vue historique par test utilisent pour aligner les captures d'un
+     même point du test à travers plusieurs runs. */
   function capture(libelle) {
     if (!enCours) return;
     var c = capturer(enCours.g, libelle || 'capture');
-    if (c) enCours.captures.push(c);
+    if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); }
   }
 
   function ahora() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
@@ -3566,12 +3572,24 @@
     initRefs();
     var delaiMs = ((test.fiche && test.fiche.delai) || opts.delaiDefaut || 15 * 60) * 1000;
     return new Promise(function (resolve) {
-      var ctx = { g: g, t0: ahora(), images: [], etapes: [], captures: [],
+      var ctx = { g: g, t0: ahora(), debutISO: new Date().toISOString(), images: [], etapes: [], captures: [],
                   assertions: { ok: 0, ko: 0 }, etapeCourante: null };
       enCours = ctx;
       var c0 = capturer(g, 'début');
-      if (c0) ctx.captures.push(c0);
+      if (c0) { c0.t_ms = 0; ctx.captures.push(c0); }
       var fini = false;
+
+      /* Rôle de chaque capture (SPEC-BANC-032, historique par test) : la
+         PREMIÈRE (toujours « début », posée ci-dessus) et la DERNIÈRE
+         (toujours posée par conclure(), qu'il s'agisse de « fin », « échec »
+         ou « délai dépassé ») ne sont connues qu'une fois le test terminé —
+         d'où l'affectation ICI, une seule fois, plutôt qu'à chaque push. */
+      function assignerRoles() {
+        var n = ctx.captures.length;
+        ctx.captures.forEach(function (c, i) {
+          c.role = (i === 0) ? 'debut' : (i === n - 1 ? 'fin' : 'intermediaire');
+        });
+      }
 
       function metriques() {
         var deltas = [];
@@ -3598,10 +3616,11 @@
       function conclure(etat, message, pile, attendu, obtenu) {
         if (fini) return; fini = true;
         clearTimeout(minuteur);
+        assignerRoles();
         var res = {
           id: test.id !== undefined ? test.id : null, nom: test.name, type: 'e2e',
           groupe: 'end-to-end', domaines: test.domaines || [], specs: test.specs || [],
-          fiche: test.fiche || null, etat: etat, duree_ms: ahora() - ctx.t0, etapes: ctx.etapes,
+          fiche: test.fiche || null, etat: etat, debut: ctx.debutISO, duree_ms: ahora() - ctx.t0, etapes: ctx.etapes,
           assertions: ctx.assertions, message: message || null, pile: pile || null,
           attendu: attendu, obtenu: obtenu, metriques: metriques(), captures: ctx.captures,
         };
@@ -3611,20 +3630,20 @@
       }
       var minuteur = setTimeout(function () {
         var c = capturer(g, 'délai dépassé');
-        if (c) ctx.captures.push(c);
+        if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
         conclure('delai', 'délai dépassé (' + (delaiMs / 1000) + ' s)' +
                  (ctx.etapeCourante ? ' — étape en cours : ' + ctx.etapeCourante : ''));
       }, delaiMs);
 
       Promise.resolve().then(function () { return test.fn(g); }).then(function () {
         var c = capturer(g, 'fin');
-        if (c) ctx.captures.push(c);
+        if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
         conclure('reussi', null);
       }, function (e) {
         var msg = (e && e.message) || String(e);
         var pile = (e && e.stack) ? String(e.stack) : null;
         var c = capturer(g, 'échec');
-        if (c) ctx.captures.push(c);
+        if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
         conclure('echec', msg, pile, e && e.attendu, e && e.obtenu);
       });
     });

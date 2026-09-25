@@ -88,6 +88,29 @@ respecter (voir PLAN.md, « Commits et versions »).
   (`temoin`), à défaut la dernière capture officiellement validée. Stockage
   des captures adressé par contenu (`images/<sha1>.<ext>`) : aucune capture
   identique n'est recopiée. CLI : `node tools/registre.js inscrire|commit|historique|temoin`.
+- Registre officiel : révision du format suite relecture (SPEC-BANC-032).
+  Stockage éclaté en UN FICHIER JSONL PAR INSCRIPTION (`tests/registre/entrees/*.jsonl`,
+  1re ligne = méta du run, une ligne par test) au lieu d'un `entrees.json`
+  unique — deux inscriptions concurrentes (branches, agents) ne se gênent
+  plus jamais en conflit de fusion. Schéma enrichi pour l'historique global
+  à venir (`docs/banc/historique-global.md`) sans migration future : chaque
+  run porte `id`, `inscrit`, `motif` (facultatif), `arbre_modifie` (capturé
+  au DÉBUT de la campagne locale) et `interrompu` ; chaque test porte une
+  IDENTITÉ instantanée du catalogue (`categorie: {type, groupe}`, `domaines`,
+  `specs`, `etiquettes`, `fonctions` — vide pour l'instant, observation
+  automatique en lot séparé) et `erreur` (renommé depuis `message`) ;
+  chaque capture porte un `role` (`debut`/`intermediaire`/`fin`, affecté une
+  fois le test terminé) et un `t_ms` (`tests/e2e.js`, `tools/e2e-headless.js`) —
+  la capture manuelle nommée en cours de test (`capture('libellé')`) était
+  déjà supportée. `inscrire()` devient idempotente (refuse un cahier déjà
+  inscrit) et accepte désormais un `motif` ; nouvelle fonction
+  `runsUnifies()` fusionnant registre et cahiers locaux sous UNE SEULE
+  forme (`inscrit` les distingue), point d'accroche documenté pour le futur
+  lot d'interface (routes serveur, tableau, graphiques, diaporamas —
+  `tests/registre/README.md`). Rebasé sur le commit qui a corrigé le damier
+  de tuiles (rendu) ; le registre versionné repart VIDE (l'entrée de test
+  écrite lors du développement, qui citait un commit réécrit par un rebase
+  antérieur, a été retirée).
 - Vague 2 (B1, SPEC-SYNC-007 à 017) : raccordement de `MC.ContratsV2` à
   `NP.valider` — les nouveaux types de message (`CRAFT`, `EQUIP`,
   `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le
