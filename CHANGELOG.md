@@ -262,6 +262,32 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
+- Vague 2 (B1, revue adversariale, gravité élevée, SPEC-SYNC-012/013/014) :
+  `validerEmplacement` (contrats-vague2.js, figé) plafonne génériquement `i`
+  à 27 pour toute zone `'cont'`, en comptant sur le serveur pour vérifier la
+  taille RÉELLE (fourneau 3, étagère/distributeur 9, bibliothèque 18) — que
+  `resolveZone`/`transfert` (conteneurs.js) ne comparaient jamais à
+  `cont.taille`. `zd.slots[op.vers.i] = …` pouvait donc agrandir le tableau
+  JS au-delà de sa taille, et `validerConteneurPersiste` (qui exige
+  `slots.length === taille`) faisait alors disparaître le conteneur ENTIER,
+  silencieusement, à la prochaine relance `--monde`. `indiceValide`
+  (conteneurs.js) refuse désormais tout indice hors de la taille réelle du
+  conteneur ciblé, en lecture comme en écriture, pour `inv`/`grille`/`cont`
+  (motif `absent` en source, `incompatible` en destination) — jamais une
+  écriture qui l'agrandirait. Défense en profondeur à la persistance
+  (`normaliserTailleConteneur`, server.js) : un conteneur déjà mal formé
+  n'est plus filtré silencieusement par `etatMonde` — tronqué à sa taille,
+  l'excédent lâché au sol (position connue), jamais perdu sans trace, avec
+  un avertissement journalisé. Casser (et éventuellement remplacer) un
+  conteneur posé pendant qu'un joueur l'a ouvert le désabonne désormais
+  EXPLICITEMENT et le notifie (`CONTENEUR_FERMER`, message jusqu'ici
+  seulement c→s, réutilisé comme fermeture forcée s→c — `net.js`/`game.js`
+  ferment l'écran) : l'ancienne clé ne se résout plus jamais contre un
+  conteneur de type différent posé au même endroit (coffre 27 cases →
+  fourneau 3, par exemple). `onInvMaj` fournit désormais le miroir du
+  conteneur EN LIGNE ouvert au rejeu des opérations en attente (`predInv`)
+  — une opération sur la zone `'cont'` encore en attente échouait sinon au
+  rejeu ; auparavant, seul son côté inventaire était rejoué.
 
 - Rendu (mesher.js, régression du lot A3 « greedy meshing », SPEC-PERF-011 à
   013) : `tileOrigin(tile, rot)` appliquait la rotation de variante de tuile

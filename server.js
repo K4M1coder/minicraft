@@ -181,10 +181,19 @@ function etatMonde() {
     // conteneurs POSÉS (coffres, fourneaux, armoires, étagères,
     // bibliothèques, distributeurs) — un joueur qui en a un ouvert à
     // l'instant de la sauvegarde est capturé à jour (même objet vivant).
+    // `normaliserTailleConteneur` : défense en profondeur (revue adversariale)
+    // — un conteneur mal formé (jamais censé arriver depuis le correctif
+    // d'`indiceValide`, conteneurs.js) n'est plus filtré silencieusement par
+    // `validerConteneurPersiste` (qui exige `slots.length === taille`) : il
+    // est tronqué à sa vraie taille AVANT sérialisation, l'excédent lâché au
+    // sol quand la position est connue — jamais perdu sans trace.
     conteneurs: Array.from(conteneursPoses.entries())
-      .map(([cle, cont]) => MC.ContratsV2.validerConteneurPersiste({
-        cle, type: cont.type, slots: cont.slots.map(MC.ContratsV2.pileVersCase), four: cont.four,
-      }))
+      .map(([cle, cont]) => {
+        normaliserTailleConteneur(cle, cont);
+        return MC.ContratsV2.validerConteneurPersiste({
+          cle, type: cont.type, slots: cont.slots.map(MC.ContratsV2.pileVersCase), four: cont.four,
+        });
+      })
       .filter(Boolean),
   };
 }
@@ -1155,10 +1164,14 @@ function traiter(c, m) {
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
       /* B1 (étape 7) : un conteneur posé cassé lâche son contenu au sol —
          UNE SEULE FOIS ici (le serveur fait autorité sur la casse), même si
-         deux joueurs l'avaient ouvert en même temps : leur `js.conteneurOuvert`
-         pointe vers une entrée qui vient de disparaître de `conteneursPoses`,
-         donc `resoudreConteneur` refusera désormais tout transfert dessus
-         (motif 'ferme') — pas de double lâcher, pas de perte. */
+         deux joueurs l'avaient ouvert en même temps. `fermerConteneurPourAbonnes`
+         (revue adversariale, item 3) désabonne CHAQUE joueur qui l'avait
+         ouvert AVANT de retirer l'entrée : sans ça, `js.conteneurOuvert`
+         resterait pointé sur cette clé, et si un AUTRE bloc conteneur (un
+         fourneau, par exemple) est reposé au même endroit, ce joueur se
+         retrouverait abonné au nouveau conteneur sans jamais avoir rouvert —
+         un coffre (27 cases) qu'il croit toujours voir alors que 3 cases
+         existent réellement dessous. */
       if (m.id === 0 && avant) {
         const defAvant = C.BLOCKS[avant];
         const tAvant = defAvant && defAvant.interactive && MC.ContratsV2.TYPES_CONTENEUR[defAvant.interactive];
@@ -1166,6 +1179,7 @@ function traiter(c, m) {
           const kc = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
           const contCasse = conteneursPoses.get(kc);
           if (contCasse) {
+            fermerConteneurPourAbonnes(kc);
             contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
             conteneursPoses.delete(kc);
             derniereEmissionFour.delete(kc);
@@ -1521,6 +1535,22 @@ function resoudreConteneur(js, cle) {
 function abonnesActuels(cle) {
   return tousLesJoueurs().filter(x => x.js.conteneurOuvert === cle);
 }
+/* Revue adversariale (item 3) : quand un conteneur posé disparaît (cassé,
+   avec ou sans bloc reposé ensuite au même endroit), tout joueur qui l'avait
+   ouvert est FORCÉMENT désabonné ET prévenu — jamais une resubscription
+   fantôme qui réutiliserait la clé pour un conteneur de type différent
+   (coffre 27 cases → fourneau 3 cases, par exemple). `CONTENEUR_FERMER`
+   (message existant, jusqu'ici seulement c→s) sert aussi de notification
+   s→c : net.js ferme l'écran du client dès qu'il la reçoit pour SA clé
+   ouverte. */
+function fermerConteneurPourAbonnes(cle) {
+  abonnesActuels(cle).forEach(({ c: c2, j: j2, js: js2 }) => {
+    js2.conteneurOuvert = null;
+    js2.banquePos = null;
+    js2.banqueEid = null;
+    envoyer(c2, { t: NP.MSG.CONTENEUR_FERMER, j: j2, cle: cle });
+  });
+}
 /* Résout et ouvre un conteneur pour CONTENEUR_OUVRIR (bloc posé à x,y,z, ou
    banquier par eid) : vérifie la portée, crée le conteneur au registre à la
    première ouverture (donjon, bibliothèque générée — parité avec le solo,
@@ -1556,6 +1586,35 @@ function ouvrirConteneurPourJoueur(js, m) {
   }
   js.conteneurOuvert = cle; js.banquePos = null; js.banqueEid = null;
   return { cle, type: bd.interactive, cont };
+}
+/* Défense en profondeur (revue adversariale) : le correctif d'`indiceValide`
+   (conteneurs.js) empêche désormais toute écriture qui agrandirait
+   `cont.slots` au-delà de `cont.taille` — mais un conteneur DÉJÀ mal formé
+   (ancienne exécution avant ce correctif, ou toute autre voie non prévue) ne
+   doit plus être filtré silencieusement par `validerConteneurPersiste`
+   (`slots.length === taille` strict), ce qui aurait fait disparaître le
+   conteneur ENTIER, y compris ses cases valides, à la prochaine relance
+   `--monde`. Tronque à la taille réelle ; l'excédent (toujours à une
+   position connue — `cle` encode x,y,z pour un conteneur posé) tombe au
+   sol comme une casse ordinaire, jamais perdu sans trace. */
+function normaliserTailleConteneur(cle, cont) {
+  if (cont.slots.length === cont.taille) return;
+  if (cont.slots.length < cont.taille) {
+    while (cont.slots.length < cont.taille) cont.slots.push(null);
+    return;
+  }
+  const excedent = cont.slots.slice(cont.taille);
+  cont.slots.length = cont.taille;
+  const p = cle.split(',');
+  let lachees = 0;
+  excedent.forEach(s => {
+    if (!s) return;
+    lachees++;
+    if (p.length === 3) entites.dropItem(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s.id, s.n);
+  });
+  journal(`avertissement : conteneur ${cle} (${cont.type}) mal formé — ` +
+          `${cont.slots.length + excedent.length} case(s) au lieu de ${cont.taille}, tronqué` +
+          (lachees ? `, ${lachees} pile(s) lâchée(s) au sol` : ''));
 }
 /* Un objet ajouté à la première case libre — assez pour remplir un
    conteneur neuf (donjon, bibliothèque générée), jamais utilisé pour un

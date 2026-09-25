@@ -60,6 +60,24 @@
     if (!cont) return null;
     return { slots: cont.slots, cont: cont };
   }
+  /* Revue adversariale (défaut confirmé) : le contrat (validerEmplacement,
+     contrats-vague2.js) plafonne `i` à 27 pour TOUTE zone 'cont' — une borne
+     générique, pas la taille RÉELLE du conteneur visé (fourneau 3, étagère 9,
+     distributeur 9, bibliothèque 18), que seul le serveur connaît une fois le
+     conteneur résolu. Sans cette vérification, `zd.slots[op.vers.i] = …`
+     agrandissait le tableau JS au-delà de `cont.taille` : le conteneur ne
+     correspondait alors plus au schéma persisté (`validerConteneurPersiste`
+     exige `slots.length === taille`) et disparaissait ENTIER, silencieusement,
+     au prochain `--monde` (perte totale, pas seulement de l'excédent).
+     Toujours utiliser `cont.taille` (fixée à la création, jamais la longueur
+     physique du tableau, qui pourrait déjà avoir grossi par ce même bug ou une
+     vieille sauvegarde corrompue) — voir aussi `normaliserTailleConteneur`
+     (server.js, défense en profondeur à la persistance). */
+  function indiceValide(z, i) {
+    if (typeof i !== 'number' || i < 0) return false;
+    var taille = z.cont ? z.cont.taille : z.slots.length;
+    return i < taille;
+  }
   function marquerZone(mods, e) {
     if (e.z === 'inv') mods.inv = true;
     else if (e.z === 'grille') mods.grille = true;
@@ -71,6 +89,11 @@
   function transfert(ctx, op) {
     var zs = resolveZone(ctx, op.de), zd = resolveZone(ctx, op.vers);
     if (!zs || !zd) return { ok: false, motif: 'ferme' };
+    // indice hors bornes du conteneur/zone RÉELLEMENT ciblé : refusé comme une
+    // case absente (source) ou incompatible (destination) — jamais une
+    // écriture qui agrandirait le tableau au-delà de sa taille véritable.
+    if (!indiceValide(zs, op.de.i)) return { ok: false, motif: 'absent' };
+    if (!indiceValide(zd, op.vers.i)) return { ok: false, motif: 'incompatible' };
     var S = zs.slots[op.de.i];
     if (!S) return { ok: false, motif: 'absent' };
     if (S.n < op.n) return { ok: false, motif: 'quantite' };

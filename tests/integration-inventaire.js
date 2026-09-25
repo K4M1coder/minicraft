@@ -373,6 +373,38 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
                     de: { z: 'inv', i: iLogZoe }, vers: { z: 'cont', cle: cleCoffreZ, i: 0 }, n: 3 });
       await zoe.attendre('inv_maj', 3000, m => m.ack === 2);
 
+      // ── Revue adversariale (item 3) : le coffre de Zoe est cassé PUIS un
+      // fourneau est posé au même endroit PENDANT qu'elle l'a encore ouvert —
+      // le serveur doit désabonner ET notifier (CONTENEUR_FERMER s→c,
+      // message existant réutilisé comme fermeture forcée), jamais laisser
+      // sa vieille clé se résoudre en silence contre le nouveau conteneur
+      // (un fourneau, 3 cases, vu comme un coffre, 27).
+      const fermeAttendue = zoe.attendre('cont_fermer', 3000, m => m.cle === cleCoffreZ);
+      zoe.envoyer({ t: 'bloc', x: bxZ, y: byZ, z: bzZ, id: 0, outil: 0, j: 0 });
+      await zoe.attendre('bloc', 2000, m => m.x === bxZ && m.z === bzZ && m.id === 0);
+      const majFerme = await fermeAttendue;
+      eq(majFerme.cle, cleCoffreZ, 'SPEC-SYNC-012 (revue adversariale) : le serveur notifie la fermeture forcée du coffre cassé');
+      zoe.envoyer({ t: 'bloc', x: bxZ, y: byZ, z: bzZ, id: B.FURNACE, j: 0 });
+      await zoe.attendre('bloc', 2000, m => m.x === bxZ && m.z === bzZ && m.id === B.FURNACE);
+
+      // l'ancienne clé ne se résout plus JAMAIS contre le nouveau conteneur :
+      // motif 'ferme' (désabonnée), jamais 'incompatible' (ce qui prouverait
+      // une résolution contre le fourneau à un indice qui lui est étranger)
+      zoe.envoyer({ t: 'cont_transfert', j: 0, seq: 3,
+                    de: { z: 'inv', i: 0 }, vers: { z: 'cont', cle: cleCoffreZ, i: 10 }, n: 1 });
+      const majApresRemplacement = await zoe.attendre('inv_maj', 3000, m => m.ack === 3);
+      ok(majApresRemplacement.refus && majApresRemplacement.refus.some(r => r.motif === 'ferme'),
+         'SPEC-SYNC-012/013 (revue adversariale) : l\'ancien abonnement n\'est jamais réutilisé après remplacement (motif ferme)');
+
+      zoe.envoyer({ t: 'cont_ouvrir', j: 0, x: bxZ, y: byZ, z: bzZ });
+      // le filtre porte sur `type` (pas seulement `cle`) : sans lui,
+      // `attendre` renverrait le premier `cont_etat` déjà reçu pour cette
+      // clé — celui du coffre original, avant remplacement (piège du client
+      // de test, pas du serveur).
+      const etatFourZoe = await zoe.attendre('cont_etat', 3000, m => m.cle === cleCoffreZ && m.type === 'furnace');
+      eq(etatFourZoe.type, 'furnace', 'le nouveau conteneur au même endroit est bien reconnu comme un fourneau');
+      eq(etatFourZoe.slots.length, 3, 'taille correcte du fourneau (pas 27, pas agrandie)');
+
       // au moins une sauvegarde périodique (MC_SAUVEGARDE_MS=150) avant l'arrêt —
       // le joueur reste connecté : c'est bien snapshotRegistreJoueurs qui capture
       // son état, pas seulement `fermer()`.
@@ -400,10 +432,15 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
            'SPEC-SYNC-021 : l\'équipement de Zoe survit à un arrêt puis relance --monde',
            'equip.casque = ' + JSON.stringify(majZoe2.equip && majZoe2.equip.casque));
         eq(compte(majZoe2.inv, I.CUIR_CASQUE), 0, 'SPEC-SYNC-021 : le casque équipé n\'est pas aussi dans l\'inventaire retrouvé');
+        // le coffre a été remplacé par un fourneau (revue adversariale,
+        // item 3, plus haut) : c'est CE conteneur — bien formé, 3 cases —
+        // qui doit survivre à --monde, pas un fantôme de 27 cases.
         zoe2.envoyer({ t: 'cont_ouvrir', j: 0, x: bxZ, y: byZ, z: bzZ });
         const etatCoffreZ2 = await zoe2.attendre('cont_etat', 3000, m => m.cle === cleCoffreZ);
-        eq(compte(etatCoffreZ2.slots, B.LOG), 3,
-           'SPEC-SYNC-021 : un coffre POSÉ retrouve son contenu après un arrêt puis relance --monde');
+        eq(etatCoffreZ2.type, 'furnace',
+           'SPEC-SYNC-021 : le conteneur posé (un fourneau après remplacement) retrouve son TYPE après --monde');
+        eq(etatCoffreZ2.slots.length, 3,
+           'SPEC-SYNC-021 : … et sa taille réelle (3 cases), jamais agrandie ni tronquée à tort');
         zoe2.fermer();
       } finally {
         serveur2.kill();
@@ -658,6 +695,46 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
       const etatFourApres = await ivan.attendre('cont_etat', 3000, m => m.cle === cleFour && m.rev > etatFour0.rev);
       ok(compte(etatFourApres.slots, B.GLASS) >= 1,
          'SPEC-SYNC-016 : le fourneau a cuit le sable en verre alors que personne ne regardait');
+
+      // ── Revue adversariale (défaut confirmé, gravité élevée) : le contrat
+      // (validerEmplacement) plafonne génériquement `i` à 27 pour TOUTE zone
+      // 'cont', bien au-delà de la taille RÉELLE d'un fourneau (3) ou d'une
+      // étagère (9) — sans la vérification serveur, `slots[20] = …` aurait
+      // agrandi le tableau, et le conteneur ENTIER aurait disparu,
+      // silencieusement, à la persistance --monde (validerConteneurPersiste
+      // exige slots.length === taille).
+      const iLogIvan2 = trouverIndex(majIvan0.inv, B.LOG);
+      const seqHorsBornesFour = ++seqIvan;
+      ivan.envoyer({ t: 'cont_transfert', j: 0, seq: seqHorsBornesFour,
+                     de: { z: 'inv', i: iLogIvan2 }, vers: { z: 'cont', cle: cleFour, i: 20 }, n: 1 });
+      const majHorsBornesFour = await ivan.attendre('inv_maj', 3000, m => m.ack === seqHorsBornesFour);
+      ok(majHorsBornesFour.refus && majHorsBornesFour.refus.some(r => r.motif === 'incompatible'),
+         'SPEC-SYNC-014 (revue adversariale) : un indice hors de la taille réelle du fourneau (i=20, taille 3) est refusé');
+      ivan.envoyer({ t: 'cont_ouvrir', j: 0, x: bxF, y: byF, z: bzF });
+      const etatFourBorne = await ivan.attendre('cont_etat', 3000, m => m.cle === cleFour && m.rev >= etatFourApres.rev);
+      eq(etatFourBorne.slots.length, 3, 'le fourneau garde EXACTEMENT 3 cases après la tentative refusée — jamais agrandi');
+
+      // même vérification sur une étagère (taille 9), posée à un endroit
+      // distinct — près du JOUEUR (pas du fourneau, déjà à la limite de la
+      // portée d'OUVERTURE, 6 blocs, plus stricte que celle de POSE, 7)
+      const bxE = Math.floor(posIvan.x) + 1, byE = Math.floor(posIvan.y) + 3, bzE = Math.floor(posIvan.z) + 1;
+      ivan.envoyer({ t: 'bloc', x: bxE, y: byE, z: bzE, id: B.ETAGERE, j: 0 });
+      await ivan.attendre('bloc', 2000, m => m.x === bxE && m.z === bzE && m.id === B.ETAGERE);
+      const cleEtagere = `${bxE},${byE},${bzE}`;
+      ivan.envoyer({ t: 'cont_ouvrir', j: 0, x: bxE, y: byE, z: bzE });
+      const etatEtagere0 = await ivan.attendre('cont_etat', 3000, m => m.cle === cleEtagere);
+      eq(etatEtagere0.type, 'etagere', 'l\'étagère est bien reconnue comme conteneur de type etagere');
+      eq(etatEtagere0.slots.length, 9, 'taille correcte de l\'étagère (9 cases)');
+      const seqHorsBornesEtagere = ++seqIvan;
+      ivan.envoyer({ t: 'cont_transfert', j: 0, seq: seqHorsBornesEtagere,
+                     de: { z: 'inv', i: iLogIvan2 }, vers: { z: 'cont', cle: cleEtagere, i: 20 }, n: 1 });
+      const majHorsBornesEtagere = await ivan.attendre('inv_maj', 3000, m => m.ack === seqHorsBornesEtagere);
+      ok(majHorsBornesEtagere.refus && majHorsBornesEtagere.refus.some(r => r.motif === 'incompatible'),
+         'SPEC-SYNC-014 (revue adversariale) : un indice hors de la taille réelle de l\'étagère (i=20, taille 9) est refusé');
+      ivan.envoyer({ t: 'cont_ouvrir', j: 0, x: bxE, y: byE, z: bzE });
+      const etatEtagereBorne = await ivan.attendre('cont_etat', 3000, m => m.cle === cleEtagere && m.rev >= etatEtagere0.rev);
+      eq(etatEtagereBorne.slots.length, 9, 'l\'étagère garde EXACTEMENT 9 cases après la tentative refusée — jamais agrandie');
+      eq(compte(etatEtagereBorne.slots, B.LOG), 0, 'aucun bois n\'est apparu dans l\'étagère après le refus (aucune quantité créée)');
 
       eve2.fermer(); faye.fermer(); ivan.fermer();
       await dodo(200);

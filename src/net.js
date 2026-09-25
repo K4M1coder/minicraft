@@ -42,6 +42,11 @@
       // l'auteur d'un transfert).
       onConteneurEtat: opts.onConteneurEtat || function () {},
       onConteneurMaj: opts.onConteneurMaj || function () {},
+      // Revue adversariale (item 3) : CONTENEUR_FERMER, jusqu'ici seulement
+      // c→s, sert AUSSI de notification s→c quand le serveur force la
+      // fermeture (conteneur cassé, éventuellement remplacé par un autre —
+      // jamais de resubscription fantôme sur la nouvelle clé).
+      onConteneurFerme: opts.onConteneurFerme || function () {},
     };
 
     function statut(e, info) {
@@ -145,6 +150,12 @@
           break;
         case NP.MSG.CONTENEUR_MAJ:
           hooks.onConteneurMaj(m);
+          break;
+        // Revue adversariale (item 3) : le serveur force une fermeture
+        // (conteneur cassé pendant qu'on l'avait ouvert) — jamais envoyé
+        // par ce client (CONTENEUR_FERMER c→s reste inchangé, voir envoyer()).
+        case NP.MSG.CONTENEUR_FERMER:
+          hooks.onConteneurFerme(m);
           break;
 
         case NP.MSG.REFUS:

@@ -308,7 +308,14 @@
         if (st.grille) st.grille.load(v.grille);
         CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(v.equip[s]); });
         j.predInv.confirmer(v.ack);
-        j.predInv.rejouer(st, {}, { regles: regles });
+        // Revue adversariale (item 4) : sans le miroir du conteneur EN LIGNE
+        // actuellement ouvert, une opération encore en attente sur la zone
+        // 'cont' (transfert vers/depuis un coffre) échouait au rejeu
+        // (`conteneur: () => null`) — avec elle aussi, en plus de son côté
+        // inventaire (déjà rejoué avant ce correctif).
+        var conteneursPourRejeu = (conteneurOuvert && j.index === 0)
+          ? (function () { var o = {}; o[conteneurOuvert.cle] = conteneurOuvert.mirror; return o; })() : {};
+        j.predInv.rejouer(st, conteneursPourRejeu, { regles: regles });
         if (v.gain && j.index === 0) { ui.toast('+' + v.gain.n + ' ' + C.nameOf(v.gain.id)); audio.play('ramasser'); }
         // B1 (étape 8) : le delta d'un conteneur touché par NOTRE propre
         // opération voyage dans CE message (SYNC-015) — jamais un CONTENEUR_MAJ
@@ -335,6 +342,20 @@
       onConteneurMaj: function (m) {
         var v = MC.ContratsV2.validerConteneurMaj(m);
         if (v) appliquerDeltaConteneur(v);
+      },
+      /* Revue adversariale (item 3) : le serveur force la fermeture d'un
+         conteneur qu'on avait ouvert (cassé, éventuellement remplacé par un
+         autre type au même endroit) — jamais de resubscription fantôme :
+         `game.operer` ne verra plus JAMAIS `conteneurOuvert.cle` pour cette
+         clé après ce message, et l'écran se referme si c'est lui d'affiché. */
+      onConteneurFerme: function (m) {
+        if (!conteneurOuvert || typeof m.cle !== 'string' || conteneurOuvert.cle !== m.cle) return;
+        conteneurOuvert = null;
+        if (ui.container && ui.container.cont && ui.container.cont.cle === m.cle) {
+          ui.closeContainer();
+          if (input.state === 'ui') input.setState('playing');
+          ui.toast('Le conteneur a disparu', 'warn');
+        }
       },
     });
     /* Applique un delta serveur (`{ cle, rev, maj, four? }`, INV_MAJ.conteneurs
