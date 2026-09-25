@@ -264,6 +264,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   pour toute ressource non agricole). Nouveau `Metiers.estRessourceAgricole`
   (pure, dérivée de `METIER_DE_RESSOURCE` sans le dupliquer) distingue cette
   seule ressource des autres stocks de lieu.
+- Diplomatie joueurs ↔ PNJ (SPEC-FACTION-017) : `guildes.js:declarerRelation`
+  accepte désormais un état politique (`MC.Politique`) optionnel en dernier
+  argument ; quand `cibleId` ne désigne pas une autre faction de joueurs, la
+  relation n'est acceptée que si cet identifiant correspond à une faction PNJ
+  réellement connue de cet état (sinon `{ ok:false, motif:'cible_introuvable' }`,
+  rien n'est enregistré), et la relation posée est répercutée côté PNJ, sur
+  l'échelle guerre/rivalité/neutre/alliance de `politique.js` (alliée→alliance,
+  ennemie→guerre), avec la même clé triée que `cleRelation` afin que
+  `MC.Politique.relationEntre` la relise à l'identique. `appliquerAction`
+  (commande `/faction relation`) transmet ce même état politique, désormais
+  en 4e argument optionnel ; le câblage réel de l'état politique du monde à
+  travers `server.js`/`game.js` reste à faire (fichiers hors périmètre de
+  cette tâche).
 
 ### Modifié
 
@@ -286,6 +299,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
+- SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
+  relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
+  mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
+  Or `politique.js:tourUnJour` balayait ensuite TOUTES les clés de
+  `etat.relations` sans filtre (contrairement à `ciblePourRaid`, qui filtre
+  déjà avec `etat.factions.has`) pour leur appliquer une dérive aléatoire
+  journalière et générer des annonces via `nomDe` : une relation déclarée par
+  un joueur envers une faction PNJ dérivait donc spontanément au fil des
+  jours simulés, et les annonces pouvaient afficher l'id brut de la faction
+  de joueurs (`nomDe` retombe sur l'id quand il n'est pas dans
+  `etat.factions`) au lieu d'un nom lisible. `tourUnJour` applique désormais
+  la même garde que `ciblePourRaid` : une clé de relation dont l'une des deux
+  parts n'est pas une faction PNJ connue n'est ni dérivée ni annoncée.
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 - Vague 2 (B1, revue adversariale, gravité élevée, SPEC-SYNC-012/013/014) :
   `validerEmplacement` (contrats-vague2.js, figé) plafonne génériquement `i`
