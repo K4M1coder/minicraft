@@ -182,6 +182,55 @@ Décidé par l'utilisateur. Le registre ne conserve en détail que :
 
 À chaque publication (`tools/version.js --publier` appelle `node tools/registre.js compacter`), les runs de merge et de PR du cycle qui se termine sont **compactés** : on garde leur résumé (états, durées, métriques, raisons, commit), mais on retire leurs images, sauf les images témoins encore épinglées. Les images qui ne sont plus référencées par aucune entrée sont supprimées du stockage. Les runs manuels inscrits suivent la même règle que les runs de merge et de PR. Les cahiers locaux, non versionnés, gardent leur propre limite des N derniers.
 
+### 3.13 Diagnostics joints aux échecs et aux lenteurs
+
+Validé par l'utilisateur. Tout est joint au rapport du test **seulement s'il échoue ou s'il est lent** (sauf les métriques du §3.9, toujours présentes).
+
+- **Enregistreur de vol** : le journal (§3.14) écrit TOUT, niveaux trace et debug compris, dans un tampon circulaire par test (taille bornée). Le tampon est vidé dans le rapport en cas d'échec ou de lenteur, et jeté sinon.
+- **Instantané de l'état du jeu** à l'échec : graine, position, heure, météo, chunks chargés, en attente et en maillage, files des workers (génération, maillage), versions de chunk, entités, mode réseau. Une fonction `MC_DEBUG.instantane()` le produit, et le banc l'appelle dans le `finally` du test.
+- **Erreurs que la console ne montre pas**, et comment on les attrape :
+  - *exceptions non rattrapées et promesses rejetées* : `window.addEventListener('error')` et `('unhandledrejection')` installés AVANT les scripts du jeu. Dans le banc, c'est un script en tête de `tests/index.html`. Sans fenêtre, c'est CDP `Page.addScriptToEvaluateOnNewDocument`, doublé de `Runtime.exceptionThrown`, qui voit tout ce qui remonte au niveau global.
+  - *messages du navigateur lui-même* (dépréciations, interventions, erreurs de sécurité) : CDP `Log.entryAdded`. Ils ne passent pas par `console`.
+  - *workers* : dans chaque worker, `self.addEventListener('error'/'unhandledrejection')` renvoie l'erreur au fil principal par `postMessage({type:'journal', …})`. Côté pool (src/workers.js), `worker.onerror` et `onmessageerror` alimentent le journal. Sans fenêtre, CDP `Target.setAutoAttach` capte aussi la console et les exceptions des workers.
+  - *WebGL* : three.js r128 écrit les erreurs de compilation et de liaison des shaders via `console.error` (`renderer.debug.checkShaderErrors`, laissé à true en test), qui est capté par le journal. L'événement `webglcontextlost` et sa restauration sur le canvas sont journalisés. En mode test seulement, `gl.getError()` est interrogé une image sur 60 : c'est une synchronisation coûteuse, donc échantillonnée et jamais active en jeu normal.
+  - *ressources introuvables* : CDP `Network.loadingFailed` et `Network.responseReceived` (statut ≥ 400). Dans le banc, un écouteur `error` en phase de capture sur `window` attrape les `<script>` et `<img>` qui ne chargent pas. WebSocket : `onerror` et le code de `onclose` dans src/net.js vont au journal.
+  - *serveur* : pour les tests d'intégration, stdout et stderr du processus serveur sont capturés, plus `process.on('uncaughtException'/'unhandledRejection')`.
+- **Tests lents** : tâches longues du fil principal (`PerformanceObserver` sur `longtask`, avec leur attribution), histogramme des temps d'image, et, au-delà du seuil, **profil CPU** (CDP `Profiler.start/stop`, fichier `.cpuprofile` joint et ouvrable dans les DevTools).
+- **Profil GPU** (précisé par l'utilisateur), en couches, chacune indiquée « non disponible » plutôt que simulée quand l'environnement ne la fournit pas :
+  - *mémoire GPU allouée par le jeu* : `renderer.info.memory` (nombre de géométries et de textures) et une estimation en octets calculée par le jeu (somme des `byteLength` des attributs et des index, plus largeur × hauteur × 4 × 4/3 pour chaque texture mipmappée). Une page web ne peut pas lire la VRAM réelle, mais cette estimation couvre ce que le jeu alloue.
+  - *coût de dessin* : appels de dessin, triangles, programmes de shaders (`renderer.info.programs.length`), par passe (ombres, principale, eau, lointain).
+  - *temps GPU par image et par passe* : `EXT_disjoint_timer_query_webgl2` quand l'extension est exposée (souvent le cas avec un vrai GPU sous Chrome, rarement en rendu logiciel sans fenêtre), en p50 et p95.
+  - *côté processus* : CDP `SystemInfo.getInfo` (GPU, pilote, fonctionnalités accélérées, dans les métadonnées du moteur de rendu, §3.8) et, pour un test lent, une trace Chrome aux catégories `gpu` et `disabled-by-default-gpu.service`, jointe et ouvrable dans le visualiseur de performances.
+  - *système, Windows, facultatif* : compteurs `\GPU Process Memory(*)\Dedicated Usage` et `\GPU Engine(*)\Utilization Percentage` lus par le banc via `typeperf` pour le processus GPU du navigateur, soit la VRAM et l'occupation réelles. Seulement en run avec fenêtre sur un vrai GPU.
+- **Tests réseau** : les N derniers messages échangés (sens, type, `seq`, taille, horodatage) côté client et côté serveur, plus le journal du serveur pendant le test.
+
+### 3.14 Journal : un vrai logger
+
+Précisé par l'utilisateur : un vrai logger, qui gère aussi les messages d'erreur.
+
+- **Module `MC.Journal`** (src/journal.js), pur, chargé en premier, identique dans le navigateur, les workers, Node (tests vm) et server.js.
+- **API** : `var log = MC.Journal('RENDU');` puis `log.trace/debug/info/warn/error/fatal(message, donnees?, erreur?)`. Chaque entrée porte l'horodatage, le domaine, le niveau, le message, des données structurées, la pile de l'erreur, le contexte (joueur local, mode, id du test en cours).
+- **Sorties**, chacune avec son seuil :
+  - console (par défaut `warn` en jeu, `info` en développement) ;
+  - tampon circulaire, tous niveaux (enregistreur de vol, §3.13) ;
+  - rapport de test ;
+  - fichier du serveur avec rotation (`logs/serveur-<date>.log`) ;
+  - en multijoueur, les erreurs `error` et `fatal` du client sont remontées au serveur, avec un débit limité, pour que le journal du serveur rassemble aussi les pannes des clients.
+- **Messages d'erreur pour le joueur** : `log.error(message, donnees, erreur, { joueur: 'Impossible de charger la sauvegarde' })`. Une seule voie journalise le détail technique ET affiche au joueur un message lisible (toast ou écran d'erreur). Fini les `alert`, `console.error` et toasts dispersés qui divergent.
+- **Codes d'erreur** stables (`E-SAVE-003`…), recensés dans un catalogue (docs/erreurs.md) avec leur cause et la conduite à tenir. On les retrouve avec grep dans les rapports et dans le journal du serveur.
+- **Réglage à chaud** : paramètre d'URL `?journal=RENDU:debug,SYNC:trace`, `MC_DEBUG.journal.niveau('SYNC', 'trace')`, option serveur `--journal`.
+- **Migration** : les `console.*` de src/ et server.js passent par le journal. Une porte (G16) interdit tout nouveau `console.*` direct hors de src/journal.js.
+
+### 3.15 Campagnes sur l'historique des merges, PR et releases
+
+Validé par l'utilisateur. Une fois le moteur stable, `node tools/registre.js historiser [--depuis <ref>]` lance, pour chaque commit de merge ou de PR et chaque commit de release de l'historique, dans l'ordre, une **vraie campagne complète** sur ce commit. Ce ne sont pas des runs à part : ce sont des campagnes comme les autres, sans marqueur spécial.
+
+- Worktree temporaire sur le commit. Le code du jeu et les tests viennent de ce commit. L'orchestration, les captures (CDP), les diagnostics et l'écriture du registre viennent du moteur actuel. Comme tout run, l'entrée enregistre la version du moteur de test qui l'a produite.
+- Métadonnées tirées de git : message du merge, parents, branche fusionnée, auteur, date du commit, fichiers modifiés, `VERSION_JEU` de ce commit, étiquette de release. `debut_run` reste l'heure réelle d'exécution.
+- Un test que le moteur ne peut pas faire tourner sur ce commit est `ignore`, avec une raison explicite. Il ne compte jamais comme réussi.
+- Reprise après interruption : les commits déjà inscrits sont sautés. Environ 5 à 10 minutes par commit.
+- La rétention (§3.12) s'applique comme pour tout run : un run détaillé par release, le reste compacté en résumé.
+
 ## 4. Tests (le banc se teste lui-même)
 
 - Node, `tests/spec-banc.js` : filtrage, tri multi-clés, pagination, agrégation des séries, fusion registre + locaux, ordre topologique, ligne sans capture.
@@ -199,3 +248,6 @@ Décidé par l'utilisateur. Le registre ne conserve en détail que :
 5. Intégration dans le banc (bouton, clic depuis la sélection), inscription manuelle en fin de campagne (§3.4) et test e2e.
 6. Périmètre d’exécution (§3.6) : carte d’impact, tools/perimetre.js, crochets pre-commit / pre-push / pre-merge-commit, sélection dans le banc, contrôle des trous de périmètre, G13.
 7. Rétention (§3.12, branchée sur `tools/version.js --publier`) et score d'instabilité (§3.10).
+8. Journal `MC.Journal` et migration des `console.*`, G16 (§3.14) : peut démarrer tout de suite, en parallèle, car il ne dépend d'aucun autre point.
+9. Diagnostics d'échec et de lenteur, profil CPU et GPU (§3.13), sur le journal.
+10. En dernier, moteur stabilisé : campagnes sur l'historique des merges, PR et releases (§3.15).
