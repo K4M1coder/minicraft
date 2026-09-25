@@ -16,6 +16,23 @@ respecter (voir PLAN.md, « Commits et versions »).
 ## [Non publié]
 ### Ajouté
 
+- Sécurité serveur (SPEC-SECU-010/011, SPEC-SERVEUR-007) : les réponses de
+  fichiers statiques (`servir()`) portent désormais `X-Content-Type-Options:
+  nosniff` et une `Content-Security-Policy` minimale (calcul pur,
+  `NP.entetesSecuriteStatiques()`, src/net-protocol.js) compatible avec
+  three.js chargé depuis cdnjs.cloudflare.com et avec le bootstrap inline du
+  jeu comme du banc de test (`tests/index.html`, `document.write` compris) ;
+  jamais de `X-Powered-By`. La poignée de main WebSocket vérifie désormais
+  l'en-tête `Origin` contre une liste blanche configurable par
+  `--origines a,b,...` (décision pure `NP.origineAutorisee`) — sans ce
+  paramètre (défaut), aucune restriction n'est appliquée, choix explicite et
+  documenté qui laisse le jeu servi par ce même serveur fonctionner comme
+  avant. Le plafond de `ETAT.mobs` (80) est désormais un invariant nommé et
+  testé (`NP.MAX_MOBS_DIFFUSES`, `NP.selectionnerMobsProches`, fonction pure)
+  au lieu d'un littéral inline, et la cadence de diffusion de l'état
+  (`etatHz`) s'adapte maintenant à la charge — nombre de clients connectés et
+  file d'envoi TCP la plus encombrée (`NP.calculerEtatHz`) — plutôt que de
+  rester fixe, recalculée à chaque tic.
 - Vague 2 (B1, SPEC-SYNC-007/010/011, docs/vague-2/B1.md § 6, fin) :
   `ui.js` route désormais l'inventaire, l'équipement et la grille de
   fabrication du joueur (établi compris — `player.js` gagne `pl.grille`,

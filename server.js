@@ -732,11 +732,15 @@ function servir(req, res) {
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
   fs.stat(chemin, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('404 introuvable'); return; }
-    res.writeHead(200, {
+    // SPEC-SECU-010 : en-têtes de sécurité de base sur toute réponse de
+    // fichier statique — nosniff, CSP minimale (calcul pur, testé sous Node
+    // dans src/net-protocol.js) ; jamais de X-Powered-By (http natif de Node
+    // n'en ajoute pas, et on n'en ajoute aucune ici).
+    res.writeHead(200, Object.assign({
       'Content-Type': TYPES[path.extname(chemin).toLowerCase()] || 'application/octet-stream',
       'Content-Length': st.size,
       'Cache-Control': 'no-cache',
-    });
+    }, NP.entetesSecuriteStatiques()));
     fs.createReadStream(chemin).pipe(res);
   });
 }
@@ -744,9 +748,26 @@ function servir(req, res) {
 // ── serveur HTTP + bascule WebSocket ─────────────────────────────────────────
 const serveur = http.createServer(servir);
 
+// SPEC-SECU-011 : liste blanche d'Origin, configurable via --origines (voir
+// src/parametres.js). Calculée UNE fois au démarrage — jamais par requête.
+// null = AUCUNE restriction, le choix par DÉFAUT, explicite et documenté
+// (--aide origines) : sans --origines, le jeu servi par ce même serveur
+// continue de fonctionner exactement comme avant (aucun Origin exigé).
+const ORIGINES_AUTORISEES = PARAMS.origines
+  ? PARAMS.origines.split(',').map(s => s.trim()).filter(Boolean)
+  : null;
+
 serveur.on('upgrade', (req, socket) => {
   if (!NP.estRequeteWebSocket(req.headers)) {
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  // SPEC-SECU-011 : décision PURE (src/net-protocol.js, testée sous Node) —
+  // ici on ne fait que lire l'en-tête et refuser la poignée de main AVANT
+  // toute allocation de client, avec un code d'erreur HTTP explicite.
+  if (!NP.origineAutorisee(req.headers['origin'], ORIGINES_AUTORISEES)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
     socket.destroy();
     return;
   }
@@ -2062,7 +2083,14 @@ setInterval(() => {
      période et sautait son envoi — 30 états par seconde au lieu de 60. La
      petite tolérance absorbe la gigue du minuteur. */
   accEtat += dt;
-  const periodeEtat = 1 / CONF.etatHz;
+  // SPEC-SERVEUR-007 : la cadence de diffusion s'adapte à la charge (nombre
+  // de clients connectés, file d'envoi TCP la plus encombrée) plutôt que de
+  // rester fixe — calcul PUR, testé sous Node (src/net-protocol.js). Recalculé
+  // à chaque tic : toujours cohérent avec la charge actuelle.
+  let fileEnvoiMax = 0;
+  clients.forEach(c => { const f = (c.socket && c.socket.writableLength) || 0; if (f > fileEnvoiMax) fileEnvoiMax = f; });
+  const etatHzEffectif = NP.calculerEtatHz(CONF.etatHz, { nbClients: clients.size, fileMax: fileEnvoiMax });
+  const periodeEtat = 1 / etatHzEffectif;
   if (accEtat >= periodeEtat * 0.9) {
     accEtat = Math.min(periodeEtat, Math.max(0, accEtat - periodeEtat));
     if (clients.size > 0) {
@@ -2085,19 +2113,20 @@ setInterval(() => {
       const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
-        /* À chacun les créatures les plus proches de SES joueurs : avec les
-           habitants des villes, les 80 premières de la liste pouvaient être
-           à l'autre bout du monde. */
+        /* À chacun les créatures les plus proches de SES joueurs, plafonnées à
+           NP.MAX_MOBS_DIFFUSES (invariant documenté et testé, SPEC-SERVEUR-007) :
+           avec les habitants des villes, les premières de la liste pouvaient
+           être à l'autre bout du monde. */
         const pos = c.joueurs.map(x => x.joueur.state.pos);
         const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
-        commun.mobs = entites.list.filter(e => d2(e) < 96 * 96).sort((a, b) => d2(a) - d2(b)).slice(0, 80).map(decrire);
+        commun.mobs = NP.selectionnerMobsProches(entites.list, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrire);
         /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
            ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
            liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques
            dizaines de joueurs, ça sature le réseau bien avant que la
            simulation elle-même ne peine (identifié au banc de charge,
            SPEC-SERVEUR-002 — chiffres avant/après dans docs/charge.md). */
-        commun.joueurs = js.filter(j => d2({ pos: { x: j.x, z: j.z } }) < 96 * 96);
+        commun.joueurs = js.filter(j => d2({ pos: { x: j.x, z: j.z } }) < NP.PORTEE_MOBS_DIFFUSES * NP.PORTEE_MOBS_DIFFUSES);
         commun.toi = c.joueurs.map(x => SY.etatJoueur(x.joueur, x.dernier));
         envoyer(c, commun);
       });

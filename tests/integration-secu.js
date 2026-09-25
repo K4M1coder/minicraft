@@ -38,7 +38,9 @@ function ok(cond, nom, info) {
 function eq(a, b, nom) { ok(a === b, nom, `attendu ${JSON.stringify(b)}, obtenu ${JSON.stringify(a)}`); }
 
 // ── client WebSocket minimal (repris d'integration-net.js), + accès brut ────
-function connecter(port) {
+// `origin` (SPEC-SECU-011) : quand fourni, pose l'en-tête Origin de la requête
+// de poignée de main, comme le ferait un vrai navigateur.
+function connecter(port, origin) {
   return new Promise((resolve, reject) => {
     const cle = crypto.randomBytes(16).toString('base64');
     const sock = net.connect(port, '127.0.0.1', () => {
@@ -46,6 +48,7 @@ function connecter(port) {
         'GET / HTTP/1.1\r\n' +
         `Host: 127.0.0.1:${port}\r\n` +
         'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
+        (origin ? `Origin: ${origin}\r\n` : '') +
         `Sec-WebSocket-Key: ${cle}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
     });
 
@@ -531,6 +534,95 @@ async function rejoindre(port, nom, locaux) {
     }
 
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+  }
+
+  // ── groupe 6 : en-têtes de sécurité HTTP (SPEC-SECU-010) ─────────────────
+  {
+    const port = PORT + 10;
+    const s = demarrer(['--port', String(port), '--serveur'], {});
+    try {
+      ok(await attendrePret(port), 'le serveur démarre (groupe 6)');
+      const rep = await new Promise((resolve) => {
+        http.get({ host: '127.0.0.1', port, path: '/index.html' }, (res) => {
+          res.resume();
+          res.on('end', () => resolve({ code: res.statusCode, entetes: res.headers }));
+        }).on('error', () => resolve({ code: 0, entetes: {} }));
+      });
+      eq(rep.code, 200, 'SPEC-SECU-010 : /index.html répond 200');
+      eq(rep.entetes['x-content-type-options'], 'nosniff', 'SPEC-SECU-010 : X-Content-Type-Options: nosniff');
+      const csp = rep.entetes['content-security-policy'] || '';
+      ok(!!csp, 'SPEC-SECU-010 : une Content-Security-Policy est présente');
+      ok(csp.indexOf('cdnjs.cloudflare.com') >= 0, 'SPEC-SECU-010 : la CSP autorise le CDN de three.js');
+      ok(!('x-powered-by' in rep.entetes), 'SPEC-SECU-010 : pas de X-Powered-By');
+    } catch (e) {
+      echecs++; details.push(`  ${C.r}✗ exception (groupe 6) : ${e.message}${C.x}\n${s.logs.join('')}`);
+    } finally {
+      try { s.kill(); } catch (e) {}
+      await dodo(150);
+    }
+  }
+
+  // ── groupe 7 : liste blanche d'Origin à la poignée de main (SPEC-SECU-011) ──
+  {
+    const port = PORT + 11;
+    const origineOk = `http://127.0.0.1:${port}`;
+    const s = demarrer(['--port', String(port), '--serveur', '--origines', origineOk], {});
+    try {
+      ok(await attendrePret(port), 'le serveur démarre avec --origines (groupe 7)');
+
+      let refusee = false;
+      try { await connecter(port, 'http://interdit.example'); } catch (e) { refusee = true; }
+      ok(refusee, 'SPEC-SECU-011 : un Origin absent de la liste configurée est refusé');
+
+      let acceptee = false;
+      try { const cl = await connecter(port, origineOk); acceptee = true; cl.fermer(); }
+      catch (e) { acceptee = false; }
+      ok(acceptee, 'SPEC-SECU-011 : l origine attendue aboutit');
+      // Sans --origines (tous les AUTRES groupes de ce fichier se connectent
+      // sans Origin), la poignée de main aboutit toujours — c'est le
+      // comportement par défaut, déjà vérifié partout ailleurs ici.
+    } catch (e) {
+      echecs++; details.push(`  ${C.r}✗ exception (groupe 7) : ${e.message}${C.x}\n${s.logs.join('')}`);
+    } finally {
+      try { s.kill(); } catch (e) {}
+      await dodo(150);
+    }
+  }
+
+  // ── groupe 8 : cadence de diffusion adaptée à la charge (SPEC-SERVEUR-007) ──
+  {
+    const port = PORT + 12;
+    const s = demarrer(['--port', String(port), '--serveur'], { MC_ETAT_HZ: '48' });
+    try {
+      ok(await attendrePret(port), 'le serveur démarre (groupe 8)');
+
+      const { cl: sonde } = await rejoindre(port, 'Sonde');
+      await dodo(300);
+      const n0a = sonde.messages.filter(m => m.t === 'etat').length;
+      await dodo(1000);
+      const tauxPeu = sonde.messages.filter(m => m.t === 'etat').length - n0a;
+
+      // 29 connexions supplémentaires (pas besoin de REJOINDRE : le nombre de
+      // clients CONNECTÉS suffit déjà à faire monter la charge côté serveur).
+      const autres = await Promise.all(Array.from({ length: 29 }, () => connecter(port)));
+      await dodo(300);          // laisse le serveur voir les nouvelles connexions
+      const n0b = sonde.messages.filter(m => m.t === 'etat').length;
+      await dodo(1000);
+      const tauxCharge = sonde.messages.filter(m => m.t === 'etat').length - n0b;
+
+      ok(tauxPeu >= 25, 'SPEC-SERVEUR-007 : avec peu de clients, la cadence reste proche de la configuration (' + tauxPeu + '/s, MC_ETAT_HZ=48)');
+      ok(tauxCharge > 0, 'SPEC-SERVEUR-007 : la diffusion continue malgré la charge, jamais interrompue (' + tauxCharge + '/s)');
+      ok(tauxCharge < tauxPeu, 'SPEC-SERVEUR-007 : la cadence mesurée diminue progressivement quand le nombre de clients augmente (' + tauxCharge + ' < ' + tauxPeu + ')');
+
+      autres.forEach(cl => cl.fermer());
+      sonde.fermer();
+      await dodo(150);
+    } catch (e) {
+      echecs++; details.push(`  ${C.r}✗ exception (groupe 8) : ${e.message}${C.x}\n${s.logs.join('')}`);
+    } finally {
+      try { s.kill(); } catch (e) {}
+      await dodo(150);
+    }
   }
 
   console.log(`\n${C.b}Integration sécurité (L44 — sous-lot A1)${C.x}`);
