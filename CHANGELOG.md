@@ -239,6 +239,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   documenté B1.md § 12) — c'est désormais le serveur seul qui fait autorité.
   Hors périmètre : l'échange avec un PNJ marchand ordinaire (`TROC`, pas un
   conteneur) reste tel quel.
+- SPEC-ENV-003 (`src/metiers.js`, `src/economie.js`) : l'offre du fermier
+  (blé, seul métier agricole, METIER-001) ne se contente plus de geler en
+  hiver (`tickJour`, mult de pousse nul, SAISON-006) — elle diminue à son
+  tour, faute de récolte, jusqu'à épuisement, puis se restaure normalement
+  dès le retour d'une pousse au printemps (branche déjà existante, inchangée
+  pour toute ressource non agricole). Nouveau `Metiers.estRessourceAgricole`
+  (pure, dérivée de `METIER_DE_RESSOURCE` sans le dupliquer) distingue cette
+  seule ressource des autres stocks de lieu.
 
 ### Modifié
 
