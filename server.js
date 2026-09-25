@@ -109,7 +109,9 @@ const guildes = MC.Guildes.creerEtat();
 const economie = MC.Economie.creerEtat(CONF.graine);
 // SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
 // s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
-const distributeurs = new Map();
+// B1 (étape 7, SPEC-SYNC-012/013) : un distributeur est maintenant un
+// conteneur POSÉ comme un autre — il vit dans `conteneursPoses`, plus de Map
+// séparée (ce qui le fait aussi persister dans etatMonde, § 8 du plan).
 // B1 (SPEC-SYNC-007 à 017) : registre des joueurs nommés et banques — déclarés
 // ICI (avant `appliquerEtatMonde`, qui les lit dès la reprise `--monde` au
 // démarrage, plus bas dans ce fichier) et non près du reste de la section
@@ -117,6 +119,16 @@ const distributeurs = new Map();
 // une zone morte temporelle (`const` lu avant sa déclaration lexicale).
 const joueursRegistre = new Map();   // cleRegistre(nom, j) → enregistrement { v:1, inv, equip, banque }
 const banques = new Map();           // cleRegistre(nom, j) → conteneur 'banque' (API figée, § 5 du plan)
+// B1 (étape 7, docs/vague-2/B1.md § 7) : registre des conteneurs POSÉS — coffre,
+// fourneau, armoire, étagère, bibliothèque, distributeur (PAS la banque, ni la
+// grille : par joueur, voir plus haut/plus bas). `js.conteneurOuvert` (sur
+// chaque joueur local, voir creerJoueurServeur) tient lieu d'abonnement : un
+// seul conteneur posé ouvert à la fois par joueur local, comme à l'écran —
+// revérifié (abonnement ET portée) à CHAQUE opération par `resoudreConteneur`.
+const conteneursPoses = new Map();   // cle 'x,y,z' → conteneur MC.Conteneurs
+// dernier instantané ENVOYÉ d'un fourneau (cadence de message ≤ 2 Hz,
+// SPEC-SYNC-015) — la cuisson elle-même tourne à chaque tic (SPEC-SYNC-016).
+const derniereEmissionFour = new Map();
 function banqueDe(cleReg) {
   let b = banques.get(cleReg);
   if (!b) { b = MC.Conteneurs.creerConteneur('banque'); banques.set(cleReg, b); }
@@ -126,6 +138,7 @@ let heure = 60;
 let meteoT = null;
 let accEau = 0;
 let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
+let accFourMsg = 0;       // B1 (étape 7) : cadence de message des fourneaux posés (≤ 2 Hz, SPEC-SYNC-015)
 
 // ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
 /* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
@@ -162,9 +175,17 @@ function etatMonde() {
     // (inventaire, équipement, banque — `MC.Conteneurs.versEnregistrement`
     // inclut déjà la banque) ; un joueur ENCORE connecté à l'instant de la
     // sauvegarde est capturé à jour, pas seulement celui déjà écrit au
-    // dernier `fermer()`. Le registre des conteneurs POSÉS (coffres,
-    // fourneaux…) n'existe pas encore ici (étape 7) : rien à en sauver.
+    // dernier `fermer()`.
     joueurs: Array.from(snapshotRegistreJoueurs().entries()),
+    // B1 (étape 7, SPEC-SYNC-021 partiel — la partie inventaire) : les
+    // conteneurs POSÉS (coffres, fourneaux, armoires, étagères,
+    // bibliothèques, distributeurs) — un joueur qui en a un ouvert à
+    // l'instant de la sauvegarde est capturé à jour (même objet vivant).
+    conteneurs: Array.from(conteneursPoses.entries())
+      .map(([cle, cont]) => MC.ContratsV2.validerConteneurPersiste({
+        cle, type: cont.type, slots: cont.slots.map(MC.ContratsV2.pileVersCase), four: cont.four,
+      }))
+      .filter(Boolean),
   };
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
@@ -233,6 +254,19 @@ function appliquerEtatMonde(data) {
     if (!v) return;
     joueursRegistre.set(entree[0], v);
     banqueDe(entree[0]).slots = v.banque.map(MC.ContratsV2.caseVersPile);
+  });
+  // B1 (étape 7, SPEC-SYNC-021 partiel) : conteneurs POSÉS — absents d'un
+  // fichier plus ancien, donc simplement vides, comme aujourd'hui.
+  conteneursPoses.clear();
+  derniereEmissionFour.clear();
+  (data.conteneurs || []).forEach(o => {
+    const v = MC.ContratsV2.validerConteneurPersiste(o);
+    if (!v) return;
+    const cont = MC.Conteneurs.creerConteneur(v.type);
+    if (!cont) return;
+    cont.slots = v.slots.map(MC.ContratsV2.caseVersPile);
+    if (v.four) cont.four = v.four;
+    conteneursPoses.set(v.cle, cont);
   });
   return true;
 }
@@ -1119,34 +1153,44 @@ function traiter(c, m) {
       // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
-      // SPEC-MECA-001 : un distributeur cassé lâche ce qu'il contenait.
-      if (m.id === 0 && avant === C.B.DISTRIBUTEUR) {
-        const kd = `${m.x},${m.y},${m.z}`;
-        const slots = distributeurs.get(kd);
-        if (slots) slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
-        distributeurs.delete(kd);
+      /* B1 (étape 7) : un conteneur posé cassé lâche son contenu au sol —
+         UNE SEULE FOIS ici (le serveur fait autorité sur la casse), même si
+         deux joueurs l'avaient ouvert en même temps : leur `js.conteneurOuvert`
+         pointe vers une entrée qui vient de disparaître de `conteneursPoses`,
+         donc `resoudreConteneur` refusera désormais tout transfert dessus
+         (motif 'ferme') — pas de double lâcher, pas de perte. */
+      if (m.id === 0 && avant) {
+        const defAvant = C.BLOCKS[avant];
+        const tAvant = defAvant && defAvant.interactive && MC.ContratsV2.TYPES_CONTENEUR[defAvant.interactive];
+        if (tAvant && !tAvant.parJoueur) {
+          const kc = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+          const contCasse = conteneursPoses.get(kc);
+          if (contCasse) {
+            contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
+            conteneursPoses.delete(kc);
+            derniereEmissionFour.delete(kc);
+          }
+        }
       }
       break;
     }
 
-    /* SPEC-SYNC-017 (B1, docs/vague-2/B1.md § 9 étape 9) : DISTRIB est une
-       DÉCLARATION, pas un dépôt aveugle — `m.slots` (déjà borné et normalisé
-       par net-protocol.js) est ce que le joueur VEUT voir dans le
-       distributeur ; `MC.Conteneurs.declarer` ne prélève dans son inventaire
-       serveur que ce qu'il possède réellement (tronqué), et rend ce qu'un
-       retrait n'a pas pu récupérer (Σ inv + distributeur conservée par id).
-       Le registre des distributeurs posés (étape 7) n'existe pas encore :
-       `distributeurs` reste la Map brute cle → slots, ici enveloppée le
-       temps de l'appel pour offrir la forme `{ slots }` que `declarer`
-       attend (mutation en place : aucune réécriture séparée nécessaire). */
+    /* SPEC-SYNC-017 : DISTRIB est une DÉCLARATION, pas un dépôt aveugle —
+       `m.slots` (déjà borné et normalisé par net-protocol.js) est ce que le
+       joueur VEUT voir dans le distributeur ; `MC.Conteneurs.declarer` ne
+       prélève dans son inventaire serveur que ce qu'il possède réellement
+       (tronqué), et rend ce qu'un retrait n'a pas pu récupérer (Σ inv +
+       distributeur conservée par id). Le distributeur est un conteneur posé
+       comme un autre depuis l'étape 7 (`conteneursPoses`) — gardé pour un
+       appelant historique (solo via un ancien client, tests) ; le client
+       à jour préfère `CONTENEUR_TRANSFERT` (modèle référence, § 6/8). */
     case NP.MSG.DISTRIB: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || monde.getBlock(m.x, m.y, m.z) !== C.B.DISTRIBUTEUR) break;
-      const kd = `${m.x},${m.y},${m.z}`;
-      const TAILLE_DISTRIB = 9;
-      const cont = { slots: distributeurs.get(kd) || new Array(TAILLE_DISTRIB).fill(null) };
+      const kd = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+      let cont = conteneursPoses.get(kd);
+      if (!cont) { cont = MC.Conteneurs.creerConteneur('distributeur'); conteneursPoses.set(kd, cont); }
       MC.Conteneurs.declarer(js.joueur.state.inv, cont, m.slots);
-      distributeurs.set(kd, cont.slots);
       envoyerInvMaj(c, m.j, {});
       break;
     }
@@ -1200,22 +1244,43 @@ function traiter(c, m) {
       if (r && r.ok) diffuserEquipVu(c, m.j, js, m.slot);
       break;
     }
-    // le transfert inv↔grille ne dépend d'aucun registre de conteneur posé —
-    // un transfert vers/depuis 'cont' échoue proprement (motif 'ferme') tant
-    // que le registre des conteneurs (B1, étape 7) n'est pas branché.
+    /* B1 (étape 7, SPEC-SYNC-012/013) : s'abonner à un conteneur à portée —
+       bloc (x,y,z) ou banquier (eid). Un seul conteneur ouvert à la fois par
+       joueur local (une nouvelle ouverture remplace la précédente, comme un
+       joueur qui ferme un coffre pour en ouvrir un autre). Refus SILENCIEUX
+       sauf si le message porte un `seq` (clic explicite côté client, B1.md
+       § 4) — sinon un `INV_MAJ` de refus. */
+    case NP.MSG.CONTENEUR_OUVRIR: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || js.joueur.state.dead) break;
+      // `seq` facultatif (§ 4 du plan) : quand il est fourni, il partage le
+      // même compteur strictement croissant que les autres opérations de ce
+      // joueur local — sinon l'`ack` d'un refus ne correspondrait jamais au
+      // `seq` envoyé, et le client ne saurait jamais le relier à sa demande.
+      if (m.seq !== undefined && !seqNouveau(js, m.seq)) break;
+      const r = ouvrirConteneurPourJoueur(js, m);
+      if (!r) { if (m.seq !== undefined) refuserOp(c, m.j, m.seq, 'portee'); break; }
+      envoyer(c, {
+        t: NP.MSG.CONTENEUR_ETAT, j: m.j, cle: r.cle, type: r.type, rev: r.cont.rev || 0,
+        slots: r.cont.slots.map(MC.ContratsV2.pileVersCase),
+        four: r.cont.four ? { burn: r.cont.four.burn, cook: r.cont.four.cook } : undefined,
+      });
+      break;
+    }
     case NP.MSG.CONTENEUR_TRANSFERT: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
       traiterOp(c, m, js, { k: 'transfert', de: m.de, vers: m.vers, n: m.n });
       break;
     }
-    // fermer la grille rend son contenu à l'inventaire (SPEC-SYNC-007, B1.md
-    // § 6) — un vrai conteneur posé (coffre, fourneau…) n'existe pas encore
-    // ici (étape 7) : rien d'autre à faire pour l'instant.
+    /* Fermer la grille rend son contenu à l'inventaire (SPEC-SYNC-007) ; un
+       conteneur posé ou la banque : simple désabonnement (rien à rendre,
+       tout y est déjà réellement). */
     case NP.MSG.CONTENEUR_FERMER: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
-      if (m.cle === 'grille') traiterOp(c, m, js, { k: 'rendreGrille' });
+      if (m.cle === 'grille') { traiterOp(c, m, js, { k: 'rendreGrille' }); break; }
+      if (js.conteneurOuvert === m.cle) { js.conteneurOuvert = null; js.banquePos = null; js.banqueEid = null; }
       break;
     }
     case NP.MSG.INV_CONSOMMER: {
@@ -1407,18 +1472,119 @@ function cleRegDejaConnectee(cleReg) {
   }
   return false;
 }
-/* ctx pour MC.Conteneurs.appliquer : la banque est déjà un conteneur
-   accessible par sa clé propre ('banque') ; un conteneur posé (coffre,
-   fourneau…) n'existe pas encore ici (étape 7) — renvoyer null fait échouer
-   proprement l'opération (motif 'ferme'), sans planter. */
+/* ctx pour MC.Conteneurs.appliquer : `conteneur(cle)` est LE point où
+   l'accès à un conteneur posé ou à la banque est décidé — abonnement
+   (`js.conteneurOuvert`, un seul conteneur ouvert à la fois par joueur
+   local, comme l'écran) ET portée (SPEC-SYNC-013, 6 blocs) revérifiés à
+   CHAQUE appel, pas seulement à l'ouverture : un joueur qui s'est éloigné,
+   ou qui n'a jamais ouvert ce conteneur, ne peut plus agir dessus même s'il
+   en connaît la clé (rejeu, faux message forgé…). */
 function ctxJoueur(js) {
   return {
     joueur: { inv: js.joueur.state.inv, equip: js.joueur.state.equip, grille: js.grille },
-    conteneur: (cle) => (cle === 'banque' && js.cleReg) ? banqueDe(js.cleReg) : null,
+    conteneur: (cle) => resoudreConteneur(js, cle),
     regles,
     stats: { faim: js.joueur.state.hunger, vie: js.joueur.state.hp, vieMax: MC.PlayerConst.MAX_HP },
     eauProche: () => eauProcheDe(js.joueur.state.pos),
   };
+}
+// distance (œil du joueur → CENTRE du bloc), même calcul que blocAutorise plus bas
+function distanceConteneur(st, x, y, z) {
+  return Math.hypot(x + 0.5 - st.pos.x, y + 0.5 - (st.pos.y + 1.62), z + 0.5 - st.pos.z);
+}
+function resoudreConteneur(js, cle) {
+  if (js.conteneurOuvert !== cle) return null;      // pas abonné (ou pas CE conteneur) : refusé
+  const st = js.joueur.state;
+  if (cle === 'banque') {
+    if (!js.cleReg) return null;
+    // SYNC-013 : la banque exige la proximité d'un bloc coffre-fort (ou du
+    // banquier par lequel elle a été ouverte) — REvérifiée ici, pas
+    // seulement à CONTENEUR_OUVRIR (un joueur qui s'éloigne perd l'accès).
+    if (js.banquePos) {
+      if (distanceConteneur(st, js.banquePos.x, js.banquePos.y, js.banquePos.z) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    } else if (js.banqueEid !== null && js.banqueEid !== undefined) {
+      const ent = entites.list.find(e => e.eid === js.banqueEid && !e.dead);
+      if (!ent) return null;
+      const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+      if (d > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    } else return null;
+    return banqueDe(js.cleReg);
+  }
+  const cont = conteneursPoses.get(cle);
+  if (!cont) return null;                            // détruit entre-temps (cassé)
+  const p = cle.split(',');
+  if (p.length !== 3 || distanceConteneur(st, +p[0], +p[1], +p[2]) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+  return cont;
+}
+// tous les joueurs locaux (toutes connexions) actuellement abonnés à `cle`
+// (SPEC-SYNC-015 : à qui diffuser un CONTENEUR_MAJ)
+function abonnesActuels(cle) {
+  return tousLesJoueurs().filter(x => x.js.conteneurOuvert === cle);
+}
+/* Résout et ouvre un conteneur pour CONTENEUR_OUVRIR (bloc posé à x,y,z, ou
+   banquier par eid) : vérifie la portée, crée le conteneur au registre à la
+   première ouverture (donjon, bibliothèque générée — parité avec le solo,
+   game.js coffreDe/l. 1734-1747, 2104-2110), et marque l'abonnement. Renvoie
+   { cle, type, cont } ou null (refusé). */
+function ouvrirConteneurPourJoueur(js, m) {
+  const st = js.joueur.state;
+  if (m.eid !== undefined) {
+    const ent = entites.list.find(e => e.eid === m.eid && e.role === 'banquier' && !e.dead);
+    if (!ent || !js.cleReg) return null;
+    const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+    if (d > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    js.conteneurOuvert = 'banque'; js.banquePos = null; js.banqueEid = m.eid;
+    return { cle: 'banque', type: 'banque', cont: banqueDe(js.cleReg) };
+  }
+  if (distanceConteneur(st, m.x, m.y, m.z) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+  const bd = C.BLOCKS[monde.getBlock(m.x, m.y, m.z)];
+  if (!bd || !bd.interactive) return null;
+  if (bd.interactive === 'banque') {
+    if (!js.cleReg) return null;
+    js.conteneurOuvert = 'banque'; js.banquePos = { x: m.x, y: m.y, z: m.z }; js.banqueEid = null;
+    return { cle: 'banque', type: 'banque', cont: banqueDe(js.cleReg) };
+  }
+  const t = MC.ContratsV2.TYPES_CONTENEUR[bd.interactive];
+  if (!t || t.parJoueur) return null;                 // 'craft' (établi), 'info'… : pas un conteneur posé
+  const cle = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+  let cont = conteneursPoses.get(cle);
+  if (!cont) {
+    cont = MC.Conteneurs.creerConteneur(bd.interactive);
+    if (!cont) return null;
+    remplirConteneurNeuf(cont, bd.interactive, m.x, m.y, m.z, cle);
+    conteneursPoses.set(cle, cont);
+  }
+  js.conteneurOuvert = cle; js.banquePos = null; js.banqueEid = null;
+  return { cle, type: bd.interactive, cont };
+}
+/* Un objet ajouté à la première case libre — assez pour remplir un
+   conteneur neuf (donjon, bibliothèque générée), jamais utilisé pour un
+   transfert normal (qui passe par MC.Conteneurs.appliquer). */
+function ajouterPileConteneur(cont, id, n, data) {
+  for (let i = 0; i < cont.slots.length && n > 0; i++) {
+    if (!cont.slots[i]) {
+      const p = { id, n: Math.min(n, C.maxStack(id)) };
+      if (data !== undefined) p.data = data;
+      cont.slots[i] = p;
+      n -= p.n;
+    }
+  }
+  return n;
+}
+/* Parité avec le solo (game.js coffreDe, l. 1734-1747 ; ouvrirConteneur,
+   l. 2104-2110) : un coffre de donjon se remplit de son butin à la première
+   ouverture, une bibliothèque générée (jamais posée par un joueur) tient
+   quelques livres du monde. */
+function remplirConteneurNeuf(cont, type, x, y, z, cle) {
+  if (type === 'chest' && monde.butinCoffre && monde.coffresPilles && !monde.coffresPilles.has(cle)) {
+    const butin = monde.butinCoffre(x, y, z);
+    if (butin) { monde.coffresPilles.add(cle); butin.forEach(st => ajouterPileConteneur(cont, st.id, st.n)); }
+  } else if (type === 'bibliotheque' && !monde.overrides.has(cle) && MC.Livres && monde.habitats) {
+    const lieuB = monde.habitats.lieuxProches(x, z, 160)[0];
+    if (lieuB) for (let nb = 0; nb < 3; nb++) {
+      ajouterPileConteneur(cont, C.I.LIVRE, 1, MC.Livres.livreDuMonde(monde.seed + nb * 7919, lieuB));
+    }
+  }
 }
 // approximation volontairement large (pas un rayon lancé) : juste assez pour
 // distinguer « près d'une source d'eau » de « nulle part près de l'eau »,
@@ -1456,16 +1622,54 @@ function lacherAuxPieds(js, pile) {
   const p = js.joueur.state.pos;
   entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n);
 }
+// clé(s) de conteneur posé/banque potentiellement concernées par une
+// opération AVANT de savoir si elle réussit (pour capturer l'instantané
+// « avant » sans dépendre du résultat) — transfert : de/vers ; declarer : cle.
+function clesConteneurDe(op) {
+  const out = [];
+  if (op.de && op.de.z === 'cont') out.push(op.de.cle);
+  if (op.vers && op.vers.z === 'cont') out.push(op.vers.cle);
+  if (op.cle) out.push(op.cle);
+  return out;
+}
+function conteneurParCle(js, cle) {
+  return cle === 'banque' ? (js.cleReg ? banqueDe(js.cleReg) : null) : conteneursPoses.get(cle);
+}
 /* Cœur commun à CRAFT, EQUIP, CONTENEUR_TRANSFERT, INV_CONSOMMER, INV_LACHER,
    INV_CREATIF : vérifie l'idempotence du `seq`, applique l'opération pure,
    lâche au sol ce qu'elle a éventuellement fait déborder, puis répond par un
-   INV_MAJ (ack ou refus) — TOUJOURS, jamais deux messages non atomiques. */
+   INV_MAJ (ack ou refus) — TOUJOURS, jamais deux messages non atomiques.
+
+   SPEC-SYNC-015 : quand l'opération touche un conteneur posé ou la banque
+   (`r.modifs.conteneurs`), l'AUTEUR reçoit le delta DANS son INV_MAJ
+   (`conteneurs:[…]`, jamais un CONTENEUR_MAJ séparé — ça clignoterait) ; les
+   AUTRES joueurs qui ont ce même conteneur ouvert reçoivent un CONTENEUR_MAJ. */
 function traiterOp(c, m, js, op) {
   if (!seqNouveau(js, m.seq)) return null;
+  const avant = new Map();
+  clesConteneurDe(op).forEach(cle => {
+    const cont = conteneurParCle(js, cle);
+    if (cont) avant.set(cle, MC.Conteneurs.instantane(cont));
+  });
   const r = MC.Conteneurs.appliquer(ctxJoueur(js), op);
   if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); return r; }
   if (r.effets && r.effets.lache) lacherAuxPieds(js, r.effets.lache);
-  envoyerInvMaj(c, m.j, {});
+  const deltas = [];
+  (r.modifs.conteneurs || []).forEach(cle => {
+    const cont = conteneurParCle(js, cle);
+    if (!cont) return;
+    const av = avant.get(cle);
+    const maj = av ? MC.Conteneurs.diff(av.slots, cont.slots)
+                   : cont.slots.map((s, i) => [i, MC.ContratsV2.pileVersCase(s)]);
+    const delta = { cle, rev: cont.rev, maj };
+    if (cont.four) delta.four = { burn: cont.four.burn, cook: cont.four.cook };
+    deltas.push(delta);
+    abonnesActuels(cle).forEach(({ c: c2, j: j2 }) => {
+      if (c2.id === c.id && j2 === m.j) return;         // jamais à l'auteur (déjà dans son INV_MAJ)
+      envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, delta));
+    });
+  });
+  envoyerInvMaj(c, m.j, deltas.length ? { conteneurs: deltas } : {});
   return r;
 }
 /* SPEC-SYNC-011 : EQUIP_VU n'est diffusé qu'aux AUTRES joueurs à portée de vue
@@ -1493,6 +1697,9 @@ function creerJoueurServeur(j) {
   // messages d'inventaire (dernierSeq, revInv — voir seqNouveau/envoyerInvMaj).
   const grille = MC.Inventory.create(MC.ContratsV2 ? MC.ContratsV2.BORNES.SLOTS_GRILLE : 9);
   return { joueur, grille, cleReg: null, dernierSeq: 0, revInv: 0,
+           // B1 (étape 7) : conteneur posé (ou 'banque') actuellement ouvert par
+           // ce joueur local — un seul à la fois, voir resoudreConteneur/ctxJoueur.
+           conteneurOuvert: null, banquePos: null, banqueEid: null,
            entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
 }
 const PORTEE_BLOC = 7;
@@ -1639,20 +1846,27 @@ setInterval(() => {
       // arrow) rejoignent tout seules la diffusion d'état périodique (ETAT),
       // pas besoin de message dédié.
       onDistribuer: (x, y, z) => {
-        const kd = `${x},${y},${z}`;
-        const slots = distributeurs.get(kd);
-        if (!slots) return;
-        const i = MC.Circuits.distributeurChoix(slots);
+        const kd = MC.ContratsV2.cleConteneur(x, y, z);
+        const cont = conteneursPoses.get(kd);
+        if (!cont) return;
+        const i = MC.Circuits.distributeurChoix(cont.slots);
         if (i < 0) return;
-        const st = slots[i];
+        const st = cont.slots[i];
         const idef = C.ITEMS[st.id];
         st.n -= 1;
-        if (st.n <= 0) slots[i] = null;
+        if (st.n <= 0) cont.slots[i] = null;
+        cont.rev = (cont.rev || 0) + 1;
         if (idef && idef.ammo) {
           entites.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
                          14, idef.damage || 5, null, idef.ammoType || 'fleche');
         } else {
           entites.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
+        }
+        // SPEC-SYNC-015 : un joueur qui a ce distributeur ouvert voit l'éjection
+        const abonnesD = abonnesActuels(kd);
+        if (abonnesD.length) {
+          const deltaD = { cle: kd, rev: cont.rev, maj: [[i, MC.ContratsV2.pileVersCase(cont.slots[i])]] };
+          abonnesD.forEach(({ c: c2, j: j2 }) => envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, deltaD)));
         }
       },
       // SPEC-MECA-007 : rejoue la commande stockée avec le même routage que
@@ -1663,6 +1877,29 @@ setInterval(() => {
       id: ch.setBlock !== undefined ? ch.setBlock : monde.getBlock(ch.x, ch.y, ch.z),
       etat: ch.setEtat !== undefined ? ch.setEtat : (monde.getEtat(ch.x, ch.y, ch.z) || 0),
     }));
+  }
+
+  /* B1 (étape 7) : les fourneaux posés cuisent à CHAQUE tic (SPEC-SYNC-016 —
+     ils n'attendent pas qu'un joueur regarde), mais un CONTENEUR_MAJ n'est
+     émis qu'à un rythme limité (≤ 2 Hz) et SEULEMENT s'il existe un abonné
+     (SPEC-SYNC-015) — le delta compare l'instantané envoyé la dernière fois
+     à l'état courant, donc reste correct même après une longue absence. */
+  conteneursPoses.forEach(cont => { if (cont.four) MC.Conteneurs.tickFour(cont, dt); });
+  accFourMsg += dt;
+  if (accFourMsg >= 0.5) {
+    accFourMsg = 0;
+    conteneursPoses.forEach((cont, cle) => {
+      if (!cont.four) return;
+      const av = derniereEmissionFour.get(cle);
+      derniereEmissionFour.set(cle, MC.Conteneurs.instantane(cont));
+      if (!av) return;
+      const abonnesF = abonnesActuels(cle);
+      if (!abonnesF.length) return;
+      const maj = MC.Conteneurs.diff(av.slots, cont.slots);
+      if (!maj.length && av.four.burn === cont.four.burn && av.four.cook === cont.four.cook) return;
+      const deltaF = { cle, rev: cont.rev, maj, four: { burn: cont.four.burn, cook: cont.four.cook } };
+      abonnesF.forEach(({ c: c2, j: j2 }) => envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, deltaF)));
+    });
   }
 
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :

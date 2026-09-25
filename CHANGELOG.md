@@ -200,6 +200,29 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- Vague 2 (B1, étape 7, SPEC-SYNC-012/013/015/016, docs/vague-2/B1.md § 7) :
+  registre serveur des conteneurs POSÉS (`conteneursPoses`, `server.js`) —
+  coffre, armoire, étagère, bibliothèque, fourneau, distributeur (le
+  distributeur quitte sa Map séparée et rejoint ce registre, ce qui le rend
+  aussi persistant). `CONTENEUR_OUVRIR`/`CONTENEUR_FERMER` abonnent/désabonnent
+  un joueur local (un seul conteneur ouvert à la fois, comme l'écran) ;
+  `resoudreConteneur` REvérifie abonnement ET portée (6 blocs, `PORTEE_CONTENEUR`)
+  à CHAQUE opération, pas seulement à l'ouverture — corrige le trou par
+  lequel la banque (`ctxJoueur`) et un conteneur posé pouvaient rester
+  accessibles à distance. La banque se rouvre via un bloc coffre-fort
+  (position revérifiée) ou un banquier (`eid`, entité de rôle `banquier`,
+  distance revérifiée). `CONTENEUR_TRANSFERT`/`declarer` diffusent un delta
+  (`CONTENEUR_MAJ`) aux AUTRES abonnés, jamais à l'auteur (déjà servi par son
+  propre `INV_MAJ.conteneurs`, SYNC-015). Un fourneau posé cuit à chaque tic
+  qu'il ait ou non un abonné (SYNC-016) ; les messages de progression sont
+  limités à 2 Hz et seulement émis s'il y a un abonné. Casser un conteneur
+  posé (n'importe lequel, coffre-fort excepté puisqu'il n'a pas de contenu
+  propre) lâche son contenu au sol une seule fois, même si plusieurs joueurs
+  l'avaient ouvert : le retirer du registre avant toute autre opération fait
+  échouer proprement (motif `ferme`) tout transfert ultérieur. Persisté dans
+  `etatMonde`/`appliquerEtatMonde` (`conteneurs`, `MC.ContratsV2.validerConteneurPersiste`),
+  donc retrouvé après un arrêt puis une relance `--monde` (SYNC-021, partie
+  conteneurs).
 
 ### Modifié
 
