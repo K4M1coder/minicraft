@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 ### Ajouté
+- `tests/spec-pvp.js` : test direct de `MC.PvpEnjeux.factionsProches` (SPEC-PVP-006), jusque-là exercée seulement indirectement via `embargo` — porte G6 (surface publique testée).
 - Catalogue de tests : `pvp-enjeux` (src) et `spec-pvp` (tests) rejoignent la liste officielle de `tests/run.js`/`tests/gates.js` (couverts par G1/G2 depuis leur fusion, mais pas encore exécutés par ces commandes) ; `tests/index.html` resynchronisé avec `tests/run.js` (spec-conteneurs, spec-crochets, spec-maillage, spec-pvp, pvp-enjeux, manquants depuis leurs lots respectifs).
 
 - Lot BANC, étapes 0a/0b (docs/banc/historique-global.md, SPEC-BANC-059 à 066,

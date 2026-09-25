@@ -337,6 +337,16 @@
       var politique = { factions: new Map([['f1', { siege: { x: 0, z: 0 }, territoire: 100 }]]) };
       A.equal(PV.embargo(pv, 'inconnu', politique, 0, 0), false);
     });
+    it('SPEC-PVP-006 : factionsProches ne retient que les factions dont le territoire couvre (x, z), triées', function () {
+      var politique = { factions: new Map([
+        ['f2', { siege: { x: 200, z: 200 }, territoire: 50 }],
+        ['f1', { siege: { x: 0, z: 0 }, territoire: 100 }],
+        ['f3', { siege: { x: 5, z: 5 }, territoire: 20 }],
+      ]) };
+      A.deep(PV.factionsProches(politique, 10, 10), ['f1', 'f3'], 'f2 est hors de portée, f1/f3 triées');
+      A.deep(PV.factionsProches(politique, 1000, 1000), [], 'aucune faction ne couvre ce point');
+      A.deep(PV.factionsProches(null, 0, 0), [], 'sans état politique, aucune faction');
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════════
