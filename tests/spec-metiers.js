@@ -84,6 +84,22 @@
       A.equal(Met.metierDeCollecte({ give: [{ id: I.EMERALD, n: 1 }], get: { id: I.BREAD, n: 4 } }), null, 'un achat ne collecte rien');
     });
 
+    it('SPEC-ENV-003 : l\'offre agricole (nourriture, METIER-001) diminue en hiver sous la référence estivale, restaurée à un cycle de printemps', function () {
+      A.ok(Met.estRessourceAgricole(I.WHEAT), 'le blé (fermier) est une ressource agricole');
+      A.ok(!Met.estRessourceAgricole(I.IRON_INGOT), 'le minerai (forgeron) n\'est pas agricole');
+      A.ok(!Met.estRessourceAgricole(B.LOG), 'le bois (menuisier) n\'est pas agricole');
+
+      var etat = Eco.creerEtat(6);
+      var L = Eco.lieuDe(etat, { id: 'ferme3', biome: 'plaines', x: 0, z: 0 });
+      var s = L.stocks[I.WHEAT] = { stock: 64, ref: 64 };
+      var refEte = s.stock;
+      for (var j = 1; j <= 10; j++) Eco.tickJour(etat, j, 'hiver');
+      A.lt(s.stock, refEte, 'l\'offre hivernale descend sous la référence estivale (même graine)');
+      var stockHiver = s.stock;
+      for (var k = 11; k <= 40; k++) Eco.tickJour(etat, k, 'printemps');
+      A.gt(s.stock, stockHiver, 'un cycle de printemps restaure l\'offre au-delà du creux hivernal');
+    });
+
     it('SPEC-METIER-005 : surplus réel transféré au lieu en pénurie par une caravane ; rien sans surplus', function () {
       var etat = Eco.creerEtat(4);
       var Lo = Eco.lieuDe(etat, { id: 'a', biome: 'plaines', x: 0, z: 0 });

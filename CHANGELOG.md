@@ -200,6 +200,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- SPEC-ENV-003 (`src/metiers.js`, `src/economie.js`) : l'offre du fermier
+  (blé, seul métier agricole, METIER-001) ne se contente plus de geler en
+  hiver (`tickJour`, mult de pousse nul, SAISON-006) — elle diminue à son
+  tour, faute de récolte, jusqu'à épuisement, puis se restaure normalement
+  dès le retour d'une pousse au printemps (branche déjà existante, inchangée
+  pour toute ressource non agricole). Nouveau `Metiers.estRessourceAgricole`
+  (pure, dérivée de `METIER_DE_RESSOURCE` sans le dupliquer) distingue cette
+  seule ressource des autres stocks de lieu.
 
 ### Modifié
 
