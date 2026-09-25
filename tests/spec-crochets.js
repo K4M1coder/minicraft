@@ -13,6 +13,13 @@
   describe('Specs — crochets git (filet anti-blocage)', function () {
 
     it('SPEC-BANC-010 : un seul filet anti-blocage de 15 min (900 s) partout, crochets compris', function () {
+      // La constante partagée doit rester à 900 s : c'est elle que les crochets
+      // référencent désormais (plus de littéral numérique à scanner dans leur
+      // texte), donc c'est elle qu'il faut vérifier directement pour que ce
+      // test détecte encore une dérive de la valeur partagée.
+      var DELAI_FILET_S = require('../tools/hooks/delai-filet.js').DELAI_FILET_S;
+      A.equal(DELAI_FILET_S, 900, 'la constante partagée DELAI_FILET_S vaut 900 s');
+
       var fichiersCrochets = ['pre-commit.js', 'pre-push.js', 'pre-merge-commit.js']
         .filter(function (f) { return fs.existsSync(path.join(RACINE, 'tools', 'hooks', f)); });
       A.ok(fichiersCrochets.indexOf('pre-commit.js') >= 0, 'pre-commit.js existe');

@@ -228,7 +228,11 @@ respecter (voir PLAN.md, « Commits et versions »).
   qu'un lancement manuel du même préréglage. Nouveau test
   `tests/spec-crochets.js` (ajouté à la liste `TESTS` de `tests/run.js`,
   hors `tests/spec-banc.js` qui n'en avait pas encore) qui vérifie qu'aucun
-  crochet ne passe un délai différent de 900.
+  crochet ne passe un délai différent de 900 — et affirme en plus,
+  directement, que la constante partagée `DELAI_FILET_S` vaut 900 (relecture :
+  le scan des littéraux dans le texte des crochets réussissait trivialement
+  dès lors que ceux-ci passaient une référence symbolique plutôt qu'un
+  littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
