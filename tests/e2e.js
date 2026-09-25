@@ -2066,8 +2066,12 @@
        recalage déjà fait ; on attend plutôt le recalage LUI-MÊME (le vrai
        critère), avec un garde-fou généreux (400 images) au cas où une
        goutte s'attarderait plus longtemps. */
-    var __garde = 0;
-    while (__garde++ < 400) {
+    // Le jeu promet un recalage en ~1 s simulée (cache d'abri vidé chaque
+    // seconde) : au-delà de 2 s simulées, c'est un vrai défaut, et l'assertion
+    // qui suit doit le signaler. Les 400 images ne sont qu'un filet si
+    // l'horloge simulée n'avance plus.
+    var __garde = 0, __dureeMax = g.duree + 2;
+    while (__garde++ < 400 && g.duree < __dureeMax) {
       await frames(1);
       var __sysAvant = g.precipitation && g.precipitation.forme === 'neige' ? g.render.precipitations.neige : g.render.precipitations.pluie;
       if (!__sysAvant) break;
