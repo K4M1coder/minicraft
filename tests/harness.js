@@ -219,7 +219,7 @@
       var sp = 0, sf = 0, lines = [], t0g = maintenant();
       if (suivi && suivi.debutGroupe) suivi.debutGroupe(s.name, tests.length);
       for (var j = 0; j < tests.length; j++) {
-        var t = tests[j], t0 = maintenant(), ok = true, info = null;
+        var t = tests[j], t0 = maintenant(), debutISO = new Date().toISOString(), ok = true, info = null;
         if (suivi && suivi.debutTest) suivi.debutTest(s.name, t.name);
         var contexte = { groupe: s.name, nom: t.name, debut: t0, etapes: [], suivi: suivi, limiteMs: opts.delaiMs || 0, assertions: { ok: 0, ko: 0 } };
         pileAssertions.push(contexte.assertions);
@@ -258,7 +258,7 @@
         if (suivi && suivi.finTest) {
           var detail = { etapes: contexte.etapes, assertions: contexte.assertions,
             message: info && info.message, attendu: info && info.attendu, obtenu: info && info.obtenu,
-            pile: info && info.pile, delai: !!(info && info.delai) };
+            pile: info && info.pile, delai: !!(info && info.delai), debut: debutISO };
           suivi.finTest(s.name, t.name, ok, maintenant() - t0, detail);
         }
       }

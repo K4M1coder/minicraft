@@ -26,9 +26,22 @@
 'use strict';
 const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
+const path = require('path');
 const { domainesTouches } = require('../domaines-touches.js');
 
 const erreurs = [];
+
+// Registre officiel (SPEC-BANC-028) : une inscription laissée « en_attente »
+// par un pre-push précédent (le commit qu'elle cite est déjà fait, mais son
+// écriture n'a pas pu y entrer) est intégrée AUTOMATIQUEMENT ICI, au commit
+// suivant — flip du statut puis `git add`, avant que le commit ne se fasse.
+try {
+  const REG = require('../registre.js');
+  if (REG.aDesEntreesEnAttente()) {
+    REG.marquerEnAttenteCommitees();
+    execSync('git add -- ' + REG.DOSSIER_REGISTRE_REL, { cwd: path.join(__dirname, '..', '..') });
+  }
+} catch (e) { erreurs.push('registre (tests/registre/) : ' + e.message); }
 let indexes = [];
 try {
   indexes = execSync('git diff --cached --name-only --diff-filter=ACMR', { encoding: 'utf8' }).split('\n').filter(Boolean);

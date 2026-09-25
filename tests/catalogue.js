@@ -114,26 +114,36 @@
   }
 
   // ── SPEC-BANC-002 : fiche déclarée, sinon déduite de la 1re spec citée ──
-  /* `delai` (SPEC-BANC-010, e2e seulement) DOIT survivre au passage par le
-     catalogue : c'est l'entrée DU CATALOGUE (celle-ci, pas la fiche brute de
-     tests/e2e.js) que le banc navigateur réinjecte dans le test avant de
-     l'exécuter (tests/banc-ui.js, executerE2E) — l'oublier ici a longtemps
-     fait tourner un test délibérément bloqué (delai:1, pour vérifier le
-     mécanisme) à son délai par défaut (60 s), jusqu'à ce que le tueur
-     externe, bien plus dur (45 s, tools/e2e-headless.js), l'arrête en
-     échec « brut » au lieu du 'delai' propre attendu. */
+  /* `delai` (SPEC-BANC-010, e2e seulement — filet de sécurité anti-deadlock,
+     pas un couperet pour un test lent) DOIT survivre au passage par le
+     catalogue, QUELLE QUE SOIT la branche empruntée ci-dessous : c'est
+     l'entrée DU CATALOGUE (celle-ci, pas la fiche brute de tests/e2e.js) que
+     le banc navigateur réinjecte dans le test avant de l'exécuter
+     (tests/banc-ui.js, executerE2E). Bug corrigé ici (revue) : un test
+     déclaré avec SEULEMENT `{ delai: N }` (sans teste/pourquoi/attendu à lui,
+     comptant sur la déduction depuis sa spec citée) prenait la branche
+     spec ci-dessous, qui ne recopiait PAS `delai` — le `delai` demandé était
+     alors silencieusement ignoré, et le test tournait au délai par défaut
+     jusqu'à être arrêté plus brutalement par le tueur externe
+     (tools/e2e-headless.js) en échec « brut » au lieu du 'delai' propre
+     attendu. `delai` est donc désormais reporté dans LES TROIS branches. */
   function ficheDe(ids, specsIndex, ficheDeclaree, ficheGroupe) {
+    var delai = ficheDeclaree && ficheDeclaree.delai !== undefined ? ficheDeclaree.delai : undefined;
     if (ficheDeclaree && (ficheDeclaree.teste || ficheDeclaree.attendu)) {
       var f = { teste: ficheDeclaree.teste, pourquoi: ficheDeclaree.pourquoi, attendu: ficheDeclaree.attendu, source: 'declaree' };
-      if (ficheDeclaree.delai !== undefined) f.delai = ficheDeclaree.delai;
+      if (delai !== undefined) f.delai = delai;
       return f;
     }
     if (ids.length && specsIndex && specsIndex[ids[0]]) {
       var s = specsIndex[ids[0]];
-      return { teste: s.spec, pourquoi: 'couvre ' + ids[0] + ' — ' + s.spec, attendu: s.verification, source: 'spec' };
+      var fSpec = { teste: s.spec, pourquoi: 'couvre ' + ids[0] + ' — ' + s.spec, attendu: s.verification, source: 'spec' };
+      if (delai !== undefined) fSpec.delai = delai;
+      return fSpec;
     }
     if (ficheGroupe && (ficheGroupe.teste || ficheGroupe.attendu)) {
-      return { teste: ficheGroupe.teste, pourquoi: ficheGroupe.pourquoi, attendu: ficheGroupe.attendu, source: 'declaree' };
+      var fGrp = { teste: ficheGroupe.teste, pourquoi: ficheGroupe.pourquoi, attendu: ficheGroupe.attendu, source: 'declaree' };
+      if (delai !== undefined) fGrp.delai = delai;
+      return fGrp;
     }
     return null;
   }

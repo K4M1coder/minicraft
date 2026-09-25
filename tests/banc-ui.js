@@ -551,7 +551,9 @@
           majResume();
         },
       }, {
-        delaiDefaut: 60,
+        // filet de sécurité anti-deadlock (SPEC-BANC-010, révisé), pas un
+        // couperet pour un test lent — voir tests/e2e.js runUnE2E()
+        delaiDefaut: 15 * 60,
         arretee: function () { return etat.arretDemande; },
       });
     }

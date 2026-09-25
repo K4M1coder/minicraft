@@ -73,6 +73,44 @@ respecter (voir PLAN.md, « Commits et versions »).
   Reste à faire : `CRAFT`/`EQUIP`/`MANGER` ne passent pas encore par
   `operer` (ui.js garde son modèle d'objet réellement tenu en main), le
   registre des conteneurs posés côté serveur (étape 7) et leur UI (étape 8).
+- Registre officiel de tests, VERSIONNÉ dans git (`tests/registre/`, distinct
+  des cahiers locaux gitignorés de `tests/resultats/`) : `tools/registre.js`
+  retient, par commit, les résultats et captures des tests jugés dignes de
+  faire foi pour l'historique visuel (SPEC-BANC-028 à 031). Une campagne de
+  validation avant push (préréglages `pr`/`e2e-fumee`, `tools/hooks/pre-push.js`)
+  y inscrit automatiquement son cahier (`statut: 'en_attente'`, intégré au
+  commit SUIVANT par `tools/hooks/pre-commit.js`, qui ne peut pas encore
+  l'être dans le commit qu'il vient de tester). Vue « historique du test »
+  (`historiqueTest()`/`exporterHistoriqueHTML()`) : agrège résultats et
+  captures d'un même test à travers le registre, triée par ordre de commit
+  git réel (`git rev-list --topo-order`) ou par ordre de lancement local,
+  export HTML autonome. Témoin épinglable par commit + hash de capture
+  (`temoin`), à défaut la dernière capture officiellement validée. Stockage
+  des captures adressé par contenu (`images/<sha1>.<ext>`) : aucune capture
+  identique n'est recopiée. CLI : `node tools/registre.js inscrire|commit|historique|temoin`.
+- Registre officiel : révision du format suite relecture (SPEC-BANC-032).
+  Stockage éclaté en UN FICHIER JSONL PAR INSCRIPTION (`tests/registre/entrees/*.jsonl`,
+  1re ligne = méta du run, une ligne par test) au lieu d'un `entrees.json`
+  unique — deux inscriptions concurrentes (branches, agents) ne se gênent
+  plus jamais en conflit de fusion. Schéma enrichi pour l'historique global
+  à venir (`docs/banc/historique-global.md`) sans migration future : chaque
+  run porte `id`, `inscrit`, `motif` (facultatif), `arbre_modifie` (capturé
+  au DÉBUT de la campagne locale) et `interrompu` ; chaque test porte une
+  IDENTITÉ instantanée du catalogue (`categorie: {type, groupe}`, `domaines`,
+  `specs`, `etiquettes`, `fonctions` — vide pour l'instant, observation
+  automatique en lot séparé) et `erreur` (renommé depuis `message`) ;
+  chaque capture porte un `role` (`debut`/`intermediaire`/`fin`, affecté une
+  fois le test terminé) et un `t_ms` (`tests/e2e.js`, `tools/e2e-headless.js`) —
+  la capture manuelle nommée en cours de test (`capture('libellé')`) était
+  déjà supportée. `inscrire()` devient idempotente (refuse un cahier déjà
+  inscrit) et accepte désormais un `motif` ; nouvelle fonction
+  `runsUnifies()` fusionnant registre et cahiers locaux sous UNE SEULE
+  forme (`inscrit` les distingue), point d'accroche documenté pour le futur
+  lot d'interface (routes serveur, tableau, graphiques, diaporamas —
+  `tests/registre/README.md`). Rebasé sur le commit qui a corrigé le damier
+  de tuiles (rendu) ; le registre versionné repart VIDE (l'entrée de test
+  écrite lors du développement, qui citait un commit réécrit par un rebase
+  antérieur, a été retirée).
 - Vague 2 (B1, SPEC-SYNC-007 à 017) : raccordement de `MC.ContratsV2` à
   `NP.valider` — les nouveaux types de message (`CRAFT`, `EQUIP`,
   `CONTENEUR_*`, `INV_*`, `TROC`, `PVP`) sont désormais reconnus par le
@@ -199,6 +237,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   porte la rotation), vérifié par reconstruction algébrique face à `pushUV` (la
   référence sans repli greedy) et reproduit/confirmé corrigé en navigateur réel
   (Playwright, seed -1001861235).
+- Banc de test (SPEC-BANC-010, révision) : le délai par test e2e/Node
+  coupait un test dès qu'il dépassait son délai (60 s côté e2e navigateur,
+  45 s côté navigateur sans fenêtre `tools/e2e-headless.js`, 30 s côté Node)
+  — un test réel simplement LENT (rendu logiciel, machine chargée) était
+  donc marqué « delai » puis compté en échec, avant même d'avoir pu finir de
+  s'exécuter. Devient un filet de sécurité contre un test qui ne rend
+  VRAIMENT jamais la main (deadlock) : généreux par défaut (15 min sur les
+  trois volets), configurable par `fiche.delai`. Le seuil « lent » (signal
+  en direct dans la zone des tests lents) reste inchangé et ne fait toujours
+  pas échouer un test. Corrige aussi un bug latent de `tests/catalogue.js`
+  (`ficheDe()`) : `fiche.delai` ne survivait pas à la déduction de fiche
+  depuis la spec citée quand le test ne déclarait QUE `{ delai: N }`.
 - Workers de chunk (L47, B3, revue adversariale) : le message `init` était
   envoyé via `pool.envoyer()`, qui ne distribue qu'à UN SEUL worker libre —
   correct pour `genere`/`maille`, faux pour `init` qui doit atteindre CHAQUE

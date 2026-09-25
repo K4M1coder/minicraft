@@ -309,6 +309,69 @@ porte('G14', '100 % des tests ont une fiche déclarée ou déduite d\'une spec c
     : { ok: true, detail: '100 % des tests ont une fiche' };
 });
 
+// ── G15 : captures systématiques début/fin pour tout test e2e (SPEC-BANC-026/027) ─
+/* Une dérive visuelle (ex. damier de texture sur le terrain) ne peut être
+   repérée après coup que si CHAQUE test e2e du cahier garde au moins une
+   image du début et une de la fin — jamais seulement les tests qui pensent
+   à appeler capture() eux-mêmes. Contrairement à G1/G2/G6 (lecture de texte
+   source), cette porte vérifie le comportement RÉEL : elle relance une
+   petite campagne e2e sans fenêtre (préréglage e2e-fumee, < 2 min, le même
+   que pre-push) et inspecte le cahier de test qu'elle vient d'écrire sur le
+   disque — resultats.json ET les fichiers de captures/ eux-mêmes, pas
+   seulement le code qui est censé les produire. Sans navigateur Edge/Chrome
+   installé, la campagne s'ignore avec un avertissement (SPEC-BANC-025) :
+   aucun test e2e n'apparaît alors dans le cahier, et la porte ne peut pas
+   se prononcer — elle passe sans échec, comme pre-push le fait déjà. */
+porte('G15', 'Chaque test e2e du cahier produit ≥ 2 captures réelles, début et fin (SPEC-BANC-026/027)', () => {
+  const avant = new Set(fs.existsSync(path.join(root, 'tests', 'resultats'))
+    ? fs.readdirSync(path.join(root, 'tests', 'resultats')) : []);
+  let out;
+  try {
+    out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'e2e-fumee', '--delai', '150'],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+  } catch (e) {
+    out = (e.stdout || '') + (e.stderr || '');
+  }
+  if (/aucun navigateur Edge\/Chrome installé/.test(out)) {
+    return { ok: true, detail: 'sans navigateur installé : porte ignorée sans échec (comme pre-push, SPEC-BANC-025)' };
+  }
+  const dossierResultats = path.join(root, 'tests', 'resultats');
+  const apres = fs.existsSync(dossierResultats) ? fs.readdirSync(dossierResultats) : [];
+  // le dossier fraîchement écrit par cette campagne : le seul nouveau nom
+  // (l'horodatage garantit l'unicité), pas « le plus récent par date de
+  // modification » qui pourrait pointer sur un cahier concurrent en cours
+  // d'écriture par un autre process au même instant.
+  const nouveaux = apres.filter(d => !avant.has(d));
+  if (!nouveaux.length) return { ok: false, detail: 'aucun cahier de test écrit par e2e-fumee (sortie : ' + out.slice(-300) + ')' };
+  const dossier = nouveaux.sort().slice(-1)[0];
+  let resultats;
+  try {
+    resultats = JSON.parse(fs.readFileSync(path.join(dossierResultats, dossier, 'resultats.json'), 'utf8'));
+  } catch (e) {
+    return { ok: false, detail: 'resultats.json illisible dans ' + dossier + ' : ' + e.message };
+  }
+  const testsE2E = (resultats.tests || []).filter(t => t.type === 'e2e');
+  if (!testsE2E.length) return { ok: false, detail: 'aucun test e2e dans le cahier ' + dossier + ' — préréglage e2e-fumee vide ou campagne en échec avant tout test' };
+  const capturesDir = path.join(dossierResultats, dossier, 'captures');
+  const insuffisants = [];
+  let octetsCaptures = 0;
+  testsE2E.forEach((t) => {
+    const caps = t.captures || [];
+    const valides = caps.filter((c) => {
+      if (!c.fichier) return false;
+      const p = path.join(capturesDir, c.fichier);
+      try { const st = fs.statSync(p); octetsCaptures += st.size; return st.size > 0; }
+      catch (e) { return false; }
+    });
+    if (valides.length < 2) insuffisants.push(t.nom + ' (' + valides.length + ')');
+  });
+  if (insuffisants.length) {
+    return { ok: false, detail: insuffisants.length + '/' + testsE2E.length + ' test(s) e2e avec moins de 2 captures réelles : ' + insuffisants.slice(0, 5).join(', ') };
+  }
+  const ko = testsE2E.length ? Math.round(octetsCaptures / 1024) : 0;
+  return { ok: true, detail: testsE2E.length + ' test(s) e2e, tous ≥ 2 captures (' + ko + ' Ko de captures pour ce cahier)' };
+});
+
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────
 const MANUELLES = [
   ['G7', '100 % des tests end-to-end passent', 'ouvrir tests/index.html'],
