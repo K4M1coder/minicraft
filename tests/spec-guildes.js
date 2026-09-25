@@ -87,23 +87,51 @@
       A.ok(GU.declarerRelation(e, 'Alice', f1, f2, 'ennemie').ok);
       A.equal(GU.relationEnvers(e, f1, f2), 'ennemie');
       A.notOk(GU.declarerRelation(e, 'Bob', f1, f2, 'alliee').ok, 'une recrue ne déclare pas la diplomatie');
-      // aussi envers une faction PNJ (MC.Politique) : un simple identifiant
-      A.ok(GU.declarerRelation(e, 'Alice', f1, 'royaume:ville:0,0', 'alliee').ok);
+      // aussi envers une faction PNJ (MC.Politique) réellement connue (SPEC-FACTION-017)
+      var ep = MC.Politique.creer(1);
+      MC.Politique.decouvrir(ep, [{ id: 'ville:0,0', kind: 'ville', x: 100, z: 100, nom: 'Beaulac' }]);
+      var pnjId = Array.from(ep.factions.keys())[0];
+      A.ok(GU.declarerRelation(e, 'Alice', f1, pnjId, 'alliee', ep).ok);
       // pas de dégâts entre membres d'une même faction
       A.notOk(GU.peutBlesser(e, 'Alice', 'Bob'), 'même faction, jamais de dégâts');
       A.ok(GU.peutBlesser(e, 'Alice', 'Carla'), 'factions différentes : les dégâts restent possibles même en cas de diplomatie ennemie');
       A.notOk(GU.peutBlesser(e, 'Alice', 'Alice'), 'jamais se blesser soi-même via cette porte');
     });
 
+    it('SPEC-FACTION-017 : declarerRelation vérifie la faction PNJ cible (politique.js) et applique la relation réciproque côté PNJ', function () {
+      var e = GU.creerEtat();
+      var f1 = GU.creerFaction(e, 'Alice', { nom: 'Nord3' }).id;
+      var ep = MC.Politique.creer(1);
+      MC.Politique.decouvrir(ep, [{ id: 'ville:0,0', kind: 'ville', x: 100, z: 100, nom: 'Beaulac' }]);
+      var pnjId = Array.from(ep.factions.keys())[0];
+
+      // refusée si la cible ne correspond à aucune faction PNJ connue (ni à une faction de joueurs)
+      var refus = GU.declarerRelation(e, 'Alice', f1, 'royaume:inconnu', 'alliee', ep);
+      A.notOk(refus.ok, 'aucune faction PNJ ne porte cet identifiant');
+      A.equal(refus.motif, 'cible_introuvable');
+      A.equal(GU.relationEnvers(e, f1, 'royaume:inconnu'), 'neutre', 'rien n\'a été enregistré');
+      // refusée aussi sans état politique fourni, même avec un identifiant PNJ valide par ailleurs
+      A.notOk(GU.declarerRelation(e, 'Alice', f1, pnjId, 'alliee').ok, 'sans etatPolitique, la cible PNJ ne peut pas être vérifiée');
+
+      // acceptée envers une faction PNJ réellement connue : mise à jour symétrique
+      A.ok(GU.declarerRelation(e, 'Alice', f1, pnjId, 'ennemie', ep).ok);
+      A.equal(GU.relationEnvers(e, f1, pnjId), 'ennemie', 'côté faction de joueurs');
+      A.equal(MC.Politique.relationEntre(ep, pnjId, f1), 'guerre', 'perçue comme une guerre côté PNJ');
+
+      A.ok(GU.declarerRelation(e, 'Alice', f1, pnjId, 'alliee', ep).ok);
+      A.equal(MC.Politique.relationEntre(ep, pnjId, f1), 'alliance', 'la mise à jour réciproque suit un nouveau changement');
+    });
+
     it('SPEC-FACTION-013 : persistance serveur (aller-retour) et modération admin (renommer/dissoudre)', function () {
       var e = GU.creerEtat();
       var f1 = GU.creerFaction(e, 'Alice', { nom: 'Aube', couleur: '#123456', devise: 'Vers la lumière' }).id;
       GU.postuler(e, 'Bob', f1); GU.accepter(e, 'Alice', f1, 'Bob');
-      GU.declarerRelation(e, 'Alice', f1, 'x', 'alliee');
+      var fCible = GU.creerFaction(e, 'Zoe', { nom: 'Cible' }).id;
+      GU.declarerRelation(e, 'Alice', f1, fCible, 'alliee');
       var data = GU.serialiser(e);
       var e2 = GU.charger(JSON.parse(JSON.stringify(data)));
       A.deep(GU.membresDe(e2, f1).sort(), GU.membresDe(e, f1).sort());
-      A.equal(GU.relationEnvers(e2, f1, 'x'), 'alliee');
+      A.equal(GU.relationEnvers(e2, f1, fCible), 'alliee');
       A.deep(GU.factionsDe(e2, 'Bob'), GU.factionsDe(e, 'Bob'));
 
       // modération : renommer et dissoudre (le contrôle du rôle est fait en

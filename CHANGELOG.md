@@ -200,6 +200,19 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- Diplomatie joueurs ↔ PNJ (SPEC-FACTION-017) : `guildes.js:declarerRelation`
+  accepte désormais un état politique (`MC.Politique`) optionnel en dernier
+  argument ; quand `cibleId` ne désigne pas une autre faction de joueurs, la
+  relation n'est acceptée que si cet identifiant correspond à une faction PNJ
+  réellement connue de cet état (sinon `{ ok:false, motif:'cible_introuvable' }`,
+  rien n'est enregistré), et la relation posée est répercutée côté PNJ, sur
+  l'échelle guerre/rivalité/neutre/alliance de `politique.js` (alliée→alliance,
+  ennemie→guerre), avec la même clé triée que `cleRelation` afin que
+  `MC.Politique.relationEntre` la relise à l'identique. `appliquerAction`
+  (commande `/faction relation`) transmet ce même état politique, désormais
+  en 4e argument optionnel ; le câblage réel de l'état politique du monde à
+  travers `server.js`/`game.js` reste à faire (fichiers hors périmètre de
+  cette tâche).
 
 ### Modifié
 
