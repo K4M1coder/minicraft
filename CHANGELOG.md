@@ -184,6 +184,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
+- Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 
 - Rendu (mesher.js, régression du lot A3 « greedy meshing », SPEC-PERF-011 à
   013) : `tileOrigin(tile, rot)` appliquait la rotation de variante de tuile

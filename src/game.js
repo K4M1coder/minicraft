@@ -294,6 +294,9 @@
         j.revInv = v.rev;
         var st = j.player.state, CV = MC.ContratsV2;
         st.inv.load(v.inv);
+        // la grille fait partie de l'état confirmé : sans elle, un transfert
+        // inv→grille refusé par le serveur laisse un objet fantôme dans la grille
+        if (st.grille) st.grille.load(v.grille);
         CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(v.equip[s]); });
         j.predInv.confirmer(v.ack);
         j.predInv.rejouer(st, {}, { regles: regles });
