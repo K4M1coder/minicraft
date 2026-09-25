@@ -143,6 +143,45 @@ Précisé par l'utilisateur : le moteur doit permettre de ne lancer que les test
 
 **Contrôle de fiabilité de la carte.** À chaque run complet, pour chaque test qui échoue, on vérifie si le dernier `pre-commit` l'aurait sélectionné pour les fichiers changés depuis le run complet précédent. Un échec que le périmètre aurait raté est signalé en avertissement (« trou de périmètre ») dans le rapport et l'historique : c'est ce signal qui dit si la carte est digne de confiance.
 
+### 3.7 Étapes et triplets d'images
+
+Précisé par l'utilisateur : trois images successives au début et à la fin de chaque étape, pour détecter le tremblement (jitter), les erreurs de position, les artefacts et les scintillements.
+
+- **Étapes déclarées.** API e2e `T.etape('nom')` : ouvre une étape, ferme la précédente. Un test sans étape déclarée a une étape implicite `test` (début et fin du test).
+- **Triplet = 3 images réellement consécutives**, lues dans la boucle de rendu juste après `renderer.render()` (lecture du tampon d'image sur les images N, N+1, N+2), la compression JPEG étant différée hors de la boucle. Une capture d'écran CDP ou un `toDataURL` hors boucle sauterait des images et perturberait le rendu qu'on mesure.
+- **Chaque image du triplet porte ses nombres** : horodatage, durée de l'image, position et orientation de la caméra, position du joueur, numéro d'image. Un tremblement se lit dans les positions avant de se voir, et un écart de temps irrégulier révèle une saccade.
+- **Identité** : (test, étape, `debut`|`fin`, rang 0-2). Dans l'historique, chaque triplet est une image au sens des diaporamas (§3.3). Sa vignette et son diaporama la montrent en boucle image par image (clignotement), le mode le plus sensible à l'œil pour un scintillement.
+- **Score d'instabilité temporelle** par triplet : écart moyen de pixels entre images consécutives et écart de pose de la caméra. C'est une colonne numérique, tracée dans la timeline, qui signale sans jamais décider.
+- **Mouvements scriptés.** Pour juger un tremblement en mouvement, l'étape doit faire un mouvement reproductible (déplacement ou rotation à vitesse fixe). Caméra immobile : on juge scintillements et artefacts.
+- **Volume** (environ 143 e2e × 4 étapes × 6 images, soit environ 3 400 images et 70 Mo par run) : tous les triplets vont dans les résultats locaux. Le registre garde l'image centrale de chaque triplet et tous les nombres. Il ne garde le triplet complet que pour les tests étiquetés `rendu`, ou quand le score d'instabilité dépasse un seuil. Le stockage adressé par contenu rend gratuite une scène reproductible qui ne change pas.
+
+### 3.8 Rendu reproductible et moteur de rendu
+
+- Chaque test visuel fixe la graine, l'heure du jeu, la météo, la position et l'orientation de la caméra et la résolution (1280×800, jamais sous 800×600). Les animations non liées au test sont gelées ou réglées sur une horloge déterministe.
+- Chaque run enregistre son **moteur de rendu** : `GL_RENDERER` et `GL_VENDOR` (via `WEBGL_debug_renderer_info` quand disponible), logiciel ou GPU, navigateur et version, OS, et la présence ou non d'une fenêtre. C'est une colonne de l'historique.
+- **Un témoin ne se compare qu'à un run du même moteur de rendu.** Le témoin par défaut est le dernier inscrit sur le même moteur. S'il n'y en a pas, le panneau le dit au lieu de comparer des pommes et des oranges.
+
+### 3.9 Métriques de performance par test
+
+Colonnes numériques par test (et par étape pour les e2e) : images par seconde, temps d'image p50 et p95, appels de dessin (`renderer.info.render.calls`), triangles, géométries et textures en mémoire (`renderer.info.memory`), tas JS quand le navigateur l'expose. Elles sont tracées dans la timeline, et elles repèrent l'alourdissement du code avant que les tests ralentissent (G9 et G12 s'y appuient).
+
+### 3.10 Score d'instabilité des tests
+
+À partir de l'historique : un test qui alterne entre réussite et échec alors qu'aucune des fonctions qu'il touche (carte d'impact, §3.6) n'a changé entre les runs est étiqueté automatiquement `instable`, avec un score (nombre d'alternances sur les N derniers runs). Il est affiché dans le rapport et filtrable. Il ne fait pas échouer la porte à lui seul, mais son échec reste un échec : c'est un signal à traiter, pas une excuse.
+
+### 3.11 Raison obligatoire
+
+Les états `ignore` et `avertissement` exigent un champ `raison` non vide (par ex. « pas de WebGL dans cet environnement », « lent : 14 s > seuil 8 s »). Un test ignoré sans raison devient un échec. La raison est une colonne filtrable, et la répartition (§3.5) peut compter par raison.
+
+### 3.12 Rétention du registre
+
+Décidé par l'utilisateur. Le registre ne conserve en détail que :
+
+- les runs des **commits de merge et de PR depuis la dernière release** ;
+- **un run par release** (le run de validation du commit étiqueté par `tools/version.js --publier`), gardé en détail pour toujours.
+
+À chaque publication (`tools/version.js --publier` appelle `node tools/registre.js compacter`), les runs de merge et de PR du cycle qui se termine sont **compactés** : on garde leur résumé (états, durées, métriques, raisons, commit), mais on retire leurs images, sauf les images témoins encore épinglées. Les images qui ne sont plus référencées par aucune entrée sont supprimées du stockage. Les runs manuels inscrits suivent la même règle que les runs de merge et de PR. Les cahiers locaux, non versionnés, gardent leur propre limite des N derniers.
+
 ## 4. Tests (le banc se teste lui-même)
 
 - Node, `tests/spec-banc.js` : filtrage, tri multi-clés, pagination, agrégation des séries, fusion registre + locaux, ordre topologique, ligne sans capture.
@@ -151,10 +190,12 @@ Précisé par l'utilisateur : le moteur doit permettre de ne lancer que les test
 
 ## 5. Découpage conseillé
 
-0. Catalogue : champ `fonctions` déclaré, observation des fonctions en Node, instantané fiche+tags dans les cahiers et le registre, fiche affichée avant les résultats dans rapport et cahier (§3.5), G14 étendue.
+0a. Format de données complet (instantané fiche+tags, étapes et triplets §3.7, moteur de rendu §3.8, métriques §3.9, raison obligatoire §3.11) : il conditionne tout le reste, à faire en premier.
+0b. Catalogue : champ `fonctions` déclaré, observation des fonctions en Node, instantané fiche+tags dans les cahiers et le registre, fiche affichée avant les résultats dans rapport et cahier (§3.5), G14 étendue.
 1. Routes serveur et index en mémoire, avec tests Node.
 2. Tableau : colonnes, tri, filtres, pagination, export.
 3. Graphiques timeline.
 4. Panneau test : un diaporama par image, témoin, comparaison.
 5. Intégration dans le banc (bouton, clic depuis la sélection), inscription manuelle en fin de campagne (§3.4) et test e2e.
 6. Périmètre d’exécution (§3.6) : carte d’impact, tools/perimetre.js, crochets pre-commit / pre-push / pre-merge-commit, sélection dans le banc, contrôle des trous de périmètre, G13.
+7. Rétention (§3.12, branchée sur `tools/version.js --publier`) et score d'instabilité (§3.10).
