@@ -2378,8 +2378,17 @@
     A.equal(s.monture, auto, 'le joueur est au volant');
     var z0 = auto.pos.z;
     key('KeyW');
-    // 7 m/s² d'accélération : deux secondes donnent une bonne dizaine de blocs
-    await frames(120);
+    // 7 m/s² d'accélération : deux secondes de temps SIMULÉ (g.duree) donnent
+    // une bonne dizaine de blocs. On attend ce temps simulé, pas un nombre
+    // fixe d'images réelles : poser la piste ci-dessus dirtie plusieurs
+    // chunks d'un coup, et remeshDirtyNear() les reconstruit ensuite au fil
+    // des images (jusqu'à 3 par image, maillage fusionné — coûteux) ; le
+    // clamp dt (SPEC-BANC-010, 0.05 s/image, filet anti-explosion) réduit
+    // alors le temps simulé sous ce que 120 images laissaient supposer,
+    // d'autant plus qu'une image tarde. 120 images réelles n'ont donc plus
+    // rien de garanti côté horloge simulée — seul g.duree en fait foi.
+    var dureeCible = g.duree + 2, garde = 0;
+    while (g.duree < dureeCible && garde++ < 600) await frames(1);
     key('KeyW', 'keyup');
     A.ok(auto.pos.z < z0 - 5, 'la voiture a avancé (' + (z0 - auto.pos.z).toFixed(1) + ' blocs)');
     A.ok(Math.abs(s.pos.z - auto.pos.z) < 0.01, 'le conducteur a suivi');

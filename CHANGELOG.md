@@ -224,6 +224,24 @@ respecter (voir PLAN.md, « Commits et versions »).
 ### Corrigé
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 
+- Test e2e SPEC-VEHIC-006/002 (« monter en voiture, rouler au clavier »),
+  faussement qualifié d'intermittent — échouait en fait de façon persistante :
+  le test attendait 120 IMAGES RÉELLES en supposant qu'elles représentent
+  toujours ~2 s de temps SIMULÉ. Or poser sa piste (7×44 blocs, plusieurs
+  chunks d'un coup) les rend tous `dirty` en même temps ; `remeshDirtyNear()`
+  les remaille ensuite en tâche de fond, jusqu'à 3 par image, un maillage
+  fusionné coûtant couramment 45-60 ms (mesuré, budget de
+  `tests/budget-perf.json`) — largement au-delà du clamp `dt` de 0,05 s/image
+  (SPEC-BANC-010, filet anti-explosion). Plusieurs de ces images lentes de
+  suite réduisaient le temps réellement simulé bien en-deçà des ~2 s
+  attendues, sous le seuil physique nécessaire (0,5·7·t² > 5 blocs ⇒ t >
+  1,2 s) pour que la voiture ait mesurément avancé. Le comportement du jeu
+  (clamp dt, remaillage synchrone borné) est correct et volontaire ; seule
+  l'hypothèse du test était fausse. Corrigé en attendant le temps SIMULÉ
+  (`g.duree`) plutôt qu'un nombre fixe d'images, ce qui garde exactement la
+  même vérification (accélération réelle sur ~2 s de jeu) sans dépendre du
+  nombre d'images qu'il aura fallu pour les obtenir.
+
 - Rendu (mesher.js, régression du lot A3 « greedy meshing », SPEC-PERF-011 à
   013) : `tileOrigin(tile, rot)` appliquait la rotation de variante de tuile
   (herbe/sable/pierre/neige… `tourne: true`) à l'origine ET `localUV`
