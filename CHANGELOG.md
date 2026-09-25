@@ -239,6 +239,17 @@ respecter (voir PLAN.md, « Commits et versions »).
   documenté B1.md § 12) — c'est désormais le serveur seul qui fait autorité.
   Hors périmètre : l'échange avec un PNJ marchand ordinaire (`TROC`, pas un
   conteneur) reste tel quel.
+- Vague 2 (B4, SPEC-PVP-001 à 006, docs/vague-2/B4.md) : `src/pvp-enjeux.js`
+  (nouveau, `MC.PvpEnjeux`, module pur) — butin borné (10-25 % du nombre
+  d'objets du vaincu, équipement exclu, transféré exactement au vainqueur,
+  reliquat renvoyé pour tomber au sol), réputation politique dégradée de
+  10 points par meurtre non consenti au-delà du 2ᵉ en moins de 10 min de jeu
+  (fenêtre glissante) auprès des factions dont le territoire couvre le lieu,
+  hors-la-loi (réputation ≤ -50) et embargo recalculé dynamiquement (jamais
+  figé), duel consenti (proposition/acceptation/refus, caduque à 30 s, actif
+  120 s dans un rayon de 32 blocs autour du point médian à l'acceptation),
+  victoires comptées par joueur nommé, persistance (meurtres/victoires/
+  réputations ; duels et propositions éphémères, jamais sérialisés).
 
 ### Modifié
 
