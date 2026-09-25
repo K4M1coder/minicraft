@@ -239,7 +239,14 @@
       A.ok(P.headInWater(w, pos, 1.62), 'tete immergee des que y=11 est de l eau');
     });
 
-    it('EntitySpecs decrit chaque type d entite', function () {
+    it('EntitySpecs decrit chaque type d entite', {
+      // SPEC-BANC-066 : `MC.EntitySpecs` est une TABLE DE DONNÉES pure, sans
+      // accesseur exporté (contrairement à C.def()/C.nameOf() pour
+      // blocs/objets) — aucune fonction à observer honnêtement ici ; le
+      // domaine FAUNE (gabarits des mobs/entités) est en revanche réel et
+      // vérifiable (voir SPEC-FAUNE-* dans SPECS.md).
+      domaines: ['FAUNE'],
+    }, function () {
       ['item', 'zombie', 'sheep', 'villager'].forEach(function (t) {
         var s = MC.EntitySpecs[t];
         A.ok(s, 'gabarit present : ' + t);

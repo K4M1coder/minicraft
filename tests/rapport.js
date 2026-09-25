@@ -77,10 +77,29 @@
   MC_RAPPORT._fmt = fmt;
 
   // ── construction du modèle ───────────────────────────────────────────────
+  /* SPEC-BANC-059 : chaque test s'affiche dans CET ORDRE — 1) identité (id,
+     catégorie, domaines, specs, fonctions, étiquettes), 2) fiche (ce qui est
+     testé/pourquoi/attendu/source), 3) résultat (état, durée, erreur, puis
+     vignettes). Le titre (h4) porte déjà état+durée ; ce bloc « identité »
+     complète ce que le titre ne dit pas, AVANT la fiche — jamais après. */
+  function blocIdentite(t) {
+    var champs = [];
+    if (t.id) champs.push('id : ' + t.id);
+    var categorie = t.categorie ? [t.categorie.type, t.categorie.groupe] : [t.type, t.groupe];
+    if (categorie.filter(Boolean).length) champs.push('catégorie : ' + categorie.filter(Boolean).join(' / '));
+    if (t.domaines && t.domaines.length) champs.push('domaines : ' + t.domaines.join(', '));
+    if (t.specs && t.specs.length) champs.push('specs : ' + t.specs.join(', '));
+    if (t.fonctions && t.fonctions.length) champs.push('fonctions : ' + t.fonctions.join(', '));
+    if (t.etiquettes && t.etiquettes.length) champs.push('étiquettes : ' + t.etiquettes.join(', '));
+    return champs.length ? { type: 'paragraphe', texte: champs.join('\n'), meta: { classe: 'identite' } } : null;
+  }
+
   function blocsTest(t) {
     var out = [];
     var etat = t.etat || (t.ok === false ? 'echec' : 'ok');
     out.push({ type: 'titre', niveau: 4, texte: '[' + etat + '] ' + t.nom + ' — ' + duree(t.duree_ms), meta: { etat: etat } });
+    var idBloc = blocIdentite(t);
+    if (idBloc) out.push(idBloc);
     if (t.fiche) {
       out.push({ type: 'paragraphe', texte:
         (t.fiche.teste ? 'teste : ' + t.fiche.teste + '\n' : '') +
@@ -95,6 +114,11 @@
       }) });
     }
     if (t.assertions) out.push({ type: 'paragraphe', texte: 'assertions : ' + (t.assertions.ok || 0) + ' ok / ' + (t.assertions.ko || 0) + ' échouée(s)', meta: { classe: 'dur' } });
+    // SPEC-BANC-089 : raison, obligatoire pour ignore/avertissement — affichée
+    // qu'elle vienne du vocabulaire 'echec'/'ok' (tests Node/e2e) ou déjà
+    // normalisé 'ignore'/'avertissement' (registre) : un test qui a une
+    // raison la montre, quel que soit son état exact.
+    if (t.raison) out.push({ type: 'paragraphe', texte: 'raison : ' + t.raison, meta: { classe: 'raison' } });
     if (etat !== 'ok') {
       if (t.attendu !== undefined || t.obtenu !== undefined) {
         out.push({ type: 'paragraphe', texte: 'attendu : ' + fmt(t.attendu) + '\nobtenu : ' + fmt(t.obtenu), meta: { classe: 'avobt' } });
@@ -152,7 +176,9 @@
 
     if (c.environnement) {
       var env = c.environnement;
-      var lignesEnv = [['source', env.source], ['navigateur', env.navigateur], ['GPU', env.gpu], ['résolution', env.resolution],
+      var lignesEnv = [['source', env.source], ['navigateur', env.navigateur], ['GPU', env.gpu], ['vendor GPU', env.vendorGpu],
+        ['accélération matérielle', env.accelerationMaterielle === undefined ? undefined : (env.accelerationMaterielle ? 'GPU' : 'logiciel')],
+        ['résolution', env.resolution], ['OS', env.os], ['avec fenêtre', env.avecFenetre === undefined ? undefined : (env.avecFenetre ? 'oui' : 'non')],
         ['version du jeu', env.versionJeu], ['commit', env.commit], ['node', env.node]]
         .filter(function (p) { return p[1] !== undefined && p[1] !== null && p[1] !== ''; })
         .map(function (p) { return { cellules: [p[0], String(p[1])] }; });

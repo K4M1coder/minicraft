@@ -120,15 +120,24 @@
         if (!d) continue;
         A.ok(!!d.name, 'bloc ' + id + ' a un nom');
         A.equal(d.tiles.length, 3, 'bloc ' + d.name + ' a 3 tuiles');
+        // passe aussi par l'accesseur public (SPEC-BANC-066 : fonction
+        // réellement exercée, pas seulement la table brute)
+        A.equal(C.nameOf(id), d.name, 'nameOf(' + id + ') cohérent avec la table');
       }
     });
 
     it('tout objet défini a un nom et une tuile', function () {
-      for (var id = C.FIRST_ITEM; id < 100; id++) {
+      // BORNE CORRIGÉE (revue G14/SPEC-BANC-066) : `C.FIRST_ITEM` vaut 4096
+      // (voir src/core.js) — la borne `< 100` d'avant ce correctif rendait
+      // cette boucle TOUJOURS VIDE (id < 100 jamais vrai à partir de 4096),
+      // le test « passait » sans jamais rien vérifier. `+ 300` couvre tous
+      // les objets définis aujourd'hui, avec de la marge pour en ajouter.
+      for (var id = C.FIRST_ITEM; id < C.FIRST_ITEM + 300; id++) {
         var d = C.ITEMS[id];
         if (!d) continue;
         A.ok(!!d.name, 'objet ' + id + ' a un nom');
         A.ok(typeof d.tile === 'number', 'objet ' + d.name + ' a une tuile');
+        A.equal(C.nameOf(id), d.name, 'nameOf(' + id + ') cohérent avec la table');
       }
     });
 
@@ -243,7 +252,14 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  describe('Monde — génération', { teste: 'La génération de chunks produit un terrain, des ressources et une végétation cohérents.', pourquoi: 'C\'est la fondation de tout le jeu : un chunk mal généré (trou, arbre flottant) se voit immédiatement en jeu.', attendu: 'les chunks générés respectent les règles de relief, de ressources et de végétation attendues.' }, function () {
+  describe('Monde — génération', { teste: 'La génération de chunks produit un terrain, des ressources et une végétation cohérents.', pourquoi: 'C\'est la fondation de tout le jeu : un chunk mal généré (trou, arbre flottant) se voit immédiatement en jeu.', attendu: 'les chunks générés respectent les règles de relief, de ressources et de végétation attendues.',
+    // SPEC-BANC-066 : le monde partagé du groupe (var w = MC.createWorld(...))
+    // est construit UNE FOIS au chargement du fichier, hors de toute fenêtre
+    // d'observation par test (tests/run.js) — sans cette déclaration, les
+    // tests qui n'appellent ensuite que des MÉTHODES de l'instance (jamais
+    // observables, elles ne vivent pas sous MC.<Module>.<fn>) n'auraient
+    // sinon ni domaine ni fonction.
+    fonctions: ['MC.createWorld'] }, function () {
     var w = MC.createWorld(20260921);
 
     it('le relief traverse le niveau de la mer', function () {
@@ -1104,7 +1120,7 @@
     });
 
     it('le coffre est un bloc interactif', function () {
-      A.equal(C.BLOCKS[B.CHEST].interactive, 'chest');
+      A.equal(C.def(B.CHEST).interactive, 'chest');
     });
 
     it('un coffre stocke et restitue son contenu', function () {

@@ -9,10 +9,24 @@
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
 const quiet = process.argv.includes('--quiet');
+
+/* `node tests/run.js` écrit sa progression (dont « cahier de test : … »)
+   sur STDERR (voir `ecrire()` dans ce fichier), jamais sur stdout —
+   `execFileSync` ne rend que stdout ; les portes qui doivent relire cette
+   ligne (G14) utilisent donc ce petit relais, stdout+stderr combinés, avec
+   un délai BORNÉ (5 min : cette vérification lance une vraie campagne Node
+   complète) pour ne jamais accrocher `node tests/gates.js` indéfiniment. */
+function execFileSyncCombine(args, opts) {
+  const o = Object.assign({ encoding: 'utf8', timeout: 10 * 60 * 1000, maxBuffer: 128 * 1024 * 1024 }, opts || {});
+  const r = spawnSync(process.execPath, args, o);
+  if (r.error) return { out: '', error: r.error.message };
+  if (r.signal) return { out: (r.stdout || '') + (r.stderr || ''), error: 'signal ' + r.signal + ' (délai dépassé ?)' };
+  return { out: (r.stdout || '') + (r.stderr || ''), error: null, status: r.status };
+}
 
 const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[1m', x: '\x1b[0m' };
 
@@ -289,24 +303,74 @@ porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BAN
    porte désormais sa fiche en 2e argument de e2e(nom, fiche, fn), lue en
    texte par tests/run.js (e2eListeDepuisTexte / ficheLitteraleA), sans
    jamais évaluer e2e.js sous Node. */
-porte('G14', '100 % des tests ont une fiche déclarée ou déduite d\'une spec citée (SPEC-BANC-002)', () => {
-  let out;
-  try {
-    out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8' });
-  } catch (e) { return { ok: false, detail: '--lister en erreur : ' + e.message }; }
-  const lignes = out.split('\n');
+/* SPEC-BANC-066 (extension de G14) : en plus de la fiche, 100 % des tests
+   ont au moins un domaine OU une fonction (déclarée ou observée) — voir la
+   fiche : « échoue si un test n'a NI domaine NI fonction ». `--lister` (ci-
+   dessous, sans exécution) ne voit que le DÉCLARÉ ; les fonctions OBSERVÉES
+   (SPEC-BANC-062) n'existent qu'à l'exécution — pour les tests Node
+   (unitaire/fonctionnel/spec, seuls types que tests/run.js peut observer :
+   e2e/integration/charge tournent en processus séparés, jamais enveloppés),
+   on relance donc une VRAIE campagne (rapide : ~1 minute) et on relit son
+   cahier avant de conclure qu'un test n'a rien. */
+function testsSansDomaineNiFonctionDeclaree(outListe) {
+  const lignes = outListe.split('\n');
   const sansFiche = [];
-  let typeCourant = null;
+  const suspects = [];
+  let typeCourant = null, nomCourant = null;
   lignes.forEach((l, i) => {
     const mt = /^\[(\w+)\]/.exec(l);
-    if (mt) typeCourant = mt[1];
-    if (l.trim() === '(aucune fiche)' && typeCourant) {
-      sansFiche.push((lignes[i - 1] || '').trim());
+    if (mt) { typeCourant = mt[1]; nomCourant = l.trim(); }
+    if (l.trim() === '(aucune fiche)' && typeCourant) sansFiche.push((lignes[i - 1] || '').trim());
+    const md = /^\s*domaines:\s*(.*)$/.exec(l);
+    if (md && md[1].trim() === '(aucun)') {
+      const lf = lignes[i + 1] || '';
+      if (/fonctions:\s*\(aucune declaree\)/.test(lf)) suspects.push({ type: typeCourant, ligne: nomCourant });
     }
   });
-  return sansFiche.length
-    ? { ok: false, detail: sansFiche.length + ' test(s) sans fiche ni spec citée : ' + sansFiche.slice(0, 5).join(' | ') }
-    : { ok: true, detail: '100 % des tests ont une fiche' };
+  return { sansFiche, suspects };
+}
+porte('G14', '100 % des tests ont une fiche (SPEC-BANC-002) et au moins un domaine ou une fonction, déclarée ou observée (SPEC-BANC-066)', () => {
+  let outListe;
+  try {
+    outListe = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8' });
+  } catch (e) { return { ok: false, detail: '--lister en erreur : ' + e.message }; }
+  const { sansFiche, suspects } = testsSansDomaineNiFonctionDeclaree(outListe);
+  if (sansFiche.length) {
+    return { ok: false, detail: sansFiche.length + ' test(s) sans fiche ni spec citée : ' + sansFiche.slice(0, 5).join(' | ') };
+  }
+  const suspectsNode = suspects.filter(s => s.type === 'unitaire' || s.type === 'fonctionnel' || s.type === 'spec');
+  const suspectsNonNode = suspects.filter(s => s.type !== 'unitaire' && s.type !== 'fonctionnel' && s.type !== 'spec');
+  // e2e/integration/charge : jamais observés, la déclaration seule fait foi —
+  // un suspect ici est un échec ferme de la porte.
+  if (suspectsNonNode.length) {
+    return { ok: false, detail: suspectsNonNode.length + ' test(s) e2e/intégration sans domaine NI fonction déclarée : ' + suspectsNonNode.slice(0, 5).map(s => s.ligne).join(' | ') };
+  }
+  if (!suspectsNode.length) return { ok: true, detail: '100 % des tests ont une fiche, un domaine ou une fonction (déclarée)' };
+
+  // suspects Node : une VRAIE exécution peut leur trouver une fonction
+  // OBSERVÉE que --lister, sans rien exécuter, ne pouvait pas voir.
+  // `cahier de test : …` (ecrire()) sort sur STDERR, jamais stdout — d'où
+  // spawnSync (les deux capturés) plutôt qu'execFileSync (stdout seul).
+  const rExec = execFileSyncCombine([path.join(root, 'tests', 'run.js'), '--type', 'unitaire,fonctionnel,spec']);
+  if (rExec.error) {
+    return { ok: false, detail: 'exécution Node (unitaire/fonctionnel/spec) en échec — impossible de vérifier l\'observation : ' + rExec.error };
+  }
+  const outExec = rExec.out;
+  const mCahier = /cahier de test : (\S+rapport\.html)/.exec(outExec);
+  if (!mCahier) return { ok: false, detail: 'aucun cahier produit par l\'exécution de vérification' };
+  let resultats;
+  try { resultats = JSON.parse(fs.readFileSync(path.join(root, mCahier[1].replace(/rapport\.html$/, 'resultats.json').replace(/^\//, '')), 'utf8')); }
+  catch (e) { return { ok: false, detail: 'cahier de vérification illisible : ' + e.message }; }
+  const parNom = new Map(resultats.tests.map(t => [t.nom, t]));
+  const encoreSansRien = suspectsNode.filter((s) => {
+    // `s.ligne` = "[type] groupe :: nom" — seul le nom, après « :: », sert à retrouver le test
+    const nom = s.ligne.split(' :: ').slice(1).join(' :: ');
+    const t = parNom.get(nom);
+    return !t || (!(t.domaines || []).length && !(t.fonctions || []).length);
+  });
+  return encoreSansRien.length
+    ? { ok: false, detail: encoreSansRien.length + ' test(s) sans domaine NI fonction (déclarée OU observée) : ' + encoreSansRien.slice(0, 5).map(s => s.ligne).join(' | ') }
+    : { ok: true, detail: '100 % des tests ont une fiche, un domaine ou une fonction (déclarée ou observée)' };
 });
 
 // ── G15 : captures systématiques début/fin pour tout test e2e (SPEC-BANC-026/027) ─

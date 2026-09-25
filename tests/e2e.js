@@ -105,6 +105,135 @@
   function ahora() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
   function moyenne(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; }
 
+  // ─── étapes déclarées et triplets d'images (SPEC-BANC-077 à 083) ──────────
+  /* Dessine le canvas de rendu COURANT dans un canvas hors-écran, SANS
+     encoder en JPEG (la compression, coûteuse, est différée hors de la
+     boucle de collecte — voir capturerTriplet ci-dessous). `g.render.render()`
+     est rappelé avant, comme `capturer()` ci-dessus : le tampon peut avoir
+     été consommé par la boucle de jeu normale entre deux `await`. */
+  function dessinerFrame(g) {
+    try {
+      g.render.render();
+      var src = g.render.renderer.domElement;
+      var w = src.width, h = src.height;
+      if (!w || !h) return null;
+      var echelle = Math.min(1, 320 / w);
+      var cw = Math.max(1, Math.round(w * echelle)), ch = Math.max(1, Math.round(h * echelle));
+      var c = document.createElement('canvas');
+      c.width = cw; c.height = ch;
+      c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+      return c;
+    } catch (e) { return null; }
+  }
+  /* Pose de la caméra et position du joueur (SPEC-BANC-079). */
+  function poseCourante(g) {
+    var cam = g.render && g.render.camera, s = g.player && g.player.state;
+    return {
+      camera: cam ? { x: cam.position.x, y: cam.position.y, z: cam.position.z,
+        qx: cam.quaternion.x, qy: cam.quaternion.y, qz: cam.quaternion.z, qw: cam.quaternion.w } : null,
+      joueur: s ? { x: s.pos.x, y: s.pos.y, z: s.pos.z } : null,
+    };
+  }
+  function ecartPose(a, b) {
+    if (!a || !b || !a.camera || !b.camera) return 0;
+    var dp = Math.hypot(a.camera.x - b.camera.x, a.camera.y - b.camera.y, a.camera.z - b.camera.z);
+    var dq = Math.hypot(a.camera.qx - b.camera.qx, a.camera.qy - b.camera.qy, a.camera.qz - b.camera.qz, a.camera.qw - b.camera.qw);
+    return dp + dq;
+  }
+  /* Écart moyen de pixels entre deux images (échantillonné : un pixel sur
+     ~7, coût borné même à haute résolution) — 0-255 par canal, moyenne des
+     trois canaux (SPEC-BANC-081). */
+  function ecartPixelsMoyen(cA, cB) {
+    if (!cA || !cB) return 0;
+    try {
+      var w = Math.min(cA.width, cB.width), h = Math.min(cA.height, cB.height);
+      if (!w || !h) return 0;
+      var dA = cA.getContext('2d').getImageData(0, 0, w, h).data;
+      var dB = cB.getContext('2d').getImageData(0, 0, w, h).data;
+      var somme = 0, n = 0, pas = 4 * 7;
+      for (var i = 0; i < dA.length; i += pas) {
+        somme += Math.abs(dA[i] - dB[i]) + Math.abs(dA[i + 1] - dB[i + 1]) + Math.abs(dA[i + 2] - dB[i + 2]);
+        n++;
+      }
+      return n ? somme / (n * 3) : 0;
+    } catch (e) { return 0; }
+  }
+  /* Capture un TRIPLET de 3 images RÉELLEMENT consécutives (SPEC-BANC-078) :
+     lues dans la boucle de rendu juste après `renderer.render()` (via
+     `dessinerFrame`, ci-dessus), sur les images N, N+1, N+2 — `await frames(1)`
+     entre chaque laisse la vraie boucle de jeu avancer d'exactement une
+     image entre deux lectures. La compression JPEG (`toDataURL`) est
+     différée APRÈS la collecte des trois canvases, hors de cette boucle. */
+  var compteurImagesTriplet = 0;
+  function capturerTriplet(g, nomEtape, bord) {
+    return (async function () {
+      var images = [];
+      for (var i = 0; i < 3; i++) {
+        if (i > 0) await frames(1);
+        var t = ahora();
+        var c = dessinerFrame(g);
+        compteurImagesTriplet++;
+        images.push({ canvas: c, t_ms: t, numero: compteurImagesTriplet, pose: poseCourante(g) });
+      }
+      var ecartsPixels = [], ecartsPose = [];
+      for (var k = 1; k < images.length; k++) {
+        ecartsPixels.push(ecartPixelsMoyen(images[k - 1].canvas, images[k].canvas));
+        ecartsPose.push(ecartPose(images[k - 1].pose, images[k].pose));
+      }
+      var instabilite = { pixels: moyenne(ecartsPixels), pose: moyenne(ecartsPose) };
+      var t0Triplet = images[0].t_ms;
+      // un canvas manqué (largeur/hauteur nulle, contexte perdu…) n'est
+      // jamais poussé — même convention que capturer()/capture() ci-dessus,
+      // qui ne poussent une capture qu'en cas de succès réel.
+      var captures = images.filter(function (im) { return !!im.canvas; }).map(function (im, i) {
+        return {
+          role: 'triplet', etape: nomEtape, bord: bord, rang: i,
+          libelle: nomEtape + '-' + bord + '-' + i,
+          type: 'image/jpeg', base64: im.canvas.toDataURL('image/jpeg', 0.7),
+          t_ms: Math.round(im.t_ms - (enCours ? enCours.t0 : t0Triplet)),
+          numero_image: im.numero,
+          duree_image_ms: i > 0 ? Math.round(im.t_ms - images[i - 1].t_ms) : 0,
+          pose: im.pose, instabilite: instabilite,
+        };
+      });
+      return { captures: captures, instabilite: instabilite };
+    })();
+  }
+  /* API e2e `T.etape('nom')` (SPEC-BANC-077) : ouvre une étape et ferme la
+     précédente (ou l'étape implicite `test`, ouverte par runUnE2E avant
+     d'appeler le corps du test). Chaque bord (début d'étape, fin d'étape)
+     capture un triplet — la fermeture de l'étape précédente et l'ouverture
+     de la suivante sont CHAÎNÉES (`ctx._chaineEtapes`) pour que deux appels
+     rapprochés à `T.etape()` ne collectent jamais deux triplets en même
+     temps sur le même test ; la chaîne est attendue par `conclure()` avant
+     de rendre le résultat du test (voir runUnE2E plus bas), donc jamais
+     bloquante pour le test lui-même : `T.etape()` reste un appel SYNCHRONE. */
+  function fermerEtapeCourante(g, ctx) {
+    var e = ctx.etapeCourante2;
+    if (!e) return Promise.resolve();
+    return capturerTriplet(g, e.nom, 'fin').then(function (r) {
+      e.fin = r;
+      e.fin_t_ms = ahora() - ctx.t0;
+      ctx.etapeCourante2 = null;
+    });
+  }
+  function ouvrirEtape(g, ctx, nom) {
+    return capturerTriplet(g, nom, 'debut').then(function (r) {
+      var e = { nom: nom, debut: r, debut_t_ms: ahora() - ctx.t0, fin: null, fin_t_ms: null };
+      ctx.etapesTriplets.push(e);
+      ctx.etapeCourante2 = e;
+    });
+  }
+  var T = {};
+  T.etape = function (nom) {
+    if (!enCours) return;
+    var ctx = enCours;
+    ctx._chaineEtapes = (ctx._chaineEtapes || Promise.resolve()).then(function () {
+      var suite = ctx.etapeCourante2 ? fermerEtapeCourante(ctx.g, ctx) : Promise.resolve();
+      return suite.then(function () { return ouvrirEtape(ctx.g, ctx, nom); });
+    });
+  };
+
   // ─── utilitaires ───────────────────────────────────────────────────────────
   /* Attend n images RÉELLES. Piège : une version qui teste le compteur avant
      le premier requestAnimationFrame résout de façon synchrone pour n=1, et
@@ -3629,10 +3758,16 @@
     var delaiMs = ((test.fiche && test.fiche.delai) || opts.delaiDefaut || 15 * 60) * 1000;
     return new Promise(function (resolve) {
       var ctx = { g: g, t0: ahora(), debutISO: new Date().toISOString(), images: [], etapes: [], captures: [],
-                  assertions: { ok: 0, ko: 0 }, etapeCourante: null };
+                  assertions: { ok: 0, ko: 0 }, etapeCourante: null,
+                  // étapes déclarées et triplets (SPEC-BANC-077 à 081)
+                  etapesTriplets: [], etapeCourante2: null, _chaineEtapes: null };
       enCours = ctx;
       var c0 = capturer(g, 'début');
       if (c0) { c0.t_ms = 0; ctx.captures.push(c0); }
+      // étape IMPLICITE `test` (SPEC-BANC-077) : ouverte dès le départ, comme
+      // n'importe quelle étape déclarée — un test qui n'appelle jamais
+      // T.etape() garde exactement CETTE étape, du début à la fin du test.
+      ctx._chaineEtapes = ouvrirEtape(g, ctx, 'test');
       var fini = false;
 
       /* Rôle de chaque capture (SPEC-BANC-032, historique par test) : la
@@ -3647,42 +3782,84 @@
         });
       }
 
-      function metriques() {
+      // percentile générique (p50/p95) sur un tableau de nombres déjà triable
+      function percentile(valeurs, p) {
+        if (!valeurs.length) return 0;
+        var triees = valeurs.slice().sort(function (a, b) { return a - b; });
+        return triees[Math.min(triees.length - 1, Math.floor(triees.length * p))];
+      }
+      /* Métriques (SPEC-BANC-087) sur une fenêtre d'images du test : bornes
+         [debutMs, finMs] en ms depuis ctx.t0, ou tout le test si omises —
+         c'est ce qui permet de produire les MÊMES métriques globalement
+         (metriques(), plus bas) et par étape (dans etapesTriplets, ci-dessous). */
+      function metriquesFenetre(debutMs, finMs) {
+        var d0 = debutMs === undefined ? -Infinity : debutMs, d1 = finMs === undefined ? Infinity : finMs;
+        var imgs = ctx.images.filter(function (t) { var rel = t - ctx.t0; return rel >= d0 && rel <= d1; });
         var deltas = [];
-        for (var i = 1; i < ctx.images.length; i++) deltas.push(ctx.images[i] - ctx.images[i - 1]);
-        var fps = deltas.filter(function (d) { return d > 0; }).map(function (d) { return 1000 / d; });
-        var triees = fps.slice().sort(function (a, b) { return a - b; });
-        var p95 = triees.length ? triees[Math.min(triees.length - 1, Math.floor(triees.length * 0.95))] : 0;
+        for (var i = 1; i < imgs.length; i++) deltas.push(imgs[i] - imgs[i - 1]);
+        var msImage = deltas.filter(function (d) { return d > 0; });
+        var fps = msImage.map(function (d) { return 1000 / d; });
         var info = null;
         try { info = g.render.renderer.info.render; } catch (e) { /* rien */ }
-        var mem = null;
-        try { mem = performance.memory ? performance.memory.usedJSHeapSize : null; } catch (e) { /* rien */ }
+        var memInfo = null;
+        try { memInfo = g.render.renderer.info.memory; } catch (e) { /* rien */ }
+        var tasJS = null;
+        try { tasJS = performance.memory ? performance.memory.usedJSHeapSize : null; } catch (e) { /* rien */ }
         // noms de champs alignés sur le schéma documenté par tests/rapport.js
         // (noyau, SPEC-BANC-012/013/014) : fps_moy/appels/memoire, pas
         // fps_moyen/appels_dessin/memoire_js — sinon rapport.html, les
         // exports et la campagne affichent ces métriques comme absentes.
         return {
-          images: ctx.images.length,
-          fps_moy: moyenne(fps), fps_min: fps.length ? Math.min.apply(null, fps) : 0, fps_p95: p95,
-          ms_image: moyenne(deltas),
+          images: imgs.length,
+          fps_moy: moyenne(fps), fps_min: fps.length ? Math.min.apply(null, fps) : 0,
+          ms_image_p50: percentile(msImage, 0.50), ms_image_p95: percentile(msImage, 0.95),
+          fps_p95: percentile(fps, 0.95),
+          ms_image: moyenne(msImage),
           appels: info ? info.calls : null, triangles: info ? info.triangles : null,
-          memoire: mem,
+          memoire: memInfo, tasJS: tasJS,
         };
       }
+      function metriques() { return metriquesFenetre(); }
       function conclure(etat, message, pile, attendu, obtenu) {
         if (fini) return; fini = true;
         clearTimeout(minuteur);
-        assignerRoles();
-        var res = {
-          id: test.id !== undefined ? test.id : null, nom: test.name, type: 'e2e',
-          groupe: 'end-to-end', domaines: test.domaines || [], specs: test.specs || [],
-          fiche: test.fiche || null, etat: etat, debut: ctx.debutISO, duree_ms: ahora() - ctx.t0, etapes: ctx.etapes,
-          assertions: ctx.assertions, message: message || null, pile: pile || null,
-          attendu: attendu, obtenu: obtenu, metriques: metriques(), captures: ctx.captures,
-        };
-        enCours = null;
-        nettoyer(g);
-        resolve(res);
+        // referme l'étape encore ouverte (implicite `test`, ou la dernière
+        // déclarée) puis attend TOUTE la chaîne d'étapes (SPEC-BANC-077) —
+        // aucun triplet en vol n'est perdu, même si le test se termine juste
+        // après un T.etape() dont la collecte (3 vraies images) est encore
+        // en cours.
+        var chaine = (ctx._chaineEtapes || Promise.resolve()).then(function () { return fermerEtapeCourante(g, ctx); });
+        chaine.then(function () {
+          assignerRoles();
+          // aplati les triplets de chaque étape dans `captures` (identité
+          // SPEC-BANC-080 : test/étape/debut|fin/rang, au même titre que les
+          // autres images d'un diaporama), ET porte les étapes elles-mêmes
+          // avec leurs métriques propres (fenêtre debut_t_ms→fin_t_ms).
+          var capturesTriplets = [];
+          var etapesAvecMetriques = ctx.etapesTriplets.map(function (e) {
+            (e.debut ? e.debut.captures : []).forEach(function (c) { capturesTriplets.push(c); });
+            (e.fin ? e.fin.captures : []).forEach(function (c) { capturesTriplets.push(c); });
+            return {
+              nom: e.nom, debut_t_ms: Math.round(e.debut_t_ms),
+              fin_t_ms: e.fin_t_ms === null ? null : Math.round(e.fin_t_ms),
+              instabilite_debut: e.debut ? e.debut.instabilite : null,
+              instabilite_fin: e.fin ? e.fin.instabilite : null,
+              metriques: metriquesFenetre(e.debut_t_ms, e.fin_t_ms === null ? undefined : e.fin_t_ms),
+            };
+          });
+          var res = {
+            id: test.id !== undefined ? test.id : null, nom: test.name, type: 'e2e',
+            groupe: 'end-to-end', domaines: test.domaines || [], specs: test.specs || [],
+            fiche: test.fiche || null, etat: etat, debut: ctx.debutISO, duree_ms: ahora() - ctx.t0, etapes: ctx.etapes,
+            assertions: ctx.assertions, message: message || null, pile: pile || null,
+            attendu: attendu, obtenu: obtenu, metriques: metriques(),
+            captures: ctx.captures.concat(capturesTriplets),
+            etapesTriplets: etapesAvecMetriques,
+          };
+          enCours = null;
+          nettoyer(g);
+          resolve(res);
+        });
       }
       var minuteur = setTimeout(function () {
         var c = capturer(g, 'délai dépassé');
@@ -3751,12 +3928,29 @@
     return resultats;
   }
 
+  /* Exécute UN test par son NOM EXACT, avec la même instrumentation que
+     `runUnE2E` (étapes, triplets, métriques) — pour tools/e2e-headless.js
+     (campagne sans fenêtre, SPEC-BANC-023/024/025), qui ne connaît les
+     tests que par leur nom (transmis en JSON, jamais la fonction elle-même
+     : elle vit dans la fermeture de ce module). Ambiguïté (aucun test ou
+     plusieurs du même nom exact) : rendu explicite plutôt que de deviner. */
+  function runUnE2EParNom(g, nom, opts) {
+    var trouves = tests.filter(function (t) { return t.name === nom; });
+    if (trouves.length !== 1) {
+      return Promise.resolve({ etat: 'echec', nom: nom, duree_ms: 0, etapes: [], captures: [],
+        assertions: { ok: 0, ko: 1 }, message: 'sélection par nom exact ambiguë ou vide (' + trouves.length + ' correspondance(s))' });
+    }
+    return runUnE2E(g, trouves[0], opts);
+  }
+
   G.runE2E = runE2E;
   G.runUnE2E = runUnE2E;
+  G.runUnE2EParNom = runUnE2EParNom;
   G.runCampagneE2E = runCampagneE2E;
   G.nettoyerE2E = nettoyer;
   G.E2E_COUNT = tests.length;
   G.E2E_LISTE = tests;
   G.etape = etape;
   G.capture = capture;
+  G.T = T;
 })(typeof globalThis !== 'undefined' ? globalThis : this);

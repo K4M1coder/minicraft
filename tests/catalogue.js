@@ -127,22 +127,50 @@
      jusqu'à être arrêté plus brutalement par le tueur externe
      (tools/e2e-headless.js) en échec « brut » au lieu du 'delai' propre
      attendu. `delai` est donc désormais reporté dans LES TROIS branches. */
+  /* SPEC-BANC-062 : `fonctions` DÉCLARÉES suit le même sort que `delai`
+     (voir le commentaire au-dessus, corrigé pour la même raison) — un test
+     déclarant SEULEMENT `{ fonctions: [...] }` (sans teste/pourquoi/attendu
+     à lui, comptant sur la déduction depuis sa spec citée) doit garder ses
+     fonctions déclarées quelle que soit la branche empruntée ci-dessous. */
   function ficheDe(ids, specsIndex, ficheDeclaree, ficheGroupe) {
     var delai = ficheDeclaree && ficheDeclaree.delai !== undefined ? ficheDeclaree.delai : undefined;
+    var fonctions = (ficheDeclaree && ficheDeclaree.fonctions && ficheDeclaree.fonctions.length) ? ficheDeclaree.fonctions
+      : ((ficheGroupe && ficheGroupe.fonctions && ficheGroupe.fonctions.length) ? ficheGroupe.fonctions : undefined);
+    // SPEC-BANC-066 : domaines DÉCLARÉS (même logique de repli que `fonctions`
+    // ci-dessus) — pour un test honnête qui n'a ni SPEC-* dans son nom ni
+    // fonction observable (données pures sans accesseur), voir harness.js.
+    var domainesDeclares = (ficheDeclaree && ficheDeclaree.domaines && ficheDeclaree.domaines.length) ? ficheDeclaree.domaines
+      : ((ficheGroupe && ficheGroupe.domaines && ficheGroupe.domaines.length) ? ficheGroupe.domaines : undefined);
+    // même sort que fonctions/domaines : un test qui n'a NI teste NI attendu à
+    // lui (déduit de sa spec citée) garde quand même ses étiquettes DÉCLARÉES
+    // (ex. `budget-perf`, voir tests/spec-perf.js) — sans ça, etiquettesDe()
+    // (plus bas dans ce fichier) ne verrait jamais que la fiche DÉDUITE,
+    // jamais celle réellement passée à it()/describe().
+    var etiquettesDeclarees = (ficheDeclaree && ficheDeclaree.etiquettes && ficheDeclaree.etiquettes.length) ? ficheDeclaree.etiquettes
+      : ((ficheGroupe && ficheGroupe.etiquettes && ficheGroupe.etiquettes.length) ? ficheGroupe.etiquettes : undefined);
     if (ficheDeclaree && (ficheDeclaree.teste || ficheDeclaree.attendu)) {
       var f = { teste: ficheDeclaree.teste, pourquoi: ficheDeclaree.pourquoi, attendu: ficheDeclaree.attendu, source: 'declaree' };
       if (delai !== undefined) f.delai = delai;
+      if (fonctions !== undefined) f.fonctions = fonctions;
+      if (domainesDeclares !== undefined) f.domaines = domainesDeclares;
+      if (etiquettesDeclarees !== undefined) f.etiquettes = etiquettesDeclarees;
       return f;
     }
     if (ids.length && specsIndex && specsIndex[ids[0]]) {
       var s = specsIndex[ids[0]];
       var fSpec = { teste: s.spec, pourquoi: 'couvre ' + ids[0] + ' — ' + s.spec, attendu: s.verification, source: 'spec' };
       if (delai !== undefined) fSpec.delai = delai;
+      if (fonctions !== undefined) fSpec.fonctions = fonctions;
+      if (domainesDeclares !== undefined) fSpec.domaines = domainesDeclares;
+      if (etiquettesDeclarees !== undefined) fSpec.etiquettes = etiquettesDeclarees;
       return fSpec;
     }
     if (ficheGroupe && (ficheGroupe.teste || ficheGroupe.attendu)) {
       var fGrp = { teste: ficheGroupe.teste, pourquoi: ficheGroupe.pourquoi, attendu: ficheGroupe.attendu, source: 'declaree' };
       if (delai !== undefined) fGrp.delai = delai;
+      if (fonctions !== undefined) fGrp.fonctions = fonctions;
+      if (domainesDeclares !== undefined) fGrp.domaines = domainesDeclares;
+      if (etiquettesDeclarees !== undefined) fGrp.etiquettes = etiquettesDeclarees;
       return fGrp;
     }
     return null;
@@ -150,6 +178,14 @@
 
   function idUnique(prefixe, nom, index) {
     return prefixe + '-' + index + '-' + String(nom).slice(0, 40).replace(/[^a-zA-Z0-9]+/g, '_');
+  }
+  // domaines déduits des SPEC-* citées ∪ domaines DÉCLARÉS dans la fiche
+  // (SPEC-BANC-066) — dédupliqués, jamais un remplacement de l'un par l'autre.
+  function domainesFusionnes(idsPresents, fiche) {
+    var out = idsPresents.slice(), vus = {};
+    out.forEach(function (d) { vus[d] = true; });
+    ((fiche && fiche.domaines) || []).forEach(function (d) { if (!vus[d]) { vus[d] = true; out.push(d); } });
+    return out;
   }
 
   function construire(T, e2eListe, specsIndex) {
@@ -167,9 +203,14 @@
           type: type,
           fichier: suite.fichier,
           groupe: suite.name,
-          domaines: domainesDe(ids),
+          domaines: domainesFusionnes(domainesDe(ids), fiche),
           specs: ids,
           etiquettes: etiquettesDe(t.name, fiche || t.fiche, suite.fichier),
+          // SPEC-BANC-062 : fonctions DÉCLARÉES seulement ici (celles
+          // OBSERVÉES en exécution sont fusionnées après coup, par
+          // tests/run.js, sur le résultat du test — le catalogue est établi
+          // AVANT toute exécution, il ne peut rien observer lui-même).
+          fonctions: (fiche && fiche.fonctions) || [],
           fiche: fiche,
         });
       });
@@ -178,7 +219,13 @@
       index++;
       var nom = e.nom || e.name;
       var ids = idsDe(nom);
-      var fiche = ficheDe(ids, specsIndex, e.fiche, null);
+      // SPEC-BANC-066 : `e.ficheGroupe` (facultatif, posé par l'appelant —
+      // tests/run.js pour Node, la page du banc pour le navigateur) sert le
+      // même rôle que `suite.fiche` côté describe/it : un repli DÉCLARÉ
+      // (domaines/fonctions) pour un test e2e qui n'a ni SPEC-* dans son nom
+      // ni fiche propre suffisante — les tests e2e n'ont pas de describe()
+      // à eux, donc rien ne portait ce repli avant ce champ.
+      var fiche = ficheDe(ids, specsIndex, e.fiche, e.ficheGroupe || null);
       out.push({
         id: idDeSpecOuGenere(ids, 'E', nom, index),
         nom: nom,
@@ -188,9 +235,10 @@
         type: e.type || 'e2e',
         fichier: e.fichier || 'tests/e2e.js',
         groupe: e.groupe || 'e2e',
-        domaines: domainesDe(ids),
+        domaines: domainesFusionnes(domainesDe(ids), fiche),
         specs: ids,
         etiquettes: etiquettesDe(nom, fiche || e.fiche, e.fichier || 'tests/e2e.js'),
+        fonctions: (fiche && fiche.fonctions) || [],
         fiche: fiche,
       });
     });

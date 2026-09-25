@@ -167,14 +167,56 @@ function rangCommit(commits, sha) {
    réussite (rare : un avertissement non bloquant remonté par le test
    lui-même) — jamais un motif d'échec, juste un signal à regarder. */
 const SEUIL_LENT_DEFAUT_MS = 20000;
+/* SPEC-BANC-089 : `ignore` et `avertissement` exigent une RAISON non vide —
+   un test ignoré sans raison n'a rien prouvé de son ignorance, il devient
+   donc un échec (jamais un simple silence). La raison d'un test source est
+   cherchée dans `t.raison` (nouveau champ, prioritaire) puis `t.message`
+   (rétro-compatible : c'est déjà là qu'un test ignoré remontait son motif
+   avant ce lot). `raisonRegistre`, plus bas, calcule la raison à STOCKER
+   dans l'entrée, cohérente avec l'état ici résolu — les deux fonctions
+   restent séparées pour ne pas changer la signature de celle-ci. */
+function raisonSource(t) {
+  const r = (t && (t.raison || t.message)) || '';
+  return String(r).trim();
+}
 function etatRegistre(t, seuilLentMs) {
   const src = (t && t.etat) || '';
   if (src === 'echec' || src === 'delai') return 'echec';
-  if (src === 'ignore') return 'ignore';
+  if (src === 'ignore') return raisonSource(t) ? 'ignore' : 'echec';
   const lent = (t && t.duree_ms || 0) > (seuilLentMs === undefined ? SEUIL_LENT_DEFAUT_MS : seuilLentMs);
   if (lent || (t && t.message)) return 'avertissement';
   return 'reussi';
 }
+/* Raison à STOCKER pour ce test (SPEC-BANC-089), cohérente avec l'état que
+   `etatRegistre` vient de rendre :
+   - `ignore` : la raison source (jamais vide ici, sinon `etatRegistre`
+     aurait déjà reclassé en `echec` avant qu'on y arrive) ;
+   - `avertissement` par lenteur : raison AUTOMATIQUE (« lent : 14.0 s >
+     seuil 20.0 s »), même si le test portait aussi un message ;
+   - `avertissement` par message (succès malgré tout) : la raison EST ce
+     message ;
+   - tout autre état (`reussi`/`echec`) : pas de raison exigée, `null`. */
+function raisonRegistre(t, etat, seuilLentMs) {
+  if (etat === 'ignore') return raisonSource(t) || null;
+  if (etat === 'avertissement') {
+    const seuil = seuilLentMs === undefined ? SEUIL_LENT_DEFAUT_MS : seuilLentMs;
+    const lent = (t && t.duree_ms || 0) > seuil;
+    if (lent) return 'lent : ' + (t.duree_ms / 1000).toFixed(1) + ' s > seuil ' + (seuil / 1000).toFixed(1) + ' s';
+    return raisonSource(t) || null;
+  }
+  return null;
+}
+
+/* SPEC-BANC-083 : seuil d'instabilité (écart moyen de pixels entre deux
+   images consécutives d'un triplet) au-delà duquel le registre OFFICIEL
+   garde le triplet COMPLET plutôt que sa seule image centrale — constante
+   documentée, réglable par l'appelant (`opts.seuilInstabilite` de
+   `inscrire()`) pour un test qui aurait besoin d'un seuil différent sans
+   toucher au code. Valeur par défaut choisie empiriquement : un écart
+   moyen (0-255 par canal) de 6 dépasse largement le bruit de compression
+   JPEG d'une scène immobile, mais reste sous ce que produit une vraie
+   saccade ou un scintillement d'une image à l'autre. */
+const SEUIL_INSTABILITE_PIXELS_DEFAUT = 6;
 
 /* Convertit les captures BRUTES d'un test (resultats.json, avec `fichier`
    pointant dans un dossier captures/ local) en enregistrements du registre
@@ -183,23 +225,84 @@ function etatRegistre(t, seuilLentMs) {
    qui a produit la capture (tests/e2e.js `assignerRoles()`) s'il existe,
    sinon déduit PAR POSITION ici (1re = debut, dernière = fin, le reste =
    intermediaire) — filet de sécurité pour une source plus ancienne/externe
-   qui ne le poserait pas. */
-function construireCaptures(capturesBrutes, capturesDir, dossierImages) {
-  const n = (capturesBrutes || []).length;
+   qui ne le poserait pas.
+
+   SPEC-BANC-083 : une capture de rôle `triplet` (trois par étape×bord,
+   `rang` 0-2, voir tests/e2e.js) est un cas à part — TOUS ses NOMBRES
+   (pose, instabilité, numéro d'image, durée d'image) sont TOUJOURS gardés,
+   mais l'IMAGE elle-même (`image`) n'est écrite dans `dossierImages` QUE
+   pour le rang central (1) — sauf si le test porte l'étiquette `rendu` ou
+   si l'instabilité du triplet dépasse le seuil, auquel cas les trois
+   images sont conservées. Les rangs élagués gardent `image: null` : le
+   diaporama d'un triplet peut donc afficher « pas de capture » pour un rang
+   sans perdre les nombres qui l'accompagnent (§3.7 du document de
+   conception). */
+function construireCaptures(capturesBrutes, capturesDir, dossierImages, opts) {
+  const o = opts || {};
+  const etiquettes = o.etiquettes || [];
+  const seuil = o.seuilInstabilite === undefined ? SEUIL_INSTABILITE_PIXELS_DEFAUT : o.seuilInstabilite;
+  const gardeTripletComplet = etiquettes.indexOf('rendu') >= 0;
+  const brut = capturesBrutes || [];
+  const n = brut.length;
   let imagesNouvelles = 0, imagesReutilisees = 0;
-  const captures = (capturesBrutes || []).filter(c => c.fichier).map((c, i) => {
-    const p = path.join(capturesDir, c.fichier);
+  function ecrireImage(fichier) {
+    const p = path.join(capturesDir, fichier);
     let donnees;
     try { donnees = fs.readFileSync(p); } catch (e) { return null; }
     const h = sha1(donnees);
-    const ext = extensionDe(c.fichier);
+    const ext = extensionDe(fichier);
     const dest = path.join(dossierImages, h + '.' + ext);
     if (fs.existsSync(dest)) imagesReutilisees++;
     else { fs.mkdirSync(dossierImages, { recursive: true }); fs.writeFileSync(dest, donnees); imagesNouvelles++; }
-    const role = c.role || (i === 0 ? 'debut' : (i === n - 1 ? 'fin' : 'intermediaire'));
-    return { role: role, libelle: c.libelle, image: h + '.' + ext, t_ms: c.t_ms === undefined ? null : c.t_ms };
+    return h + '.' + ext;
+  }
+  const captures = brut.map((c, i) => {
+    if (c.role !== 'triplet') {
+      if (!c.fichier) return null;
+      const image = ecrireImage(c.fichier);
+      if (!image) return null;
+      const role = c.role || (i === 0 ? 'debut' : (i === n - 1 ? 'fin' : 'intermediaire'));
+      return { role: role, libelle: c.libelle, image: image, t_ms: c.t_ms === undefined ? null : c.t_ms };
+    }
+    // triplet (SPEC-BANC-077 à 083) : les nombres survivent toujours, l'image
+    // dépend du rang et du seuil/de l'étiquette (voir l'en-tête ci-dessus)
+    const instable = c.instabilite && c.instabilite.pixels > seuil;
+    const garder = c.rang === 1 || gardeTripletComplet || instable;
+    const image = (garder && c.fichier) ? ecrireImage(c.fichier) : null;
+    return {
+      role: 'triplet', etape: c.etape || null, bord: c.bord || null, rang: c.rang === undefined ? null : c.rang,
+      libelle: c.libelle, image: image, t_ms: c.t_ms === undefined ? null : c.t_ms,
+      numero_image: c.numero_image === undefined ? null : c.numero_image,
+      duree_image_ms: c.duree_image_ms === undefined ? null : c.duree_image_ms,
+      pose: c.pose || null, instabilite: c.instabilite || null,
+    };
   }).filter(Boolean);
   return { captures, imagesNouvelles, imagesReutilisees };
+}
+
+/* SPEC-BANC-085 : signature MINIMALE d'un moteur de rendu — assez pour dire
+   « même moteur » sans confondre deux runs de GPU différents, mais sans
+   sur-spécifier (deux résolutions différentes sur le MÊME GPU restent
+   comparables). `null` si l'environnement du run ne porte aucune info de
+   rendu (run purement Node, aucun e2e). */
+function moteurRenduDe(env) {
+  if (!env) return null;
+  const gpu = env.gpu || null, vendor = env.vendorGpu || null;
+  if (!gpu && !env.navigateur) return null;
+  return {
+    glRenderer: gpu, glVendor: vendor,
+    accelerationMaterielle: env.accelerationMaterielle === undefined ? null : env.accelerationMaterielle,
+    navigateur: env.navigateur || null, os: env.os || null,
+    avecFenetre: !!env.avecFenetre, resolution: env.resolution || null,
+  };
+}
+/* Deux moteurs « pareils » pour comparer un témoin (SPEC-BANC-086) : même
+   renderer/vendor WebGL ET même statut logiciel/GPU — la résolution ou le
+   navigateur exact ne font PAS partie de la comparaison (une même carte
+   graphique rendue à une résolution différente reste un témoin valable). */
+function memeMoteur(a, b) {
+  if (!a || !b) return false;
+  return a.glRenderer === b.glRenderer && a.accelerationMaterielle === b.accelerationMaterielle;
 }
 
 /* Un identifiant de run STABLE (ne dépend pas du nom de fichier, ni de
@@ -211,16 +314,18 @@ function idDeRun(commit, preset, date) { return sha1(Buffer.from(commit + '|' + 
 /* Instantané de catalogue d'un test (docs/banc/historique-global.md §1/§3.5) :
    copié dans l'entrée du run tel quel — une fiche modifiée plus tard NE
    réécrit PAS l'historique, on voit ce que le test prétendait vérifier au
-   moment où il a tourné. `fonctions` : liste vide pour l'instant (le champ
-   existe pour que ce format n'ait pas besoin de migration) — l'observation
-   automatique des fonctions réellement appelées est un lot séparé, à venir
-   (§3.5, découpage §5 étape 0). */
+   moment où il a tourné. `fonctions` (SPEC-BANC-062) : fusion, déjà faite
+   par l'appelant (tests/run.js, côté Node ; tests/e2e.js côté e2e), des
+   fonctions DÉCLARÉES dans la fiche et des fonctions OBSERVÉES en
+   exécution — ce module se contente de LIRE `t.fonctions` tel quel, sans
+   jamais recalculer l'observation lui-même (hors de portée d'un module qui
+   ne s'exécute qu'après coup, sur un cahier déjà écrit). */
 function identiteTest(t) {
   return {
     id: t.id || null, nom: t.nom,
     categorie: { type: t.type || null, groupe: t.groupe || null },
     domaines: t.domaines || [], specs: t.specs || [], etiquettes: t.etiquettes || [],
-    fonctions: [],
+    fonctions: t.fonctions || [],
     fiche: t.fiche || null,
   };
 }
@@ -280,11 +385,17 @@ function inscrire(dossierCahier, opts) {
   let imagesNouvelles = 0, imagesReutilisees = 0;
   const capturesDir = path.join(racineResultats, dossierCahier, 'captures');
   const tests = (resultats.tests || []).map((t) => {
-    const r = construireCaptures(t.captures, capturesDir, dossierImages);
+    const r = construireCaptures(t.captures, capturesDir, dossierImages, { etiquettes: t.etiquettes, seuilInstabilite: o.seuilInstabilitePixels });
     imagesNouvelles += r.imagesNouvelles; imagesReutilisees += r.imagesReutilisees;
+    const etat = etatRegistre(t, seuilLentMs);
+    // SPEC-BANC-089 : un `ignore` sans raison a déjà été reclassé en `echec`
+    // par etatRegistre() ci-dessus — `erreur` le dit explicitement plutôt
+    // que de laisser un échec muet, sans raison apparente dans l'historique.
+    const erreur = (t.etat === 'ignore' && etat === 'echec' && !raisonSource(t))
+      ? 'ignoré sans raison — reclassé en échec (SPEC-BANC-089)' : (t.message || null);
     return Object.assign(identiteTest(t), {
       debut: t.debut || null, duree_ms: t.duree_ms,
-      etat: etatRegistre(t, seuilLentMs), erreur: t.message || null,
+      etat: etat, raison: raisonRegistre(t, etat, seuilLentMs), erreur: erreur,
       captures: r.captures,
     });
   });
@@ -305,6 +416,10 @@ function inscrire(dossierCahier, opts) {
     // recalculés ici : l'arbre a pu changer depuis (voir leur en-tête)
     arbre_modifie: !!campagne.arbreModifie,
     interrompu: !!campagne.interrompue,
+    // SPEC-BANC-085 : moteur de rendu du RUN (propriété de la campagne, pas
+    // d'un test), tel que tools/e2e-headless.js/tests/run.js l'a observé —
+    // absent (null) pour un run purement Node sans e2e (aucun WebGL sollicité).
+    moteurRendu: moteurRenduDe(env),
     tests: tests,
   };
   const fichier = ecrireEntreeFichier(dossierRegistre, entree);
@@ -393,10 +508,20 @@ function historiqueTest(testId, opts) {
 function construireTestsLocaux(tests, seuilLentMs) {
   return (tests || []).map((t) => {
     const n = (t.captures || []).length;
+    const etat = etatRegistre(t, seuilLentMs);
     return Object.assign(identiteTest(t), {
       debut: t.debut || null, duree_ms: t.duree_ms,
-      etat: etatRegistre(t, seuilLentMs), erreur: t.message || null,
-      captures: (t.captures || []).map((c, i) => ({
+      etat: etat, raison: raisonRegistre(t, etat, seuilLentMs), erreur: t.message || null,
+      // un cahier LOCAL n'est jamais dédupliqué/élagué (SPEC-BANC-083 ne
+      // s'applique qu'au registre versionné) : chaque capture, triplet
+      // compris, est reprise TELLE QUELLE, nombres et image ensemble.
+      captures: (t.captures || []).map((c, i) => (c.role === 'triplet' ? {
+        role: 'triplet', etape: c.etape || null, bord: c.bord || null, rang: c.rang === undefined ? null : c.rang,
+        libelle: c.libelle, image: c.fichier || null, t_ms: c.t_ms === undefined ? null : c.t_ms,
+        numero_image: c.numero_image === undefined ? null : c.numero_image,
+        duree_image_ms: c.duree_image_ms === undefined ? null : c.duree_image_ms,
+        pose: c.pose || null, instabilite: c.instabilite || null,
+      } : {
         role: c.role || (i === 0 ? 'debut' : (i === n - 1 ? 'fin' : 'intermediaire')),
         libelle: c.libelle, image: c.fichier || null, t_ms: c.t_ms === undefined ? null : c.t_ms,
       })),
@@ -448,6 +573,7 @@ function runsUnifies(opts) {
         inscrit: false,
         arbre_modifie: !!campagne.arbreModifie,
         interrompu: !!campagne.interrompue,
+        moteurRendu: moteurRenduDe(env),
         tests: construireTestsLocaux(resultats.tests, seuilLentMs),
       });
     });
@@ -472,19 +598,40 @@ function marquerTemoin(testId, commit, image, opts) {
   ecrireTemoins(temoins, dossierRegistre);
   return { ok: true };
 }
-/* Témoin par défaut (SPEC-BANC-030) : celui épinglé à la main s'il pointe
-   encore sur une entrée de CET historique, sinon la dernière capture de la
-   dernière entrée `origine: 'pre-push'` — le dernier état officiellement
-   validé avant un push. */
+/* Témoin par défaut (SPEC-BANC-030, restreint par SPEC-BANC-086) : celui
+   épinglé à la main s'il pointe encore sur une entrée de CET historique
+   (et, si `opts.moteurRendu` est fourni, sur le MÊME moteur de rendu —
+   épingler un GPU réel puis comparer en rendu logiciel ne veut rien dire),
+   sinon la dernière capture de la dernière entrée `origine: 'pre-push'`
+   (elle aussi restreinte au même moteur si `opts.moteurRendu` est fourni).
+   Sans `opts.moteurRendu` (compatibilité : aucun appelant existant n'en
+   passe encore), le comportement reste celui d'avant ce lot — non restreint.
+   `opts.entreesParCommit` (facultatif, Map commit → entrée complète du run,
+   pour lire son `moteurRendu`) : `historique` (produit par historiqueTest())
+   n'emporte pas ce champ lui-même, propre au RUN et non au test. */
+function memeMoteurQue(entree, moteurCible, entreesParCommit) {
+  if (!moteurCible) return true;
+  const e = (entreesParCommit && entreesParCommit.get(entree.commit)) || entree;
+  return memeMoteur(e.moteurRendu, moteurCible);
+}
 function temoinDe(testId, historique, opts) {
   const o = opts || {};
   const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
+  const moteurCible = o.moteurRendu || null;
   const epingle = lireTemoins(dossierRegistre)[testId];
-  if (epingle && historique.some(e => e.commit === epingle.commit && (e.captures || []).some(c => c.image === epingle.image))) {
-    return Object.assign({ epingle: true }, epingle);
+  if (epingle) {
+    const eEpingle = historique.find(e => e.commit === epingle.commit && (e.captures || []).some(c => c.image === epingle.image));
+    if (eEpingle && memeMoteurQue(eEpingle, moteurCible, o.entreesParCommit)) {
+      return Object.assign({ epingle: true }, epingle);
+    }
   }
-  const dernier = historique.find(e => e.origine === 'pre-push' && (e.captures || []).length);
+  const dernier = historique.find(e => e.origine === 'pre-push' && (e.captures || []).length && memeMoteurQue(e, moteurCible, o.entreesParCommit));
   if (dernier) return { epingle: false, commit: dernier.commit, image: dernier.captures[dernier.captures.length - 1].image };
+  // SPEC-BANC-086 : un moteur ciblé sans AUCUN run correspondant dans
+  // l'historique ne doit jamais retomber sur un moteur différent en
+  // silence — le dire explicitement plutôt que de comparer des pommes et
+  // des oranges.
+  if (moteurCible && historique.length) return { pasDeTemoinMemeMoteur: true };
   return null;
 }
 
@@ -601,7 +748,8 @@ if (require.main === module) {
 module.exports = {
   DOSSIER_REGISTRE, DOSSIER_REGISTRE_REL, DOSSIER_IMAGES, DOSSIER_ENTREES_REL, CHEMIN_TEMOINS_REL,
   lireEntrees, lireEntreeFichier, listerFichiersEntrees, lireTemoins, ecrireTemoins, sha1,
-  commitPlein, brancheCourante, ordreCommits, rangCommit, etatRegistre, SEUIL_LENT_DEFAUT_MS,
+  commitPlein, brancheCourante, ordreCommits, rangCommit, etatRegistre, raisonRegistre, SEUIL_LENT_DEFAUT_MS,
+  moteurRenduDe, memeMoteur, SEUIL_INSTABILITE_PIXELS_DEFAUT,
   inscrire, dejaInscrit, aDesEntreesEnAttente, marquerEnAttenteCommitees,
   historiqueTest, runsUnifies, marquerTemoin, temoinDe, exporterHistoriqueHTML, commiterRegistre,
 };

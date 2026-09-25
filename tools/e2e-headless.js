@@ -121,17 +121,31 @@ const EXPRESSION_RENDU = `(function () {
   try {
     var c = document.createElement('canvas');
     var gl = c.getContext('webgl') || c.getContext('experimental-webgl');
-    if (!gl) return { ok: false, renderer: null, motif: 'pas de contexte WebGL' };
+    if (!gl) return { ok: false, renderer: null, vendor: null, motif: 'pas de contexte WebGL' };
     var dbg = gl.getExtension('WEBGL_debug_renderer_info');
     var renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
-    return { ok: true, renderer: String(renderer) };
-  } catch (e) { return { ok: false, renderer: null, motif: String(e && e.message || e) }; }
+    var vendor = dbg ? gl.getParameter(dbg.UNMASKED_VENDOR_WEBGL) : gl.getParameter(gl.VENDOR);
+    return { ok: true, renderer: String(renderer), vendor: String(vendor) };
+  } catch (e) { return { ok: false, renderer: null, vendor: null, motif: String(e && e.message || e) }; }
 })()`;
 const RE_LOGICIEL = /swiftshader|llvmpipe|software|basic render|microsoft basic|mesa.*llvmpipe/i;
 
 function accelerationDepuisRenderer(renderer) {
   if (!renderer) return null;
   return !RE_LOGICIEL.test(renderer);
+}
+
+/* `tests/e2e.js` (runUnE2EParNom, instrumenté) produit des captures en URL
+   de données COMPLÈTE (`canvas.toDataURL()`, préfixe `data:image/...;base64,`
+   compris — voir capturer()/dessinerFrame() dans ce fichier) : c'est ce dont
+   banc-ui.js a besoin pour les afficher TELLES QUELLES. Ce module-ci, comme
+   l'ancien chemin CDP `Page.captureScreenshot` qu'il remplace, expose du
+   base64 PUR à ses appelants (tests/integration-e2e-headless.js le vérifie
+   explicitement) — le préfixe est donc retiré ICI, une fois, plutôt que de
+   propager deux conventions différentes selon la provenance de la capture. */
+function base64Pur(donnees) {
+  const m = /^data:[^;,]*(?:;base64)?,/.exec(donnees || '');
+  return m ? donnees.slice(m[0].length) : donnees;
 }
 
 /* Exécute UN test par son nom exact (filtre substring de runE2E, voir
@@ -142,21 +156,16 @@ function accelerationDepuisRenderer(renderer) {
 async function executerUnTest(session, portServeur, test, opts) {
   const debut = Date.now();
   const debutISO = new Date(debut).toISOString();
-  const captures = [];
-  /* `role` : 'debut'/'fin' — pas de capture 'intermediaire' possible ici, ce
-     module pilote `window.runE2E` (non instrumenté) DE L'EXTÉRIEUR par CDP,
-     sans passer par etape()/capture() de tests/e2e.js (limite documentée en
-     tête de fichier). t_ms : depuis le début DE CE TEST, pas de la campagne. */
-  async function capturer(suffixe, role) {
-    try {
-      const r = await session.envoyer('Page.captureScreenshot', { format: 'jpeg', quality: 60 }, 8000);
-      if (r && r.data) captures.push({ libelle: test.nom + ' · ' + suffixe, type: 'image/jpeg', base64: r.data, role, t_ms: Date.now() - debut });
-    } catch (e) { /* une capture manquée n'invalide pas le résultat du test */ }
-  }
 
-  await capturer('début', 'debut');
-
-  const expression = 'window.runE2E(ensureGame(), null, ' + JSON.stringify(test.nom) + ')';
+  /* Piloté par `window.runUnE2EParNom` (tests/e2e.js), l'équivalent
+     instrumenté (étapes, triplets, métriques — SPEC-BANC-077 à 087) de ce
+     que le banc navigateur utilise déjà : ce module gagne donc la même
+     richesse que le banc plutôt que de se contenter d'observer de
+     l'extérieur (limite historique, désormais levée). `opts.delaiTestMs`
+     (ms) devient `delaiDefaut` en SECONDES, ce que `runUnE2E` attend
+     (`fiche.delai` reste prioritaire si le test en déclare un). */
+  const expression = 'window.runUnE2EParNom(ensureGame(), ' + JSON.stringify(test.nom) +
+    ', { delaiDefaut: ' + (opts.delaiTestMs / 1000) + ' })';
   let resultatJS = null;
   let erreur = null;
   let delaiDepasse = false;
@@ -179,29 +188,38 @@ async function executerUnTest(session, portServeur, test, opts) {
       try { await session.envoyer('Runtime.terminateExecution', {}, 5000); } catch (e2) { /* au pire, on continue quand même */ }
     }
   }
-
-  await capturer(erreur ? 'échec' : 'fin', 'fin');
   const duree_ms = Date.now() - debut;
 
   if (erreur) {
+    // aucune capture possible ici : le script a explosé côté page (exception
+    // non rattrapée par runUnE2EParNom lui-même, ou délai global CDP) —
+    // runUnE2E(), qui capture systématiquement, n'a alors jamais pu rendre
+    // la main.
     return {
       etat: delaiDepasse ? 'delai' : 'echec', debut: debutISO, duree_ms,
       message: delaiDepasse ? 'délai dépassé (' + opts.delaiTestMs + ' ms)' : erreur,
-      assertions: { ok: 0, ko: 1 }, captures,
+      assertions: { ok: 0, ko: 1 }, etapes: [], captures: [],
     };
   }
-  if (!resultatJS || resultatJS.total !== 1 || !resultatJS.results || resultatJS.results.length !== 1) {
+  if (!resultatJS) {
     return {
       etat: 'echec', debut: debutISO, duree_ms,
-      message: 'sélection par nom ambiguë ou vide (runE2E a rendu ' + (resultatJS ? resultatJS.total : 0) + ' résultat(s) au lieu de 1)',
-      assertions: { ok: 0, ko: 1 }, captures,
+      message: 'runUnE2EParNom n\'a rendu aucun résultat',
+      assertions: { ok: 0, ko: 1 }, etapes: [], captures: [],
     };
   }
-  const r0 = resultatJS.results[0];
+  // vocabulaire e2e ('reussi'/'echec'/'delai', tests/e2e.js runUnE2E) →
+  // vocabulaire de ce module ('ok'/'echec'/'delai', historique de
+  // tests/run.js) : etatRegistre() (tools/registre.js) accepte les deux,
+  // mais tests/run.js, LUI, ne compte 'ok' comme passé — voir plus bas.
   return {
-    etat: r0.ok ? 'ok' : 'echec', debut: debutISO, duree_ms,
-    message: r0.ok ? undefined : r0.message,
-    assertions: { ok: r0.ok ? 1 : 0, ko: r0.ok ? 0 : 1 }, captures,
+    etat: resultatJS.etat === 'reussi' ? 'ok' : resultatJS.etat, debut: resultatJS.debut || debutISO, duree_ms: resultatJS.duree_ms || duree_ms,
+    message: resultatJS.message, pile: resultatJS.pile, attendu: resultatJS.attendu, obtenu: resultatJS.obtenu,
+    assertions: resultatJS.assertions || { ok: 0, ko: 0 }, etapes: resultatJS.etapes || [],
+    etapesTriplets: resultatJS.etapesTriplets || [], metriques: resultatJS.metriques || null,
+    captures: (resultatJS.captures || []).map((c) => ({ libelle: c.libelle, type: c.type, base64: base64Pur(c.base64), role: c.role,
+      etape: c.etape, bord: c.bord, rang: c.rang, t_ms: c.t_ms, numero_image: c.numero_image, duree_image_ms: c.duree_image_ms,
+      pose: c.pose, instabilite: c.instabilite })),
   };
 }
 
@@ -321,9 +339,19 @@ async function executerCampagne(selection, options) {
       testsResultats.push({
         id: test.id, nom: test.nom, type: test.type || 'e2e', groupe: test.groupe,
         domaines: test.domaines || [], specs: test.specs || [], fiche: test.fiche || null, etiquettes: test.etiquettes || [],
-        etat: r.etat, debut: r.debut || null, duree_ms: r.duree_ms, etapes: [], assertions: r.assertions,
-        message,
-        captures: r.captures.map((c, i) => ({ libelle: c.libelle, type: c.type, role: c.role, t_ms: c.t_ms, fichier: capturesGlobales.length + i })),
+        // SPEC-BANC-062 : fonctions DÉCLARÉES seulement côté e2e (l'énoncé le
+        // permet explicitement — pas d'observation en exécution navigateur
+        // dans ce lot, voir docs/banc/historique-global.md §3.5).
+        fonctions: test.fonctions || [],
+        etat: r.etat, debut: r.debut || null, duree_ms: r.duree_ms,
+        etapes: r.etapes || [], etapesTriplets: r.etapesTriplets || [],
+        assertions: r.assertions, metriques: r.metriques || undefined,
+        message, pile: r.pile, attendu: r.attendu, obtenu: r.obtenu,
+        captures: r.captures.map((c, i) => ({
+          libelle: c.libelle, type: c.type, role: c.role, etape: c.etape, bord: c.bord, rang: c.rang,
+          t_ms: c.t_ms, numero_image: c.numero_image, duree_image_ms: c.duree_image_ms, pose: c.pose, instabilite: c.instabilite,
+          fichier: capturesGlobales.length + i,
+        })),
       });
       r.captures.forEach((c) => capturesGlobales.push(c));
     }
@@ -334,8 +362,16 @@ async function executerCampagne(selection, options) {
         source: 'navigateur-headless',
         navigateur: (infoVersion && infoVersion.Browser) || navigateurHandle.chemin,
         gpu: rGpu ? rGpu.renderer : null,
+        vendorGpu: rGpu ? rGpu.vendor : null,
         resolution: navigateurHandle.largeur + 'x' + navigateurHandle.hauteur,
         accelerationMaterielle,
+        // SPEC-BANC-085 : os et présence d'une fenêtre — ce module lance
+        // TOUJOURS le navigateur sans fenêtre (tools/navigateur.js) ; le banc
+        // navigateur normal (tests/banc-ui.js), qui s'exécute avec fenêtre,
+        // n'écrit pas ces champs par ce chemin — ils resteraient `false`/os
+        // par défaut plutôt qu'absents, ce qui serait faux pour ce cas-là.
+        os: os.platform() + ' ' + os.release(),
+        avecFenetre: false,
       },
       tests: testsResultats,
       captures: capturesGlobales,

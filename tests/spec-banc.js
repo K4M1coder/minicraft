@@ -556,6 +556,126 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — fonctions déclarées/observées, fiche avant résultat, G14 étendue (0a/0b)', function () {
+    it('SPEC-BANC-062 : une fiche (test ou groupe) déclare `fonctions`, propagées jusqu\'à l\'entrée du catalogue', function () {
+      var specsIndex = MC_TESTS.indexSpecs(fs.readFileSync(path.join(RACINE, 'SPECS.md'), 'utf8'));
+      var TT = { suites: [{
+        name: 'Groupe démo', fichier: 'tests/unit.js', fiche: null,
+        tests: [
+          { name: 'test avec fonctions déclarées', fiche: { teste: 't', pourquoi: 'p', attendu: 'a', fonctions: ['MC.Demo.f'] } },
+          { name: 'test sans rien de spécial', fiche: null },
+        ],
+      }] };
+      var cat = MC_TESTS.construire(TT, [], specsIndex);
+      var a = cat.find(function (c) { return c.nom === 'test avec fonctions déclarées'; });
+      var b = cat.find(function (c) { return c.nom === 'test sans rien de spécial'; });
+      A.deep(a.fonctions, ['MC.Demo.f'], 'fonctions déclarées reprises sur l\'entrée du catalogue');
+      A.deep(b.fonctions, [], 'sans déclaration : liste vide (jamais undefined)');
+    });
+
+    it('SPEC-BANC-066 : un domaine peut aussi être DÉCLARÉ (fiche ou groupe), fusionné à celui déduit des SPEC-* citées', function () {
+      var TT = { suites: [{
+        name: 'Groupe démo 2', fichier: 'tests/unit.js', fiche: { teste: 't', pourquoi: 'p', attendu: 'a', domaines: ['FAUNE'] },
+        tests: [{ name: 'SPEC-RENDU-001 : un test avec spec et domaine déclaré' }],
+      }] };
+      var cat = MC_TESTS.construire(TT, [], {});
+      var t = cat[0];
+      A.ok(t.domaines.indexOf('RENDU') >= 0, 'domaine déduit de la spec citée toujours présent');
+      A.ok(t.domaines.indexOf('FAUNE') >= 0, 'domaine déclaré ajouté, sans remplacer celui déduit');
+    });
+
+    it('SPEC-BANC-062 : un test Node sans fonctions déclarées appelant MC.Mesher.tileOrigin la fait apparaître dans ses fonctions OBSERVÉES, compteur d\'appels ≥ 1', function () {
+      // le surcoût mesuré (comme toute la progression de tests/run.js, voir
+      // ecrire()) est écrit sur STDERR, pas stdout — execFileSync ne rend
+      // que stdout ; spawnSync capture les deux, qu'on combine pour le test.
+      // délai généreux mais BORNÉ (60 s) : un sous-processus qui ne rend
+      // jamais la main (observé une fois, cause non élucidée sous charge
+      // concurrente) ne doit jamais accrocher CE test à son tour.
+      var nomTest = 'SPEC-PERF-011 à 013 : uvBase + fract(uvRep) * tailleTuile retombe sur pushUV, à toute rotation';
+      var dossierTmp = tmpDir('spec-banc-062');
+      var r1 = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--test', 'SPEC-PERF-011'],
+        { encoding: 'utf8', timeout: 60000, env: Object.assign({}, process.env, { MC_TEST_RESULTATS_DIR: dossierTmp }) });
+      try {
+        var out = (r1.stdout || '') + (r1.stderr || '');
+        A.ok(!r1.error, 'le sous-processus s\'est terminé dans le délai imparti : ' + (r1.error && r1.error.message));
+        A.ok(/observation des fonctions active — surcoût mesuré/.test(out), 'le surcoût mesuré est affiché : ' + out.slice(0, 300));
+        var dossiers = fs.readdirSync(dossierTmp, { withFileTypes: true }).filter(function (d) { return d.isDirectory(); });
+        A.ok(dossiers.length >= 1, 'un cahier a été écrit');
+        var resultats = JSON.parse(fs.readFileSync(path.join(dossierTmp, dossiers[0].name, 'resultats.json'), 'utf8'));
+        var t = resultats.tests.find(function (x) { return x.nom.indexOf('uvBase + fract(uvRep)') >= 0; });
+        A.ok(t, 'le test cible est bien dans la sélection --test SPEC-PERF-011');
+        A.ok(t.fonctions.indexOf('MC.Mesher.tileOrigin') >= 0, 'MC.Mesher.tileOrigin observée : ' + JSON.stringify(t.fonctions));
+        A.ok(t.fonctionsAppels['MC.Mesher.tileOrigin'] >= 1, 'compteur d\'appels >= 1 : ' + t.fonctionsAppels['MC.Mesher.tileOrigin']);
+      } finally { nettoyer(dossierTmp); }
+
+      var dossierTmp2 = tmpDir('spec-banc-062-sans');
+      try {
+        var r2 = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--sans-fonctions', '--test', 'SPEC-PERF-011'],
+          { encoding: 'utf8', timeout: 60000, env: Object.assign({}, process.env, { MC_TEST_RESULTATS_DIR: dossierTmp2 }) });
+        var outSans = (r2.stdout || '') + (r2.stderr || '');
+        A.ok(!r2.error, 'le sous-processus (--sans-fonctions) s\'est terminé dans le délai imparti : ' + (r2.error && r2.error.message));
+        A.ok(/observation des fonctions désactivée/.test(outSans), '--sans-fonctions annonce la désactivation : ' + outSans.slice(0, 300));
+      } finally { nettoyer(dossierTmp2); }
+    });
+
+    it('SPEC-BANC-059 : la fiche d\'un test HTML s\'affiche AVANT son résultat (identité, fiche, puis état/erreur/vignettes)', function () {
+      var resultats = {
+        schema: 1, campagne: { preset: 'demo', totaux: { total: 1, passes: 0, echecs: 1, ignores: 0 } },
+        tests: [{
+          id: 'DEMO-ORDRE', nom: 'demo ordre', type: 'unitaire', groupe: 'G', domaines: ['ECO'], specs: ['SPEC-ECO-001'],
+          fonctions: ['MC.Eco.f'], etiquettes: ['lent'],
+          fiche: { teste: 'CECI-EST-LA-FICHE', pourquoi: 'p', attendu: 'a' },
+          etat: 'echec', duree_ms: 1, message: 'CECI-EST-L-ERREUR', captures: [],
+        }],
+      };
+      var html = MC_RAPPORT.html(resultats);
+      var iIdentite = html.indexOf('domaines : ECO');
+      var iFiche = html.indexOf('CECI-EST-LA-FICHE');
+      var iResultat = html.indexOf('CECI-EST-L-ERREUR');
+      A.ok(iIdentite >= 0 && iFiche >= 0 && iResultat >= 0, 'les trois blocs sont présents');
+      A.ok(iIdentite < iFiche, 'identité AVANT la fiche');
+      A.ok(iFiche < iResultat, 'fiche AVANT le résultat (erreur)');
+      A.ok(html.indexOf('fonctions : MC.Eco.f') >= 0, 'les fonctions figurent dans l\'identité');
+    });
+
+    it('SPEC-BANC-060 : instantané — modifier la fiche du catalogue après un run n\'altère jamais la fiche déjà inscrite pour ce run passé', function () {
+      var REG = require(path.join(RACINE, 'tools', 'registre.js'));
+      var racineResultats = tmpDir('reg-instantane'), dossierRegistre = tmpDir('reg-instantane-reg');
+      try {
+        var b64 = Buffer.from([0xFF, 0xD8, 0xFF, 0xD9]).toString('base64');
+        RT.ecrireCahier({
+          schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(), environnement: { commit: 'HEAD' },
+            totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 } },
+          tests: [{ id: 'DEMO-INSTANTANE', nom: 'demo-instantane', type: 'unitaire', groupe: 'g', domaines: ['ECO'], specs: [],
+            fiche: { teste: 'version au moment du run', pourquoi: 'p', attendu: 'a' },
+            etat: 'ok', duree_ms: 1, captures: [{ libelle: 'fin', fichier: 0 }] }],
+        }, { racine: racineResultats, nom: 'run1', captures: [{ libelle: 'fin', type: 'image/jpeg', base64: b64 }] });
+        var r = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.ok(r.ok, 'inscription acceptée : ' + JSON.stringify(r));
+
+        // la fiche « catalogue » change APRÈS coup (comme si le test avait été réécrit depuis)
+        var ficheApresCoup = { teste: 'version réécrite plus tard, très différente', pourquoi: 'p2', attendu: 'a2' };
+        A.notEqual(JSON.stringify(ficheApresCoup), JSON.stringify({ teste: 'version au moment du run', pourquoi: 'p', attendu: 'a' }));
+
+        var entree = REG.lireEntrees(dossierRegistre)[0];
+        A.equal(entree.tests[0].fiche.teste, 'version au moment du run',
+          'l\'entrée déjà écrite garde EXACTEMENT la fiche du moment du run, jamais la version réécrite ensuite');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-061 : une étiquette non listée dans le README du registre n\'est ni rejetée ni signalée en erreur', function () {
+      var specsIndex = {};
+      var TT = { suites: [{
+        name: 'Groupe démo 3', fichier: 'tests/unit.js', fiche: null,
+        tests: [{ name: 'un test avec un tag jamais vu ailleurs', fiche: { teste: 't', pourquoi: 'p', attendu: 'a', etiquettes: ['zzz-jamais-vu-nulle-part'] } }],
+      }] };
+      var cat = MC_TESTS.construire(TT, [], specsIndex);
+      A.equal(cat.length, 1, 'le test apparaît normalement dans le catalogue, sans rejet ni erreur');
+      A.ok(cat[0].etiquettes.indexOf('zzz-jamais-vu-nulle-part') >= 0, 'l\'étiquette inédite est reprise telle quelle');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════════
   describe('Specs — registre officiel versionné et historique par test (tools/registre.js)', function () {
     var REG = require(path.join(RACINE, 'tools', 'registre.js'));
 
@@ -714,7 +834,112 @@
       A.equal(REG.etatRegistre({ etat: 'ok', duree_ms: 100, message: 'un avertissement non bloquant' }), 'avertissement', 'succès avec message : avertissement');
       A.equal(REG.etatRegistre({ etat: 'echec', duree_ms: 100 }), 'echec');
       A.equal(REG.etatRegistre({ etat: 'delai', duree_ms: 100 }), 'echec', 'un délai dépassé compte comme un échec');
-      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100 }), 'ignore');
+      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100, raison: 'pas de WebGL' }), 'ignore', 'ignore AVEC raison reste ignore');
+    });
+
+    it('SPEC-BANC-089 : ignore/avertissement exigent une raison non vide — un ignoré sans raison devient un échec', function () {
+      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100 }), 'echec', 'ignore SANS raison ni message : reclassé en échec');
+      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100, raison: '   ' }), 'echec', 'raison blanche : toujours reclassé');
+      A.equal(REG.etatRegistre({ etat: 'ignore', duree_ms: 100, message: 'pas de WebGL dans cet environnement' }), 'ignore',
+        'à défaut de raison, le message (rétro-compatibilité) suffit');
+      A.equal(REG.raisonRegistre({ etat: 'ok', duree_ms: 30000 }, 'avertissement', 20000), 'lent : 30.0 s > seuil 20.0 s',
+        'raison automatique pour un avertissement de lenteur');
+      A.equal(REG.raisonRegistre({ etat: 'ok', duree_ms: 100, message: 'presque à la limite' }, 'avertissement', 20000),
+        'presque à la limite', 'raison = le message pour un avertissement par message');
+      A.equal(REG.raisonRegistre({ etat: 'ignore', raison: 'pas de WebGL' }, 'ignore'), 'pas de WebGL');
+      A.equal(REG.raisonRegistre({ etat: 'ok', duree_ms: 1 }, 'reussi'), null, 'aucune raison exigée pour un succès simple');
+    });
+
+    it('SPEC-BANC-089 : inscrire() reclasse un ignore sans raison en échec, avec une erreur explicite', function () {
+      var racineResultats = tmpDir('reg-raison'), dossierRegistre = tmpDir('reg-raison-reg');
+      try {
+        RT.ecrireCahier({
+          schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(), environnement: { commit: 'HEAD' },
+            totaux: { total: 1, passes: 0, echecs: 0, ignores: 1 } },
+          tests: [{ id: 'DEMO-RAISON', nom: 'demo-raison', type: 'unitaire', groupe: 'g', domaines: [], specs: [],
+            etat: 'ignore', duree_ms: 1, captures: [] }],
+        }, { racine: racineResultats, nom: 'run1', captures: [] });
+        var r = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.ok(r.ok, 'inscription acceptée : ' + JSON.stringify(r));
+        var t = REG.lireEntrees(dossierRegistre)[0].tests[0];
+        A.equal(t.etat, 'echec', 'un ignore sans raison est reclassé en échec dans le registre');
+        A.ok(/reclassé en échec/.test(t.erreur || ''), 'l\'erreur explique la reclassification : ' + t.erreur);
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-085/086 : le moteur de rendu du run est enregistré, et un témoin ne se compare qu\'au même moteur', function () {
+      var racineResultats = tmpDir('reg-moteur'), dossierRegistre = tmpDir('reg-moteur-reg');
+      try {
+        function cahierAvecMoteur(nom, commitCourt, gpu, accel, b64) {
+          RT.ecrireCahier({
+            schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(),
+              environnement: { commit: commitCourt, gpu: gpu, accelerationMaterielle: accel, navigateur: 'Chrome/1', os: 'win32', avecFenetre: false },
+              totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 } },
+            tests: [{ id: 'DEMO-MOTEUR', nom: 'demo-moteur', type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [],
+              etat: 'ok', duree_ms: 1, captures: [{ libelle: 'fin', fichier: 0 }] }],
+          }, { racine: racineResultats, nom: nom, captures: [{ libelle: 'fin', type: 'image/jpeg', base64: b64 }] });
+        }
+        var log = cp.execFileSync('git', ['log', '--format=%H', '-n', '2'], { cwd: RACINE, encoding: 'utf8' }).trim().split('\n');
+        var b64a = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 11]).toString('base64');
+        var b64b = Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, 12]).toString('base64');
+        cahierAvecMoteur('rlog', log[1].slice(0, 12), 'SwiftShader', false, b64a);
+        REG.inscrire('rlog', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+        cahierAvecMoteur('rgpu', log[0].slice(0, 12), 'NVIDIA GeForce RTX', true, b64b);
+        REG.inscrire('rgpu', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE, origine: 'pre-push' });
+
+        var entrees = REG.lireEntrees(dossierRegistre);
+        var eLogiciel = entrees.find(function (e) { return e.dossierCahier === 'rlog'; });
+        A.equal(eLogiciel.moteurRendu.glRenderer, 'SwiftShader', 'le moteur de rendu du run est enregistré');
+        A.equal(eLogiciel.moteurRendu.accelerationMaterielle, false, 'logiciel (pas de GPU réel)');
+
+        var hist = REG.historiqueTest('DEMO-MOTEUR', { dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        var entreesParCommit = new Map(entrees.map(function (e) { return [e.commit, e]; }));
+
+        var tLogiciel = REG.temoinDe('DEMO-MOTEUR', hist, { dossierRegistre: dossierRegistre, moteurRendu: eLogiciel.moteurRendu, entreesParCommit: entreesParCommit });
+        A.ok(tLogiciel && !tLogiciel.pasDeTemoinMemeMoteur, 'un témoin logiciel existe (celui du même moteur)');
+        A.equal(tLogiciel.commit, eLogiciel.commit, 'le témoin proposé pour le rendu logiciel est bien le run logiciel, jamais le run GPU');
+
+        var moteurIntrouvable = { glRenderer: 'Intel UHD', glVendor: null, accelerationMaterielle: true };
+        var tAucun = REG.temoinDe('DEMO-MOTEUR', hist, { dossierRegistre: dossierRegistre, moteurRendu: moteurIntrouvable, entreesParCommit: entreesParCommit });
+        A.ok(tAucun && tAucun.pasDeTemoinMemeMoteur, 'aucun run sur ce moteur : message explicite, pas de comparaison hasardeuse');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
+    });
+
+    it('SPEC-BANC-083 : le registre ne garde que l\'image centrale d\'un triplet (et tous ses nombres), sauf étiquette `rendu` ou instabilité au-dessus du seuil', function () {
+      var racineResultats = tmpDir('reg-triplet'), dossierRegistre = tmpDir('reg-triplet-reg');
+      try {
+        var capDir = path.join(racineResultats, 'run1', 'captures');
+        fs.mkdirSync(capDir, { recursive: true });
+        [0, 1, 2].forEach(function (rang) { fs.writeFileSync(path.join(capDir, 'img' + rang + '.jpg'), Buffer.from([0xFF, 0xD8, 0xFF, 0xE0, rang])); });
+        function triplet(etiquettes, instabilitePixels) {
+          return [0, 1, 2].map(function (rang) {
+            return { role: 'triplet', etape: 'test', bord: 'debut', rang: rang, libelle: 'test-debut-' + rang,
+              fichier: 'img' + rang + '.jpg', t_ms: rang * 16, numero_image: rang + 1, duree_image_ms: rang ? 16 : 0,
+              pose: { camera: { x: rang, y: 0, z: 0 } }, instabilite: { pixels: instabilitePixels, pose: 0.1 } };
+          });
+        }
+        RT.ecrireCahier({
+          schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(), environnement: { commit: 'HEAD' },
+            totaux: { total: 2, passes: 2, echecs: 0, ignores: 0 } },
+          tests: [
+            { id: 'DEMO-TRIPLET-STABLE', nom: 'stable', type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [], etiquettes: [],
+              etat: 'ok', duree_ms: 1, captures: triplet([], 1) },
+            { id: 'DEMO-TRIPLET-RENDU', nom: 'rendu', type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [], etiquettes: ['rendu'],
+              etat: 'ok', duree_ms: 1, captures: triplet(['rendu'], 1) },
+          ],
+        }, { racine: racineResultats, nom: 'run1', captures: [] });
+        var r = REG.inscrire('run1', { racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: RACINE });
+        A.ok(r.ok, 'inscription acceptée : ' + JSON.stringify(r));
+        var tests = REG.lireEntrees(dossierRegistre)[0].tests;
+        var stable = tests.find(function (t) { return t.id === 'DEMO-TRIPLET-STABLE'; });
+        var rendu = tests.find(function (t) { return t.id === 'DEMO-TRIPLET-RENDU'; });
+        A.equal(stable.captures.length, 3, 'les TROIS nombres du triplet sont toujours gardés');
+        A.notOk(stable.captures[0].image, 'rang 0 : image élaguée (stable, sans étiquette rendu)');
+        A.ok(stable.captures[1].image, 'rang 1 (central) : image gardée');
+        A.notOk(stable.captures[2].image, 'rang 2 : image élaguée');
+        A.equal(stable.captures[0].pose.camera.x, 0, 'les nombres (pose) restent malgré l\'image élaguée');
+        A.ok(rendu.captures[0].image && rendu.captures[1].image && rendu.captures[2].image, 'étiquette `rendu` : triplet COMPLET gardé');
+      } finally { nettoyer(racineResultats); nettoyer(dossierRegistre); }
     });
 
     it('SPEC-BANC-032 : une capture manuelle nommée en cours de test (T.capture) est déjà supportée et reste stable d\'un run à l\'autre', function () {

@@ -26,7 +26,14 @@
   }
 
   describe('Specs — PERF, bruit et génération (lot A, audit du 2026-09-24)', function () {
-    it('SPEC-PERF-001 : la génération de chunk reste sous le budget de temps grâce au cache de grille du bruit de grotte', function () {
+    it('SPEC-PERF-001 : la génération de chunk reste sous le budget de temps grâce au cache de grille du bruit de grotte',
+      // SPEC-BANC-062 : un budget de temps mesuré en millisecondes n'a de
+      // sens que SANS l'enveloppe d'observation des fonctions (comme G12,
+      // tests/gates.js) — `@budget-perf` fait sauter la fenêtre d'observation
+      // pour CE test précis (tests/run.js), sans désactiver l'enveloppe pour
+      // le reste de la campagne (--sans-fonctions le ferait, lui, globalement).
+      { etiquettes: ['budget-perf'] },
+      function () {
       var w = MC.createWorld(20260924);
       // 80 chunks (pas 40) : un seul chunk de ville coûte largement plus que
       // les autres (habitats/routes) et fausse la moyenne sur un petit

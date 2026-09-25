@@ -150,7 +150,10 @@
       }
     });
 
-    it('SPEC-OMBRE-002 : reste rapide, 256×256 échantillons en moins de 150 ms', function () {
+    it('SPEC-OMBRE-002 : reste rapide, 256×256 échantillons en moins de 150 ms',
+      // SPEC-BANC-062 : budget de temps mesuré — voir tests/spec-perf.js
+      { etiquettes: ['budget-perf'] },
+      function () {
       var g = grilleAvecMur(256, 4, 30, 128, 70);
       var t0 = (typeof performance !== 'undefined' ? performance.now() : Date.now());
       O.ombrerRelief(g, couchant, {});

@@ -90,7 +90,7 @@ function assainirCampagne(campagne) {
   if (c.preset !== undefined) c.preset = assainirChamp(c.preset);
   if (c.environnement && typeof c.environnement === 'object') {
     const env = c.environnement;
-    ['commit', 'versionJeu', 'navigateur', 'gpu', 'resolution'].forEach((champ) => {
+    ['commit', 'versionJeu', 'navigateur', 'gpu', 'vendorGpu', 'resolution', 'os'].forEach((champ) => {
       if (env[champ] !== undefined) env[champ] = assainirChamp(env[champ]);
     });
   }

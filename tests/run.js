@@ -178,6 +178,31 @@ function ficheLitteraleA(texte, depart) {
   try { return JSON.parse(texte.slice(i, j)); } catch (e) { return null; }
 }
 
+/* SPEC-BANC-066 : domaine DÉCLARÉ par groupe de bandeau e2e (voir
+   e2eListeDepuisTexte ci-dessous) — SEULS les groupes qui contiennent au
+   moins un test sans SPEC-* dans son nom ni fonction observable (e2e :
+   jamais observé, voir docs/banc/historique-global.md §3.5) en ont besoin ;
+   un groupe absent d'ici garde son comportement d'avant (domaine déduit du
+   nom, ou aucun si le test a sa propre fiche à lui). Domaines honnêtes,
+   cohérents avec ceux déjà utilisés par les tests Node du même thème
+   (SPECS.md) — « Agriculture, fourneau, cycle » (MECA) est le bandeau le
+   plus large : la détection de section de e2eListeDepuisTexte (bandeau à
+   trois lignes) ne retrouve pas toujours une nouvelle section pour chaque
+   sujet réellement distinct qu'il contient (villageois, torches, coffres,
+   usure, chat, cycle jour/nuit…) — un domaine large mais vrai plutôt qu'un
+   domaine précis mais faux pour un sous-thème qu'il ne couvre pas tous. */
+const DOMAINE_PAR_GROUPE_E2E = {
+  'Démarrage et états': ['MENU'],
+  'Capture souris et pause  (les défauts signalés)': ['MENU'],
+  'Déplacement réel dans la boucle': ['PHYS'],
+  'Inventaire et craft par l\'interface': ['INVENTAIRE'],
+  'Miner, poser, ramasser — dans la boucle réelle': ['BLOC'],
+  'Combat et entités': ['COMBAT'],
+  'Agriculture, fourneau, cycle': ['MECA'],
+  'Sauvegarde': ['SAVE'],
+  'HUD': ['HUD'],
+  'Performance': ['PERF'],
+};
 function e2eListeDepuisTexte() {
   const fichier = path.join(root, 'tests', 'e2e.js');
   if (!fs.existsSync(fichier)) return [];
@@ -207,8 +232,13 @@ function e2eListeDepuisTexte() {
       let p = debutsLignes[i] + ma[0].length;
       while (p < texte.length && /[\s,]/.test(texte[p])) p++;
       const fiche = ficheLitteraleA(texte, p);
-      const entree = { nom: ma[2].replace(/\\(.)/g, '$1'), groupe: dernierGroupe || 'e2e', fichier: 'tests/e2e.js' };
+      const groupe = dernierGroupe || 'e2e';
+      const entree = { nom: ma[2].replace(/\\(.)/g, '$1'), groupe, fichier: 'tests/e2e.js' };
       if (fiche) entree.fiche = fiche;
+      // SPEC-BANC-066 : repli DÉCLARÉ par groupe (voir tests/catalogue.js,
+      // e.ficheGroupe) — un domaine honnête pour un test qui n'a ni SPEC-*
+      // dans son nom ni fonction observable (pas d'observation en e2e).
+      if (DOMAINE_PAR_GROUPE_E2E[groupe]) entree.ficheGroupe = { domaines: DOMAINE_PAR_GROUPE_E2E[groupe] };
       out.push(entree);
     }
   }
@@ -220,19 +250,24 @@ function e2eListeDepuisTexte() {
    chacun compte comme UNE entrée du catalogue (type 'integration' ou
    'charge'), exécutable en un lancement. C'est run.js, ici, qui sait les
    lancer (spawnSync) quand ils sont sélectionnés — voir plus bas. */
+/* `domaines` (SPEC-BANC-066) : chaque script est UNE SEULE entrée de
+   catalogue (pas de describe/it), donc jamais de SPEC-* dans son NOM —
+   contrairement aux tests décrits DANS le fichier (qui, eux, en citent).
+   Un domaine honnête par script, cohérent avec ce que dit sa fiche
+   ci-dessus (network/admin/paquet/pvp/charge/banc/sécurité/sync). */
 const FICHE_INTEGRATION = {
-  'integration-net.js': { teste: 'Le protocole réseau (WebSocket, autorité serveur) sur de vraies sockets.', pourquoi: 'La logique réseau est testée unitairement ailleurs (src/net-protocol.js) ; ici, un vrai serveur et de vrais clients TCP vérifient qu\'elle fonctionne réellement en bout en bout.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-admin.js': { teste: 'L\'administration et la persistance du serveur, sur un vrai processus server.js.', pourquoi: 'Rôles, jetons et sauvegarde du monde ne peuvent se vérifier qu\'avec un vrai serveur qui démarre, tourne et s\'arrête.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-paquet.js': { teste: 'Le lancement empaqueté du jeu (paramètres, ouverture du navigateur).', pourquoi: 'L\'empaquetage n\'est vérifiable qu\'en lançant réellement le programme avec différents arguments.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-pvp.js': { teste: 'Le PvP, les zones de jeu et les factions, sur un vrai serveur avec plusieurs clients.', pourquoi: 'Les règles de zone et de faction combinent plusieurs joueurs réels ; un test unitaire ne peut pas simuler l\'ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-charge.js': { teste: 'Le banc de charge, à petite échelle, pour vérifier qu\'il fonctionne.', pourquoi: 'Un banc de charge cassé donnerait une fausse confiance sur les performances mesurées ailleurs.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-cahiers.js': { teste: 'La bibliothèque des cahiers de test (SPEC-BANC-018 à 022) sur un vrai serveur : enregistrement, liste, comparaison, export HTML/.docx.', pourquoi: 'Les routes /tests/cahiers combinent serveur HTTP, disque et rendu ; seul un vrai processus vérifie qu\'elles fonctionnent ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-secu.js': { teste: 'La fiabilité et la sécurité du transport réseau (SPEC-SECU-001 à 007, SPEC-SERVEUR-003/004) sur de vrais processus server.js : pannes non fatales, trames non masquées, anti-flood, sauvegarde atomique sous coupure.', pourquoi: 'Try/catch autour des handlers, anti-flood et écriture atomique ne se vérifient qu\'avec un vrai serveur, de vraies sockets et de vraies interruptions de processus.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-cdp-fake.js': { teste: 'Le client CDP minimal (SPEC-BANC-023, tools/cdp.js) contre un faux serveur WebSocket local : découverte, requête/réponse par id, événements relayés, délai, erreur CDP.', pourquoi: 'tests/harness.js (describe/it) est délibérément synchrone : une assertion qui échouerait dans un .then() ne serait jamais rapportée comme un échec de test. Le protocole CDP a besoin de vraies requêtes HTTP/WebSocket asynchrones, donc d\'un vrai script Node avec await, comme les autres tests/integration-*.js.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-e2e-headless.js': { teste: 'Une vraie campagne e2e sans fenêtre (SPEC-BANC-023/024/025) : navigateur Edge/Chrome réel en mode sans interface, deux e2e exécutés, cahier écrit avec captures lisibles, aucun processus restant.', pourquoi: 'CDP, la détection du navigateur et le nettoyage garanti ne se vérifient qu\'avec un vrai navigateur lancé et arrêté pour de vrai — voir tools/cdp.js, tools/navigateur.js, tools/e2e-headless.js.', attendu: 'le script se termine sans échec (code de sortie 0) ; sans aucun Edge/Chrome installé, il s\'ignore avec un avertissement (code de sortie 0 aussi).' },
-  'charge.js': { teste: 'Le banc de charge complet (1 à 100 joueurs simulés).', pourquoi: 'Mesure la tenue en charge réelle du serveur — voir docs/charge.md.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-inventaire.js': { teste: 'L\'inventaire, l\'équipement et la grille de fabrication serveur (B1, SPEC-SYNC-007 à 011, 014) sur un vrai serveur : MC_TEST_INV, CRAFT, EQUIP/EQUIP_VU, MANGER, INV_CONSOMMER, INV_LACHER, INV_CREATIF, idempotence du seq, reconnexion sous le même nom.', pourquoi: 'Le serveur devient la seule source de vérité pour l\'inventaire en ligne (docs/vague-2/B1.md) ; seul un vrai processus avec de vrais clients prouve que la prédiction/réconciliation et le registre des joueurs nommés fonctionnent ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
-  'integration-troc.js': { teste: 'Le commerce serveur-autoritaire (SPEC-SYNC-023) : consulter/échanger sur un vrai serveur, prix et trésors conservés après --monde arrêt/relance.', pourquoi: 'L\'arbitrage atomique d\'un troc (inventaire + stock + trésor) et sa persistance ne se vérifient qu\'avec un vrai serveur et de vrais clients.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.' },
+  'integration-net.js': { teste: 'Le protocole réseau (WebSocket, autorité serveur) sur de vraies sockets.', pourquoi: 'La logique réseau est testée unitairement ailleurs (src/net-protocol.js) ; ici, un vrai serveur et de vrais clients TCP vérifient qu\'elle fonctionne réellement en bout en bout.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['RESEAU'] },
+  'integration-admin.js': { teste: 'L\'administration et la persistance du serveur, sur un vrai processus server.js.', pourquoi: 'Rôles, jetons et sauvegarde du monde ne peuvent se vérifier qu\'avec un vrai serveur qui démarre, tourne et s\'arrête.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['ADMIN'] },
+  'integration-paquet.js': { teste: 'Le lancement empaqueté du jeu (paramètres, ouverture du navigateur).', pourquoi: 'L\'empaquetage n\'est vérifiable qu\'en lançant réellement le programme avec différents arguments.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['PAQUET'] },
+  'integration-pvp.js': { teste: 'Le PvP, les zones de jeu et les factions, sur un vrai serveur avec plusieurs clients.', pourquoi: 'Les règles de zone et de faction combinent plusieurs joueurs réels ; un test unitaire ne peut pas simuler l\'ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['PVP'] },
+  'integration-charge.js': { teste: 'Le banc de charge, à petite échelle, pour vérifier qu\'il fonctionne.', pourquoi: 'Un banc de charge cassé donnerait une fausse confiance sur les performances mesurées ailleurs.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['CHARGE'] },
+  'integration-cahiers.js': { teste: 'La bibliothèque des cahiers de test (SPEC-BANC-018 à 022) sur un vrai serveur : enregistrement, liste, comparaison, export HTML/.docx.', pourquoi: 'Les routes /tests/cahiers combinent serveur HTTP, disque et rendu ; seul un vrai processus vérifie qu\'elles fonctionnent ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['BANC'] },
+  'integration-secu.js': { teste: 'La fiabilité et la sécurité du transport réseau (SPEC-SECU-001 à 007, SPEC-SERVEUR-003/004) sur de vrais processus server.js : pannes non fatales, trames non masquées, anti-flood, sauvegarde atomique sous coupure.', pourquoi: 'Try/catch autour des handlers, anti-flood et écriture atomique ne se vérifient qu\'avec un vrai serveur, de vraies sockets et de vraies interruptions de processus.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['SECU'] },
+  'integration-cdp-fake.js': { teste: 'Le client CDP minimal (SPEC-BANC-023, tools/cdp.js) contre un faux serveur WebSocket local : découverte, requête/réponse par id, événements relayés, délai, erreur CDP.', pourquoi: 'tests/harness.js (describe/it) est délibérément synchrone : une assertion qui échouerait dans un .then() ne serait jamais rapportée comme un échec de test. Le protocole CDP a besoin de vraies requêtes HTTP/WebSocket asynchrones, donc d\'un vrai script Node avec await, comme les autres tests/integration-*.js.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['BANC'] },
+  'integration-e2e-headless.js': { teste: 'Une vraie campagne e2e sans fenêtre (SPEC-BANC-023/024/025) : navigateur Edge/Chrome réel en mode sans interface, deux e2e exécutés, cahier écrit avec captures lisibles, aucun processus restant.', pourquoi: 'CDP, la détection du navigateur et le nettoyage garanti ne se vérifient qu\'avec un vrai navigateur lancé et arrêté pour de vrai — voir tools/cdp.js, tools/navigateur.js, tools/e2e-headless.js.', attendu: 'le script se termine sans échec (code de sortie 0) ; sans aucun Edge/Chrome installé, il s\'ignore avec un avertissement (code de sortie 0 aussi).', domaines: ['BANC'] },
+  'charge.js': { teste: 'Le banc de charge complet (1 à 100 joueurs simulés).', pourquoi: 'Mesure la tenue en charge réelle du serveur — voir docs/charge.md.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['CHARGE'] },
+  'integration-inventaire.js': { teste: 'L\'inventaire, l\'équipement et la grille de fabrication serveur (B1, SPEC-SYNC-007 à 011, 014) sur un vrai serveur : MC_TEST_INV, CRAFT, EQUIP/EQUIP_VU, MANGER, INV_CONSOMMER, INV_LACHER, INV_CREATIF, idempotence du seq, reconnexion sous le même nom.', pourquoi: 'Le serveur devient la seule source de vérité pour l\'inventaire en ligne (docs/vague-2/B1.md) ; seul un vrai processus avec de vrais clients prouve que la prédiction/réconciliation et le registre des joueurs nommés fonctionnent ensemble.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['SYNC'] },
+  'integration-troc.js': { teste: 'Le commerce serveur-autoritaire (SPEC-SYNC-023) : consulter/échanger sur un vrai serveur, prix et trésors conservés après --monde arrêt/relance.', pourquoi: 'L\'arbitrage atomique d\'un troc (inventaire + stock + trésor) et sa persistance ne se vérifient qu\'avec un vrai serveur et de vrais clients.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['SYNC'] },
 };
 function integrationListeDepuisFichiers() {
   return fs.readdirSync(path.join(root, 'tests'))
@@ -356,6 +391,13 @@ if (drapeau('--lister')) {
     console.log(`[${t.type}] ${t.groupe} :: ${t.nom}`);
     if (t.fiche) console.log(`    teste: ${t.fiche.teste}\n    pourquoi: ${t.fiche.pourquoi}\n    attendu: ${t.fiche.attendu}`);
     else console.log('    (aucune fiche)');
+    // SPEC-BANC-066 (G14 étendue) : domaines et fonctions DÉCLARÉES, sur
+    // leur propre ligne reconnaissable — gates.js les relit en texte, comme
+    // il le fait déjà pour « (aucune fiche) ». Les fonctions OBSERVÉES ne
+    // sont connues qu'à l'exécution (voir plus haut) : --lister n'exécute
+    // rien, il ne peut donc voir QUE les fonctions déclarées.
+    console.log(`    domaines: ${(t.domaines || []).join(',') || '(aucun)'}`);
+    console.log(`    fonctions: ${(t.fonctions || []).join(',') || '(aucune declaree)'}`);
   });
   console.log(`\n${selection.length} test(s) sélectionné(s) sur ${catalogue.length} au catalogue.`);
   process.exit(0);
@@ -409,18 +451,114 @@ function environnement() {
   return { source: 'node', versionJeu, commit, node: process.version };
 }
 
+/* SPEC-BANC-062 : observation des fonctions RÉELLEMENT appelées, en
+   exécution Node — les fonctions exportées de chaque module `MC.<Module>`
+   sont enveloppées UNE FOIS ici (après le chargement de src/*.js, avant la
+   première exécution de test) ; l'enveloppe compte un appel, qualifié
+   `MC.<Module>.<fonction>`, SEULEMENT pendant la fenêtre `actif.v = true`
+   que `debutTest`/`finTest` ouvrent et referment ci-dessous — un appel fait
+   PENDANT le chargement (hors de tout test) ne compte jamais. Désactivable
+   par `--sans-fonctions` (test qui préfère éviter le coût de l'enveloppe) ;
+   le budget de performance (G12, tests/gates.js) tourne dans des PROCESSUS
+   SÉPARÉS (bench-generation.js/bench-maillage.js, `require` direct, jamais
+   ce contexte vm) — il ne voit donc jamais cette enveloppe, sans rien à
+   faire de spécial ici pour l'en protéger. */
+function envelopperFonctions(vmCtx) {
+  const MCns = vmCtx.MC;
+  const compteur = Object.create(null);
+  const actif = { v: false };
+  function enveloppeDe(qualifie, orig) {
+    return function () {
+      if (actif.v) compteur[qualifie] = (compteur[qualifie] || 0) + 1;
+      return orig.apply(this, arguments);
+    };
+  }
+  if (MCns) {
+    Object.keys(MCns).forEach((cle) => {
+      const val = MCns[cle];
+      // certains modules exposent une fabrique DIRECTEMENT sur MC (un seul
+      // niveau : `MC.makeNoise`, `MC.createWorld`…), pas seulement à travers
+      // un espace `MC.<Module>.<fn>` — sans ce cas, aucun appel à ces
+      // fabriques n'est jamais observé (constaté : tests du bruit procédural).
+      if (typeof val === 'function') { MCns[cle] = enveloppeDe('MC.' + cle, val); return; }
+      if (!val || typeof val !== 'object') return;
+      Object.keys(val).forEach((fnName) => {
+        const orig = val[fnName];
+        if (typeof orig !== 'function') return;
+        val[fnName] = enveloppeDe('MC.' + cle + '.' + fnName, orig);
+      });
+    });
+  }
+  return { compteur, actif };
+}
+/* Surcoût MESURÉ (pas estimé) de l'enveloppe : chronomètre N appels d'une
+   fonction de référence pure et bon marché (MC.Core.isSolid) AVANT
+   l'enveloppement, puis la MÊME fonction (relue depuis `ctx.MC`, car
+   l'enveloppement REMPLACE la propriété) APRÈS — la différence relative
+   est le coût réel d'un passage par l'enveloppe pour ce dépôt, sur cette
+   machine, affiché à chaque campagne plutôt que documenté à la main (donc
+   jamais périmé). */
+function chronoAppels(fn, n) {
+  if (typeof fn !== 'function') return null;
+  const t0 = process.hrtime.bigint();
+  for (let i = 0; i < n; i++) fn(0, 0, 0);
+  return Number(process.hrtime.bigint() - t0) / 1e6;
+}
+const sansFonctions = drapeau('--sans-fonctions');
+const N_CALIBRATION = 200000;
+const avantEnveloppe = chronoAppels(ctx.MC && ctx.MC.Core && ctx.MC.Core.isSolid, N_CALIBRATION);
+const observateurFonctions = sansFonctions ? null : envelopperFonctions(ctx);
+let surcoutFonctions = null;
+if (!sansFonctions && avantEnveloppe !== null) {
+  const apresEnveloppe = chronoAppels(ctx.MC.Core.isSolid, N_CALIBRATION);
+  const pct = avantEnveloppe > 0 ? ((apresEnveloppe - avantEnveloppe) / avantEnveloppe) * 100 : 0;
+  surcoutFonctions = { fonctionReference: 'MC.Core.isSolid', appels: N_CALIBRATION, avant_ms: avantEnveloppe, apres_ms: apresEnveloppe, surcout_pct: pct };
+  ecrire('(observation des fonctions active — surcoût mesuré ' + pct.toFixed(1) + ' % sur ' + N_CALIBRATION + ' appels de référence : ' +
+    avantEnveloppe.toFixed(1) + ' ms → ' + apresEnveloppe.toFixed(1) + ' ms ; --sans-fonctions pour désactiver)');
+} else if (sansFonctions) {
+  ecrire('(observation des fonctions désactivée : --sans-fonctions)');
+}
+
 const nomsAExecuter = aExecuter.map(t => t.nom);
 const res = ctx.T.run(nomsAExecuter, {
   debutGroupe: (nom, n) => ecrire('▶ ' + nom + ' (' + n + ' test' + (n > 1 ? 's' : '') + ')'),
-  debutTest: (groupe, nom) => { if (fichierEtat) try { fs.writeFileSync(fichierEtat, groupe + ' › ' + nom); } catch (e) { /* rien */ } },
+  debutTest: (groupe, nom) => {
+    if (fichierEtat) try { fs.writeFileSync(fichierEtat, groupe + ' › ' + nom); } catch (e) { /* rien */ }
+    if (observateurFonctions) {
+      Object.keys(observateurFonctions.compteur).forEach(k => delete observateurFonctions.compteur[k]);
+      const cat = catalogue.find(c => c.groupe === groupe && c.nom === nom);
+      // SPEC-BANC-062 : un test qui mesure un budget de TEMPS (millisecondes)
+      // n'a de sens que SANS l'enveloppe (comme G12, tests/gates.js, qui
+      // tourne dans un processus séparé pour la même raison) — étiquette
+      // `budget-perf` (tests/spec-perf.js, tests/spec-ombres.js) : la fenêtre
+      // d'observation ne s'ouvre PAS pour ce test précis, sans rien changer
+      // pour le reste de la campagne.
+      const budgetPerf = cat && (cat.etiquettes || []).indexOf('budget-perf') >= 0;
+      observateurFonctions.actif.v = !budgetPerf;
+    }
+  },
   etape: (groupe, nom, libelle, n, total) => ecrire('    ↳ ' + nom + ' — ' + libelle + (n ? ' (' + n + (total ? '/' + total : '') + ')' : '')),
   finTest: (groupe, nom, ok, ms, detail) => {
+    if (observateurFonctions) observateurFonctions.actif.v = false;
     if (ms > SEUIL_LENT * 1000) ecrire('  ⚠ lent (' + secondes(ms) + ') : ' + nom);
     const cat = catalogue.find(c => c.groupe === groupe && c.nom === nom);
+    // fusion (SPEC-BANC-062) : fonctions DÉCLARÉES (fiche) ∪ OBSERVÉES (cette
+    // exécution) — dédupliquées, sans jamais perdre une déclaration que
+    // l'observation, elle, n'aurait pas vue passer (chemin non emprunté cette fois).
+    const declarees = cat ? (cat.fonctions || []) : [];
+    // SPEC-BANC-062 : compteur d'appels par fonction observée (ex. « un test
+    // appelant MC.Mesher.tileOrigin fait apparaître … avec un compteur
+    // d'appels ≥ 1 ») — hors du schéma `fonctions` du registre (liste de
+    // noms, docs/banc/historique-global.md §1), donc un champ à part,
+    // propre au cahier Node, plutôt qu'une migration de ce schéma déjà
+    // documenté et consommé ailleurs.
+    const fonctionsAppels = observateurFonctions ? Object.assign({}, observateurFonctions.compteur) : {};
+    const observees = Object.keys(fonctionsAppels);
+    const fonctions = Array.from(new Set(declarees.concat(observees)));
     testsResultats.push({
       id: cat ? cat.id : nom, nom, type: cat ? cat.type : 'unitaire', groupe,
       domaines: cat ? cat.domaines : [], specs: cat ? cat.specs : [], fiche: cat ? cat.fiche : null,
-      etiquettes: cat ? cat.etiquettes : [],
+      etiquettes: cat ? cat.etiquettes : [], fonctions, fonctionsAppels,
       etat: ok ? 'ok' : (detail && detail.delai ? 'delai' : 'echec'), debut: detail && detail.debut, duree_ms: Math.round(ms),
       etapes: detail ? detail.etapes : [], assertions: detail ? detail.assertions : { ok: 0, ko: 0 },
       message: detail && detail.message, attendu: detail && detail.attendu, obtenu: detail && detail.obtenu, pile: detail && detail.pile,
@@ -545,8 +683,11 @@ const environnementFinal = environnement();
 if (environnementE2E) {
   environnementFinal.navigateur = environnementE2E.navigateur;
   environnementFinal.gpu = environnementE2E.gpu;
+  environnementFinal.vendorGpu = environnementE2E.vendorGpu;
   environnementFinal.resolution = environnementE2E.resolution;
   environnementFinal.accelerationMaterielle = environnementE2E.accelerationMaterielle;
+  environnementFinal.os = environnementE2E.os;
+  environnementFinal.avecFenetre = environnementE2E.avecFenetre;
 }
 const resultatsFinaux = {
   schema: 1,
@@ -554,13 +695,17 @@ const resultatsFinaux = {
     preset: etiquetteCampagne, criteres, debut: debutISO, fin: finISO, duree_ms: Date.now() - debut,
     interrompue: false, arbreModifie: arbreModifieAuDebut, environnement: environnementFinal,
     totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E, parType, parDomaine },
-    lents,
+    lents, observationFonctions: surcoutFonctions,
   },
   tests: testsResultats,
 };
 try {
   const RT = require('../tools/resultats-tests.js');
-  const r = RT.ecrireCahier(resultatsFinaux, { captures: capturesGlobalesE2E });
+  // `MC_TEST_RESULTATS_DIR` (tests only) : redirige l'écriture du cahier
+  // hors de tests/resultats/ partagé — utile à un test qui lance ce fichier
+  // en sous-processus (tests/spec-banc.js) sans se disputer la rotation aux
+  // N derniers (elaguer()) avec une VRAIE campagne concurrente sur le même poste.
+  const r = RT.ecrireCahier(resultatsFinaux, { captures: capturesGlobalesE2E, racine: process.env.MC_TEST_RESULTATS_DIR || undefined });
   ecrire('cahier de test : ' + r.rapport);
 } catch (e) { ecrire('(cahier de test non écrit : ' + e.message + ')'); }
 

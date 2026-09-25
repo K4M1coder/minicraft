@@ -36,6 +36,16 @@
     return {
       teste: f.teste || '', pourquoi: f.pourquoi || '', attendu: f.attendu || '',
       etiquettes: f.etiquettes || [],
+      // SPEC-BANC-062 : `fonctions` DÉCLARÉES (la cible du test), fusionnées
+      // à l'affichage avec les fonctions OBSERVÉES par tests/run.js — voir
+      // son en-tête. Absent de la fiche : liste vide, jamais `undefined`
+      // (un consommateur peut toujours faire `.concat()` sans vérifier).
+      fonctions: f.fonctions || [],
+      // SPEC-BANC-066 : domaine(s) DÉCLARÉ(S), pour un test honnête qui n'a
+      // ni fonction observable (données pures, sans accesseur) ni SPEC-*
+      // dans son nom — fusionné aux domaines déduits des specs citées
+      // (tests/catalogue.js), jamais un remplacement.
+      domaines: f.domaines || [],
     };
   }
 

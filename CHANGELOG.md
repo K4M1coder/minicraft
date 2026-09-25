@@ -16,6 +16,43 @@ respecter (voir PLAN.md, « Commits et versions »).
 ## [Non publié]
 ### Ajouté
 
+- Lot BANC, étapes 0a/0b (docs/banc/historique-global.md, SPEC-BANC-059 à 066,
+  083, 089) : format de données complet et catalogue étendu, préalables au
+  reste du lot Historique global.
+  - **Raison obligatoire** (SPEC-BANC-089) : `tools/registre.js` reclasse en
+    échec tout test `ignore` sans `raison` (ou `message`) non vide ; la raison
+    d'un avertissement de lenteur est désormais automatique (« lent : X s >
+    seuil Y s »), sinon reprise du message du test.
+  - **Moteur de rendu et témoin** (SPEC-BANC-085/086) : le run enregistre
+    `GL_RENDERER`/`GL_VENDOR`, l'accélération matérielle, le navigateur, l'OS
+    et la présence d'une fenêtre (`tools/e2e-headless.js`) ; `tools/registre.js`
+    ne propose plus un témoin d'un moteur différent (message explicite sinon).
+  - **Étapes et triplets d'images** (SPEC-BANC-077 à 083) : nouvelle API e2e
+    `T.etape('nom')` (`tests/e2e.js`) — ouvre une étape et ferme la précédente
+    (étape implicite `test` sinon) — avec triplet de 3 images réellement
+    consécutives au début et à la fin de chaque étape (pose caméra/joueur,
+    numéro et durée d'image, score d'instabilité pixels/pose). Le registre ne
+    garde que l'image centrale (et tous les nombres) sauf étiquette `rendu` ou
+    instabilité au-dessus du seuil documenté (`SEUIL_INSTABILITE_PIXELS_DEFAUT`).
+    `tools/e2e-headless.js` pilote désormais le test instrumenté
+    (`runUnE2EParNom`) au lieu du chemin non instrumenté, gagnant étapes,
+    triplets et métriques par étape dans la campagne sans fenêtre.
+  - **Fiche avant résultat** (SPEC-BANC-059) : `tests/rapport.js` (donc
+    `tools/cahier.js` et ses exports html/pdf/docx, qui partagent le même
+    modèle) affiche désormais l'identité (id, catégorie, domaines, specs,
+    fonctions, étiquettes) avant la fiche, elle-même avant le résultat.
+  - **Fonctions déclarées et observées** (SPEC-BANC-062, 066) : champ
+    `fonctions` déclarable dans une fiche de test ou de groupe (Node et e2e,
+    y compris `domaines` en repli honnête pour un test sans fonction
+    observable). Sous Node, `tests/run.js` enveloppe les fonctions exportées
+    des modules `MC.*` (un et deux niveaux) pendant chaque test, comptant les
+    appels réels ; désactivable par `--sans-fonctions`, avec le surcoût mesuré
+    et affiché à chaque campagne. G12 (bancs séparés) n'est jamais concerné.
+    Un test dont le budget se mesure en millisecondes (étiquette
+    `budget-perf`) échappe à la fenêtre d'observation, pour ne jamais fausser
+    son propre seuil. G14 étend sa vérification : 100 % des tests ont
+    désormais aussi un domaine ou une fonction (déclarée ou observée).
+
 - Vague 2 (B1, SPEC-SYNC-007/010/011, docs/vague-2/B1.md § 6, fin) :
   `ui.js` route désormais l'inventaire, l'équipement et la grille de
   fabrication du joueur (établi compris — `player.js` gagne `pl.grille`,
