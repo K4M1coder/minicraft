@@ -15,6 +15,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 ### Ajouté
+- Catalogue de tests : `pvp-enjeux` (src) et `spec-pvp` (tests) rejoignent la liste officielle de `tests/run.js`/`tests/gates.js` (couverts par G1/G2 depuis leur fusion, mais pas encore exécutés par ces commandes) ; `tests/index.html` resynchronisé avec `tests/run.js` (spec-conteneurs, spec-crochets, spec-maillage, spec-pvp, pvp-enjeux, manquants depuis leurs lots respectifs).
 
 - Lot BANC, étapes 0a/0b (docs/banc/historique-global.md, SPEC-BANC-059 à 066,
   083, 089) : format de données complet et catalogue étendu, préalables au
