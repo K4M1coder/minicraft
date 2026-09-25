@@ -212,13 +212,31 @@
     return { ok: true };
   }
 
-  // ─── diplomatie et dégâts (SPEC-FACTION-012) ───────────────────────────
+  // ─── diplomatie et dégâts (SPEC-FACTION-012, SPEC-FACTION-017) ─────────
   var RELATIONS_VALIDES = ['alliee', 'neutre', 'ennemie'];
-  function declarerRelation(etat, actorId, factionId, cibleId, relation) {
+  /* Même convention de clé que politique.js:cleRelation (non exportée) : les
+     deux modules doivent s'accorder sur la même paire triée pour qu'une
+     relation posée d'un côté se relise à l'identique de l'autre. */
+  function cleVersPnj(a, b) { return a < b ? a + '~' + b : b + '~' + a; }
+  // vocabulaire guildes (alliee/neutre/ennemie) -> échelle politique.js (guerre/rivalite/neutre/alliance)
+  var RELATION_VERS_PNJ = { alliee: 'alliance', neutre: 'neutre', ennemie: 'guerre' };
+  /* `etatPolitique` (l'état de MC.Politique, optionnel) permet de déclarer une
+     relation envers une faction PNJ plutôt qu'une autre faction de joueurs :
+     `cibleId` doit alors désigner une faction PNJ réellement connue de cet
+     état, sans quoi la relation est refusée (SPEC-FACTION-017) ; une fois
+     acceptée, la relation réciproque est posée côté PNJ, sur la même échelle
+     que les relations PNJ↔PNJ (guerre/alliance perçues dans les deux sens). */
+  function declarerRelation(etat, actorId, factionId, cibleId, relation, etatPolitique) {
     var f = etat.factions.get(factionId);
     if (!f) return { ok: false, motif: 'introuvable' };
     if (!peutGerer(f, actorId)) return { ok: false, motif: 'refuse' };
     if (RELATIONS_VALIDES.indexOf(relation) < 0) return { ok: false, motif: 'relation_invalide' };
+    if (!etat.factions.has(cibleId)) {
+      if (!etatPolitique || !etatPolitique.factions || !etatPolitique.factions.has(cibleId)) {
+        return { ok: false, motif: 'cible_introuvable' };
+      }
+      etatPolitique.relations.set(cleVersPnj(factionId, cibleId), RELATION_VERS_PNJ[relation]);
+    }
     f.relations.set(cibleId, relation);
     return { ok: true };
   }
@@ -248,7 +266,8 @@
      canal (les membres à qui le serveur ou le jeu remettra le message). */
   var MOTIFS = { nom_invalide: 'nom invalide', nom_pris: 'ce nom est déjà pris', introuvable: 'faction introuvable',
                  deja_membre: 'déjà membre', refuse: 'vous n\'en avez pas le droit', pas_membre: 'vous n\'en êtes pas membre',
-                 relation_invalide: 'relation : alliee, neutre ou ennemie', rang_invalide: 'rang : officier, membre ou recrue' };
+                 relation_invalide: 'relation : alliee, neutre ou ennemie', rang_invalide: 'rang : officier, membre ou recrue',
+                 cible_introuvable: 'faction cible introuvable (ni faction de joueurs, ni faction PNJ connue)' };
   function idDe(etat, nomOuId) {
     if (!nomOuId) return null;
     if (etat.factions.has(nomOuId)) return nomOuId;
@@ -256,7 +275,7 @@
     etat.factions.forEach(function (f, id) { if (canon(f.nom) === c) res = id; });
     return res;
   }
-  function appliquerAction(etat, joueurId, a) {
+  function appliquerAction(etat, joueurId, a, etatPolitique) {
     var x = a.args || {}, fid = idDe(etat, x.faction), r, nomF = x.faction;
     function rendu(res, ok) {
       if (!res.ok) return { ok: false, message: 'Faction : ' + (MOTIFS[res.motif] || res.motif || 'refusé') };
@@ -282,7 +301,7 @@
       case 'principale': return rendu(definirPrincipale(etat, joueurId, fid), '« ' + nomF + ' » est votre faction principale.');
       case 'relation': {
         var cible = idDe(etat, x.cible) || x.cible;
-        return rendu(declarerRelation(etat, joueurId, fid, cible, x.relation), '« ' + nomF + ' » se déclare ' + x.relation + ' envers ' + x.cible + '.');
+        return rendu(declarerRelation(etat, joueurId, fid, cible, x.relation, etatPolitique), '« ' + nomF + ' » se déclare ' + x.relation + ' envers ' + x.cible + '.');
       }
       case 'dire': {
         var mine = factionsDe(etat, joueurId).principale;

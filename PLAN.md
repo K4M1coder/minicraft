@@ -198,6 +198,12 @@ le modifier. En bref :
   et les fonctions serveur que B1 s'engage à exposer, puis se rebasent.
 - **Fusion** : B3 dès qu'il est prêt ; puis B1 → B2 → B4, portes vertes et
   revue adversariale avant chaque fusion ; publication en fin de vague.
+- **État au 2026-09-25** :
+  - B2 (économie, métiers, `TROC` en ligne) fusionné, fiches ECO, METIER et SYNC-023 ✅ ;
+  - B3 (Web Workers de génération et de maillage) fusionné, fiches PERF-004 à 010 et 014 ✅ ;
+  - B1 (inventaire autoritaire et conteneurs serveur) fusionné, relectures adversariales comprises, fiches SYNC-007 à 017 ✅ et SYNC-021 pour sa partie inventaire et conteneurs ;
+  - B4 (PvP : enjeux et sanctions) en cours ;
+  - en avance sur les vagues 3 et 4, des fiches courtes à fichiers isolés sont traitées en parallèle (SECU-009 à 011, SERVEUR-005 et 007, FACTION-016 et 017, QUETE-001 et 002, ENV-003, TRANSPORT-001), sans toucher aux zones de `server.js` des lots en cours ; le découpage de `server.js` (SERVEUR-008) reste en dernier.
 - **Specs corrigées** par la revue de cette vague (SYNC-007 à 015, 017, 023 ;
   ECO-001, 003 à 006 ; PVP-001 à 006 ; PERF-004 à 010, 014) et deux trous
   ajoutés pour la vague 3 : SPEC-SYNC-027 (présentoirs visibles de tous) et

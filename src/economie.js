@@ -287,6 +287,7 @@
      la saison — dupliqué de world.js multCroissance (non exportée). */
   function tickJour(etat, jour, saison) {
     etat.jour = jour;
+    var Met = MC.Metiers;
     var mult = MULT_SAISON[saison] !== undefined ? MULT_SAISON[saison] : 1;
     etat.lieux.forEach(function (L) {
       if (mult > 0) {
@@ -295,6 +296,18 @@
           var delta = Math.max(1, Math.round(s.ref * 0.08 * mult));
           if (s.stock < s.ref) s.stock = Math.min(s.ref, s.stock + delta);
           else if (s.stock > s.ref) s.stock = Math.max(s.ref, s.stock - delta);
+        });
+      } else if (Met) {
+        /* SPEC-ENV-003 : hors saison de pousse (hiver, mult = 0), l'offre des
+           métiers agricoles (nourriture, METIER-001) diminue à son tour,
+           proportionnellement à la réduction de pousse hivernale (ici totale)
+           — faute de récolte, le stock ne fait que s'épuiser ; il se restaure
+           au cycle de printemps suivant via la branche mult > 0 ci-dessus
+           (SAISON-006), inchangée pour toute autre ressource, qui gèle. */
+        Object.keys(L.stocks).forEach(function (id) {
+          if (!Met.estRessourceAgricole(+id)) return;
+          var s = L.stocks[id];
+          s.stock = Math.max(0, s.stock - Math.max(1, Math.round(s.ref * 0.08)));
         });
       }
       /* METIER-002 : la « mine à proximité » repousse vers MINERAI_REF, SANS

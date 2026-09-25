@@ -34,6 +34,23 @@
            !!(entetes['sec-websocket-key'] || entetes['Sec-WebSocket-Key']);
   }
 
+  // ─── Origin à la poignée de main (SPEC-SECU-011) ───────────────────────────
+  /* `listeAutorisees` : tableau d'origines exactes (ex. 'http://localhost:8080'),
+     ou null/undefined/vide = AUCUNE restriction — un choix par défaut
+     explicite (documenté dans l'aide de --origines, src/parametres.js), pas
+     un oubli : sans lui, le jeu servi par ce même serveur (qui envoie son
+     propre Origin, ou aucun pour un client non-navigateur comme les tests
+     d'intégration) doit continuer de fonctionner tel quel.
+     Une fois une liste configurée, elle devient stricte : un Origin absent de
+     la requête est refusé (un navigateur pose TOUJOURS Origin sur une
+     connexion WebSocket cross-context ; son absence quand une liste est
+     exigée est déjà suspecte). */
+  function origineAutorisee(origin, listeAutorisees) {
+    if (!listeAutorisees || !listeAutorisees.length) return true;
+    if (!origin) return false;
+    return listeAutorisees.indexOf(origin) >= 0;
+  }
+
   // ─── bornes de sécurité (SPEC-SECU-003/008) ────────────────────────────────
   /* TAMPON_MAX : taille maximale du tampon de réception PAR CONNEXION, côté
      serveur (server.js s'en sert dans son handler `data`). Le plus gros
@@ -52,6 +69,105 @@
      qu'importée, pour que ce module reste chargeable seul (comme le font déjà
      tests/spec-net.js ou tests/integration-*.js) sans dépendre de core.js. */
   var WORLD_H = 128;
+
+  // ─── en-têtes de sécurité HTTP (SPEC-SECU-010) ─────────────────────────────
+  /* Servies par server.js sur les réponses de FICHIERS STATIQUES uniquement
+     (jamais sur les routes JSON de l'API, qui répondent déjà en
+     application/json, jamais interprétées comme du HTML/JS par un
+     navigateur). `nosniff` empêche un navigateur de deviner un type de
+     contenu différent de l'en-tête envoyé ; aucune ligne X-Powered-By n'est
+     jamais posée (http natif de Node n'en ajoute pas — ce module ne fait que
+     documenter/tester l'absence, server.js ne doit jamais en ajouter une).
+
+     La CSP reste MINIMALE mais doit rester compatible avec le jeu ET le banc
+     de test (tests/index.html), servis par le même `servir()` :
+       - 'self' + cdnjs.cloudflare.com : three.js r128 est chargé depuis ce CDN
+         (index.html et tests/index.html) ;
+       - 'unsafe-inline' sur script-src : le bootstrap (index.html) ET le banc
+         (tests/index.html) chargent leurs propres scripts via un <script>
+         inline qui fabrique des balises <script src> (parfois via
+         document.write, voir tests/index.html) — sans 'unsafe-inline' ce
+         bootstrap lui-même serait bloqué avant de pouvoir charger quoi que ce
+         soit d'autre ;
+       - 'unsafe-inline' sur style-src : un message d'erreur de démarrage
+         (index.html, fatal()) pose un attribut style="" via innerHTML ;
+       - connect-src inclut ws:/wss: pour la connexion de jeu elle-même ;
+       - img-src autorise data: (favicon `data:,`) ;
+       - object-src/base-uri à 'none' : rien de tout cela n'est utilisé. */
+  var CSP_STATIQUE = [
+    "default-src 'self'",
+    "script-src 'self' 'unsafe-inline' https://cdnjs.cloudflare.com",
+    "style-src 'self' 'unsafe-inline'",
+    "img-src 'self' data:",
+    "connect-src 'self' ws: wss:",
+    "object-src 'none'",
+    "base-uri 'none'",
+  ].join('; ');
+  function entetesSecuriteStatiques() {
+    return { 'X-Content-Type-Options': 'nosniff', 'Content-Security-Policy': CSP_STATIQUE };
+  }
+
+  // ─── plafond et cadence de diffusion de ETAT (SPEC-SERVEUR-007) ───────────
+  /* MAX_MOBS_DIFFUSES : nombre maximal de créatures/entités renvoyées à un
+     client dans ETAT.mobs, quel que soit le nombre réel d'entités du monde —
+     un invariant DOCUMENTÉ ici (au lieu d'un 80 littéral perdu dans
+     server.js) et vérifié par un test pur (voir tests/spec-secu.js). */
+  var MAX_MOBS_DIFFUSES = 80;
+  // PORTEE_MOBS_DIFFUSES : au-delà, une entité n'est plus envoyée à un client
+  // (voir server.js — habitants des villes lointaines).
+  var PORTEE_MOBS_DIFFUSES = 96;
+
+  /* Sélectionne, PUREMENT (aucune socket, aucun accès au monde), les entités
+     les plus proches d'au moins UNE des positions de référence (les joueurs
+     LOCAUX d'un même client), à portée, triées par distance croissante et
+     bornées à `max`. `entites` : tableau d'objets `{ pos: {x, z} }` (ou plus,
+     ignoré) ; `positionsRef` : tableau de `{x, z}` non vide. */
+  function selectionnerMobsProches(entites, positionsRef, portee, max) {
+    var portee2 = portee * portee;
+    function d2(e) {
+      var meilleure = Infinity;
+      for (var i = 0; i < positionsRef.length; i++) {
+        var p = positionsRef[i];
+        var dx = e.pos.x - p.x, dz = e.pos.z - p.z;
+        var d = dx * dx + dz * dz;
+        if (d < meilleure) meilleure = d;
+      }
+      return meilleure;
+    }
+    return entites
+      .filter(function (e) { return d2(e) < portee2; })
+      .sort(function (a, b) { return d2(a) - d2(b); })
+      .slice(0, max);
+  }
+
+  /* Cadence de diffusion adaptée à la charge : paliers sur le nombre de
+     clients connectés (moins de travail réseau par tic quand beaucoup de
+     clients sont là, plutôt que de laisser le tic serveur se dégrader — voir
+     docs/charge.md, SPEC-SERVEUR-002), et un facteur additionnel si la file
+     d'envoi TCP d'au moins un client (son `writableLength`) montre déjà un
+     retard d'écriture — signe qu'émettre encore plus vite n'aiderait
+     personne. Toujours borné à [ETAT_HZ_MIN, baseHz] : jamais plus rapide que
+     configuré, jamais totalement figé. */
+  var ETAT_HZ_MIN = 5;
+  var SEUIL_FILE_OCTETS = 64 * 1024;                 // 64 Kio de file d'envoi en retard
+  var PALIERS_ETAT_HZ = [
+    { clients: 10, facteur: 1 },
+    { clients: 25, facteur: 0.6 },
+    { clients: 60, facteur: 0.35 },
+    { clients: Infinity, facteur: 0.2 },
+  ];
+  function calculerEtatHz(baseHz, charge) {
+    charge = charge || {};
+    var nbClients = Math.max(0, charge.nbClients || 0);
+    var fileMax = Math.max(0, charge.fileMax || 0);
+    var facteur = 1;
+    for (var i = 0; i < PALIERS_ETAT_HZ.length; i++) {
+      if (nbClients <= PALIERS_ETAT_HZ[i].clients) { facteur = PALIERS_ETAT_HZ[i].facteur; break; }
+    }
+    if (fileMax > SEUIL_FILE_OCTETS) facteur *= 0.5;
+    var hz = Math.round(baseHz * facteur);
+    return Math.max(ETAT_HZ_MIN, Math.min(baseHz, hz));
+  }
 
   // ─── trames ────────────────────────────────────────────────────────────────
   var OP = { CONT: 0x0, TEXTE: 0x1, BINAIRE: 0x2, FERME: 0x8, PING: 0x9, PONG: 0xA };
@@ -299,6 +415,12 @@
     TAMPON_MAX: TAMPON_MAX, COORD_MAX: COORD_MAX, WORLD_H: WORLD_H,
     accepteCle: accepteCle, reponseHandshake: reponseHandshake,
     estRequeteWebSocket: estRequeteWebSocket,
+    origineAutorisee: origineAutorisee,
+    CSP_STATIQUE: CSP_STATIQUE, entetesSecuriteStatiques: entetesSecuriteStatiques,
+    MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
+    selectionnerMobsProches: selectionnerMobsProches,
+    ETAT_HZ_MIN: ETAT_HZ_MIN, SEUIL_FILE_OCTETS: SEUIL_FILE_OCTETS,
+    PALIERS_ETAT_HZ: PALIERS_ETAT_HZ, calculerEtatHz: calculerEtatHz,
     encoder: encoder, decoder: decoder,
     utf8Encoder: utf8Encoder, utf8Decoder: utf8Decoder,
     valider: valider,

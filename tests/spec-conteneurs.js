@@ -298,6 +298,46 @@
       A.equal(r6.ok, false); A.equal(r6.motif, 'incompatible');
     });
 
+    it('SPEC-SYNC-014 (revue adversariale) : un indice hors de la taille RÉELLE du conteneur est refusé, sans agrandir slots', function () {
+      // le contrat (validerEmplacement, contrats-vague2.js) plafonne
+      // génériquement `i` à 27 pour toute zone 'cont' ; un fourneau (3 cases)
+      // ou une étagère (9 cases) doivent refuser un indice que le CONTRAT
+      // laisserait passer (ex. 20) — sinon `slots[20] = …` agrandit le
+      // tableau, et `validerConteneurPersiste` (slots.length === taille)
+      // fait disparaître le conteneur ENTIER, silencieusement, à la
+      // persistance (--monde).
+      var four = MCo.creerConteneur('furnace');
+      var etagere = MCo.creerConteneur('etagere');
+      var j = joueur();
+      j.inv.add(I.STICK, 10);
+      var ctx = {
+        joueur: j,
+        conteneur: function (cle) { return cle === 'four' ? four : (cle === 'etagere' ? etagere : null); },
+        regles: { blocsIllimites: false },
+      };
+
+      var rFourHaut = MCo.appliquer(ctx, { k: 'transfert', de: { z: 'inv', i: 0 }, vers: { z: 'cont', cle: 'four', i: 20 }, n: 1 });
+      A.equal(rFourHaut.ok, false); A.equal(rFourHaut.motif, 'incompatible');
+      A.equal(four.slots.length, 3, 'le fourneau garde EXACTEMENT sa taille — jamais agrandi');
+      A.equal(j.inv.count(I.STICK), 10, 'rien n\'a quitté l\'inventaire sur un refus');
+
+      var rEtagereHaut = MCo.appliquer(ctx, { k: 'transfert', de: { z: 'inv', i: 0 }, vers: { z: 'cont', cle: 'etagere', i: 20 }, n: 1 });
+      A.equal(rEtagereHaut.ok, false); A.equal(rEtagereHaut.motif, 'incompatible');
+      A.equal(etagere.slots.length, 9, 'l\'étagère garde EXACTEMENT sa taille');
+
+      // même refus quand c'est la SOURCE (op.de) qui est hors bornes
+      etagere.slots[2] = { id: I.STICK, n: 3 };
+      var rSourceHaut = MCo.appliquer(ctx, { k: 'transfert', de: { z: 'cont', cle: 'etagere', i: 20 }, vers: { z: 'inv', i: 1 }, n: 1 });
+      A.equal(rSourceHaut.ok, false); A.equal(rSourceHaut.motif, 'absent');
+      A.equal(etagere.slots.length, 9);
+      A.equal(etagere.slots[2].n, 3, 'la case réelle est intacte');
+
+      // un indice DANS les bornes réelles du fourneau reste accepté
+      var rFourBon = MCo.appliquer(ctx, { k: 'transfert', de: { z: 'inv', i: 0 }, vers: { z: 'cont', cle: 'four', i: K.FOUR.COMBUSTIBLE }, n: 2 });
+      A.ok(rFourBon.ok, 'un indice valide (< taille réelle) reste accepté');
+      A.equal(four.slots[K.FOUR.COMBUSTIBLE].n, 2);
+    });
+
     it('SPEC-SYNC-017 : déclaration d\'un distributeur tronquée à la possession, somme conservée par objet', function () {
       var distrib = MCo.creerConteneur('distributeur');
       var j = joueur();

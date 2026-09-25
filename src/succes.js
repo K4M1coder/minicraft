@@ -61,6 +61,16 @@
                           evenement: 'foudre', seuil: 1 },
     vingt_repas:       { nom: 'Bon appétit', description: 'Manger vingt fois.',
                           evenement: 'manger', seuil: 20 },
+    // B4 (SPEC-PVP-004) : victoires PvP — en ligne, `game.js` signale
+    // { type: 'pvp_victoire' } sur chaque message PVP `victoire` reçu du
+    // serveur (seul arbitre du compte réel) ; hors ligne, jamais déclenché
+    // (pas de PvP réseau en solo, docs/vague-2/B4.md § 5).
+    premiere_victoire_pvp:  { nom: 'Premier sang', description: 'Remporter un premier combat PvP.',
+                              evenement: 'pvp_victoire', seuil: 1 },
+    cinq_victoires_pvp:     { nom: 'Guerrier', description: 'Remporter cinq victoires PvP.',
+                              evenement: 'pvp_victoire', seuil: 5 },
+    vingtcinq_victoires_pvp: { nom: 'Champion', description: 'Remporter vingt-cinq victoires PvP.',
+                              evenement: 'pvp_victoire', seuil: 25 },
   };
 
   var IDS = Object.keys(LISTE);

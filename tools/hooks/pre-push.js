@@ -2,7 +2,8 @@
 /* Crochet pre-push — lance le préréglage `pr` (SPEC-BANC-006) : toute la
    suite Node (unitaire, fonctionnel, spec) plus l'intégration. La même
    commande sert à l'intégration continue d'une demande de fusion :
-   `node tests/run.js --preset pr`. Utilise `--delai` pour ne jamais
+   `node tests/run.js --preset pr`. Utilise `--delai` (le filet commun de
+   15 min, SPEC-BANC-010 révisée — tools/hooks/delai-filet.js) pour ne jamais
    bloquer indéfiniment un push.
 
    Ensuite, `e2e-fumee` (SPEC-BANC-025) : quelques e2e rapides et
@@ -19,6 +20,7 @@ const path = require('path');
 const racine = path.join(__dirname, '..', '..');
 const dossierResultats = path.join(racine, 'tests', 'resultats');
 const REG = require('../registre.js');
+const { DELAI_FILET_S } = require('./delai-filet.js');
 
 /* Registre officiel (SPEC-BANC-028) : inscrit AUTOMATIQUEMENT le cahier
    qu'une campagne de validation avant push vient d'écrire — `statut:
@@ -42,7 +44,7 @@ function inscrireLeNouveauCahier(avant) {
 }
 
 const avantPr = dossiersActuels();
-const rPr = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), '--preset', 'pr', '--delai', '600'],
+const rPr = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), '--preset', 'pr', '--delai', String(DELAI_FILET_S)],
   { stdio: 'inherit', cwd: racine });
 inscrireLeNouveauCahier(avantPr);
 
@@ -52,7 +54,7 @@ if (rPr.status !== 0) {
 }
 
 const avantFumee = dossiersActuels();
-const rFumee = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), '--preset', 'e2e-fumee', '--delai', '150'],
+const rFumee = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), '--preset', 'e2e-fumee', '--delai', String(DELAI_FILET_S)],
   { stdio: 'inherit', cwd: racine });
 inscrireLeNouveauCahier(avantFumee);
 

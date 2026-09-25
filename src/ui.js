@@ -1369,11 +1369,12 @@
 
     /* Modèle d'interaction « pile en main », legacy — clic gauche prend/pose
        tout, clic droit prend la moitié / pose une unité, en mutant DIRECTEMENT
-       les cases reçues (get/set). Réservé aux conteneurs pas encore
-       networkés (coffre, fourneau, distributeur — B1, étape 8) : tant qu'ils
-       n'existent pas comme conteneurs serveur, il n'y a rien d'autre à faire
-       que muter l'objet local. Pour l'inventaire, l'équipement et la grille
-       du joueur, voir `clickSlotRef` ci-dessous (B1.md § 6). */
+       les cases reçues (get/set). B1, étape 8 : strictement réservé au SOLO
+       (coffre, fourneau, distributeur quand `container.cont` est absent) —
+       en ligne, ces mêmes écrans passent par `clickSlotRef` (`container.cont`,
+       posé par `game.js` à l'ouverture réseau) : les deux modèles ne
+       coexistent JAMAIS sur un même écran. Pour l'inventaire, l'équipement
+       et la grille du joueur, voir `clickSlotRef` ci-dessous (B1.md § 6). */
     function clickSlotLegacy(get, set, button) {
       var cur = get();
       if (button === 'left') {
@@ -1419,13 +1420,19 @@
        en réseau avec un `seq` de prédiction — voir game.js `operer`). */
     function memeOrigine(a, b) {
       if (!a || !b || a.z !== b.z) return false;
-      return a.z === 'equip' ? a.slot === b.slot : a.i === b.i;
+      if (a.z === 'equip') return a.slot === b.slot;
+      if (a.z === 'cont') return a.cle === b.cle && a.i === b.i;
+      return a.i === b.i;
     }
     function lireReel(empl) {
       if (!container || !empl) return null;
       if (empl.z === 'inv') return container.inv.slots[empl.i] || null;
       if (empl.z === 'grille') return (container.grid && container.grid[empl.i]) || null;
       if (empl.z === 'equip') return (container.equip && container.equip[empl.slot]) || null;
+      // B1 (étape 8) : conteneur posé/banque EN LIGNE (coffre, fourneau,
+      // distributeur, banque) — le même modèle référencé que inv/grille/equip,
+      // sur `container.cont` (le miroir tenu à jour par game.js).
+      if (empl.z === 'cont') return (container.cont && container.cont.slots[empl.i]) || null;
       return null;
     }
     // ce qu'affiche une case : la vraie pile, moins ce que la main y a pris
@@ -1742,53 +1749,89 @@
       var top = el('div', 'inv-top');
       if (container.kind === 'chest' || container.kind === 'distributeur') {
         var cg = el('div', 'inv-grid');
-        var ci = container.kind === 'chest' ? container.chest : container.distributeur;
-        for (var q = 0; q < ci.size; q++) {
-          (function (si) {
-            cg.appendChild(slotEl('', ci.slots[si],
-              function () { clickSlotLegacy(function () { return ci.slots[si]; },
-                                      function (v) { ci.setAt(si, v); }, 'left'); },
-              function () { clickSlotLegacy(function () { return ci.slots[si]; },
-                                      function (v) { ci.setAt(si, v); }, 'right'); }));
-          })(q);
+        if (container.cont) {
+          // B1 (étape 8) : coffre/distributeur/banque EN LIGNE — modèle
+          // référencé, comme la grille du joueur (B1.md § 6/8).
+          var cle = container.cont.cle;
+          for (var qr = 0; qr < container.cont.slots.length; qr++) {
+            (function (si) {
+              var empl = { z: 'cont', cle: cle, i: si };
+              cg.appendChild(slotEl('', pileEmplacement(empl),
+                function () { clickSlotRef(empl, 'left'); },
+                function () { clickSlotRef(empl, 'right'); }));
+            })(qr);
+          }
+        } else {
+          var ci = container.kind === 'chest' ? container.chest : container.distributeur;
+          for (var q = 0; q < ci.size; q++) {
+            (function (si) {
+              cg.appendChild(slotEl('', ci.slots[si],
+                function () { clickSlotLegacy(function () { return ci.slots[si]; },
+                                        function (v) { ci.setAt(si, v); }, 'left'); },
+                function () { clickSlotLegacy(function () { return ci.slots[si]; },
+                                        function (v) { ci.setAt(si, v); }, 'right'); }));
+            })(q);
+          }
         }
         top.appendChild(cg);
         top.appendChild(el('p', 'hint', container.kind === 'chest'
           ? 'Le contenu reste dans le coffre, et retombe au sol si vous le cassez.'
           : 'SPEC-MECA-001 : un signal éjecte le premier objet de la première pile non vide.'));
       } else if (container.kind === 'furnace') {
+        var F = MC.ContratsV2.FOUR;
         var f = container.furnace;
+        var enLigneFour = !!container.cont;
+        var burn = enLigneFour ? container.cont.four.burn : f.burn;
+        var cook = enLigneFour ? container.cont.four.cook : f.cook;
         var cols = el('div', 'furnace-cols');
         var colIn = el('div', 'fcol');
         colIn.appendChild(el('div', 'lbl', 'À cuire'));
-        colIn.appendChild(slotEl('', f.input,
-          function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'left'); },
-          function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'right'); }));
+        if (enLigneFour) {
+          var emplE = { z: 'cont', cle: container.cont.cle, i: F.ENTREE };
+          colIn.appendChild(slotEl('', pileEmplacement(emplE),
+            function () { clickSlotRef(emplE, 'left'); }, function () { clickSlotRef(emplE, 'right'); }));
+        } else {
+          colIn.appendChild(slotEl('', f.input,
+            function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'left'); },
+            function () { clickSlotLegacy(function () { return f.input; }, function (v) { f.input = v; }, 'right'); }));
+        }
         colIn.appendChild(el('div', 'lbl', 'Combustible'));
-        colIn.appendChild(slotEl('', f.fuel,
-          function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'left'); },
-          function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'right'); }));
+        if (enLigneFour) {
+          var emplC = { z: 'cont', cle: container.cont.cle, i: F.COMBUSTIBLE };
+          colIn.appendChild(slotEl('', pileEmplacement(emplC),
+            function () { clickSlotRef(emplC, 'left'); }, function () { clickSlotRef(emplC, 'right'); }));
+        } else {
+          colIn.appendChild(slotEl('', f.fuel,
+            function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'left'); },
+            function () { clickSlotLegacy(function () { return f.fuel; }, function (v) { f.fuel = v; }, 'right'); }));
+        }
         cols.appendChild(colIn);
 
         var mid = el('div', 'fcol prog');
         var flame = el('div', 'flame');
-        flame.style.opacity = f.burn > 0 ? 1 : 0.2;
+        flame.style.opacity = burn > 0 ? 1 : 0.2;
         mid.appendChild(flame);
         var pb = el('div', 'progbar');
-        pb.innerHTML = '<div style="width:' + Math.min(100, (f.cook / Inv.SMELT_TIME) * 100) + '%"></div>';
+        pb.innerHTML = '<div style="width:' + Math.min(100, (cook / Inv.SMELT_TIME) * 100) + '%"></div>';
         mid.appendChild(pb);
         cols.appendChild(mid);
 
         var colOut = el('div', 'fcol');
         colOut.appendChild(el('div', 'lbl', 'Résultat'));
-        colOut.appendChild(slotEl('result', f.output, function () {
-          if (!f.output) return;
-          if (!heldStack) { heldStack = f.output; f.output = null; }
-          else if (heldStack.id === f.output.id
-                   && heldStack.n + f.output.n <= C.maxStack(f.output.id)) {
-            heldStack.n += f.output.n; f.output = null;
-          }
-        }));
+        if (enLigneFour) {
+          var emplS = { z: 'cont', cle: container.cont.cle, i: F.SORTIE };
+          colOut.appendChild(slotEl('result', pileEmplacement(emplS),
+            function () { clickSlotRef(emplS, 'left'); }, function () { clickSlotRef(emplS, 'right'); }));
+        } else {
+          colOut.appendChild(slotEl('result', f.output, function () {
+            if (!f.output) return;
+            if (!heldStack) { heldStack = f.output; f.output = null; }
+            else if (heldStack.id === f.output.id
+                     && heldStack.n + f.output.n <= C.maxStack(f.output.id)) {
+              heldStack.n += f.output.n; f.output = null;
+            }
+          }));
+        }
         cols.appendChild(colOut);
         top.appendChild(cols);
         top.appendChild(el('p', 'hint',
@@ -1836,14 +1879,14 @@
       }
 
       /* ── inventaire principal + hotbar : deux modèles selon l'écran.
-         'inv'/'craft' n'ouvrent qu'une zone du joueur (inv/équipement/grille,
-         toutes trois server-authoritative en ligne) : modèle référencé,
-         `game.operer`. Un conteneur posé (coffre, fourneau, distributeur,
-         échange) n'est pas encore networké (B1, étape 8) : modèle legacy,
-         mutation directe — mélanger les deux romprait l'un des deux
-         (référence stockée dans une case réelle, ou case réelle jamais
+         'inv'/'craft' (inv/équipement/grille, toutes trois
+         server-authoritative en ligne), ou tout écran networké (`container.cont`,
+         B1 étape 8 — coffre/fourneau/distributeur/banque EN LIGNE) : modèle
+         référencé, `game.operer`. Un conteneur legacy SOLO (échange compris) :
+         modèle legacy, mutation directe — mélanger les deux romprait l'un des
+         deux (référence stockée dans une case réelle, ou case réelle jamais
          reversée dans l'inventaire). */
-      var refModel = (container.kind === 'inv' || container.kind === 'craft');
+      var refModel = (container.kind === 'inv' || container.kind === 'craft' || !!container.cont);
       var main = el('div', 'inv-grid');
       for (var k = Inv.HOTBAR_SIZE; k < inv.size; k++) {
         (function (si) {
@@ -1901,18 +1944,26 @@
        migré) retombe sur un tableau local, cohérent pour l'affichage mais
        jamais raccordé à `MC.Conteneurs` (aucun craft ni transfert n'y
        fonctionnera vraiment). */
-    function openContainer(kind, inv, extra, pos, grille) {
+    /* `contRef` (B1, étape 8, docs/vague-2/B1.md § 6/8) : un conteneur posé ou
+       la banque, ouvert EN LIGNE — `{ cle, type, rev, slots, four? }`, LE MÊME
+       objet que `game.js` mute (prédiction) et corrige (réconciliation), donc
+       jamais copié ici. Présent => modèle référencé (`clickSlotRef`, comme
+       inv/équipement/grille) ; absent => modèle legacy solo (`extra`, mutation
+       directe, `clickSlotLegacy`) — les deux ne coexistent JAMAIS sur le même
+       écran (B1.md § 8). */
+    function openContainer(kind, inv, extra, pos, grille, contRef) {
       var n = 9;
       var sansGrille = kind === 'trade' || kind === 'furnace' || kind === 'chest' || kind === 'distributeur';
       container = { kind: kind, inv: inv,
                     grid: sansGrille ? null : (grille ? grille.slots : new Array(n).fill(null)),
                     result: null,
-                    furnace: kind === 'furnace' ? extra : null,
-                    chest: kind === 'chest' ? extra : null,
-                    distributeur: kind === 'distributeur' ? extra : null,
+                    furnace: (!contRef && kind === 'furnace') ? extra : null,
+                    chest: (!contRef && kind === 'chest') ? extra : null,
+                    distributeur: (!contRef && kind === 'distributeur') ? extra : null,
                 pnj: kind === 'trade' ? extra : null,
                     // équipement (SPEC-OBJET-001/003) : seul l'inventaire du joueur en a un
                     equip: kind === 'inv' ? extra : null,
+                    cont: contRef || null,
                     livre: false, livreFiltre: '',
                     pos: pos };
       recomputeResult();
@@ -1920,17 +1971,19 @@
     }
 
     /* À la fermeture (B1.md § 6) :
-       - 'inv'/'craft' (modèle référencé) : rien n'a jamais réellement
-         quitté l'inventaire ou l'équipement — seule la grille, une vraie
-         zone, doit être rendue via une opération (`rendreGrille`, offline
-         tout de suite, en ligne par CONTENEUR_FERMER puis INV_MAJ) ;
-       - un conteneur legacy (coffre, fourneau, distributeur, échange) :
+       - 'inv'/'craft' (modèle référencé), ou un conteneur posé/banque EN
+         LIGNE (`container.cont`, étape 8) : rien n'a jamais réellement
+         quitté l'inventaire, l'équipement ou le conteneur — seule la
+         grille, une vraie zone, doit être rendue via une opération
+         (`rendreGrille`, offline tout de suite, en ligne par
+         CONTENEUR_FERMER puis INV_MAJ) ;
+       - un conteneur legacy SOLO (coffre, fourneau, distributeur, échange) :
          `heldStack` porte un objet réellement détaché de sa case — il faut
          le rendre à l'inventaire nous-mêmes, comme avant B1. */
     function closeContainer() {
       var rendus = [];
       if (container) {
-        var refModel = (container.kind === 'inv' || container.kind === 'craft');
+        var refModel = (container.kind === 'inv' || container.kind === 'craft' || !!container.cont);
         if (refModel) {
           if (container.grid) {
             var r = hooks.onOperer ? hooks.onOperer({ k: 'rendreGrille' },
@@ -1950,7 +2003,11 @@
     }
 
     function isContainerOpen() { return !!container; }
-    function refreshFurnace() { if (container && container.kind === 'furnace') renderContainer(); }
+    /* Rafraîchit l'écran ouvert : historiquement réservé au fourneau (tic
+       local, solo), sert aussi B1 (étape 8) à réafficher un conteneur en
+       ligne dont le miroir vient de changer (CONTENEUR_MAJ, INV_MAJ.conteneurs) —
+       peu importe son genre, tant qu'un écran est ouvert. */
+    function refreshFurnace() { if (container) renderContainer(); }
 
     return {
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,

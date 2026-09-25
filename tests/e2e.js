@@ -1669,6 +1669,58 @@
     A.equal(g.player.state.inv.count(B.COBBLE), 7, 'inventaire solo restaure apres deconnexion');
   });
 
+  e2e('B1 (étape 8, docs/vague-2/B1.md § 6/8) : coffre en ligne — modèle référence, conteneur PARTAGÉ (pas une copie locale)', {
+        "teste": "qu'ouvrir un coffre en ligne passe par CONTENEUR_OUVRIR/CONTENEUR_ETAT (ui.container.cont posé, modèle référencé) plutôt que par une copie locale (Inv.create), et qu'un second client réseau qui ouvre la MÊME position reçoit un CONTENEUR_ETAT portant la MÊME clé — la preuve que le serveur tient un état unique et partagé",
+        "pourquoi": "avant B1 étape 8, un coffre en ligne était entièrement local (chests[k] côté client) : deux joueurs sur le même coffre avaient chacun leur copie, ce qui permettait de dupliquer des objets (risque documenté docs/vague-2/README.md)",
+        "attendu": "ui.container.cont existe et porte type:'chest' après la réponse serveur ; un second client (MC.createNetClient brut) obtient un CONTENEUR_ETAT de même clé ; Échap referme proprement (CONTENEUR_FERMER, plus d'écran)"
+  }, async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    g.rejoindreServeur({ pseudo: 'CoffreOnline_' + Date.now() % 100000, joueurs: 1 });
+    for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
+    A.equal(g.net.etat, 'en ligne', 'connecté');
+    await wait(300);
+
+    var cl = caseLibreProche(g), bx = cl.x, by = cl.y, bz = cl.z;
+    g.net.poserBloc(bx, by, bz, B.CHEST);
+    for (var u = 0; u < 30 && g.world.getBlock(bx, by, bz) !== B.CHEST; u++) await wait(100);
+    A.equal(g.world.getBlock(bx, by, bz), B.CHEST, 'le coffre est posé côté serveur');
+
+    // ouvre EXACTEMENT comme un clic droit dessus (g.ouvrirConteneur, exposé
+    // pour les tests comme g.coffreDe/g.parlerA) — asynchrone : l'écran ne
+    // s'affiche vraiment qu'à la réponse du serveur (onConteneurEtat).
+    g.ouvrirConteneur('chest', { x: bx, y: by, z: bz });
+    for (var v = 0; v < 30 && !(g.ui.container && g.ui.container.cont); v++) await wait(100);
+    A.ok(g.ui.container && g.ui.container.cont,
+         'le serveur a répondu CONTENEUR_ETAT : le coffre s\'affiche en modèle référencé');
+    A.equal(g.ui.container.kind, 'chest', 'genre chest');
+    A.equal(g.ui.container.cont.type, 'chest', 'le miroir réseau porte le type renvoyé par le serveur');
+    var cleCoffre = g.ui.container.cont.cle;
+    A.ok(cleCoffre, 'le miroir porte la clé du conteneur serveur');
+
+    // second joueur, second client réseau BRUT (même patron que SPEC-NET-021) :
+    // ouvre la MÊME position — preuve que le serveur tient un état PARTAGÉ,
+    // pas une copie par joueur (le risque documenté par B1 étape 7/8).
+    var etatsAutre = [];
+    var autre = MC.createNetClient({ onConteneurEtat: function (m) { etatsAutre.push(m); } });
+    autre.connecter('', 'Visiteur', 1);
+    for (var w = 0; w < 30 && autre.etat !== 'en ligne'; w++) await wait(100);
+    A.equal(autre.etat, 'en ligne', 'second client connecté');
+    autre.envoyer({ t: 'cont_ouvrir', j: 0, x: bx, y: by, z: bz });
+    for (var x2 = 0; x2 < 30 && !etatsAutre.length; x2++) await wait(100);
+    A.ok(etatsAutre.length, 'le second joueur reçoit bien un CONTENEUR_ETAT pour la même position');
+    A.equal(etatsAutre[0].cle, cleCoffre, 'même clé : c\'est le MÊME conteneur serveur, jamais une copie locale');
+
+    // fermeture propre : Échap referme l'écran (CONTENEUR_FERMER envoyé,
+    // désabonnement) — jamais le modèle legacy (clickSlotLegacy) en ligne.
+    key('Escape');
+    await frames(2);
+    A.notOk(g.ui.isContainerOpen(), 'l\'écran est refermé');
+
+    autre.deconnecter(); g.net.deconnecter();
+    await wait(300);
+  });
+
   /* ── Menus ───────────────────────────────────────────────────────────── */
 
   function videParties() { MC.Saves.toutEffacer(localStorage); }
@@ -2668,6 +2720,23 @@
     await frames(2);
     var t = g.player.aim();
     A.ok(t, 'un bloc est visé sous le joueur');
+    /* Le bloc réellement visé dépend du MONDE hérité des tests précédents —
+       une graine différente à chaque run (SPEC-MENU-003 : « graine vide
+       tirée au hasard », SPEC-MENU-004), ou carrément un autre monde chargé
+       (SPEC-TERRAIN-007 charge « Autre carte », graine 777, et ne restaure
+       jamais la graine d'origine ensuite) — donc un sol qui peut être de la
+       pierre, du grès… n'importe quel bloc que la pelle en fer ne « harvest »
+       pas (tier 0, vitesse ×1 au lieu de ×8) et qui prend alors jusqu'à
+       ~1,5-2,2 s de minage SIMULÉ. Un budget FIXE de 240 images RÉELLES
+       suppose implicitement une cadence d'au moins ~150 fps pour ces
+       blocs-là — fausse hypothèse sous charge partagée (constaté : ce test
+       seul prend ~600 ms isolé mais jusqu'à ~4,2 s dans le contexte des
+       ~110 tests qui le précèdent, selon la graine tirée). On force donc ici
+       un bloc CONNU et cassable INSTANTANÉMENT à la pelle (terre) : le test
+       reste déterministe et rapide quel que soit le monde hérité, sans
+       affaiblir ce qu'il vérifie (un vrai événement de casse, dans la vraie
+       boucle de jeu, déclenche bien le succès). */
+    g.world.setBlock(t.x, t.y, t.z, B.DIRT);
     var avant = g.world.getBlock(t.x, t.y, t.z);
     mouseDown(g, 0);
     for (var i = 0; i < 240 && g.world.getBlock(t.x, t.y, t.z) === avant; i++) await frames(1);
@@ -3222,8 +3291,16 @@
     }
     A.ok(lointaine, 'un point assez loin de toute eau a été trouvé : ' + g.render.eau.distance);
     A.equal(g.render.eau.refraction.value, 0, 'pas de réfraction à cette distance');
-    // proche : la même mer, cette fois à portée
+    // proche : la même mer, cette fois à portée — comme pour le point
+    // lointain ci-dessus, on force le rechargement synchrone (streamChunks
+    // en mode illimité) au lieu de compter sur le rattrapage progressif
+    // (budgeté, potentiellement via Worker) de la boucle de jeu : sans ça,
+    // le maillage d'eau proche de `cible` peut ne pas encore avoir été
+    // regénéré/remaillé après l'excursion lointaine — et `eau.distance`
+    // continue alors de désigner l'ancien maillage éloigné, de façon
+    // dépendante du temps réel écoulé (relâche CPU/Worker), donc intermittente.
     s.pos.x = cible.x + 0.5; s.pos.z = cible.z + 0.5; s.pos.y = cible.eau + 4; s.pitch = -0.9;
+    g.streamChunks(true);
     for (var j = 0; j < 20; j++) await frames(1);
     A.lt(g.render.eau.distance, 40, 'l’eau est maintenant à portée : ' + g.render.eau.distance);
     A.equal(g.render.eau.refraction.value, 1, 'la réfraction s’active');

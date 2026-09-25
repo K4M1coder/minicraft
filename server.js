@@ -29,7 +29,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'livre', 'livres'];
+                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -85,11 +85,12 @@ const CONF = {
 /* Sans --admin, le serveur tire un jeton et l'affiche UNE fois au démarrage :
    jamais de console laissée sans protection, jamais de secret par défaut
    devinable. */
-const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-');
+const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-', crypto.randomBytes);
 const admin = MC.Admin.creerEtat({
   motDePasseAdmin: ADMIN_SECRET,
   listeBlancheActive: PARAMS.listeBlanche,
   emailObligatoire: false,
+  generateurAleatoire: crypto.randomBytes,  // SPEC-SECU-009 : entropie cryptographique injectée, jamais Math.random
 });
 if (!PARAMS.admin) {
   journal(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);
@@ -107,9 +108,17 @@ const guildes = MC.Guildes.creerEtat();
 // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
 // module et même état joués à l'identique en solo (game.js) et ici.
 const economie = MC.Economie.creerEtat(CONF.graine);
+// B4 (docs/vague-2/B4.md) : butin, meurtres non consentis, réputation,
+// hors-la-loi, duels et victoires PvP. Déclaré ICI (avant `etatMonde`/
+// `appliquerEtatMonde`, appelée dès la reprise `--monde` plus bas dans ce
+// fichier), même raison que `joueursRegistre`/`banques` juste au-dessus dans
+// B1 : une `const` lue avant sa déclaration lexicale planterait au démarrage.
+const pvp = MC.PvpEnjeux.creerEtat();
 // SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
 // s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
-const distributeurs = new Map();
+// B1 (étape 7, SPEC-SYNC-012/013) : un distributeur est maintenant un
+// conteneur POSÉ comme un autre — il vit dans `conteneursPoses`, plus de Map
+// séparée (ce qui le fait aussi persister dans etatMonde, § 8 du plan).
 // B1 (SPEC-SYNC-007 à 017) : registre des joueurs nommés et banques — déclarés
 // ICI (avant `appliquerEtatMonde`, qui les lit dès la reprise `--monde` au
 // démarrage, plus bas dans ce fichier) et non près du reste de la section
@@ -117,6 +126,16 @@ const distributeurs = new Map();
 // une zone morte temporelle (`const` lu avant sa déclaration lexicale).
 const joueursRegistre = new Map();   // cleRegistre(nom, j) → enregistrement { v:1, inv, equip, banque }
 const banques = new Map();           // cleRegistre(nom, j) → conteneur 'banque' (API figée, § 5 du plan)
+// B1 (étape 7, docs/vague-2/B1.md § 7) : registre des conteneurs POSÉS — coffre,
+// fourneau, armoire, étagère, bibliothèque, distributeur (PAS la banque, ni la
+// grille : par joueur, voir plus haut/plus bas). `js.conteneurOuvert` (sur
+// chaque joueur local, voir creerJoueurServeur) tient lieu d'abonnement : un
+// seul conteneur posé ouvert à la fois par joueur local, comme à l'écran —
+// revérifié (abonnement ET portée) à CHAQUE opération par `resoudreConteneur`.
+const conteneursPoses = new Map();   // cle 'x,y,z' → conteneur MC.Conteneurs
+// dernier instantané ENVOYÉ d'un fourneau (cadence de message ≤ 2 Hz,
+// SPEC-SYNC-015) — la cuisson elle-même tourne à chaque tic (SPEC-SYNC-016).
+const derniereEmissionFour = new Map();
 function banqueDe(cleReg) {
   let b = banques.get(cleReg);
   if (!b) { b = MC.Conteneurs.creerConteneur('banque'); banques.set(cleReg, b); }
@@ -126,6 +145,7 @@ let heure = 60;
 let meteoT = null;
 let accEau = 0;
 let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
+let accFourMsg = 0;       // B1 (étape 7) : cadence de message des fourneaux posés (≤ 2 Hz, SPEC-SYNC-015)
 
 // ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
 /* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
@@ -162,9 +182,30 @@ function etatMonde() {
     // (inventaire, équipement, banque — `MC.Conteneurs.versEnregistrement`
     // inclut déjà la banque) ; un joueur ENCORE connecté à l'instant de la
     // sauvegarde est capturé à jour, pas seulement celui déjà écrit au
-    // dernier `fermer()`. Le registre des conteneurs POSÉS (coffres,
-    // fourneaux…) n'existe pas encore ici (étape 7) : rien à en sauver.
+    // dernier `fermer()`.
     joueurs: Array.from(snapshotRegistreJoueurs().entries()),
+    // B1 (étape 7, SPEC-SYNC-021 partiel — la partie inventaire) : les
+    // conteneurs POSÉS (coffres, fourneaux, armoires, étagères,
+    // bibliothèques, distributeurs) — un joueur qui en a un ouvert à
+    // l'instant de la sauvegarde est capturé à jour (même objet vivant).
+    // `normaliserTailleConteneur` : défense en profondeur (revue adversariale)
+    // — un conteneur mal formé (jamais censé arriver depuis le correctif
+    // d'`indiceValide`, conteneurs.js) n'est plus filtré silencieusement par
+    // `validerConteneurPersiste` (qui exige `slots.length === taille`) : il
+    // est tronqué à sa vraie taille AVANT sérialisation, l'excédent lâché au
+    // sol quand la position est connue — jamais perdu sans trace.
+    conteneurs: Array.from(conteneursPoses.entries())
+      .map(([cle, cont]) => {
+        normaliserTailleConteneur(cle, cont);
+        return MC.ContratsV2.validerConteneurPersiste({
+          cle, type: cont.type, slots: cont.slots.map(MC.ContratsV2.pileVersCase), four: cont.four,
+        });
+      })
+      .filter(Boolean),
+    // B4 (docs/vague-2/B4.md § 6) : meurtres récents, victoires et réputations
+    // politiques — en dernier, comme prévu par le plan. Duels et propositions
+    // sont éphémères, jamais persistés (MC.PvpEnjeux.serialiser les omet déjà).
+    pvp: MC.PvpEnjeux.serialiser(pvp),
   };
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
@@ -220,6 +261,13 @@ function appliquerEtatMonde(data) {
     economie.jour = eco.jour; economie.lieux = eco.lieux;
     economie.joueurs = eco.joueurs; economie.departs = eco.departs;
   }
+  // B4 : absent d'un fichier plus ancien (avant B4) → simplement vide, comme
+  // aujourd'hui. Duels et propositions ne sont jamais dans `data.pvp`
+  // (jamais sérialisés) : ils restent donc ceux, vides, de `pvp` au démarrage.
+  if (data.pvp) {
+    const pv = MC.PvpEnjeux.charger(data.pvp);
+    pvp.meurtres = pv.meurtres; pvp.victoires = pv.victoires; pvp.reputations = pv.reputations;
+  }
   // B1 (docs/vague-2/B1.md § 7-8) : registre des joueurs nommés — absent
   // d'un fichier plus ancien (v1/v2, ou v2 d'avant cette section), donc
   // simplement vide, comme aujourd'hui. La banque d'un joueur repris n'est
@@ -233,6 +281,19 @@ function appliquerEtatMonde(data) {
     if (!v) return;
     joueursRegistre.set(entree[0], v);
     banqueDe(entree[0]).slots = v.banque.map(MC.ContratsV2.caseVersPile);
+  });
+  // B1 (étape 7, SPEC-SYNC-021 partiel) : conteneurs POSÉS — absents d'un
+  // fichier plus ancien, donc simplement vides, comme aujourd'hui.
+  conteneursPoses.clear();
+  derniereEmissionFour.clear();
+  (data.conteneurs || []).forEach(o => {
+    const v = MC.ContratsV2.validerConteneurPersiste(o);
+    if (!v) return;
+    const cont = MC.Conteneurs.creerConteneur(v.type);
+    if (!cont) return;
+    cont.slots = v.slots.map(MC.ContratsV2.caseVersPile);
+    if (v.four) cont.four = v.four;
+    conteneursPoses.set(v.cle, cont);
   });
   return true;
 }
@@ -688,11 +749,15 @@ function servir(req, res) {
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
   fs.stat(chemin, (err, st) => {
     if (err || !st.isFile()) { res.writeHead(404); res.end('404 introuvable'); return; }
-    res.writeHead(200, {
+    // SPEC-SECU-010 : en-têtes de sécurité de base sur toute réponse de
+    // fichier statique — nosniff, CSP minimale (calcul pur, testé sous Node
+    // dans src/net-protocol.js) ; jamais de X-Powered-By (http natif de Node
+    // n'en ajoute pas, et on n'en ajoute aucune ici).
+    res.writeHead(200, Object.assign({
       'Content-Type': TYPES[path.extname(chemin).toLowerCase()] || 'application/octet-stream',
       'Content-Length': st.size,
       'Cache-Control': 'no-cache',
-    });
+    }, NP.entetesSecuriteStatiques()));
     fs.createReadStream(chemin).pipe(res);
   });
 }
@@ -700,9 +765,26 @@ function servir(req, res) {
 // ── serveur HTTP + bascule WebSocket ─────────────────────────────────────────
 const serveur = http.createServer(servir);
 
+// SPEC-SECU-011 : liste blanche d'Origin, configurable via --origines (voir
+// src/parametres.js). Calculée UNE fois au démarrage — jamais par requête.
+// null = AUCUNE restriction, le choix par DÉFAUT, explicite et documenté
+// (--aide origines) : sans --origines, le jeu servi par ce même serveur
+// continue de fonctionner exactement comme avant (aucun Origin exigé).
+const ORIGINES_AUTORISEES = PARAMS.origines
+  ? PARAMS.origines.split(',').map(s => s.trim()).filter(Boolean)
+  : null;
+
 serveur.on('upgrade', (req, socket) => {
   if (!NP.estRequeteWebSocket(req.headers)) {
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
+    socket.destroy();
+    return;
+  }
+  // SPEC-SECU-011 : décision PURE (src/net-protocol.js, testée sous Node) —
+  // ici on ne fait que lire l'en-tête et refuser la poignée de main AVANT
+  // toute allocation de client, avec un code d'erreur HTTP explicite.
+  if (!NP.origineAutorisee(req.headers['origin'], ORIGINES_AUTORISEES)) {
+    socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
     socket.destroy();
     return;
   }
@@ -996,9 +1078,11 @@ function traiter(c, m) {
         const vst = cible.js.joueur.state;
         const d2 = Math.hypot(vst.pos.x - st.pos.x, vst.pos.y + 0.9 - st.pos.y - 1.6, vst.pos.z - st.pos.z);
         if (d2 > 6) break;
-        if (!pvpAutorise(st.pos, vst.pos)) break;
-        // deux membres d'une même faction ne se blessent pas (SPEC-FACTION-012)
-        if (!MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom)) break;
+        // B4 (SPEC-PVP-002/005) : un duel consenti autorise le coup MÊME hors
+        // zone PvP et MÊME entre membres d'une même faction (le consentement
+        // explicite prime) ; sinon, comme avant, zone ET faction.
+        const duel = MC.PvpEnjeux.duelActif(pvp, c.nom, cible.c.nom, heure, st.pos, vst.pos);
+        if (!duel && !(pvpAutorise(st.pos, vst.pos) && MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom))) break;
         js.attaqueCd = 0.4;
         const avant = vst.dead;
         vst.hurtCd = 0;
@@ -1011,6 +1095,9 @@ function traiter(c, m) {
           const msg = chat.systeme(c.nom + ' a vaincu ' + cible.c.nom);
           if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
           journal(`⚔ ${c.nom} a vaincu ${cible.c.nom} (PvP)`);
+          // B4 (SPEC-PVP-001/003/004) : butin, meurtre, réputation, victoire —
+          // jamais de butin ni de meurtre compté pendant un duel consenti.
+          issuePvp({ c, j: m.j, js }, cible, duel);
         }
         break;
       }
@@ -1119,39 +1206,62 @@ function traiter(c, m) {
       // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
-      // SPEC-MECA-001 : un distributeur cassé lâche ce qu'il contenait.
-      if (m.id === 0 && avant === C.B.DISTRIBUTEUR) {
-        const kd = `${m.x},${m.y},${m.z}`;
-        const slots = distributeurs.get(kd);
-        if (slots) slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
-        distributeurs.delete(kd);
+      /* B1 (étape 7) : un conteneur posé cassé lâche son contenu au sol —
+         UNE SEULE FOIS ici (le serveur fait autorité sur la casse), même si
+         deux joueurs l'avaient ouvert en même temps. `fermerConteneurPourAbonnes`
+         (revue adversariale, item 3) désabonne CHAQUE joueur qui l'avait
+         ouvert AVANT de retirer l'entrée : sans ça, `js.conteneurOuvert`
+         resterait pointé sur cette clé, et si un AUTRE bloc conteneur (un
+         fourneau, par exemple) est reposé au même endroit, ce joueur se
+         retrouverait abonné au nouveau conteneur sans jamais avoir rouvert —
+         un coffre (27 cases) qu'il croit toujours voir alors que 3 cases
+         existent réellement dessous. */
+      if (m.id === 0 && avant) {
+        const defAvant = C.BLOCKS[avant];
+        const tAvant = defAvant && defAvant.interactive && MC.ContratsV2.TYPES_CONTENEUR[defAvant.interactive];
+        if (tAvant && !tAvant.parJoueur) {
+          const kc = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+          const contCasse = conteneursPoses.get(kc);
+          if (contCasse) {
+            fermerConteneurPourAbonnes(kc);
+            contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
+            conteneursPoses.delete(kc);
+            derniereEmissionFour.delete(kc);
+          }
+        }
       }
       break;
     }
 
-    /* SPEC-SYNC-017 (B1, docs/vague-2/B1.md § 9 étape 9) : DISTRIB est une
-       DÉCLARATION, pas un dépôt aveugle — `m.slots` (déjà borné et normalisé
-       par net-protocol.js) est ce que le joueur VEUT voir dans le
-       distributeur ; `MC.Conteneurs.declarer` ne prélève dans son inventaire
-       serveur que ce qu'il possède réellement (tronqué), et rend ce qu'un
-       retrait n'a pas pu récupérer (Σ inv + distributeur conservée par id).
-       Le registre des distributeurs posés (étape 7) n'existe pas encore :
-       `distributeurs` reste la Map brute cle → slots, ici enveloppée le
-       temps de l'appel pour offrir la forme `{ slots }` que `declarer`
-       attend (mutation en place : aucune réécriture séparée nécessaire). */
+    /* SPEC-SYNC-017 : DISTRIB est une DÉCLARATION, pas un dépôt aveugle —
+       `m.slots` (déjà borné et normalisé par net-protocol.js) est ce que le
+       joueur VEUT voir dans le distributeur ; `MC.Conteneurs.declarer` ne
+       prélève dans son inventaire serveur que ce qu'il possède réellement
+       (tronqué), et rend ce qu'un retrait n'a pas pu récupérer (Σ inv +
+       distributeur conservée par id). Le distributeur est un conteneur posé
+       comme un autre depuis l'étape 7 (`conteneursPoses`) — gardé pour un
+       appelant historique (solo via un ancien client, tests) ; le client
+       à jour préfère `CONTENEUR_TRANSFERT` (modèle référence, § 6/8). */
     case NP.MSG.DISTRIB: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || monde.getBlock(m.x, m.y, m.z) !== C.B.DISTRIBUTEUR) break;
-      const kd = `${m.x},${m.y},${m.z}`;
-      const TAILLE_DISTRIB = 9;
-      const cont = { slots: distributeurs.get(kd) || new Array(TAILLE_DISTRIB).fill(null) };
+      const kd = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+      let cont = conteneursPoses.get(kd);
+      if (!cont) { cont = MC.Conteneurs.creerConteneur('distributeur'); conteneursPoses.set(kd, cont); }
       MC.Conteneurs.declarer(js.joueur.state.inv, cont, m.slots);
-      distributeurs.set(kd, cont.slots);
       envoyerInvMaj(c, m.j, {});
       break;
     }
 
     case NP.MSG.CHAT: {
+      /* B4 (SPEC-PVP-005) : /duel <nom> | /duel accepter | /duel refuser —
+         interception AVANT /faction (§ 4 du plan), jamais diffusé au chat
+         général : une réponse système au seul intéressé (et à l'adversaire
+         quand il y en a un). */
+      if (typeof m.texte === 'string' && /^\/duel(\s|$)/.test(m.texte)) {
+        traiterDuel(c, m.texte);
+        break;
+      }
       /* /faction … : le serveur fait foi sur les factions de joueurs
          (SPEC-FACTION-009 à 013) ; la réponse ne va qu'à l'intéressé, et
          « dire » ne va qu'aux membres de sa faction principale. */
@@ -1200,22 +1310,43 @@ function traiter(c, m) {
       if (r && r.ok) diffuserEquipVu(c, m.j, js, m.slot);
       break;
     }
-    // le transfert inv↔grille ne dépend d'aucun registre de conteneur posé —
-    // un transfert vers/depuis 'cont' échoue proprement (motif 'ferme') tant
-    // que le registre des conteneurs (B1, étape 7) n'est pas branché.
+    /* B1 (étape 7, SPEC-SYNC-012/013) : s'abonner à un conteneur à portée —
+       bloc (x,y,z) ou banquier (eid). Un seul conteneur ouvert à la fois par
+       joueur local (une nouvelle ouverture remplace la précédente, comme un
+       joueur qui ferme un coffre pour en ouvrir un autre). Refus SILENCIEUX
+       sauf si le message porte un `seq` (clic explicite côté client, B1.md
+       § 4) — sinon un `INV_MAJ` de refus. */
+    case NP.MSG.CONTENEUR_OUVRIR: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || js.joueur.state.dead) break;
+      // `seq` facultatif (§ 4 du plan) : quand il est fourni, il partage le
+      // même compteur strictement croissant que les autres opérations de ce
+      // joueur local — sinon l'`ack` d'un refus ne correspondrait jamais au
+      // `seq` envoyé, et le client ne saurait jamais le relier à sa demande.
+      if (m.seq !== undefined && !seqNouveau(js, m.seq)) break;
+      const r = ouvrirConteneurPourJoueur(js, m);
+      if (!r) { if (m.seq !== undefined) refuserOp(c, m.j, m.seq, 'portee'); break; }
+      envoyer(c, {
+        t: NP.MSG.CONTENEUR_ETAT, j: m.j, cle: r.cle, type: r.type, rev: r.cont.rev || 0,
+        slots: r.cont.slots.map(MC.ContratsV2.pileVersCase),
+        four: r.cont.four ? { burn: r.cont.four.burn, cook: r.cont.four.cook } : undefined,
+      });
+      break;
+    }
     case NP.MSG.CONTENEUR_TRANSFERT: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
       traiterOp(c, m, js, { k: 'transfert', de: m.de, vers: m.vers, n: m.n });
       break;
     }
-    // fermer la grille rend son contenu à l'inventaire (SPEC-SYNC-007, B1.md
-    // § 6) — un vrai conteneur posé (coffre, fourneau…) n'existe pas encore
-    // ici (étape 7) : rien d'autre à faire pour l'instant.
+    /* Fermer la grille rend son contenu à l'inventaire (SPEC-SYNC-007) ; un
+       conteneur posé ou la banque : simple désabonnement (rien à rendre,
+       tout y est déjà réellement). */
     case NP.MSG.CONTENEUR_FERMER: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
-      if (m.cle === 'grille') traiterOp(c, m, js, { k: 'rendreGrille' });
+      if (m.cle === 'grille') { traiterOp(c, m, js, { k: 'rendreGrille' }); break; }
+      if (js.conteneurOuvert === m.cle) { js.conteneurOuvert = null; js.banquePos = null; js.banqueEid = null; }
       break;
     }
     case NP.MSG.INV_CONSOMMER: {
@@ -1258,10 +1389,11 @@ function traiter(c, m) {
         envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });
         break;
       }
-      // action === 'echanger' : idempotence par seq (B1), embargo calculé par
-      // B4 après son rebase (SPEC-PVP-006)
+      // action === 'echanger' : idempotence par seq (B1)
       if (!seqNouveau(js, m.seq)) break;
-      const embargo = false;
+      // B4 (SPEC-PVP-006) : hors-la-loi envers une faction dont le territoire
+      // couvre le lieu du PNJ → embargo (motif 'embargo', economie.js § 8).
+      const embargo = MC.PvpEnjeux.embargo(pvp, c.nom, politique, ent.pos.x, ent.pos.z);
       const r = MC.Economie.executerTroc(economie, etatJoueurServeur(js).inv, {
         lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: m.offre, fois: m.fois || 1,
         nom: c.nom, embargo,
@@ -1407,18 +1539,164 @@ function cleRegDejaConnectee(cleReg) {
   }
   return false;
 }
-/* ctx pour MC.Conteneurs.appliquer : la banque est déjà un conteneur
-   accessible par sa clé propre ('banque') ; un conteneur posé (coffre,
-   fourneau…) n'existe pas encore ici (étape 7) — renvoyer null fait échouer
-   proprement l'opération (motif 'ferme'), sans planter. */
+/* ctx pour MC.Conteneurs.appliquer : `conteneur(cle)` est LE point où
+   l'accès à un conteneur posé ou à la banque est décidé — abonnement
+   (`js.conteneurOuvert`, un seul conteneur ouvert à la fois par joueur
+   local, comme l'écran) ET portée (SPEC-SYNC-013, 6 blocs) revérifiés à
+   CHAQUE appel, pas seulement à l'ouverture : un joueur qui s'est éloigné,
+   ou qui n'a jamais ouvert ce conteneur, ne peut plus agir dessus même s'il
+   en connaît la clé (rejeu, faux message forgé…). */
 function ctxJoueur(js) {
   return {
     joueur: { inv: js.joueur.state.inv, equip: js.joueur.state.equip, grille: js.grille },
-    conteneur: (cle) => (cle === 'banque' && js.cleReg) ? banqueDe(js.cleReg) : null,
+    conteneur: (cle) => resoudreConteneur(js, cle),
     regles,
     stats: { faim: js.joueur.state.hunger, vie: js.joueur.state.hp, vieMax: MC.PlayerConst.MAX_HP },
     eauProche: () => eauProcheDe(js.joueur.state.pos),
   };
+}
+// distance (œil du joueur → CENTRE du bloc), même calcul que blocAutorise plus bas
+function distanceConteneur(st, x, y, z) {
+  return Math.hypot(x + 0.5 - st.pos.x, y + 0.5 - (st.pos.y + 1.62), z + 0.5 - st.pos.z);
+}
+function resoudreConteneur(js, cle) {
+  if (js.conteneurOuvert !== cle) return null;      // pas abonné (ou pas CE conteneur) : refusé
+  const st = js.joueur.state;
+  if (cle === 'banque') {
+    if (!js.cleReg) return null;
+    // SYNC-013 : la banque exige la proximité d'un bloc coffre-fort (ou du
+    // banquier par lequel elle a été ouverte) — REvérifiée ici, pas
+    // seulement à CONTENEUR_OUVRIR (un joueur qui s'éloigne perd l'accès).
+    if (js.banquePos) {
+      if (distanceConteneur(st, js.banquePos.x, js.banquePos.y, js.banquePos.z) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    } else if (js.banqueEid !== null && js.banqueEid !== undefined) {
+      const ent = entites.list.find(e => e.eid === js.banqueEid && !e.dead);
+      if (!ent) return null;
+      const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+      if (d > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    } else return null;
+    return banqueDe(js.cleReg);
+  }
+  const cont = conteneursPoses.get(cle);
+  if (!cont) return null;                            // détruit entre-temps (cassé)
+  const p = cle.split(',');
+  if (p.length !== 3 || distanceConteneur(st, +p[0], +p[1], +p[2]) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+  return cont;
+}
+// tous les joueurs locaux (toutes connexions) actuellement abonnés à `cle`
+// (SPEC-SYNC-015 : à qui diffuser un CONTENEUR_MAJ)
+function abonnesActuels(cle) {
+  return tousLesJoueurs().filter(x => x.js.conteneurOuvert === cle);
+}
+/* Revue adversariale (item 3) : quand un conteneur posé disparaît (cassé,
+   avec ou sans bloc reposé ensuite au même endroit), tout joueur qui l'avait
+   ouvert est FORCÉMENT désabonné ET prévenu — jamais une resubscription
+   fantôme qui réutiliserait la clé pour un conteneur de type différent
+   (coffre 27 cases → fourneau 3 cases, par exemple). `CONTENEUR_FERMER`
+   (message existant, jusqu'ici seulement c→s) sert aussi de notification
+   s→c : net.js ferme l'écran du client dès qu'il la reçoit pour SA clé
+   ouverte. */
+function fermerConteneurPourAbonnes(cle) {
+  abonnesActuels(cle).forEach(({ c: c2, j: j2, js: js2 }) => {
+    js2.conteneurOuvert = null;
+    js2.banquePos = null;
+    js2.banqueEid = null;
+    envoyer(c2, { t: NP.MSG.CONTENEUR_FERMER, j: j2, cle: cle });
+  });
+}
+/* Résout et ouvre un conteneur pour CONTENEUR_OUVRIR (bloc posé à x,y,z, ou
+   banquier par eid) : vérifie la portée, crée le conteneur au registre à la
+   première ouverture (donjon, bibliothèque générée — parité avec le solo,
+   game.js coffreDe/l. 1734-1747, 2104-2110), et marque l'abonnement. Renvoie
+   { cle, type, cont } ou null (refusé). */
+function ouvrirConteneurPourJoueur(js, m) {
+  const st = js.joueur.state;
+  if (m.eid !== undefined) {
+    const ent = entites.list.find(e => e.eid === m.eid && e.role === 'banquier' && !e.dead);
+    if (!ent || !js.cleReg) return null;
+    const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+    if (d > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+    js.conteneurOuvert = 'banque'; js.banquePos = null; js.banqueEid = m.eid;
+    return { cle: 'banque', type: 'banque', cont: banqueDe(js.cleReg) };
+  }
+  if (distanceConteneur(st, m.x, m.y, m.z) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+  const bd = C.BLOCKS[monde.getBlock(m.x, m.y, m.z)];
+  if (!bd || !bd.interactive) return null;
+  if (bd.interactive === 'banque') {
+    if (!js.cleReg) return null;
+    js.conteneurOuvert = 'banque'; js.banquePos = { x: m.x, y: m.y, z: m.z }; js.banqueEid = null;
+    return { cle: 'banque', type: 'banque', cont: banqueDe(js.cleReg) };
+  }
+  const t = MC.ContratsV2.TYPES_CONTENEUR[bd.interactive];
+  if (!t || t.parJoueur) return null;                 // 'craft' (établi), 'info'… : pas un conteneur posé
+  const cle = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+  let cont = conteneursPoses.get(cle);
+  if (!cont) {
+    cont = MC.Conteneurs.creerConteneur(bd.interactive);
+    if (!cont) return null;
+    remplirConteneurNeuf(cont, bd.interactive, m.x, m.y, m.z, cle);
+    conteneursPoses.set(cle, cont);
+  }
+  js.conteneurOuvert = cle; js.banquePos = null; js.banqueEid = null;
+  return { cle, type: bd.interactive, cont };
+}
+/* Défense en profondeur (revue adversariale) : le correctif d'`indiceValide`
+   (conteneurs.js) empêche désormais toute écriture qui agrandirait
+   `cont.slots` au-delà de `cont.taille` — mais un conteneur DÉJÀ mal formé
+   (ancienne exécution avant ce correctif, ou toute autre voie non prévue) ne
+   doit plus être filtré silencieusement par `validerConteneurPersiste`
+   (`slots.length === taille` strict), ce qui aurait fait disparaître le
+   conteneur ENTIER, y compris ses cases valides, à la prochaine relance
+   `--monde`. Tronque à la taille réelle ; l'excédent (toujours à une
+   position connue — `cle` encode x,y,z pour un conteneur posé) tombe au
+   sol comme une casse ordinaire, jamais perdu sans trace. */
+function normaliserTailleConteneur(cle, cont) {
+  if (cont.slots.length === cont.taille) return;
+  if (cont.slots.length < cont.taille) {
+    while (cont.slots.length < cont.taille) cont.slots.push(null);
+    return;
+  }
+  const excedent = cont.slots.slice(cont.taille);
+  cont.slots.length = cont.taille;
+  const p = cle.split(',');
+  let lachees = 0;
+  excedent.forEach(s => {
+    if (!s) return;
+    lachees++;
+    if (p.length === 3) entites.dropItem(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s.id, s.n);
+  });
+  journal(`avertissement : conteneur ${cle} (${cont.type}) mal formé — ` +
+          `${cont.slots.length + excedent.length} case(s) au lieu de ${cont.taille}, tronqué` +
+          (lachees ? `, ${lachees} pile(s) lâchée(s) au sol` : ''));
+}
+/* Un objet ajouté à la première case libre — assez pour remplir un
+   conteneur neuf (donjon, bibliothèque générée), jamais utilisé pour un
+   transfert normal (qui passe par MC.Conteneurs.appliquer). */
+function ajouterPileConteneur(cont, id, n, data) {
+  for (let i = 0; i < cont.slots.length && n > 0; i++) {
+    if (!cont.slots[i]) {
+      const p = { id, n: Math.min(n, C.maxStack(id)) };
+      if (data !== undefined) p.data = data;
+      cont.slots[i] = p;
+      n -= p.n;
+    }
+  }
+  return n;
+}
+/* Parité avec le solo (game.js coffreDe, l. 1734-1747 ; ouvrirConteneur,
+   l. 2104-2110) : un coffre de donjon se remplit de son butin à la première
+   ouverture, une bibliothèque générée (jamais posée par un joueur) tient
+   quelques livres du monde. */
+function remplirConteneurNeuf(cont, type, x, y, z, cle) {
+  if (type === 'chest' && monde.butinCoffre && monde.coffresPilles && !monde.coffresPilles.has(cle)) {
+    const butin = monde.butinCoffre(x, y, z);
+    if (butin) { monde.coffresPilles.add(cle); butin.forEach(st => ajouterPileConteneur(cont, st.id, st.n)); }
+  } else if (type === 'bibliotheque' && !monde.overrides.has(cle) && MC.Livres && monde.habitats) {
+    const lieuB = monde.habitats.lieuxProches(x, z, 160)[0];
+    if (lieuB) for (let nb = 0; nb < 3; nb++) {
+      ajouterPileConteneur(cont, C.I.LIVRE, 1, MC.Livres.livreDuMonde(monde.seed + nb * 7919, lieuB));
+    }
+  }
 }
 // approximation volontairement large (pas un rayon lancé) : juste assez pour
 // distinguer « près d'une source d'eau » de « nulle part près de l'eau »,
@@ -1456,16 +1734,54 @@ function lacherAuxPieds(js, pile) {
   const p = js.joueur.state.pos;
   entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n);
 }
+// clé(s) de conteneur posé/banque potentiellement concernées par une
+// opération AVANT de savoir si elle réussit (pour capturer l'instantané
+// « avant » sans dépendre du résultat) — transfert : de/vers ; declarer : cle.
+function clesConteneurDe(op) {
+  const out = [];
+  if (op.de && op.de.z === 'cont') out.push(op.de.cle);
+  if (op.vers && op.vers.z === 'cont') out.push(op.vers.cle);
+  if (op.cle) out.push(op.cle);
+  return out;
+}
+function conteneurParCle(js, cle) {
+  return cle === 'banque' ? (js.cleReg ? banqueDe(js.cleReg) : null) : conteneursPoses.get(cle);
+}
 /* Cœur commun à CRAFT, EQUIP, CONTENEUR_TRANSFERT, INV_CONSOMMER, INV_LACHER,
    INV_CREATIF : vérifie l'idempotence du `seq`, applique l'opération pure,
    lâche au sol ce qu'elle a éventuellement fait déborder, puis répond par un
-   INV_MAJ (ack ou refus) — TOUJOURS, jamais deux messages non atomiques. */
+   INV_MAJ (ack ou refus) — TOUJOURS, jamais deux messages non atomiques.
+
+   SPEC-SYNC-015 : quand l'opération touche un conteneur posé ou la banque
+   (`r.modifs.conteneurs`), l'AUTEUR reçoit le delta DANS son INV_MAJ
+   (`conteneurs:[…]`, jamais un CONTENEUR_MAJ séparé — ça clignoterait) ; les
+   AUTRES joueurs qui ont ce même conteneur ouvert reçoivent un CONTENEUR_MAJ. */
 function traiterOp(c, m, js, op) {
   if (!seqNouveau(js, m.seq)) return null;
+  const avant = new Map();
+  clesConteneurDe(op).forEach(cle => {
+    const cont = conteneurParCle(js, cle);
+    if (cont) avant.set(cle, MC.Conteneurs.instantane(cont));
+  });
   const r = MC.Conteneurs.appliquer(ctxJoueur(js), op);
   if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); return r; }
   if (r.effets && r.effets.lache) lacherAuxPieds(js, r.effets.lache);
-  envoyerInvMaj(c, m.j, {});
+  const deltas = [];
+  (r.modifs.conteneurs || []).forEach(cle => {
+    const cont = conteneurParCle(js, cle);
+    if (!cont) return;
+    const av = avant.get(cle);
+    const maj = av ? MC.Conteneurs.diff(av.slots, cont.slots)
+                   : cont.slots.map((s, i) => [i, MC.ContratsV2.pileVersCase(s)]);
+    const delta = { cle, rev: cont.rev, maj };
+    if (cont.four) delta.four = { burn: cont.four.burn, cook: cont.four.cook };
+    deltas.push(delta);
+    abonnesActuels(cle).forEach(({ c: c2, j: j2 }) => {
+      if (c2.id === c.id && j2 === m.j) return;         // jamais à l'auteur (déjà dans son INV_MAJ)
+      envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, delta));
+    });
+  });
+  envoyerInvMaj(c, m.j, deltas.length ? { conteneurs: deltas } : {});
   return r;
 }
 /* SPEC-SYNC-011 : EQUIP_VU n'est diffusé qu'aux AUTRES joueurs à portée de vue
@@ -1493,6 +1809,9 @@ function creerJoueurServeur(j) {
   // messages d'inventaire (dernierSeq, revInv — voir seqNouveau/envoyerInvMaj).
   const grille = MC.Inventory.create(MC.ContratsV2 ? MC.ContratsV2.BORNES.SLOTS_GRILLE : 9);
   return { joueur, grille, cleReg: null, dernierSeq: 0, revInv: 0,
+           // B1 (étape 7) : conteneur posé (ou 'banque') actuellement ouvert par
+           // ce joueur local — un seul à la fois, voir resoudreConteneur/ctxJoueur.
+           conteneurOuvert: null, banquePos: null, banqueEid: null,
            entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
 }
 const PORTEE_BLOC = 7;
@@ -1542,6 +1861,115 @@ function joueurParCle(cle) {
   const p = String(cle).split('/');
   const id = +p[0], j = +p[1] || 0;
   return tousLesJoueurs().find(x => x.c.id === id && x.j === j) || null;
+}
+
+// ── PvP : enjeux et sanctions (B4, SPEC-PVP-001 à 006) ──────────────────────
+/* État `pvp` (MC.PvpEnjeux) déclaré plus haut, avec `politique`/`guildes`
+   (même raison : lu par `etatMonde`/`appliquerEtatMonde` dès la reprise
+   `--monde`, avant ce point du fichier). Cette section rassemble les
+   helpers, tous des déclarations de fonction (hissées), donc utilisables
+   depuis `traiter()` bien plus haut dans le fichier — même patron que
+   `ctxJoueur`/`resoudreConteneur` pour B1. */
+
+// retrouve le tuple {c, j, js} du joueur local dont le state est EXACTEMENT
+// `state` (identité d'objet — comme `joueurs.find` sur `ev.picked`/`degatsPar`
+// déjà utilisé plus bas pour le ramassage et les dégâts de créature).
+function joueurParEtat(state) {
+  return tousLesJoueurs().find(x => x.js.joueur.state === state) || null;
+}
+// retrouve un joueur CONNECTÉ par son nom de connexion (insensible à la casse
+// et aux espaces, comme `canon`) — utilisé par /duel, qui désigne sa cible
+// par son nom plutôt que par la clé « id/j » de ATTAQUE (piège B4.md § 13 :
+// deux joueurs locaux d'un même poste partagent ce nom, jamais deux « vrais »
+// adversaires).
+function joueurParNom(nom) {
+  const cnom = MC.Admin.canon(nom);
+  return tousLesJoueurs().find(x => MC.Admin.canon(x.c.nom) === cnom) || null;
+}
+/* Fournie à `entites.update` comme `opts.peutBlesser` (SPEC-PVP-002/005) :
+   un duel consenti en cours autorise le coup MÊME hors zone PvP/sans --pvp ;
+   sinon, PvP autorisé par la zone/le réglage ET aucune faction commune —
+   exactement la même règle que `case ATTAQUE` pour le corps à corps. Prend
+   des STATES (comme `stepArrow`/`degatsPar` les manipulent), retrouve les
+   noms au besoin — jamais l'inverse (`peutBlesser` de guildes.js prend des
+   NOMS, piège documenté par B4.md § 13). */
+function peutBlesserJoueurs(stA, stB) {
+  const a = joueurParEtat(stA), b = joueurParEtat(stB);
+  if (!a || !b) return false;
+  const duel = MC.PvpEnjeux.duelActif(pvp, a.c.nom, b.c.nom, heure, stA.pos, stB.pos);
+  return duel || (pvpAutorise(stA.pos, stB.pos) && MC.Guildes.peutBlesser(guildes, a.c.nom, b.c.nom));
+}
+function envoyerSysteme(c, texte) {
+  envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte, type: 'systeme' });
+}
+/* Issue commune d'une mort PvP (corps à corps ou flèche) : butin, meurtre,
+   réputation, hors-la-loi — jamais en duel (SPEC-PVP-001/003/005) — et, DANS
+   TOUS LES CAS, la victoire et son message (SPEC-PVP-004). `vainqueur`/
+   `vaincu` : { c, j, js }. */
+function issuePvp(vainqueur, vaincu, duel) {
+  const nomV = vainqueur.c.nom, nomP = vaincu.c.nom;
+  let perte;
+  if (!duel) {
+    const invPerdant = etatJoueurServeur(vaincu.js).inv, invGagnant = etatJoueurServeur(vainqueur.js).inv;
+    const r = MC.PvpEnjeux.resoudreButin(invPerdant, invGagnant, nomV + '|' + nomP + '|' + heure.toFixed(3));
+    perte = r.perte;
+    // le reliquat que le vainqueur ne peut pas porter tombe À SES PIEDS (il
+    // vient de le gagner : c'est lui qui a la priorité dessus, pas le vaincu).
+    r.reste.forEach(p => lacherAuxPieds(vainqueur.js, p));
+    const posVaincu = vaincu.js.joueur.state.pos;
+    const factions = MC.PvpEnjeux.factionsProches(politique, posVaincu.x, posVaincu.z);
+    const res = MC.PvpEnjeux.enregistrerMeurtre(pvp, nomV, nomP, heure, factions);
+    if (res.penalites.length) envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'reputation', factions: res.penalites });
+    if (res.horsLaLoi.length) {
+      envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'hors_la_loi',
+        factions: res.penalites.filter(p => res.horsLaLoi.indexOf(p.id) >= 0) });
+    }
+  }
+  const n = MC.PvpEnjeux.enregistrerVictoire(pvp, nomV);
+  envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'victoire', contre: nomP, n });
+  const msgDefaite = { t: NP.MSG.PVP, evt: 'defaite', de: nomV };
+  if (perte) msgDefaite.perte = perte;
+  envoyer(vaincu.c, msgDefaite);
+  envoyerInvMaj(vainqueur.c, vainqueur.j, {});
+  envoyerInvMaj(vaincu.c, vaincu.j, {});
+  MC.Admin.journaliser(admin, { auteur: nomV, action: 'pvp_victoire', cible: nomP, details: duel ? 'duel' : 'meurtre', heure });
+}
+/* /duel <nom> | /duel accepter | /duel refuser (case CHAT, avant /faction).
+   Jamais diffusé au chat général : une réponse système au seul intéressé (et
+   à l'adversaire, quand il y en a un joignable). */
+function traiterDuel(c, texte) {
+  const args = texte.trim().split(/\s+/).slice(1);
+  const sous = (args[0] || '').toLowerCase();
+  if (sous === 'accepter' || sous === 'refuser') {
+    const prop = pvp.propositions.get(MC.Admin.canon(c.nom));
+    const proposeur = prop ? joueurParNom(prop.de) : null;
+    const moi = joueurParNom(c.nom);
+    if (!moi) return;
+    const posProposeur = proposeur ? proposeur.js.joueur.state.pos : moi.js.joueur.state.pos;
+    const r = MC.PvpEnjeux.repondreDuel(pvp, c.nom, sous === 'accepter', heure, posProposeur, moi.js.joueur.state.pos);
+    if (!r.ok) { envoyerSysteme(c, 'Duel : aucune proposition à laquelle répondre (ou trop tard).'); return; }
+    if (r.refuse) {
+      envoyerSysteme(c, 'Duel refusé.');
+      if (proposeur) envoyerSysteme(proposeur.c, c.nom + ' refuse le duel.');
+      return;
+    }
+    envoyerSysteme(c, 'Duel commencé avec ' + r.de + ' — ' + MC.PvpEnjeux.DUREE_DUEL + ' s, restez à moins de ' +
+                   MC.PvpEnjeux.RAYON_DUEL + ' blocs l\'un de l\'autre.');
+    envoyer(c, { t: NP.MSG.PVP, evt: 'duel_debut', contre: r.de });
+    if (proposeur) {
+      envoyerSysteme(proposeur.c, c.nom + ' accepte le duel !');
+      envoyer(proposeur.c, { t: NP.MSG.PVP, evt: 'duel_debut', contre: c.nom });
+    }
+    return;
+  }
+  const cibleNom = args[0];
+  if (!cibleNom) { envoyerSysteme(c, 'Usage : /duel <nom> | /duel accepter | /duel refuser'); return; }
+  const adversaire = joueurParNom(cibleNom);
+  if (!adversaire || adversaire.c.id === c.id) { envoyerSysteme(c, 'Joueur introuvable : ' + cibleNom); return; }
+  const r = MC.PvpEnjeux.proposerDuel(pvp, c.nom, cibleNom, heure);
+  if (!r.ok) { envoyerSysteme(c, 'Duel : impossible de se dueller soi-même.'); return; }
+  envoyerSysteme(c, 'Duel proposé à ' + adversaire.c.nom + ' — ' + MC.PvpEnjeux.DELAI_PROPOSITION + ' s pour répondre.');
+  envoyer(adversaire.c, { t: NP.MSG.PVP, evt: 'duel_propose', de: c.nom, jusque: heure + MC.PvpEnjeux.DELAI_PROPOSITION });
 }
 
 // ── instrumentation de performance (SPEC-SERVEUR-002) ───────────────────────
@@ -1619,6 +2047,14 @@ setInterval(() => {
     peuplerLieux();
     avancerPolitique();
     avancerEconomie();
+    // B4 : propositions de duel caduques (silencieuses) et duels terminés
+    // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
+    // encore connectés.
+    MC.PvpEnjeux.expirer(pvp, heure).forEach(({ a, b }) => {
+      const ja = joueurParNom(a), jb = joueurParNom(b);
+      if (ja) envoyer(ja.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: b });
+      if (jb) envoyer(jb.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: a });
+    });
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;
@@ -1639,20 +2075,27 @@ setInterval(() => {
       // arrow) rejoignent tout seules la diffusion d'état périodique (ETAT),
       // pas besoin de message dédié.
       onDistribuer: (x, y, z) => {
-        const kd = `${x},${y},${z}`;
-        const slots = distributeurs.get(kd);
-        if (!slots) return;
-        const i = MC.Circuits.distributeurChoix(slots);
+        const kd = MC.ContratsV2.cleConteneur(x, y, z);
+        const cont = conteneursPoses.get(kd);
+        if (!cont) return;
+        const i = MC.Circuits.distributeurChoix(cont.slots);
         if (i < 0) return;
-        const st = slots[i];
+        const st = cont.slots[i];
         const idef = C.ITEMS[st.id];
         st.n -= 1;
-        if (st.n <= 0) slots[i] = null;
+        if (st.n <= 0) cont.slots[i] = null;
+        cont.rev = (cont.rev || 0) + 1;
         if (idef && idef.ammo) {
           entites.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
                          14, idef.damage || 5, null, idef.ammoType || 'fleche');
         } else {
           entites.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
+        }
+        // SPEC-SYNC-015 : un joueur qui a ce distributeur ouvert voit l'éjection
+        const abonnesD = abonnesActuels(kd);
+        if (abonnesD.length) {
+          const deltaD = { cle: kd, rev: cont.rev, maj: [[i, MC.ContratsV2.pileVersCase(cont.slots[i])]] };
+          abonnesD.forEach(({ c: c2, j: j2 }) => envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, deltaD)));
         }
       },
       // SPEC-MECA-007 : rejoue la commande stockée avec le même routage que
@@ -1663,6 +2106,29 @@ setInterval(() => {
       id: ch.setBlock !== undefined ? ch.setBlock : monde.getBlock(ch.x, ch.y, ch.z),
       etat: ch.setEtat !== undefined ? ch.setEtat : (monde.getEtat(ch.x, ch.y, ch.z) || 0),
     }));
+  }
+
+  /* B1 (étape 7) : les fourneaux posés cuisent à CHAQUE tic (SPEC-SYNC-016 —
+     ils n'attendent pas qu'un joueur regarde), mais un CONTENEUR_MAJ n'est
+     émis qu'à un rythme limité (≤ 2 Hz) et SEULEMENT s'il existe un abonné
+     (SPEC-SYNC-015) — le delta compare l'instantané envoyé la dernière fois
+     à l'état courant, donc reste correct même après une longue absence. */
+  conteneursPoses.forEach(cont => { if (cont.four) MC.Conteneurs.tickFour(cont, dt); });
+  accFourMsg += dt;
+  if (accFourMsg >= 0.5) {
+    accFourMsg = 0;
+    conteneursPoses.forEach((cont, cle) => {
+      if (!cont.four) return;
+      const av = derniereEmissionFour.get(cle);
+      derniereEmissionFour.set(cle, MC.Conteneurs.instantane(cont));
+      if (!av) return;
+      const abonnesF = abonnesActuels(cle);
+      if (!abonnesF.length) return;
+      const maj = MC.Conteneurs.diff(av.slots, cont.slots);
+      if (!maj.length && av.four.burn === cont.four.burn && av.four.cook === cont.four.cook) return;
+      const deltaF = { cle, rev: cont.rev, maj, four: { burn: cont.four.burn, cook: cont.four.cook } };
+      abonnesF.forEach(({ c: c2, j: j2 }) => envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, deltaF)));
+    });
   }
 
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :
@@ -1724,11 +2190,34 @@ setInterval(() => {
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
-    hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise });
-  // les coups des créatures, appliqués aux joueurs qu'ils visaient
+    hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
+  // les coups des créatures, appliqués aux joueurs qu'ils visaient — B4
+  // (SPEC-PVP-001 à 003) : un coup de FLÈCHE tiré par un JOUEUR (`d.par`) suit
+  // le même chemin qu'un coup de mêlée (butin, meurtre, victoire), sans le
+  // multiplicateur `regles.degatsMob` (réservé aux créatures — piège B4.md
+  // § 13, bogue corrigé au passage : une flèche de joueur en était
+  // auparavant multipliée comme un coup de mob).
   ev.degatsPar.forEach(d => {
     const x = joueurs.find(y => y.js.joueur.state === d.joueur);
-    if (x) x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
+    if (!x) return;
+    const st = x.js.joueur.state;
+    const avant = st.dead;
+    if (d.par) {
+      x.js.joueur.hurt(Math.round(d.n));
+      if (!avant && st.dead) {
+        const auteur = joueurParEtat(d.par);
+        if (auteur) {
+          const duel = MC.PvpEnjeux.duelActif(pvp, auteur.c.nom, x.c.nom, heure, d.par.pos, st.pos);
+          journal(`⚔ ${auteur.c.nom} a vaincu ${x.c.nom} (PvP, flèche)`);
+          const msg = chat.systeme(auteur.c.nom + ' a vaincu ' + x.c.nom);
+          if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
+          MC.Admin.journaliser(admin, { auteur: auteur.c.nom, action: 'combat_joueur', cible: x.c.nom, details: d.n, heure });
+          issuePvp(auteur, x, duel);
+        }
+      }
+    } else {
+      x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
+    }
   });
   /* B1 (SPEC-SYNC-007) : le ramassage est désormais rangé dans l'inventaire
      SERVEUR (`js.joueur.pickUp`, le même code que le solo) — le client ne
@@ -1765,7 +2254,14 @@ setInterval(() => {
      période et sautait son envoi — 30 états par seconde au lieu de 60. La
      petite tolérance absorbe la gigue du minuteur. */
   accEtat += dt;
-  const periodeEtat = 1 / CONF.etatHz;
+  // SPEC-SERVEUR-007 : la cadence de diffusion s'adapte à la charge (nombre
+  // de clients connectés, file d'envoi TCP la plus encombrée) plutôt que de
+  // rester fixe — calcul PUR, testé sous Node (src/net-protocol.js). Recalculé
+  // à chaque tic : toujours cohérent avec la charge actuelle.
+  let fileEnvoiMax = 0;
+  clients.forEach(c => { const f = (c.socket && c.socket.writableLength) || 0; if (f > fileEnvoiMax) fileEnvoiMax = f; });
+  const etatHzEffectif = NP.calculerEtatHz(CONF.etatHz, { nbClients: clients.size, fileMax: fileEnvoiMax });
+  const periodeEtat = 1 / etatHzEffectif;
   if (accEtat >= periodeEtat * 0.9) {
     accEtat = Math.min(periodeEtat, Math.max(0, accEtat - periodeEtat));
     if (clients.size > 0) {
@@ -1788,19 +2284,20 @@ setInterval(() => {
       const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
-        /* À chacun les créatures les plus proches de SES joueurs : avec les
-           habitants des villes, les 80 premières de la liste pouvaient être
-           à l'autre bout du monde. */
+        /* À chacun les créatures les plus proches de SES joueurs, plafonnées à
+           NP.MAX_MOBS_DIFFUSES (invariant documenté et testé, SPEC-SERVEUR-007) :
+           avec les habitants des villes, les premières de la liste pouvaient
+           être à l'autre bout du monde. */
         const pos = c.joueurs.map(x => x.joueur.state.pos);
         const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
-        commun.mobs = entites.list.filter(e => d2(e) < 96 * 96).sort((a, b) => d2(a) - d2(b)).slice(0, 80).map(decrire);
+        commun.mobs = NP.selectionnerMobsProches(entites.list, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrire);
         /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
            ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
            liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques
            dizaines de joueurs, ça sature le réseau bien avant que la
            simulation elle-même ne peine (identifié au banc de charge,
            SPEC-SERVEUR-002 — chiffres avant/après dans docs/charge.md). */
-        commun.joueurs = js.filter(j => d2({ pos: { x: j.x, z: j.z } }) < 96 * 96);
+        commun.joueurs = js.filter(j => d2({ pos: { x: j.x, z: j.z } }) < NP.PORTEE_MOBS_DIFFUSES * NP.PORTEE_MOBS_DIFFUSES);
         commun.toi = c.joueurs.map(x => SY.etatJoueur(x.joueur, x.dernier));
         envoyer(c, commun);
       });

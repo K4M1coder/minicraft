@@ -14,25 +14,29 @@
   /* Caractéristiques. vmax en m/s, accel en m/s², virage en rad/s.
      `milieu` : où l'engin avance à pleine vitesse ; ailleurs il se traîne.
      `siege` : hauteur de l'assise au-dessus du bas de la caisse. */
+  /* `carburant` : autonomie de plein en distance parcourue (mètres
+     équivalents, `|vitesse| * dt` cumulés — SPEC-TRANSPORT-001). À sec, le
+     moteur n'obéit plus aux commandes : le véhicule freine et retombe
+     exactement comme un véhicule abandonné (VEHIC-009). */
   var DEFS = {
     bateau:     { nom: 'Bateau', objet: I.BATEAU, w: 1.4, h: 0.7, vmax: 7, accel: 5, virage: 1.9,
-                  milieu: 'eau', siege: 0.25, flotte: true, pv: 4 },
+                  milieu: 'eau', siege: 0.25, flotte: true, pv: 4, carburant: 30 },
     moto:       { nom: 'Moto', objet: I.MOTO, w: 0.9, h: 1.0, vmax: 16, accel: 10, virage: 2.6,
-                  milieu: 'sol', siege: 0.45, marche: true, pv: 6 },
+                  milieu: 'sol', siege: 0.45, marche: true, pv: 6, carburant: 60 },
     voiture:    { nom: 'Voiture', objet: I.VOITURE, w: 1.8, h: 1.3, vmax: 14, accel: 7, virage: 1.8,
-                  milieu: 'sol', siege: 0.35, marche: true, pv: 10 },
+                  milieu: 'sol', siege: 0.35, marche: true, pv: 10, carburant: 55 },
     // le camion embarque un coffre de 27 cases
     camion:     { nom: 'Camion', objet: I.CAMION, w: 2.4, h: 2.2, vmax: 10, accel: 4, virage: 1.2,
-                  milieu: 'sol', siege: 0.9, marche: true, pv: 14, soute: 27 },
+                  milieu: 'sol', siege: 0.9, marche: true, pv: 14, soute: 27, carburant: 45 },
     // l'avion ne quitte le sol qu'au-delà de sa vitesse de décollage
     avion:      { nom: 'Avion', objet: I.AVION, w: 2.6, h: 1.4, vmax: 26, accel: 6, virage: 1.4,
-                  milieu: 'air', siege: 0.4, decollage: 12, marche: true, pv: 10 },
+                  milieu: 'air', siege: 0.4, decollage: 12, marche: true, pv: 10, carburant: 100 },
     // on respire dans le sous-marin : ni noyade, ni remontée forcée
     sous_marin: { nom: 'Sous-marin', objet: I.SOUS_MARIN, w: 1.8, h: 1.6, vmax: 8, accel: 4, virage: 1.5,
-                  milieu: 'eau', siege: 0.3, plonge: true, respire: true, pv: 12 },
+                  milieu: 'eau', siege: 0.3, plonge: true, respire: true, pv: 12, carburant: 35 },
     // le wagonnet suit les rails : il tourne tout seul dans les virages
     wagonnet:   { nom: 'Wagonnet', objet: I.WAGONNET, w: 0.9, h: 0.8, vmax: 9, accel: 5, virage: 0,
-                  milieu: 'rail', siege: 0.3, rails: true, pv: 4 },
+                  milieu: 'rail', siege: 0.3, rails: true, pv: 4, carburant: 40 },
   };
   var TYPES = Object.keys(DEFS);
 
@@ -56,9 +60,17 @@
     var d = DEFS[nom];
     if (!d) return null;
     var e = entities.spawn(typeEntite(nom), x, y, z, { vehicule: nom, yaw: yaw || 0, vitesse: 0,
-                                                       conducteur: null });
+                                                       conducteur: null, carburant: d.carburant });
     if (d.soute && MC.Inventory) e.soute = MC.Inventory.create(d.soute);
     return e;
+  }
+
+  /* SPEC-TRANSPORT-001 : consomme le carburant proportionnellement à la
+     distance parcourue ce pas ; ne descend jamais sous zéro. */
+  function consommer(e, d, dt) {
+    if (e.carburant == null || e.carburant <= 0) { e.carburant = 0; return; }
+    e.carburant -= Math.abs(e.vitesse) * dt;
+    if (e.carburant < 0) e.carburant = 0;
   }
 
   // où l'engin se trouve : eau, sol, ou dans les airs
@@ -85,7 +97,7 @@
     var d = defDe(e);
     if (!d) return null;
     if (d.rails) return rouler(e, dt, world, cmd || {}, d);
-    var c = cmd || {};
+    var c = (e.carburant === 0) ? {} : (cmd || {});
     var milieu = milieuDe(world, e, d);
     var vm = vmaxDans(d, milieu);
 
@@ -95,6 +107,7 @@
     if (Math.abs(cible - e.vitesse) <= taux * dt) e.vitesse = cible;
     else e.vitesse += Math.sign(cible - e.vitesse) * taux * dt;
     if (Math.abs(e.vitesse) > vm) e.vitesse = Math.sign(e.vitesse) * vm;
+    consommer(e, d, dt);
 
     // ── direction : on ne braque qu'en roulant (sauf l'avion en vol) ──
     var volant = (c.gauche ? 1 : 0) - (c.droite ? 1 : 0);
@@ -162,12 +175,14 @@
     return world.getBlock(Math.floor(x), Math.floor(y), Math.floor(z)) === B_RAIL;
   }
   function rouler(e, dt, world, c, d) {
+    if (e.carburant === 0) c = {};
     var surRail = railEn(world, e.pos.x, e.pos.y + 0.1, e.pos.z);
     var vm = surRail ? d.vmax : d.vmax * 0.12;
     var cible = c.avant ? vm : (c.arriere ? -vm : 0);
     var taux = d.accel;
     if (Math.abs(cible - e.vitesse) <= taux * dt) e.vitesse = cible;
     else e.vitesse += Math.sign(cible - e.vitesse) * taux * dt;
+    consommer(e, d, dt);
     if (surRail) {
       var quart = Math.round(e.yaw / (Math.PI / 2));
       e.yaw = quart * (Math.PI / 2);
@@ -287,7 +302,8 @@
     entities.list.forEach(function (e) {
       if (!e.vehicule || e.dead) return;
       out.push([e.vehicule, +e.pos.x.toFixed(2), +e.pos.y.toFixed(2), +e.pos.z.toFixed(2),
-                +e.yaw.toFixed(3), e.soute ? e.soute.serialize() : 0]);
+                +e.yaw.toFixed(3), e.soute ? e.soute.serialize() : 0,
+                e.carburant != null ? +e.carburant.toFixed(2) : undefined]);
     });
     return out;
   }
@@ -297,6 +313,7 @@
       var e = poser(entities, v[0], v[1], v[2], v[3], v[4]);
       if (!e) return;
       if (e.soute && v[5]) e.soute.load(v[5]);
+      if (v[6] != null) e.carburant = v[6];               // sinon : plein (anciennes sauvegardes)
       n++;
     });
     return n;

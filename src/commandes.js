@@ -12,14 +12,14 @@
   var MC = G.MC = G.MC || {};
 
   var LISTE = ['aide', 'heure', 'jour', 'nuit', 'ou', 'graine', 'vider',
-               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin', 'faction'];
+               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin', 'faction', 'duel'];
 
   function msg(texte) { return { messages: texte ? [texte] : [], actions: [] }; }
   function action(texte, act) { return { messages: texte ? [texte] : [], actions: [act] }; }
 
   function aide() {
     return 'Commandes : /heure /jour /nuit /ou /graine /vider /aide /meteo /succes ' +
-           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin /faction …';
+           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin /faction … /duel <nom>|accepter|refuser';
   }
 
   /* Panneau admin en jeu (SPEC-ADMIN-006), exposé via le chat plutôt qu'un
@@ -130,6 +130,25 @@
     }
   }
 
+  /* Duel consenti (SPEC-PVP-005) : comme /faction et /admin, cette commande
+     ne fait AUCUN effet — elle traduit en une action que l'appelant applique
+     (server.js : arbitre réel via MC.PvpEnjeux ; hors ligne : message
+     d'indisponibilité, pas de PvP réseau en solo, B4.md § 5). `brut`
+     accompagne l'action pour que `game.js` relaie le texte original au
+     serveur, comme /faction. */
+  function duel(args) {
+    var r = duelSans(args);
+    (r.actions || []).forEach(function (a) { a.brut = args.join(' '); });
+    return r;
+  }
+  function duelSans(args) {
+    var sous = (args[0] || '').toLowerCase();
+    if (sous === 'accepter') return action('Réponse envoyée…', { type: 'duel', action: 'accepter', args: {} });
+    if (sous === 'refuser') return action('Réponse envoyée…', { type: 'duel', action: 'refuser', args: {} });
+    if (!sous) return msg('/duel <nom> | /duel accepter | /duel refuser');
+    return action('Duel proposé à ' + args[0] + '…', { type: 'duel', action: 'proposer', args: { nom: args[0] } });
+  }
+
   function executer(cmd, ctx) {
     ctx = ctx || {};
     if (!cmd || !cmd.nom) return msg('Commande inconnue.');
@@ -202,6 +221,8 @@
         return admin(cmd.args || []);
       case 'faction':
         return faction(cmd.args || []);
+      case 'duel':
+        return duel(cmd.args || []);
       default:
         return msg('Commande inconnue : /' + cmd.nom);
     }

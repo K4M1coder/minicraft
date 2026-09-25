@@ -192,28 +192,48 @@
     return etat.factions.get(candidats[Math.floor(h * candidats.length) % candidats.length]);
   }
   var TERRITOIRE_MAX = 400, TERRITOIRE_MIN = 20;
+  /* SPEC-FACTION-016 : un raid ou un avant-poste a un coût fixe, prélevé sur
+     l'auteur qu'il réussisse ou non (jamais sous zéro) ; le territoire, lui,
+     n'est gagné qu'en cas de succès (jet déterministe par graine). */
+  var COUT_ACTION_RESSOURCES = { or: 6, nourriture: 4 };
+  function prelever(f, cout) {
+    f.ressources.or = Math.max(0, f.ressources.or - cout.or);
+    f.ressources.nourriture = Math.max(0, f.ressources.nourriture - cout.nourriture);
+  }
   function appliquerAction(etat, f, action, jour) {
     if (action === 'caravane') { f.ressources.or += 1; annoncer(etat, f.nom + ' envoie une caravane commerciale.', [f.id]); return; }
     if (action === 'avant_poste') {
-      f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 10);
-      annoncer(etat, f.nom + ' fonde un avant-poste et étend son territoire.', [f.id]);
+      prelever(f, COUT_ACTION_RESSOURCES);
+      var hap = h01(etat.seed, f.id, 'avant_poste', jour);
+      if (hap < 0.5) {
+        f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 10);
+        annoncer(etat, f.nom + ' fonde un avant-poste et étend son territoire.', [f.id]);
+      } else {
+        annoncer(etat, f.nom + ' tente de fonder un avant-poste, sans succès.', [f.id]);
+      }
       return;
     }
     if (action === 'raid') {
       var cible = ciblePourRaid(etat, f, jour);
       if (!cible) return;
+      prelever(f, COUT_ACTION_RESSOURCES);
       var h = h01(etat.seed, f.id, cible.id, 'raid', jour);
       if (h < 0.5) {
-        f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 15);
-        cible.territoire = Math.max(TERRITOIRE_MIN, cible.territoire - 15);
-        f.ressources.or += 5;
-        etat.relations.set(cleRelation(f.id, cible.id), 'guerre');
+        appliquerGainElimination(etat, f, cible);
         annoncer(etat, f.nom + ' mène un raid contre ' + cible.nom + ' et gagne du terrain.', [f.id, cible.id]);
       } else {
         annoncer(etat, f.nom + ' échoue à raider ' + cible.nom + '.', [f.id, cible.id]);
       }
     }
     // 'patrouille' et 'rien' : discrets, pas d'annonce (sans quoi le chat déborderait)
+  }
+  /* Effet d'une élimination réussie (raid classique ou quête SPEC-QUETE-002) :
+     factorisé pour que les deux voies produisent EXACTEMENT le même résultat
+     sur le territoire et la relation, à graine égale. */
+  function appliquerGainElimination(etat, f, cible) {
+    f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 15);
+    cible.territoire = Math.max(TERRITOIRE_MIN, cible.territoire - 15);
+    etat.relations.set(cleRelation(f.id, cible.id), 'guerre');
   }
 
   function tourUnJour(etat) {
@@ -223,12 +243,17 @@
       appliquerAction(etat, f, choisirAction(f, h01(etat.seed, id, 'action', jour)), jour);
     });
     Array.from(etat.relations.keys()).sort().forEach(function (cle) {
+      var parts = cle.split('~');
+      // même garde que ciblePourRaid : une clé impliquant une faction absente
+      // de etat.factions (ex. une faction de joueurs posée par guildes.js via
+      // declarerRelation, SPEC-FACTION-017) n'est ni dérivée ni annoncée ici —
+      // etat.relations sert aussi de mémoire à ce genre de relation externe.
+      if (!etat.factions.has(parts[0]) || !etat.factions.has(parts[1])) return;
       var hd = h01(etat.seed, cle, 'derive', jour);
       if (hd >= 0.04) return;
       var avant = etat.relations.get(cle), apres = hd < 0.02 ? degrader(avant) : ameliorer(avant);
       if (apres === avant) return;
       etat.relations.set(cle, apres);
-      var parts = cle.split('~');
       annoncer(etat, nomDe(etat, parts[0]) + ' et ' + nomDe(etat, parts[1]) + ' ' + (LIBELLES_RELATION[apres] || 'changent de relation') + '.', parts);
     });
     etat.jour = jour + 1;
@@ -255,14 +280,83 @@
       default: return f.nom + ' aimerait qu\'on explore les environs.';
     }
   }
+  /* SPEC-QUETE-001 : seuil sous lequel une ressource de faction est jugée
+     basse — en dessous, une quête de livraison peut se proposer ; au-dessus,
+     jamais. */
+  var SEUIL_RESSOURCE_BAS = 20;
+  function ressourceCiblePourLivraison(f) {
+    var basOr = f.ressources.or < SEUIL_RESSOURCE_BAS;
+    var basNourriture = f.ressources.nourriture < SEUIL_RESSOURCE_BAS;
+    if (!basOr && !basNourriture) return null;
+    if (basOr && basNourriture) return f.ressources.or <= f.ressources.nourriture ? 'or' : 'nourriture';
+    return basOr ? 'or' : 'nourriture';
+  }
+  /* SPEC-QUETE-002 : une élimination ne se propose que si la faction est
+     réellement en guerre (relation 'guerre' active avec au moins une autre
+     faction connue) — une simple rivalité ne suffit pas. */
+  function enGuerreActive(etat, factionId) {
+    var trouve = false;
+    etat.relations.forEach(function (r, cle) {
+      if (trouve || r !== 'guerre') return;
+      var parts = cle.split('~');
+      if (parts[0] === factionId || parts[1] === factionId) trouve = true;
+    });
+    return trouve;
+  }
   function questesDe(etat, factionId) {
     var f = etat.factions.get(factionId);
     if (!f) return [];
     var semaine = Math.floor(etat.jour / 7);
     var h = h01(etat.seed, factionId, 'quete', semaine);
     var type = TYPES_QUETE[f.objectif] || 'explorer';
+    if (type === 'livrer') {
+      var ressource = ressourceCiblePourLivraison(f);
+      if (!ressource) return []; // ressources au-dessus du seuil bas : rien à livrer
+      return [{ id: factionId + ':quete:' + semaine, faction: factionId, type: type, ressource: ressource,
+                titre: texteQuete(f, type), recompense: 5 + Math.floor(h * 20) }];
+    }
+    if (type === 'eliminer') {
+      if (!enGuerreActive(etat, factionId)) return []; // hors guerre : aucune quête d'élimination
+      var cible = ciblePourRaid(etat, f, etat.jour);
+      if (!cible) return [];
+      return [{ id: factionId + ':quete:' + semaine, faction: factionId, type: type, cible: cible.id,
+                titre: texteQuete(f, type), recompense: 5 + Math.floor(h * 20) }];
+    }
     return [{ id: factionId + ':quete:' + semaine, faction: factionId, type: type,
               titre: texteQuete(f, type), recompense: 5 + Math.floor(h * 20) }];
+  }
+  /* Réussite d'une quête de livraison (SPEC-QUETE-001) : relève le niveau de
+     la ressource visée exactement du montant fourni, jamais au-delà du manque
+     réel (recalculé au moment de la livraison, pas figé à la proposition). */
+  function livrerQuete(etat, factionId, ressource, montant) {
+    var f = etat.factions.get(factionId);
+    if (!f || (ressource !== 'or' && ressource !== 'nourriture') || !(montant > 0)) return 0;
+    var manque = Math.max(0, SEUIL_RESSOURCE_BAS - f.ressources[ressource]);
+    var applique = Math.min(montant, manque);
+    f.ressources[ressource] += applique;
+    return applique;
+  }
+  /* Réussite d'une quête d'élimination (SPEC-QUETE-002) : même effet sur le
+     territoire/la relation qu'un raid gagné (FACTION-016), sans le coût en
+     ressources d'un raid (l'auteur est un aventurier, pas la faction elle-même).
+     `cibleId` DOIT être la cible réellement promise par la quête (le champ
+     `cible` renvoyé par questesDe au moment de la proposition) — jamais
+     recalculée ici via ciblePourRaid, dont le résultat dépend du jour de
+     résolution : rappeler ciblePourRaid avec le jour de résolution (au lieu
+     du jour de proposition) peut désigner une AUTRE faction dès que 3
+     factions ou plus sont candidates. On revalide seulement que cette cible
+     est toujours une faction connue et toujours en guerre ou en rivalité
+     avec l'auteur, pour ne pas appliquer un gain sur une relation apaisée
+     entretemps. */
+  function reussirQueteElimination(etat, factionId, cibleId) {
+    var f = etat.factions.get(factionId);
+    var cible = cibleId && etat.factions.get(cibleId);
+    if (!f || !cible) return null;
+    var relation = relationEntre(etat, f.id, cible.id);
+    if (relation !== 'guerre' && relation !== 'rivalite') return null;
+    appliquerGainElimination(etat, f, cible);
+    annoncer(etat, f.nom + ' voit ' + cible.nom + ' affaibli par un aventurier.', [f.id, cible.id]);
+    return cible.id;
   }
   function quetesActives(etat) {
     var out = [];
@@ -314,8 +408,12 @@
     TYPES: TYPES, CARACTERES: CARACTERES, ECHELLE: ECHELLE,
     creer: creer, decouvrir: decouvrir, tourDuMonde: tourDuMonde,
     relationEntre: relationEntre, questesDe: questesDe, quetesActives: quetesActives,
+    livrerQuete: livrerQuete, reussirQueteElimination: reussirQueteElimination,
     creerReputations: creerReputations, serialiser: serialiser, charger: charger,
-    // exposés pour les tests unitaires fins (déterminisme du hachage, naissance)
-    naitreDe: naitreDe, h01: h01,
+    // exposés pour les tests unitaires fins (déterminisme du hachage, naissance,
+    // effets d'une action isolée sans passer par le tirage aléatoire du jour)
+    naitreDe: naitreDe, h01: h01, appliquerAction: appliquerAction,
+    ciblePourRaid: ciblePourRaid, SEUIL_RESSOURCE_BAS: SEUIL_RESSOURCE_BAS,
+    COUT_ACTION_RESSOURCES: COUT_ACTION_RESSOURCES,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

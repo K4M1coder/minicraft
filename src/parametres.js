@@ -24,6 +24,12 @@
       aide: 'politique des zones de jeu (SPEC-ZONE-004) : generee, tout_pve, tout_sur ou tout_pvp' },
     { nom: 'liste-blanche', cle: 'listeBlanche', valeur: false, aide: 'seuls les joueurs inscrits entrent' },
     { nom: 'admin', cle: 'admin', attend: 'texte', defaut: null, aide: 'mot de passe ou jeton d\'administration' },
+    // SPEC-SECU-011 : liste blanche d'Origin pour la poignée de main WebSocket.
+    // Défaut null = AUCUNE restriction, choix explicite et documenté (pas un
+    // oubli) : sans --origines, le jeu servi par ce même serveur continue de
+    // fonctionner exactement comme avant.
+    { nom: 'origines', cle: 'origines', attend: 'texte', defaut: null,
+      aide: 'origines WebSocket autorisées, séparées par des virgules (ex. http://localhost:8080) ; défaut : aucune restriction' },
     // SPEC-BANC-015 : un serveur --serveur (dédié) refuse les résultats de test SAUF avec --tests
     { nom: 'tests', cle: 'tests', valeur: false, aide: 'autorise la réception de résultats de test (POST /tests/resultats) même en --serveur dédié' },
     { nom: 'aide', cle: 'aide', valeur: false, aide: 'affiche cette liste et s\'arrête' },

@@ -53,6 +53,23 @@ respecter (voir PLAN.md, « Commits et versions »).
     son propre seuil. G14 étend sa vérification : 100 % des tests ont
     désormais aussi un domaine ou une fonction (déclarée ou observée).
 
+- Sécurité serveur (SPEC-SECU-010/011, SPEC-SERVEUR-007) : les réponses de
+  fichiers statiques (`servir()`) portent désormais `X-Content-Type-Options:
+  nosniff` et une `Content-Security-Policy` minimale (calcul pur,
+  `NP.entetesSecuriteStatiques()`, src/net-protocol.js) compatible avec
+  three.js chargé depuis cdnjs.cloudflare.com et avec le bootstrap inline du
+  jeu comme du banc de test (`tests/index.html`, `document.write` compris) ;
+  jamais de `X-Powered-By`. La poignée de main WebSocket vérifie désormais
+  l'en-tête `Origin` contre une liste blanche configurable par
+  `--origines a,b,...` (décision pure `NP.origineAutorisee`) — sans ce
+  paramètre (défaut), aucune restriction n'est appliquée, choix explicite et
+  documenté qui laisse le jeu servi par ce même serveur fonctionner comme
+  avant. Le plafond de `ETAT.mobs` (80) est désormais un invariant nommé et
+  testé (`NP.MAX_MOBS_DIFFUSES`, `NP.selectionnerMobsProches`, fonction pure)
+  au lieu d'un littéral inline, et la cadence de diffusion de l'état
+  (`etatHz`) s'adapte maintenant à la charge — nombre de clients connectés et
+  file d'envoi TCP la plus encombrée (`NP.calculerEtatHz`) — plutôt que de
+  rester fixe, recalculée à chaque tic.
 - Vague 2 (B1, SPEC-SYNC-007/010/011, docs/vague-2/B1.md § 6, fin) :
   `ui.js` route désormais l'inventaire, l'équipement et la grille de
   fabrication du joueur (établi compris — `player.js` gagne `pl.grille`,
@@ -237,6 +254,115 @@ respecter (voir PLAN.md, « Commits et versions »).
   `MC_TEST_ARRET_MS` pour un arrêt propre sous Windows où `kill()` n'y
   déclenche aucun signal POSIX) : consulter/échanger, portée, refus, prix et
   stock persistés après arrêt/relance `--monde`.
+- Vague 2 (B1, étape 7, SPEC-SYNC-012/013/015/016, docs/vague-2/B1.md § 7) :
+  registre serveur des conteneurs POSÉS (`conteneursPoses`, `server.js`) —
+  coffre, armoire, étagère, bibliothèque, fourneau, distributeur (le
+  distributeur quitte sa Map séparée et rejoint ce registre, ce qui le rend
+  aussi persistant). `CONTENEUR_OUVRIR`/`CONTENEUR_FERMER` abonnent/désabonnent
+  un joueur local (un seul conteneur ouvert à la fois, comme l'écran) ;
+  `resoudreConteneur` REvérifie abonnement ET portée (6 blocs, `PORTEE_CONTENEUR`)
+  à CHAQUE opération, pas seulement à l'ouverture — corrige le trou par
+  lequel la banque (`ctxJoueur`) et un conteneur posé pouvaient rester
+  accessibles à distance. La banque se rouvre via un bloc coffre-fort
+  (position revérifiée) ou un banquier (`eid`, entité de rôle `banquier`,
+  distance revérifiée). `CONTENEUR_TRANSFERT`/`declarer` diffusent un delta
+  (`CONTENEUR_MAJ`) aux AUTRES abonnés, jamais à l'auteur (déjà servi par son
+  propre `INV_MAJ.conteneurs`, SYNC-015). Un fourneau posé cuit à chaque tic
+  qu'il ait ou non un abonné (SYNC-016) ; les messages de progression sont
+  limités à 2 Hz et seulement émis s'il y a un abonné. Casser un conteneur
+  posé (n'importe lequel, coffre-fort excepté puisqu'il n'a pas de contenu
+  propre) lâche son contenu au sol une seule fois, même si plusieurs joueurs
+  l'avaient ouvert : le retirer du registre avant toute autre opération fait
+  échouer proprement (motif `ferme`) tout transfert ultérieur. Persisté dans
+  `etatMonde`/`appliquerEtatMonde` (`conteneurs`, `MC.ContratsV2.validerConteneurPersiste`),
+  donc retrouvé après un arrêt puis une relance `--monde` (SYNC-021, partie
+  conteneurs).
+- Vague 2 (B1, étape 8, docs/vague-2/B1.md § 6/8) : `ui.js`/`game.js` —
+  coffre, armoire, étagère, bibliothèque, fourneau, distributeur et banque
+  passent au modèle référencé EN LIGNE (`container.cont`, le miroir réseau
+  posé par `game.js` à l'ouverture — `clickSlotRef`, `game.operer`), au lieu
+  d'une copie locale (`chests[k]`/`furnaces[k]`/`distributeurs[k]`) que deux
+  joueurs sur le même conteneur pouvaient chacun modifier sans jamais se
+  synchroniser (risque de duplication documenté). `net.js` gagne
+  `ouvrirConteneur`/`fermerConteneur` et les hooks `onConteneurEtat`/
+  `onConteneurMaj` ; l'ouverture devient asynchrone (l'écran ne s'affiche
+  qu'à la réponse du serveur). `clickSlotLegacy` (`ui.js`) est désormais
+  STRICTEMENT réservé au solo (`container.cont` absent) ; les deux modèles ne
+  coexistent jamais sur un même écran. Les fourneaux locaux (`furnaces[k]`)
+  ne sont plus tic-tés côté client en ligne (double cuisson corrigée, piège
+  documenté B1.md § 12) — c'est désormais le serveur seul qui fait autorité.
+  Hors périmètre : l'échange avec un PNJ marchand ordinaire (`TROC`, pas un
+  conteneur) reste tel quel.
+- Vague 2 (B4, SPEC-PVP-001 à 006, docs/vague-2/B4.md) : `src/pvp-enjeux.js`
+  (nouveau, `MC.PvpEnjeux`, module pur) — butin borné (10-25 % du nombre
+  d'objets du vaincu, équipement exclu, transféré exactement au vainqueur,
+  reliquat renvoyé pour tomber au sol), réputation politique dégradée de
+  10 points par meurtre non consenti au-delà du 2ᵉ en moins de 10 min de jeu
+  (fenêtre glissante) auprès des factions dont le territoire couvre le lieu,
+  hors-la-loi (réputation ≤ -50) et embargo recalculé dynamiquement (jamais
+  figé), duel consenti (proposition/acceptation/refus, caduque à 30 s, actif
+  120 s dans un rayon de 32 blocs autour du point médian à l'acceptation),
+  victoires comptées par joueur nommé, persistance (meurtres/victoires/
+  réputations ; duels et propositions éphémères, jamais sérialisés).
+- Vague 2 (B4, suite) : branchement réseau/serveur. `src/entities.js`
+  (`stepArrow`) porte désormais l'auteur du coup (`degatsPar[].par`) et
+  consulte `opts.peutBlesser(tireur, cible)` — une flèche entre deux membres
+  d'une même faction (SPEC-FACTION-012) n'inflige plus de dégâts (bogue
+  corrigé : seul le corps à corps était protégé), et un duel autorise un tir
+  même hors zone PvP/sans `--pvp`, jugé à l'IMPACT (pas au tir : un duel qui
+  expire pendant le vol d'un projectile protège la cible). `src/succes.js`
+  gagne trois succès (`pvp_victoire`, seuils 1/5/25). `src/commandes.js`
+  gagne `/duel`. `src/net.js`/`src/game.js` gagnent le hook `onPvp` (message
+  `PVP`, toasts/chat, succès sur `victoire`). Zones B4 de `server.js` :
+  `case ATTAQUE` (duel OU PvP+faction autorisés), interception `/duel` avant
+  `/faction`, `ev.degatsPar` (issue PvP commune corps-à-corps/flèche,
+  `regles.degatsMob` n'est plus appliqué à un coup de joueur — bogue
+  documenté par le plan, corrigé au passage), embargo dans `case TROC`,
+  persistance (`pvp:` dans `etatMonde`). `tests/integration-pvp.js` étendu
+  (butin, flèche entre membres de faction, `/duel` de bout en bout, message
+  `PVP` de victoire/défaite).
+- SPEC-ENV-003 (`src/metiers.js`, `src/economie.js`) : l'offre du fermier
+  (blé, seul métier agricole, METIER-001) ne se contente plus de geler en
+  hiver (`tickJour`, mult de pousse nul, SAISON-006) — elle diminue à son
+  tour, faute de récolte, jusqu'à épuisement, puis se restaure normalement
+  dès le retour d'une pousse au printemps (branche déjà existante, inchangée
+  pour toute ressource non agricole). Nouveau `Metiers.estRessourceAgricole`
+  (pure, dérivée de `METIER_DE_RESSOURCE` sans le dupliquer) distingue cette
+  seule ressource des autres stocks de lieu.
+- Diplomatie joueurs ↔ PNJ (SPEC-FACTION-017) : `guildes.js:declarerRelation`
+  accepte désormais un état politique (`MC.Politique`) optionnel en dernier
+  argument ; quand `cibleId` ne désigne pas une autre faction de joueurs, la
+  relation n'est acceptée que si cet identifiant correspond à une faction PNJ
+  réellement connue de cet état (sinon `{ ok:false, motif:'cible_introuvable' }`,
+  rien n'est enregistré), et la relation posée est répercutée côté PNJ, sur
+  l'échelle guerre/rivalité/neutre/alliance de `politique.js` (alliée→alliance,
+  ennemie→guerre), avec la même clé triée que `cleRelation` afin que
+  `MC.Politique.relationEntre` la relise à l'identique. `appliquerAction`
+  (commande `/faction relation`) transmet ce même état politique, désormais
+  en 4e argument optionnel ; le câblage réel de l'état politique du monde à
+  travers `server.js`/`game.js` reste à faire (fichiers hors périmètre de
+  cette tâche).
+- Factions politiques et quêtes (SPEC-FACTION-016, SPEC-QUETE-001/002,
+  `src/politique.js`) : un raid ou un avant-poste (`tourUnJour`) prélève
+  désormais un coût fixe (`or`/`nourriture`) sur son auteur qu'il réussisse
+  ou non, l'avant-poste gagnant lui aussi un risque d'échec (jet déterministe
+  par graine) qui ne coûte que les ressources, sans gain de territoire ;
+  raid et quête d'élimination partagent le même effet de succès
+  (`appliquerGainElimination`). `questesDe` ne propose plus une quête de
+  livraison que si la ressource visée (`or`/`nourriture`) est réellement
+  sous le seuil bas (`SEUIL_RESSOURCE_BAS`, 20), sa réussite (`livrerQuete`)
+  relevant ce niveau du montant fourni, plafonné au manque réel ; une quête
+  d'élimination n'apparaît qu'en relation `guerre` active, ciblant le membre
+  désigné par `ciblePourRaid`, et sa réussite (`reussirQueteElimination`)
+  applique exactement le gain d'un raid gagné avec la même graine.
+- Transport (SPEC-TRANSPORT-001, L45) : chaque véhicule (`src/vehicules.js`)
+  a désormais une jauge de carburant (`e.carburant`, capacité propre à
+  chaque type dans `DEFS`), consommée proportionnellement à la distance
+  parcourue par `conduire()`/`rouler()` ; à sec, les commandes du pilote
+  sont ignorées et le véhicule freine/retombe exactement comme un véhicule
+  abandonné (SPEC-VEHIC-009). Persistée par `serialiser()`/`restaurer()`
+  (anciennes sauvegardes : plein par défaut). Partie pure seulement — jauge
+  affichée au HUD et ravitaillement restent à faire côté `game.js`/`ui.js`.
 
 ### Modifié
 
@@ -257,9 +383,73 @@ respecter (voir PLAN.md, « Commits et versions »).
 - `tests/harness.js` : un test Node qui retourne une `Promise` échoue
   désormais explicitement (garde anti-faux-positif) plutôt que d'être compté
   vert sans que ses assertions asynchrones aient réellement été attendues.
+- Crochets git (SPEC-BANC-010 révisée) : `tools/hooks/pre-commit.js` et
+  `tools/hooks/pre-push.js` partagent désormais un seul filet anti-blocage de
+  15 min (`--delai 900`, constante `DELAI_FILET_S` dans le nouveau
+  `tools/hooks/delai-filet.js`) au lieu de fixer chacun le sien (240 s, puis
+  600 s et 150 s) — un crochet qui finit par réussir n'est plus coupé plus tôt
+  qu'un lancement manuel du même préréglage. Nouveau test
+  `tests/spec-crochets.js` (ajouté à la liste `TESTS` de `tests/run.js`,
+  hors `tests/spec-banc.js` qui n'en avait pas encore) qui vérifie qu'aucun
+  crochet ne passe un délai différent de 900 — et affirme en plus,
+  directement, que la constante partagée `DELAI_FILET_S` vaut 900 (relecture :
+  le scan des littéraux dans le texte des crochets réussissait trivialement
+  dès lors que ceux-ci passaient une référence symbolique plutôt qu'un
+  littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
+  relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
+  mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
+  Or `politique.js:tourUnJour` balayait ensuite TOUTES les clés de
+  `etat.relations` sans filtre (contrairement à `ciblePourRaid`, qui filtre
+  déjà avec `etat.factions.has`) pour leur appliquer une dérive aléatoire
+  journalière et générer des annonces via `nomDe` : une relation déclarée par
+  un joueur envers une faction PNJ dérivait donc spontanément au fil des
+  jours simulés, et les annonces pouvaient afficher l'id brut de la faction
+  de joueurs (`nomDe` retombe sur l'id quand il n'est pas dans
+  `etat.factions`) au lieu d'un nom lisible. `tourUnJour` applique désormais
+  la même garde que `ciblePourRaid` : une clé de relation dont l'une des deux
+  parts n'est pas une faction PNJ connue n'est ni dérivée ni annoncée.
+- SPEC-QUETE-002 (`politique.js`) : `reussirQueteElimination` recevait un
+  jour et recalculait la cible via `ciblePourRaid(etat, f, jour)`, alors que
+  `ciblePourRaid` dépend du jour (candidats indexés par un hachage qui varie
+  par jour). Résolue un jour différent de celui de la proposition — le cas
+  normal une fois le suivi/l'acceptation des quêtes câblé —, la « réussite »
+  pouvait viser une AUTRE faction que celle annoncée au joueur dans la quête,
+  dès que 3 factions ou plus étaient candidates (guerre ou rivalité).
+  `reussirQueteElimination` reçoit désormais directement `cibleId`, la cible
+  réellement promise par `questesDe` à la proposition, et se contente de
+  revalider qu'elle est toujours une faction connue en guerre ou en
+  rivalité avec l'auteur, plutôt que de la recalculer au jour de résolution.
+
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
+- Vague 2 (B1, revue adversariale, gravité élevée, SPEC-SYNC-012/013/014) :
+  `validerEmplacement` (contrats-vague2.js, figé) plafonne génériquement `i`
+  à 27 pour toute zone `'cont'`, en comptant sur le serveur pour vérifier la
+  taille RÉELLE (fourneau 3, étagère/distributeur 9, bibliothèque 18) — que
+  `resolveZone`/`transfert` (conteneurs.js) ne comparaient jamais à
+  `cont.taille`. `zd.slots[op.vers.i] = …` pouvait donc agrandir le tableau
+  JS au-delà de sa taille, et `validerConteneurPersiste` (qui exige
+  `slots.length === taille`) faisait alors disparaître le conteneur ENTIER,
+  silencieusement, à la prochaine relance `--monde`. `indiceValide`
+  (conteneurs.js) refuse désormais tout indice hors de la taille réelle du
+  conteneur ciblé, en lecture comme en écriture, pour `inv`/`grille`/`cont`
+  (motif `absent` en source, `incompatible` en destination) — jamais une
+  écriture qui l'agrandirait. Défense en profondeur à la persistance
+  (`normaliserTailleConteneur`, server.js) : un conteneur déjà mal formé
+  n'est plus filtré silencieusement par `etatMonde` — tronqué à sa taille,
+  l'excédent lâché au sol (position connue), jamais perdu sans trace, avec
+  un avertissement journalisé. Casser (et éventuellement remplacer) un
+  conteneur posé pendant qu'un joueur l'a ouvert le désabonne désormais
+  EXPLICITEMENT et le notifie (`CONTENEUR_FERMER`, message jusqu'ici
+  seulement c→s, réutilisé comme fermeture forcée s→c — `net.js`/`game.js`
+  ferment l'écran) : l'ancienne clé ne se résout plus jamais contre un
+  conteneur de type différent posé au même endroit (coffre 27 cases →
+  fourneau 3, par exemple). `onInvMaj` fournit désormais le miroir du
+  conteneur EN LIGNE ouvert au rejeu des opérations en attente (`predInv`)
+  — une opération sur la zone `'cont'` encore en attente échouait sinon au
+  rejeu ; auparavant, seul son côté inventaire était rejoué.
 
 - Aide de test partagée `reset()` (tests/e2e.js, ~140 tests e2e) : elle
   repositionnait le joueur au point d'apparition puis n'attendait que 3
@@ -407,6 +597,60 @@ respecter (voir PLAN.md, « Commits et versions »).
   route n'existait pas encore provoquait un 405 (le serveur n'accepte que
   `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
   désormais stable dans le noyau.
+- Test e2e SPEC-RENDU-004 (« la réfraction ne s'active qu'à moins d'une
+  distance fixe de la caméra »), intermittent : après l'excursion loin de
+  toute eau (téléportations successives, rechargées à chaque fois en
+  synchrone via `streamChunks(true)`), le retour près de la mer cible ne
+  rappelait PAS `streamChunks(true)` et se contentait d'attendre 20 images
+  réelles — en comptant sur le rattrapage progressif et budgété
+  (`GEN_BUDGET`/`MESH_BUDGET`, potentiellement via Worker) de la boucle de
+  jeu pour régénérer/remailler le chunk d'eau proche, redevenu absent après
+  l'excursion. Ce rattrapage dépend du temps réel écoulé (aller-retour
+  Worker, charge CPU concurrente) et non du nombre d'images : sous charge,
+  20 images ne suffisaient pas toujours, et `eau.distance` continuait de
+  désigner l'ancien maillage éloigné (« l'eau est maintenant à portée : 77.35
+  >= 40 »). Comportement du jeu inchangé ; le test force maintenant le même
+  rechargement synchrone qu'à l'aller avant de vérifier la distance.
+- Test e2e SPEC-SUCCES-001 (« casser un bloc débloque « Premier bloc » »),
+  intermittent dans le contexte des ~110 tests qui le précèdent (reproduit,
+  cause identifiée par instrumentation ciblée) : le bloc réellement visé
+  sous le joueur dépend du MONDE hérité de tests antérieurs sans rapport
+  (une graine tirée au hasard par SPEC-MENU-003/004, ou le monde « Autre
+  carte », graine 777, chargé par SPEC-TERRAIN-007 et jamais restauré
+  ensuite) — un sol qui peut être de la pierre, du grès… n'importe quel
+  bloc que la pelle en fer tenue par le test ne « harvest » pas (tier 0,
+  vitesse ×1 au lieu de ×8), prenant alors jusqu'à ~1,5-2,2 s de minage
+  SIMULÉ. Le test attendait déjà le vrai critère (le bloc change) mais le
+  bornait à 240 images RÉELLES, une hypothèse implicite d'au moins ~150 fps
+  pour ces blocs-là — fausse sous charge partagée (constaté : ~600 ms isolé,
+  jusqu'à ~4,2 s dans le contexte, selon la graine tirée par les tests
+  précédents). Le test force désormais un bloc CONNU et cassable
+  INSTANTANÉMENT à la pelle (terre) sous le joueur avant de miner : le
+  résultat reste déterministe et rapide quel que soit le monde hérité, sans
+  affaiblir ce qu'il vérifie.
+
+### Sécurité
+
+- Jetons d'administration et d'invitation à entropie cryptographique
+  (SPEC-SECU-009) : `src/admin.js` (module pur, sans dépendance Node)
+  accepte désormais une source aléatoire INJECTÉE (`generateurAleatoire`,
+  posée par `creerEtat()`) pour `nouveauJeton()` — server.js lui passe
+  `crypto.randomBytes`, jamais `Math.random`, aussi bien pour le jeton
+  d'administration tiré au démarrage sans `--admin` que pour les jetons de
+  modérateur et d'invitation. Sans générateur injecté, l'ancien repli
+  (horodatage + compteur + hasard, suffisant pour la seule unicité) reste
+  disponible pour la rétrocompatibilité.
+- `src/admin.js` (module pur) expose désormais `MC.Admin.purger()`
+  (SPEC-SERVEUR-005, toujours ⏳) : bornage de `admin.sessions`,
+  `admin.invitations` et `admin.sanctions` en taille ET en ancienneté, sans
+  jamais retirer une entrée encore active (session ouverte, invitation ni
+  révoquée ni expirée ni épuisée, bannissement ou sourdine en cours) — les
+  entrées obsolètes les plus vieilles sont retirées d'abord, puis les plus
+  anciennes au-delà du seuil de taille si besoin. La fonction est testée en
+  isolation (`tests/spec-admin.js`) mais n'est PAS ENCORE invoquée par
+  `server.js` : aucune purge n'a lieu sur un serveur qui tourne réellement
+  tant qu'elle n'est pas branchée sur la boucle périodique existante
+  (tâche de suivi explicitement à part, hors du périmètre autorisé ici).
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité

@@ -4,6 +4,19 @@
    --pvp on (pour vérifier que le PvP marche ET reste soumis aux zones),
    l'autre sans (pour vérifier qu'il reste désactivé par défaut).
 
+   Étendu (B4, docs/vague-2/B4.md § 11, SPEC-PVP-001 à 006) : les deux
+   lancements existants portent aussi MC_TEST_INV, pour vérifier en plus —
+   scénario 1 (sans --pvp) : /duel autorise le combat MÊME sans --pvp, et
+   AUCUN butin/meurtre n'est compté pendant un duel (SPEC-PVP-001/003/005) ;
+   scénario 2 (--pvp on) : une flèche entre membres d'une même faction
+   n'inflige aucun dégât (SPEC-PVP-002 en ligne), et la défaite finale
+   transfère un butin borné au vainqueur, annoncé par un message PVP
+   victoire/défaite (SPEC-PVP-001/004). SPEC-PVP-003/006 (réputation,
+   embargo) sont vérifiées par tests/spec-pvp.js (pur, déterministe) : les
+   reproduire ici exigerait un lieu politique réel à une position connue à
+   l'avance, fragile dans un monde généré — inutile, le calcul lui-même
+   (fenêtre glissante, seuil, embargo recalculé) est déjà couvert.
+
    Usage : node tests/integration-pvp.js [port] */
 'use strict';
 const net = require('net');
@@ -131,8 +144,10 @@ async function attendreDemarrage(port) {
   const logs = [];
 
   // ── 1. serveur SANS --pvp : désactivé par défaut (SPEC-COMBAT-002) ────────
+  // MC_TEST_INV='[[3,10]]' : 10 pierres (id 3, B.STONE) à quiconque rejoint
+  // sans enregistrement existant — de quoi vérifier qu'un duel ne butine pas.
   const s1 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secret1'],
-                   { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
+                   { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,10]]' }) });
   s1.stdout.on('data', d => logs.push(String(d)));
   s1.stderr.on('data', d => logs.push('ERR ' + String(d)));
   try {
@@ -152,6 +167,34 @@ async function attendreDemarrage(port) {
     const pvBob1 = toiB1 && toiB1[0] && toiB1[0].pv;
     eq(pvBob1, 20, 'SPEC-COMBAT-002 : sans --pvp, une attaque entre joueurs ne fait AUCUN dégât');
 
+    // ── SPEC-PVP-005 : un duel consenti autorise le combat MÊME sans --pvp ──
+    a1.envoyer({ t: 'chat', texte: '/duel Bob' });
+    const propose = await b1.attendre('pvp', 3000, m => m.evt === 'duel_propose');
+    eq(propose.de, 'Alice', 'SPEC-PVP-005 : Bob reçoit la proposition de duel d\'Alice');
+    b1.envoyer({ t: 'chat', texte: '/duel accepter' });
+    await a1.attendre('pvp', 3000, m => m.evt === 'duel_debut');
+    await b1.attendre('pvp', 3000, m => m.evt === 'duel_debut');
+
+    const invBobAvant = (b1.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
+    a1.envoyer({ t: 'attaque', j: 0, degats: 5, joueurCible: bB1.id + '/0' });
+    await dodo(500);   // laisse passer la cadence d'attaque (0,4 s) avant le prochain coup
+    const toiB1d = (b1.messages.filter(m => m.t === 'etat').pop() || {}).toi;
+    eq(toiB1d && toiB1d[0] && toiB1d[0].pv, 15, 'SPEC-PVP-005 : en duel, le coup porte même sans --pvp');
+
+    // achever Bob DANS le duel : ni butin ni meurtre non consenti comptés
+    for (let i = 0; i < 3; i++) {
+      a1.envoyer({ t: 'attaque', j: 0, degats: 5, joueurCible: bB1.id + '/0' });
+      await dodo(500);
+    }
+    const defaite1 = await b1.attendre('pvp', 4000, m => m.evt === 'defaite');
+    ok(!defaite1.perte || !defaite1.perte.length, 'SPEC-PVP-001/005 : aucun butin lors d\'une défaite en duel', JSON.stringify(defaite1));
+    const victoire1 = await a1.attendre('pvp', 3000, m => m.evt === 'victoire');
+    eq(victoire1.n, 1, 'SPEC-PVP-004 : première victoire comptée (message PVP victoire reçu par le vainqueur)');
+    await dodo(200);
+    const invBobApres = (b1.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
+    ok(JSON.stringify(invBobAvant) === JSON.stringify(invBobApres),
+       'SPEC-PVP-001 : l\'inventaire de Bob est inchangé après une défaite en duel', JSON.stringify(invBobApres));
+
     a1.fermer(); b1.fermer();
     await dodo(150);
   } catch (e) {
@@ -164,9 +207,11 @@ async function attendreDemarrage(port) {
 
   // ── 2. serveur AVEC --pvp on, zone forcée en PvP par un administrateur ────
   const PORT2 = PORT + 1;
+  // MC_TEST_INV='[[3,20]]' : 20 pierres chacun, de quoi mesurer un butin
+  // borné (10 à 25 % de 20 = 2 à 5) à la défaite finale (SPEC-PVP-001).
   const s2 = spawn(process.execPath,
     [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--pvp', 'on', '--admin', 'secret2', '--zone', 'generee'],
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
+    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,20]]' }) });
   s2.stdout.on('data', d => logs.push(String(d)));
   s2.stderr.on('data', d => logs.push('ERR ' + String(d)));
   try {
@@ -219,6 +264,14 @@ async function attendreDemarrage(port) {
     await dodo(600);
     toiB = (b.messages.filter(m => m.t === 'etat').pop() || {}).toi;
     eq(toiB && toiB[0] && toiB[0].pv, 15, 'SPEC-FACTION-012 : deux membres d\'une même faction ne se blessent pas');
+
+    // ── SPEC-PVP-002 en ligne : une flèche entre membres d'une même faction
+    // n'inflige pas davantage de dégâts que le corps à corps ci-dessus.
+    a.envoyer({ t: 'tir', j: 0, dx: 0, dy: 0, dz: 1, vitesse: 30, degats: 5, genre: 'fleche' });
+    await dodo(400);
+    toiB = (b.messages.filter(m => m.t === 'etat').pop() || {}).toi;
+    eq(toiB && toiB[0] && toiB[0].pv, 15, 'SPEC-PVP-002 : une flèche entre membres d\'une même faction n\'inflige aucun dégât');
+
     b.envoyer({ t: 'chat', texte: '/faction dire rendez-vous au col' });
     const canal = await a.attendre('chat', 3000, m => m.type === 'faction');
     ok(/\[Loups\] Bob : rendez-vous au col/.test(canal.texte), 'SPEC-FACTION-012 : le canal de faction porte le message', canal.texte);
@@ -235,6 +288,7 @@ async function attendreDemarrage(port) {
     eq(toiB && toiB[0] && toiB[0].pv, 15, 'une cible introuvable ne fait aucun dégât');
 
     // achever Bob : le serveur annonce qui a vaincu qui (chat)
+    const invAliceAvant = (a.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
     for (let i = 0; i < 4; i++) {
       a.envoyer({ t: 'attaque', j: 0, degats: 5, joueurCible: bB.id + '/0' });
       await dodo(500);                          // laisse passer la cadence d'attaque (0,4 s)
@@ -242,6 +296,24 @@ async function attendreDemarrage(port) {
     const annonce = await a.attendre('chat', 4000, m => /vaincu/.test(m.texte || ''));
     ok(/Alice/.test(annonce.texte) && /Bob/.test(annonce.texte),
        'SPEC-COMBAT-002 : le serveur annonce qui a vaincu qui', annonce && annonce.texte);
+
+    // ── SPEC-PVP-001/004 : butin borné (10-25 % de 20 pierres = 2 à 5),
+    // reçu exactement par le vainqueur, victoire/défaite annoncées ────────
+    const victoire = await a.attendre('pvp', 3000, m => m.evt === 'victoire');
+    eq(victoire.contre, 'Bob', 'SPEC-PVP-004 : Alice reçoit sa victoire contre Bob');
+    eq(victoire.n, 1, 'SPEC-PVP-004 : première victoire d\'Alice comptée par le serveur');
+    const defaite = await b.attendre('pvp', 3000, m => m.evt === 'defaite');
+    eq(defaite.de, 'Alice', 'SPEC-PVP-001 : Bob apprend qui l\'a vaincu');
+    const pertesBob = (defaite.perte || []).reduce((s, p) => s + p.n, 0);
+    ok(pertesBob >= 2 && pertesBob <= 5, `SPEC-PVP-001 : perte de Bob (${pertesBob}) dans les bornes [2,5] (10-25 % de 20)`, JSON.stringify(defaite));
+    await dodo(200);
+    const invBobFinal = (b.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
+    const totalBobFinal = (invBobFinal || []).reduce((s, c) => s + (c ? c[1] : 0), 0);
+    eq(totalBobFinal, 20 - pertesBob, 'SPEC-PVP-001 : Bob garde exactement ce qu\'il n\'a pas perdu');
+    const invAliceApres = (a.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
+    const totalAliceAvant = (invAliceAvant || []).reduce((s, c) => s + (c ? c[1] : 0), 0);
+    const totalAliceApres = (invAliceApres || []).reduce((s, c) => s + (c ? c[1] : 0), 0);
+    eq(totalAliceApres - totalAliceAvant, pertesBob, 'SPEC-PVP-001 : Alice reçoit exactement ce que Bob a perdu (aucune duplication)');
 
     a.fermer(); b.fermer(); admin.fermer();
     await dodo(150);
