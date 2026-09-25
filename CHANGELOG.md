@@ -290,6 +290,14 @@ respecter (voir PLAN.md, « Commits et versions »).
   d'élimination n'apparaît qu'en relation `guerre` active, ciblant le membre
   désigné par `ciblePourRaid`, et sa réussite (`reussirQueteElimination`)
   applique exactement le gain d'un raid gagné avec la même graine.
+- Transport (SPEC-TRANSPORT-001, L45) : chaque véhicule (`src/vehicules.js`)
+  a désormais une jauge de carburant (`e.carburant`, capacité propre à
+  chaque type dans `DEFS`), consommée proportionnellement à la distance
+  parcourue par `conduire()`/`rouler()` ; à sec, les commandes du pilote
+  sont ignorées et le véhicule freine/retombe exactement comme un véhicule
+  abandonné (SPEC-VEHIC-009). Persistée par `serialiser()`/`restaurer()`
+  (anciennes sauvegardes : plein par défaut). Partie pure seulement — jauge
+  affichée au HUD et ravitaillement restent à faire côté `game.js`/`ui.js`.
 
 ### Modifié
 
