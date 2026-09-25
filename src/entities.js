@@ -272,7 +272,19 @@
     /* Avance un projectile par petits pas et s'arrete au premier contact.
        On subdivise le deplacement : a 34 m/s et 60 images/s, un pas entier
        fait 0,57 bloc — un mur d'un bloc passerait au travers un tir sur deux. */
-    function stepArrow(e, dt, player, events, joueurs, pvpOk) {
+    /* `peutBlesser(tireurState, cibleState)` (B4, SPEC-PVP-002/005) : fourni
+       par le serveur (server.js), il retrouve les deux joueurs par leur
+       `state` et décide — duel consenti en cours (SPEC-PVP-005, prioritaire :
+       il autorise même hors zone PvP ou sans --pvp) OU (PvP autorisé par la
+       zone/le réglage ET aucune faction commune, SPEC-PVP-002/FACTION-012).
+       Quand il est fourni, il REMPLACE `pvpOk` pour un tir de JOUEUR (`pvpOk`
+       reste seul juge pour un tir de créature/distributeur, via
+       `degatsMobOk`, inchangé) — évalué à CHAQUE pas de la trajectoire, donc
+       à l'IMPACT réel, jamais au moment du tir : un duel qui expire ou
+       s'éloigne pendant le vol d'un projectile protège la cible, même si le
+       tir était permis à l'instant du déclenchement (piège documenté par
+       B4.md § 13, testé par SPEC-PVP-005). */
+    function stepArrow(e, dt, player, events, joueurs, pvpOk, peutBlesser) {
       var cibles = joueurs && joueurs.length ? joueurs : (player ? [player] : []);
       e.vie -= dt;
       if (e.vie <= 0) { remove(e); return; }
@@ -315,11 +327,16 @@
                joueur n'est un coup permis que si le PvP l'est (réglage du
                serveur ET zone, jugés par `pvpOk`, fourni par l'appelant) ;
                tirée par une créature, c'est une question de zone PvE. */
-            var permis = estJoueur(e.tireur) ? (pvpOk ? pvpOk(e.tireur.pos, pj.pos) : false)
-                                              : degatsMobOk(pj.pos);
+            var permis = estJoueur(e.tireur)
+              ? (peutBlesser ? peutBlesser(e.tireur, pj) : (pvpOk ? pvpOk(e.tireur.pos, pj.pos) : false))
+              : degatsMobOk(pj.pos);
             if (events && permis) {
               if (pj === player) events.damage += e.degats;
-              events.degatsPar.push({ joueur: pj, n: e.degats });
+              // `par` (B4, SPEC-PVP-001/003) : l'auteur du coup — le state du
+              // tireur s'il s'agit d'un joueur, `null` pour une créature ou un
+              // distributeur (server.js le retrouve par identité d'objet,
+              // comme il le fait déjà pour `joueur`).
+              events.degatsPar.push({ joueur: pj, n: e.degats, par: e.tireur || null });
             }
             remove(e);
             return;
@@ -850,7 +867,7 @@
         if (e.hurtCd > 0) e.hurtCd -= dt;
 
         if (e.type === 'arrow') {
-          stepArrow(e, dt, player, events, joueurs, opts.pvpOk);
+          stepArrow(e, dt, player, events, joueurs, opts.pvpOk, opts.peutBlesser);
           continue;
         }
 

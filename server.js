@@ -29,7 +29,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
-                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'livre', 'livres'];
+                 'chat', 'commandes', 'split', 'contrats-vague2', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -108,6 +108,12 @@ const guildes = MC.Guildes.creerEtat();
 // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
 // module et même état joués à l'identique en solo (game.js) et ici.
 const economie = MC.Economie.creerEtat(CONF.graine);
+// B4 (docs/vague-2/B4.md) : butin, meurtres non consentis, réputation,
+// hors-la-loi, duels et victoires PvP. Déclaré ICI (avant `etatMonde`/
+// `appliquerEtatMonde`, appelée dès la reprise `--monde` plus bas dans ce
+// fichier), même raison que `joueursRegistre`/`banques` juste au-dessus dans
+// B1 : une `const` lue avant sa déclaration lexicale planterait au démarrage.
+const pvp = MC.PvpEnjeux.creerEtat();
 // SPEC-MECA-001 : contenu des distributeurs — le serveur fait foi sur ce qui
 // s'éjecte sur signal (voir NP.MSG.DISTRIB et monde.tickCircuits plus bas).
 // B1 (étape 7, SPEC-SYNC-012/013) : un distributeur est maintenant un
@@ -196,6 +202,10 @@ function etatMonde() {
         });
       })
       .filter(Boolean),
+    // B4 (docs/vague-2/B4.md § 6) : meurtres récents, victoires et réputations
+    // politiques — en dernier, comme prévu par le plan. Duels et propositions
+    // sont éphémères, jamais persistés (MC.PvpEnjeux.serialiser les omet déjà).
+    pvp: MC.PvpEnjeux.serialiser(pvp),
   };
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
@@ -250,6 +260,13 @@ function appliquerEtatMonde(data) {
     const eco = MC.Economie.charger(data.economie);
     economie.jour = eco.jour; economie.lieux = eco.lieux;
     economie.joueurs = eco.joueurs; economie.departs = eco.departs;
+  }
+  // B4 : absent d'un fichier plus ancien (avant B4) → simplement vide, comme
+  // aujourd'hui. Duels et propositions ne sont jamais dans `data.pvp`
+  // (jamais sérialisés) : ils restent donc ceux, vides, de `pvp` au démarrage.
+  if (data.pvp) {
+    const pv = MC.PvpEnjeux.charger(data.pvp);
+    pvp.meurtres = pv.meurtres; pvp.victoires = pv.victoires; pvp.reputations = pv.reputations;
   }
   // B1 (docs/vague-2/B1.md § 7-8) : registre des joueurs nommés — absent
   // d'un fichier plus ancien (v1/v2, ou v2 d'avant cette section), donc
@@ -1061,9 +1078,11 @@ function traiter(c, m) {
         const vst = cible.js.joueur.state;
         const d2 = Math.hypot(vst.pos.x - st.pos.x, vst.pos.y + 0.9 - st.pos.y - 1.6, vst.pos.z - st.pos.z);
         if (d2 > 6) break;
-        if (!pvpAutorise(st.pos, vst.pos)) break;
-        // deux membres d'une même faction ne se blessent pas (SPEC-FACTION-012)
-        if (!MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom)) break;
+        // B4 (SPEC-PVP-002/005) : un duel consenti autorise le coup MÊME hors
+        // zone PvP et MÊME entre membres d'une même faction (le consentement
+        // explicite prime) ; sinon, comme avant, zone ET faction.
+        const duel = MC.PvpEnjeux.duelActif(pvp, c.nom, cible.c.nom, heure, st.pos, vst.pos);
+        if (!duel && !(pvpAutorise(st.pos, vst.pos) && MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom))) break;
         js.attaqueCd = 0.4;
         const avant = vst.dead;
         vst.hurtCd = 0;
@@ -1076,6 +1095,9 @@ function traiter(c, m) {
           const msg = chat.systeme(c.nom + ' a vaincu ' + cible.c.nom);
           if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
           journal(`⚔ ${c.nom} a vaincu ${cible.c.nom} (PvP)`);
+          // B4 (SPEC-PVP-001/003/004) : butin, meurtre, réputation, victoire —
+          // jamais de butin ni de meurtre compté pendant un duel consenti.
+          issuePvp({ c, j: m.j, js }, cible, duel);
         }
         break;
       }
@@ -1232,6 +1254,14 @@ function traiter(c, m) {
     }
 
     case NP.MSG.CHAT: {
+      /* B4 (SPEC-PVP-005) : /duel <nom> | /duel accepter | /duel refuser —
+         interception AVANT /faction (§ 4 du plan), jamais diffusé au chat
+         général : une réponse système au seul intéressé (et à l'adversaire
+         quand il y en a un). */
+      if (typeof m.texte === 'string' && /^\/duel(\s|$)/.test(m.texte)) {
+        traiterDuel(c, m.texte);
+        break;
+      }
       /* /faction … : le serveur fait foi sur les factions de joueurs
          (SPEC-FACTION-009 à 013) ; la réponse ne va qu'à l'intéressé, et
          « dire » ne va qu'aux membres de sa faction principale. */
@@ -1359,10 +1389,11 @@ function traiter(c, m) {
         envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });
         break;
       }
-      // action === 'echanger' : idempotence par seq (B1), embargo calculé par
-      // B4 après son rebase (SPEC-PVP-006)
+      // action === 'echanger' : idempotence par seq (B1)
       if (!seqNouveau(js, m.seq)) break;
-      const embargo = false;
+      // B4 (SPEC-PVP-006) : hors-la-loi envers une faction dont le territoire
+      // couvre le lieu du PNJ → embargo (motif 'embargo', economie.js § 8).
+      const embargo = MC.PvpEnjeux.embargo(pvp, c.nom, politique, ent.pos.x, ent.pos.z);
       const r = MC.Economie.executerTroc(economie, etatJoueurServeur(js).inv, {
         lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: m.offre, fois: m.fois || 1,
         nom: c.nom, embargo,
@@ -1832,6 +1863,115 @@ function joueurParCle(cle) {
   return tousLesJoueurs().find(x => x.c.id === id && x.j === j) || null;
 }
 
+// ── PvP : enjeux et sanctions (B4, SPEC-PVP-001 à 006) ──────────────────────
+/* État `pvp` (MC.PvpEnjeux) déclaré plus haut, avec `politique`/`guildes`
+   (même raison : lu par `etatMonde`/`appliquerEtatMonde` dès la reprise
+   `--monde`, avant ce point du fichier). Cette section rassemble les
+   helpers, tous des déclarations de fonction (hissées), donc utilisables
+   depuis `traiter()` bien plus haut dans le fichier — même patron que
+   `ctxJoueur`/`resoudreConteneur` pour B1. */
+
+// retrouve le tuple {c, j, js} du joueur local dont le state est EXACTEMENT
+// `state` (identité d'objet — comme `joueurs.find` sur `ev.picked`/`degatsPar`
+// déjà utilisé plus bas pour le ramassage et les dégâts de créature).
+function joueurParEtat(state) {
+  return tousLesJoueurs().find(x => x.js.joueur.state === state) || null;
+}
+// retrouve un joueur CONNECTÉ par son nom de connexion (insensible à la casse
+// et aux espaces, comme `canon`) — utilisé par /duel, qui désigne sa cible
+// par son nom plutôt que par la clé « id/j » de ATTAQUE (piège B4.md § 13 :
+// deux joueurs locaux d'un même poste partagent ce nom, jamais deux « vrais »
+// adversaires).
+function joueurParNom(nom) {
+  const cnom = MC.Admin.canon(nom);
+  return tousLesJoueurs().find(x => MC.Admin.canon(x.c.nom) === cnom) || null;
+}
+/* Fournie à `entites.update` comme `opts.peutBlesser` (SPEC-PVP-002/005) :
+   un duel consenti en cours autorise le coup MÊME hors zone PvP/sans --pvp ;
+   sinon, PvP autorisé par la zone/le réglage ET aucune faction commune —
+   exactement la même règle que `case ATTAQUE` pour le corps à corps. Prend
+   des STATES (comme `stepArrow`/`degatsPar` les manipulent), retrouve les
+   noms au besoin — jamais l'inverse (`peutBlesser` de guildes.js prend des
+   NOMS, piège documenté par B4.md § 13). */
+function peutBlesserJoueurs(stA, stB) {
+  const a = joueurParEtat(stA), b = joueurParEtat(stB);
+  if (!a || !b) return false;
+  const duel = MC.PvpEnjeux.duelActif(pvp, a.c.nom, b.c.nom, heure, stA.pos, stB.pos);
+  return duel || (pvpAutorise(stA.pos, stB.pos) && MC.Guildes.peutBlesser(guildes, a.c.nom, b.c.nom));
+}
+function envoyerSysteme(c, texte) {
+  envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte, type: 'systeme' });
+}
+/* Issue commune d'une mort PvP (corps à corps ou flèche) : butin, meurtre,
+   réputation, hors-la-loi — jamais en duel (SPEC-PVP-001/003/005) — et, DANS
+   TOUS LES CAS, la victoire et son message (SPEC-PVP-004). `vainqueur`/
+   `vaincu` : { c, j, js }. */
+function issuePvp(vainqueur, vaincu, duel) {
+  const nomV = vainqueur.c.nom, nomP = vaincu.c.nom;
+  let perte;
+  if (!duel) {
+    const invPerdant = etatJoueurServeur(vaincu.js).inv, invGagnant = etatJoueurServeur(vainqueur.js).inv;
+    const r = MC.PvpEnjeux.resoudreButin(invPerdant, invGagnant, nomV + '|' + nomP + '|' + heure.toFixed(3));
+    perte = r.perte;
+    // le reliquat que le vainqueur ne peut pas porter tombe À SES PIEDS (il
+    // vient de le gagner : c'est lui qui a la priorité dessus, pas le vaincu).
+    r.reste.forEach(p => lacherAuxPieds(vainqueur.js, p));
+    const posVaincu = vaincu.js.joueur.state.pos;
+    const factions = MC.PvpEnjeux.factionsProches(politique, posVaincu.x, posVaincu.z);
+    const res = MC.PvpEnjeux.enregistrerMeurtre(pvp, nomV, nomP, heure, factions);
+    if (res.penalites.length) envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'reputation', factions: res.penalites });
+    if (res.horsLaLoi.length) {
+      envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'hors_la_loi',
+        factions: res.penalites.filter(p => res.horsLaLoi.indexOf(p.id) >= 0) });
+    }
+  }
+  const n = MC.PvpEnjeux.enregistrerVictoire(pvp, nomV);
+  envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'victoire', contre: nomP, n });
+  const msgDefaite = { t: NP.MSG.PVP, evt: 'defaite', de: nomV };
+  if (perte) msgDefaite.perte = perte;
+  envoyer(vaincu.c, msgDefaite);
+  envoyerInvMaj(vainqueur.c, vainqueur.j, {});
+  envoyerInvMaj(vaincu.c, vaincu.j, {});
+  MC.Admin.journaliser(admin, { auteur: nomV, action: 'pvp_victoire', cible: nomP, details: duel ? 'duel' : 'meurtre', heure });
+}
+/* /duel <nom> | /duel accepter | /duel refuser (case CHAT, avant /faction).
+   Jamais diffusé au chat général : une réponse système au seul intéressé (et
+   à l'adversaire, quand il y en a un joignable). */
+function traiterDuel(c, texte) {
+  const args = texte.trim().split(/\s+/).slice(1);
+  const sous = (args[0] || '').toLowerCase();
+  if (sous === 'accepter' || sous === 'refuser') {
+    const prop = pvp.propositions.get(MC.Admin.canon(c.nom));
+    const proposeur = prop ? joueurParNom(prop.de) : null;
+    const moi = joueurParNom(c.nom);
+    if (!moi) return;
+    const posProposeur = proposeur ? proposeur.js.joueur.state.pos : moi.js.joueur.state.pos;
+    const r = MC.PvpEnjeux.repondreDuel(pvp, c.nom, sous === 'accepter', heure, posProposeur, moi.js.joueur.state.pos);
+    if (!r.ok) { envoyerSysteme(c, 'Duel : aucune proposition à laquelle répondre (ou trop tard).'); return; }
+    if (r.refuse) {
+      envoyerSysteme(c, 'Duel refusé.');
+      if (proposeur) envoyerSysteme(proposeur.c, c.nom + ' refuse le duel.');
+      return;
+    }
+    envoyerSysteme(c, 'Duel commencé avec ' + r.de + ' — ' + MC.PvpEnjeux.DUREE_DUEL + ' s, restez à moins de ' +
+                   MC.PvpEnjeux.RAYON_DUEL + ' blocs l\'un de l\'autre.');
+    envoyer(c, { t: NP.MSG.PVP, evt: 'duel_debut', contre: r.de });
+    if (proposeur) {
+      envoyerSysteme(proposeur.c, c.nom + ' accepte le duel !');
+      envoyer(proposeur.c, { t: NP.MSG.PVP, evt: 'duel_debut', contre: c.nom });
+    }
+    return;
+  }
+  const cibleNom = args[0];
+  if (!cibleNom) { envoyerSysteme(c, 'Usage : /duel <nom> | /duel accepter | /duel refuser'); return; }
+  const adversaire = joueurParNom(cibleNom);
+  if (!adversaire || adversaire.c.id === c.id) { envoyerSysteme(c, 'Joueur introuvable : ' + cibleNom); return; }
+  const r = MC.PvpEnjeux.proposerDuel(pvp, c.nom, cibleNom, heure);
+  if (!r.ok) { envoyerSysteme(c, 'Duel : impossible de se dueller soi-même.'); return; }
+  envoyerSysteme(c, 'Duel proposé à ' + adversaire.c.nom + ' — ' + MC.PvpEnjeux.DELAI_PROPOSITION + ' s pour répondre.');
+  envoyer(adversaire.c, { t: NP.MSG.PVP, evt: 'duel_propose', de: c.nom, jusque: heure + MC.PvpEnjeux.DELAI_PROPOSITION });
+}
+
 // ── instrumentation de performance (SPEC-SERVEUR-002) ───────────────────────
 /* Coût quasi nul quand désactivée (une lecture d'env au démarrage, un `if`
    par tic) : le banc de charge l'active via MC_MESURES=1, une exploitation
@@ -1907,6 +2047,14 @@ setInterval(() => {
     peuplerLieux();
     avancerPolitique();
     avancerEconomie();
+    // B4 : propositions de duel caduques (silencieuses) et duels terminés
+    // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
+    // encore connectés.
+    MC.PvpEnjeux.expirer(pvp, heure).forEach(({ a, b }) => {
+      const ja = joueurParNom(a), jb = joueurParNom(b);
+      if (ja) envoyer(ja.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: b });
+      if (jb) envoyer(jb.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: a });
+    });
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;
@@ -2042,11 +2190,34 @@ setInterval(() => {
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
-    hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise });
-  // les coups des créatures, appliqués aux joueurs qu'ils visaient
+    hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
+  // les coups des créatures, appliqués aux joueurs qu'ils visaient — B4
+  // (SPEC-PVP-001 à 003) : un coup de FLÈCHE tiré par un JOUEUR (`d.par`) suit
+  // le même chemin qu'un coup de mêlée (butin, meurtre, victoire), sans le
+  // multiplicateur `regles.degatsMob` (réservé aux créatures — piège B4.md
+  // § 13, bogue corrigé au passage : une flèche de joueur en était
+  // auparavant multipliée comme un coup de mob).
   ev.degatsPar.forEach(d => {
     const x = joueurs.find(y => y.js.joueur.state === d.joueur);
-    if (x) x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
+    if (!x) return;
+    const st = x.js.joueur.state;
+    const avant = st.dead;
+    if (d.par) {
+      x.js.joueur.hurt(Math.round(d.n));
+      if (!avant && st.dead) {
+        const auteur = joueurParEtat(d.par);
+        if (auteur) {
+          const duel = MC.PvpEnjeux.duelActif(pvp, auteur.c.nom, x.c.nom, heure, d.par.pos, st.pos);
+          journal(`⚔ ${auteur.c.nom} a vaincu ${x.c.nom} (PvP, flèche)`);
+          const msg = chat.systeme(auteur.c.nom + ' a vaincu ' + x.c.nom);
+          if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
+          MC.Admin.journaliser(admin, { auteur: auteur.c.nom, action: 'combat_joueur', cible: x.c.nom, details: d.n, heure });
+          issuePvp(auteur, x, duel);
+        }
+      }
+    } else {
+      x.js.joueur.hurt(Math.round(d.n * (regles.degatsMob || 1)));
+    }
   });
   /* B1 (SPEC-SYNC-007) : le ramassage est désormais rangé dans l'inventaire
      SERVEUR (`js.joueur.pickUp`, le même code que le solo) — le client ne

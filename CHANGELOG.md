@@ -256,6 +256,34 @@ respecter (voir PLAN.md, « Commits et versions »).
   documenté B1.md § 12) — c'est désormais le serveur seul qui fait autorité.
   Hors périmètre : l'échange avec un PNJ marchand ordinaire (`TROC`, pas un
   conteneur) reste tel quel.
+- Vague 2 (B4, SPEC-PVP-001 à 006, docs/vague-2/B4.md) : `src/pvp-enjeux.js`
+  (nouveau, `MC.PvpEnjeux`, module pur) — butin borné (10-25 % du nombre
+  d'objets du vaincu, équipement exclu, transféré exactement au vainqueur,
+  reliquat renvoyé pour tomber au sol), réputation politique dégradée de
+  10 points par meurtre non consenti au-delà du 2ᵉ en moins de 10 min de jeu
+  (fenêtre glissante) auprès des factions dont le territoire couvre le lieu,
+  hors-la-loi (réputation ≤ -50) et embargo recalculé dynamiquement (jamais
+  figé), duel consenti (proposition/acceptation/refus, caduque à 30 s, actif
+  120 s dans un rayon de 32 blocs autour du point médian à l'acceptation),
+  victoires comptées par joueur nommé, persistance (meurtres/victoires/
+  réputations ; duels et propositions éphémères, jamais sérialisés).
+- Vague 2 (B4, suite) : branchement réseau/serveur. `src/entities.js`
+  (`stepArrow`) porte désormais l'auteur du coup (`degatsPar[].par`) et
+  consulte `opts.peutBlesser(tireur, cible)` — une flèche entre deux membres
+  d'une même faction (SPEC-FACTION-012) n'inflige plus de dégâts (bogue
+  corrigé : seul le corps à corps était protégé), et un duel autorise un tir
+  même hors zone PvP/sans `--pvp`, jugé à l'IMPACT (pas au tir : un duel qui
+  expire pendant le vol d'un projectile protège la cible). `src/succes.js`
+  gagne trois succès (`pvp_victoire`, seuils 1/5/25). `src/commandes.js`
+  gagne `/duel`. `src/net.js`/`src/game.js` gagnent le hook `onPvp` (message
+  `PVP`, toasts/chat, succès sur `victoire`). Zones B4 de `server.js` :
+  `case ATTAQUE` (duel OU PvP+faction autorisés), interception `/duel` avant
+  `/faction`, `ev.degatsPar` (issue PvP commune corps-à-corps/flèche,
+  `regles.degatsMob` n'est plus appliqué à un coup de joueur — bogue
+  documenté par le plan, corrigé au passage), embargo dans `case TROC`,
+  persistance (`pvp:` dans `etatMonde`). `tests/integration-pvp.js` étendu
+  (butin, flèche entre membres de faction, `/duel` de bout en bout, message
+  `PVP` de victoire/défaite).
 - SPEC-ENV-003 (`src/metiers.js`, `src/economie.js`) : l'offre du fermier
   (blé, seul métier agricole, METIER-001) ne se contente plus de geler en
   hiver (`tickJour`, mult de pousse nul, SAISON-006) — elle diminue à son

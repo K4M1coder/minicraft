@@ -22,6 +22,10 @@
       onEtat: opts.onEtat || function () {},
       onArrive: opts.onArrive || function () {},
       onQuitte: opts.onQuitte || function () {},
+      // B4 (SPEC-PVP-001 à 006) : victoire/défaite, proposition/début/fin de
+      // duel, réputation/hors-la-loi — un seul message s→c, `MC.ContratsV2.
+      // validerPvp` déjà appliqué (voir `case NP.MSG.PVP` plus bas).
+      onPvp: opts.onPvp || function () {},
       onStatut: opts.onStatut || function () {},
       // serveur autoritaire : l'état qui fait foi pour nos joueurs, et le butin reçu
       onToi: opts.onToi || function () {},
@@ -190,6 +194,13 @@
           distants.delete(m.id);
           hooks.onQuitte(m);
           break;
+
+        // B4 (SPEC-PVP-001 à 006) : évènements PvP destinés à CE joueur.
+        case NP.MSG.PVP: {
+          var vp = MC.ContratsV2.validerPvp(m);
+          if (vp) hooks.onPvp(vp);
+          break;
+        }
 
         case NP.MSG.ETAT:
           var presents = {};
