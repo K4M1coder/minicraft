@@ -113,6 +113,36 @@ Précisé par l'utilisateur : pour chaque test, le rapport doit indiquer les don
 - **Zone de sélection du banc.** Les mêmes dimensions servent à choisir les tests à lancer : l'arbre de sélection se regroupe au choix par catégorie, domaine, spec, fonction ou étiquette, avec les effectifs. On peut ainsi lancer « tous les tests qui touchent `MC.Mesher.tileOrigin` ».
 - **Porte.** G14 est étendue : 100 % des tests ont au moins un domaine et au moins une fonction (déclarée ou observée).
 
+### 3.6 Périmètre d'exécution : tests du commit, suite complète pour PR et merges
+
+Précisé par l'utilisateur : le moteur doit permettre de ne lancer que les tests du périmètre d'un commit, et le crochet de commit doit restreindre la liste des tests. Seuls les PR et les merges déclenchent la suite complète, comme porte.
+
+**Carte d'impact.** `tests/registre/impact.json`, versionnée, construite à chaque run complet inscrit (PR/merge) à partir des fonctions observées (§3.5) :
+
+- `fonction qualifiée → [tests]` (par ex. `MC.Mesher.tileOrigin → [N-812, N-813, E-44]`) ;
+- `fichier source → [fonctions qu'il définit]`, déduit en chargeant les modules : chaque `MC.X` est rattaché à son fichier `src/x.js` ;
+- le commit sur lequel la carte a été construite.
+
+**Calcul du périmètre** (`node tools/perimetre.js [--depuis <ref>]`, par défaut les fichiers indexés), dans l'ordre :
+
+1. Fichier de test modifié ou ajouté → tous les tests de ce fichier.
+2. Fichier `src/*.js` modifié → fonctions touchées par le diff (plages de lignes du `git diff -U0` croisées avec les bornes de chaque fonction du fichier, via un découpage syntaxique léger) → tests qui appellent ces fonctions selon la carte. Si les bornes ne peuvent pas être déterminées : toutes les fonctions du fichier.
+3. Tests sans données d'impact (nouveaux, ou jamais observés, par ex. e2e non instrumentés) → sélectionnés s'ils partagent un domaine ou une fonction déclarée avec les fichiers touchés.
+4. Toujours ajoutés : le petit ensemble « fumée » (préréglage existant) et les tests étiquetés `toujours`.
+5. **Repli sur la suite complète** si le moteur ne peut pas conclure avec confiance : fichier touché hors `src/` et hors fichiers de test (harness, catalogue, run.js, gates.js, server.js, tools/, index.html…), carte absente, ou carte construite sur un commit trop éloigné (plus de 50 commits, réglable), ou fichier `src/` absent de la carte (nouveau module).
+
+**Rapport de périmètre.** Chaque run restreint enregistre dans son cahier : fichiers touchés, fonctions touchées, raison de sélection de chaque test (`fichier-de-test`, `fonction:MC.X.f`, `domaine:RENDU`, `fumee`, `toujours`), tests exclus (nombre), et la raison d'un éventuel repli. L'historique a une colonne `perimetre` (`complet` | `commit` | `manuel`) et une colonne `raison_selection`. Seuls les runs complets alimentent la carte d'impact et servent de témoins par défaut.
+
+**Crochets et portes :**
+
+- `pre-commit` : `--perimetre commit` à la place du repli actuel par domaines (`tools/domaines-touches.js` devient l'étape 3 ci-dessus). Pas de délai qui coupe les tests (filet anti-deadlock seulement, voir SPEC-BANC-010 révisée) : l'actuel `--delai 240` passe au filet commun.
+- `pre-push` (= validation de PR) : suite complète, portes comprises, inscription automatique au registre, reconstruction de la carte d'impact.
+- **Merges** : un commit de merge déclenche la suite complète. Merge sans conflit : crochet `pre-merge-commit`, à ajouter dans `.githooks`. Merge avec conflits résolus : le `pre-commit` détecte `MERGE_HEAD` et passe en suite complète.
+- Banc web : la zone de sélection propose « Périmètre du commit » (fichiers indexés), « Périmètre depuis… » (une ref, par ex. `master`) et « Tout », avec l'aperçu des tests retenus et leur raison **avant** de lancer.
+- G13 vérifie : pre-commit → périmètre, pre-push et pre-merge-commit → complet.
+
+**Contrôle de fiabilité de la carte.** À chaque run complet, pour chaque test qui échoue, on vérifie si le dernier `pre-commit` l'aurait sélectionné pour les fichiers changés depuis le run complet précédent. Un échec que le périmètre aurait raté est signalé en avertissement (« trou de périmètre ») dans le rapport et l'historique : c'est ce signal qui dit si la carte est digne de confiance.
+
 ## 4. Tests (le banc se teste lui-même)
 
 - Node, `tests/spec-banc.js` : filtrage, tri multi-clés, pagination, agrégation des séries, fusion registre + locaux, ordre topologique, ligne sans capture.
@@ -127,3 +157,4 @@ Précisé par l'utilisateur : pour chaque test, le rapport doit indiquer les don
 3. Graphiques timeline.
 4. Panneau test : un diaporama par image, témoin, comparaison.
 5. Intégration dans le banc (bouton, clic depuis la sélection), inscription manuelle en fin de campagne (§3.4) et test e2e.
+6. Périmètre d’exécution (§3.6) : carte d’impact, tools/perimetre.js, crochets pre-commit / pre-push / pre-merge-commit, sélection dans le banc, contrôle des trous de périmètre, G13.
