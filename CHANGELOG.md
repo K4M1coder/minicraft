@@ -382,13 +382,17 @@ respecter (voir PLAN.md, « Commits et versions »).
   modérateur et d'invitation. Sans générateur injecté, l'ancien repli
   (horodatage + compteur + hasard, suffisant pour la seule unicité) reste
   disponible pour la rétrocompatibilité.
-- Purge bornée de l'administration (SPEC-SERVEUR-005) : `MC.Admin.purger()`
-  borne désormais `admin.sessions`, `admin.invitations` et `admin.sanctions`
-  en taille ET en ancienneté, sans jamais retirer une entrée encore active
-  (session ouverte, invitation ni révoquée ni expirée ni épuisée,
-  bannissement ou sourdine en cours) — les entrées obsolètes les plus
-  vieilles sont retirées d'abord, puis les plus anciennes au-delà du seuil
-  de taille si besoin.
+- `src/admin.js` (module pur) expose désormais `MC.Admin.purger()`
+  (SPEC-SERVEUR-005, toujours ⏳) : bornage de `admin.sessions`,
+  `admin.invitations` et `admin.sanctions` en taille ET en ancienneté, sans
+  jamais retirer une entrée encore active (session ouverte, invitation ni
+  révoquée ni expirée ni épuisée, bannissement ou sourdine en cours) — les
+  entrées obsolètes les plus vieilles sont retirées d'abord, puis les plus
+  anciennes au-delà du seuil de taille si besoin. La fonction est testée en
+  isolation (`tests/spec-admin.js`) mais n'est PAS ENCORE invoquée par
+  `server.js` : aucune purge n'a lieu sur un serveur qui tourne réellement
+  tant qu'elle n'est pas branchée sur la boucle périodique existante
+  (tâche de suivi explicitement à part, hors du périmètre autorisé ici).
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité
