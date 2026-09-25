@@ -263,9 +263,10 @@
       var deltaARaid = fARaid.territoire - terrARaidAvant, deltaBRaid = fBRaid.territoire - terrBRaidAvant;
       A.gt(deltaARaid, 0, 'le raid simulé gagne bien du territoire (jour choisi pour réussir)');
 
-      // réussite de la quête d'élimination sur l'état d'origine, au même jour
+      // réussite de la quête d'élimination sur l'état d'origine : reussirQueteElimination
+      // reçoit la cible réellement promise par la quête (qs[0].cible), jamais recalculée
       var terrAAvant = fA.territoire, terrBAvant = fB.territoire;
-      var cibleId = P.reussirQueteElimination(e, fA.id, jourRaidGagne);
+      var cibleId = P.reussirQueteElimination(e, fA.id, qs[0].cible);
       A.equal(cibleId, fB.id);
       var deltaAQuete = fA.territoire - terrAAvant, deltaBQuete = fB.territoire - terrBAvant;
 
@@ -273,6 +274,49 @@
       A.equal(deltaBQuete, deltaBRaid, 'perte de territoire de la cible identique à un raid gagné');
       A.equal(P.relationEntre(e, fA.id, fB.id), P.relationEntre(eRaid, fA.id, fB.id), 'même relation finale qu\'un raid gagné');
       A.equal(P.relationEntre(e, fA.id, fB.id), 'guerre');
+    });
+
+    it('SPEC-QUETE-002 (régression relecture) : reussirQueteElimination vise toujours la cible promise par questesDe, même résolue un autre jour où ciblePourRaid désignerait une autre faction', function () {
+      // 3 factions candidates (guerre + rivalité) pour que ciblePourRaid(etat, f, jour)
+      // varie selon le jour — condition nécessaire pour exercer la dérive jour->cible.
+      var seed = 1;
+      function factionTest(id, nom, objectif, objectifs) {
+        return { id: id, type: 'ordre', nom: nom, caractere: 'pragmatique',
+                 siege: { x: 0, z: 0, site: id }, territoire: 100,
+                 ressources: { or: 50, nourriture: 50 }, objectif: objectif, objectifs: objectifs,
+                 naissance: 0 };
+      }
+      var e = P.creer(seed);
+      var fA = factionTest('test:A', 'Faction A', 'defendre', ['defendre']);
+      var fB = factionTest('test:B', 'Faction B', 'etendre', ['etendre']);
+      var fC = factionTest('test:C', 'Faction C', 'etendre', ['etendre']);
+      e.factions.set(fA.id, fA); e.factions.set(fB.id, fB); e.factions.set(fC.id, fC);
+      e.relations.set(fA.id < fB.id ? fA.id + '~' + fB.id : fB.id + '~' + fA.id, 'guerre');
+      e.relations.set(fA.id < fC.id ? fA.id + '~' + fC.id : fC.id + '~' + fA.id, 'rivalite');
+
+      // jour de proposition : cible annoncée au joueur
+      e.jour = 8;
+      var qs = P.questesDe(e, fA.id);
+      A.equal(qs.length, 1, 'une quête d\'élimination se propose (guerre active avec B)');
+      var cibleAnnoncee = qs[0].cible;
+
+      // vérifie qu'un jour de résolution différent ferait dériver ciblePourRaid vers une autre
+      // faction que celle annoncée (sinon ce test n'exercerait pas le cas régressé)
+      var jourResolutionDerive = null;
+      for (var j = 0; j < 300 && jourResolutionDerive === null; j++) {
+        var c = P.ciblePourRaid(e, fA, j);
+        if (c && c.id !== cibleAnnoncee) jourResolutionDerive = j;
+      }
+      A.ok(jourResolutionDerive !== null, 'un jour où ciblePourRaid dérive vers une autre faction existe (sinon le test ne couvre rien)');
+
+      // résolue à ce jour dérivant, la quête doit quand même viser la faction annoncée
+      var terrAvantAnnoncee = e.factions.get(cibleAnnoncee).territoire;
+      var autreCandidat = cibleAnnoncee === fB.id ? fC.id : fB.id;
+      var terrAvantAutre = e.factions.get(autreCandidat).territoire;
+      var res = P.reussirQueteElimination(e, fA.id, cibleAnnoncee);
+      A.equal(res, cibleAnnoncee, 'la réussite vise la cible promise à la proposition, pas celle du jour de résolution');
+      A.equal(e.factions.get(cibleAnnoncee).territoire, terrAvantAnnoncee - 15, 'la cible promise perd bien du territoire');
+      A.equal(e.factions.get(autreCandidat).territoire, terrAvantAutre, 'l\'autre candidate (celle que viserait le jour de résolution) est intacte');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

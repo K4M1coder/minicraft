@@ -235,6 +235,18 @@ respecter (voir PLAN.md, « Commits et versions »).
   vert sans que ses assertions asynchrones aient réellement été attendues.
 
 ### Corrigé
+- SPEC-QUETE-002 (`politique.js`) : `reussirQueteElimination` recevait un
+  jour et recalculait la cible via `ciblePourRaid(etat, f, jour)`, alors que
+  `ciblePourRaid` dépend du jour (candidats indexés par un hachage qui varie
+  par jour). Résolue un jour différent de celui de la proposition — le cas
+  normal une fois le suivi/l'acceptation des quêtes câblé —, la « réussite »
+  pouvait viser une AUTRE faction que celle annoncée au joueur dans la quête,
+  dès que 3 factions ou plus étaient candidates (guerre ou rivalité).
+  `reussirQueteElimination` reçoit désormais directement `cibleId`, la cible
+  réellement promise par `questesDe` à la proposition, et se contente de
+  revalider qu'elle est toujours une faction connue en guerre ou en
+  rivalité avec l'auteur, plutôt que de la recalculer au jour de résolution.
+
 - Inventaire en ligne : la grille de fabrication est rechargée depuis l'état confirmé du serveur (INV_MAJ) ; un transfert inv→grille refusé ne laisse plus d'objet fantôme dans la grille.
 
 - Aide de test partagée `reset()` (tests/e2e.js, ~140 tests e2e) : elle

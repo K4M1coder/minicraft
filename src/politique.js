@@ -333,12 +333,22 @@
   }
   /* Réussite d'une quête d'élimination (SPEC-QUETE-002) : même effet sur le
      territoire/la relation qu'un raid gagné (FACTION-016), sans le coût en
-     ressources d'un raid (l'auteur est un aventurier, pas la faction elle-même). */
-  function reussirQueteElimination(etat, factionId, jour) {
+     ressources d'un raid (l'auteur est un aventurier, pas la faction elle-même).
+     `cibleId` DOIT être la cible réellement promise par la quête (le champ
+     `cible` renvoyé par questesDe au moment de la proposition) — jamais
+     recalculée ici via ciblePourRaid, dont le résultat dépend du jour de
+     résolution : rappeler ciblePourRaid avec le jour de résolution (au lieu
+     du jour de proposition) peut désigner une AUTRE faction dès que 3
+     factions ou plus sont candidates. On revalide seulement que cette cible
+     est toujours une faction connue et toujours en guerre ou en rivalité
+     avec l'auteur, pour ne pas appliquer un gain sur une relation apaisée
+     entretemps. */
+  function reussirQueteElimination(etat, factionId, cibleId) {
     var f = etat.factions.get(factionId);
-    if (!f) return null;
-    var cible = ciblePourRaid(etat, f, jour === undefined ? etat.jour : jour);
-    if (!cible) return null;
+    var cible = cibleId && etat.factions.get(cibleId);
+    if (!f || !cible) return null;
+    var relation = relationEntre(etat, f.id, cible.id);
+    if (relation !== 'guerre' && relation !== 'rivalite') return null;
     appliquerGainElimination(etat, f, cible);
     annoncer(etat, f.nom + ' voit ' + cible.nom + ' affaibli par un aventurier.', [f.id, cible.id]);
     return cible.id;
