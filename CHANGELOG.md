@@ -370,6 +370,20 @@ respecter (voir PLAN.md, « Commits et versions »).
   route n'existait pas encore provoquait un 405 (le serveur n'accepte que
   `GET`), journalisé en erreur à chaque campagne ; retirée, la route étant
   désormais stable dans le noyau.
+- Test e2e SPEC-RENDU-004 (« la réfraction ne s'active qu'à moins d'une
+  distance fixe de la caméra »), intermittent : après l'excursion loin de
+  toute eau (téléportations successives, rechargées à chaque fois en
+  synchrone via `streamChunks(true)`), le retour près de la mer cible ne
+  rappelait PAS `streamChunks(true)` et se contentait d'attendre 20 images
+  réelles — en comptant sur le rattrapage progressif et budgété
+  (`GEN_BUDGET`/`MESH_BUDGET`, potentiellement via Worker) de la boucle de
+  jeu pour régénérer/remailler le chunk d'eau proche, redevenu absent après
+  l'excursion. Ce rattrapage dépend du temps réel écoulé (aller-retour
+  Worker, charge CPU concurrente) et non du nombre d'images : sous charge,
+  20 images ne suffisaient pas toujours, et `eau.distance` continuait de
+  désigner l'ancien maillage éloigné (« l'eau est maintenant à portée : 77.35
+  >= 40 »). Comportement du jeu inchangé ; le test force maintenant le même
+  rechargement synchrone qu'à l'aller avant de vérifier la distance.
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité
