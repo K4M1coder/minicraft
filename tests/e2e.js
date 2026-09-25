@@ -3139,8 +3139,16 @@
     }
     A.ok(lointaine, 'un point assez loin de toute eau a été trouvé : ' + g.render.eau.distance);
     A.equal(g.render.eau.refraction.value, 0, 'pas de réfraction à cette distance');
-    // proche : la même mer, cette fois à portée
+    // proche : la même mer, cette fois à portée — comme pour le point
+    // lointain ci-dessus, on force le rechargement synchrone (streamChunks
+    // en mode illimité) au lieu de compter sur le rattrapage progressif
+    // (budgeté, potentiellement via Worker) de la boucle de jeu : sans ça,
+    // le maillage d'eau proche de `cible` peut ne pas encore avoir été
+    // regénéré/remaillé après l'excursion lointaine — et `eau.distance`
+    // continue alors de désigner l'ancien maillage éloigné, de façon
+    // dépendante du temps réel écoulé (relâche CPU/Worker), donc intermittente.
     s.pos.x = cible.x + 0.5; s.pos.z = cible.z + 0.5; s.pos.y = cible.eau + 4; s.pitch = -0.9;
+    g.streamChunks(true);
     for (var j = 0; j < 20; j++) await frames(1);
     A.lt(g.render.eau.distance, 40, 'l’eau est maintenant à portée : ' + g.render.eau.distance);
     A.equal(g.render.eau.refraction.value, 1, 'la réfraction s’active');
