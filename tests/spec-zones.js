@@ -8,7 +8,7 @@
   'use strict';
   var MC = G.MC, T = G.T;
   var describe = T.describe, it = T.it, A = T.assert;
-  var Z = MC.Zones;
+  var Z = MC.Zones, P = MC.Politique;
 
   var mondes = {};
   function monde(g, opts) {
@@ -148,6 +148,39 @@
       Z.definirRegion(etat, loinB.x, loinB.z, 'sure', 'admin', 1);
       A.notOk(Z.pvpAutorise(carte, etat, loinA, loinB),
               'un des deux joueurs réfugié en zone sûre : le PvP est refusé, même agressé depuis une zone PvP');
+    });
+
+    it('SPEC-FACTION-014 : le monde consulte RÉELLEMENT l\'état politique (world.js:zoneEn), pas seulement zones.js en isolation', function () {
+      var w = monde(11, { zonePolitique: 'generee' });
+      A.ok(w.definirFactionsPolitiques, 'le monde expose un point d\'entrée pour recevoir l\'état politique');
+      var etat = P.creer(1);
+      var siege = { x: 20000, z: 20000 };   // loin du spawn (toujours sûr), pour isoler l'effet
+      etat.factions.set('f:guerre', { id: 'f:guerre', type: 'ordre', nom: 'F', caractere: 'pragmatique',
+        siege: siege, territoire: 300, ressources: { or: 50, nourriture: 50 }, objectif: 'defendre',
+        objectifs: ['defendre'], naissance: 0 });
+      etat.factions.set('f:rivale', { id: 'f:rivale', type: 'ordre', nom: 'R', caractere: 'pragmatique',
+        siege: { x: siege.x + 9000, z: siege.z + 9000 }, territoire: 300, ressources: { or: 50, nourriture: 50 },
+        objectif: 'defendre', objectifs: ['defendre'], naissance: 0 });
+      etat.relations.set('f:guerre~f:rivale', 'guerre');
+      // AVANT le branchement : le monde ignore encore cet état, zoneEn retombe
+      // sur la carte générée seule (aucune influence politique).
+      var avant = w.zoneEn(siege.x, siege.z).zone;
+      w.definirFactionsPolitiques(etat);
+      var apres = w.zoneEn(siege.x, siege.z).zone;
+      A.equal(apres, 'pvp', 'SPEC-FACTION-014 : une fois branché, le monde reflète RÉELLEMENT la guerre de la faction (pvp)');
+      A.notEqual(apres, avant, 'le branchement change effectivement la zone (preuve que ce n\'est pas mort code)');
+      // une redéfinition d'administrateur (SPEC-ZONE-004) prime toujours,
+      // même une fois l'état politique branché dans le monde réel.
+      if (w.zonesEtat) {
+        Z.definirRegion(w.zonesEtat, siege.x, siege.z, 'sure', 'admin', 1);
+        A.equal(w.zoneEn(siege.x, siege.z).zone, 'sure', 'une redéfinition admin prime sur l\'influence politique, même câblée dans le vrai monde');
+      }
+      // les règles de zone dérivées (reglesZoneEn, consultées par entities.js
+      // pour apparitionHostile/degatsMob) reflètent la même influence — un
+      // point toujours dans le territoire (200 ≤ 300) mais hors de la région
+      // (128 blocs) que l'administrateur a redéfinie plus haut.
+      var reglesLoin = w.reglesZoneEn(siege.x + 200, siege.z);
+      A.equal(reglesLoin.degatsJoueurs, true, 'reglesZoneEn aussi consulte réellement l\'état politique branché (zone pvp : dégâts autorisés)');
     });
 
   });

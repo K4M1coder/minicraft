@@ -1276,12 +1276,17 @@
     }
     candidats.forEach(function (c, idx) { c.h = hacheEnv(graine, c.x, c.z, idx); });
     candidats.sort(function (a, b) { return a.h - b.h; });
-    var cible = Math.max(1, Math.min(candidats.length, Math.round(total * fraction)));
+    // AUCUN plancher à 1, et Math.floor (jamais round) : un lieu trop petit
+    // pour qu'un seul bloc endommagé reste sous 20 % de son total ne subit
+    // AUCUN dégât plutôt que d'en subir un qui dépasserait largement la borne
+    // haute (revue adversariale — round(0.6)=1=33 % d'un lieu de 3 blocs).
+    // `cible / total` reste ainsi TOUJOURS ≤ fraction ≤ FRACTION_DEGATS_MAX.
+    var cible = Math.min(candidats.length, Math.floor(total * fraction));
     for (var k = 0; k < cible; k++) {
       var arr2 = l.blocs.get(candidats[k].cle);
       arr2[candidats[k].i + 3] = 0; arr2[candidats[k].i + 4] = 0;
     }
-    var entry = { lieu: l.id, heure: heure || 0, ampleur: cible / total, blocs: cible, type: type || 'tornade' };
+    var entry = { lieu: l.id, heure: heure || 0, ampleur: cible ? cible / total : 0, blocs: cible, type: type || 'tornade' };
     l.catastrophes = l.catastrophes || [];
     l.catastrophes.push(entry);
     if (l.catastrophes.length > 20) l.catastrophes.shift();
@@ -1329,7 +1334,7 @@
     var grave = entry.ampleur > 0.12;
     var libelleType = entry.type === 'eruption' ? 'une éruption' : entry.type === 'cyclone' ? 'un cyclone' : 'une tornade';
     return {
-      id: l.id + ':catastrophe:' + Math.round(entry.heure), lieu: l.id,
+      id: l.id + ':catastrophe:' + Math.round(entry.heure), lieu: l.id, x: l.x, z: l.z,
       type: grave ? 'reconstruction' : 'secours',
       titre: l.nom + (grave ? ' demande de l\'aide pour se reconstruire après ' : ' a besoin de secours après ') + libelleType + '.',
       degats: entry.blocs, ampleur: entry.ampleur, depuis: entry.heure, expire: entry.heure + DUREE_QUETE_CATASTROPHE,

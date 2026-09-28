@@ -119,8 +119,8 @@
     return { zone: carte ? carte.classeBase(x, z) : 'pvp_pve', redefinie: false };
   }
 
-  function reglesEn(carte, etat, x, z) {
-    return regles(zoneEn(carte, etat, x, z).zone);
+  function reglesEn(carte, etat, x, z, politiqueEtat) {
+    return regles(zoneEn(carte, etat, x, z, politiqueEtat).zone);
   }
 
   /* Redéfinition d'une région par un administrateur (SPEC-ZONE-004,
@@ -145,9 +145,9 @@
      dans une zone qui autorise les dégâts entre joueurs — un joueur réfugié
      en zone sûre ou PvE ne peut ni frapper ni être frappé depuis là, même si
      l'agresseur, lui, se tient en zone PvP. */
-  function pvpAutorise(carte, etat, posA, posB) {
-    var ra = reglesEn(carte, etat, posA.x, posA.z);
-    var rb = reglesEn(carte, etat, posB.x, posB.z);
+  function pvpAutorise(carte, etat, posA, posB, politiqueEtat) {
+    var ra = reglesEn(carte, etat, posA.x, posA.z, politiqueEtat);
+    var rb = reglesEn(carte, etat, posB.x, posB.z, politiqueEtat);
     return ra.degatsJoueurs && rb.degatsJoueurs;
   }
 

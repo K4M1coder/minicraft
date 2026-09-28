@@ -96,9 +96,21 @@
       politique: opts.zonePolitique, spawn: zoneSpawnParDefaut,
     }) : null;
     var zonesEtat = MC.Zones ? MC.Zones.creerEtat({ politique: opts.zonePolitique }) : null;
-    function zoneEn(x, z) { return MC.Zones ? MC.Zones.zoneEn(zones, zonesEtat, x, z) : { zone: 'pvp_pve', redefinie: false }; }
+    /* SPEC-FACTION-014 : l'état des factions POLITIQUES (MC.Politique.creer,
+       à ne pas confondre avec `zonePolitique`/`politique` ci-dessus, la
+       simple POLITIQUE DE ZONE choisie au lancement) — inconnu au moment où
+       ce monde se construit (server.js le crée après `createWorld`, et un
+       client solo/multijoueur n'en a jamais). `definirFactionsPolitiques`
+       le branche APRÈS coup, sans reconstruire la carte : `zoneEn` le
+       consulte alors à chaque appel (l'influence d'un territoire change de
+       jour en jour, contrairement à la carte générée). */
+    var politiqueFactions = null;
+    function definirFactionsPolitiques(etatFactions) { politiqueFactions = etatFactions || null; }
+    function zoneEn(x, z) {
+      return MC.Zones ? MC.Zones.zoneEn(zones, zonesEtat, x, z, politiqueFactions) : { zone: 'pvp_pve', redefinie: false };
+    }
     function reglesZoneEn(x, z) {
-      return MC.Zones ? MC.Zones.reglesEn(zones, zonesEtat, x, z)
+      return MC.Zones ? MC.Zones.reglesEn(zones, zonesEtat, x, z, politiqueFactions)
                        : { degatsJoueurs: true, degatsMob: true, apparitionHostile: true };
     }
     /* Un client multijoueur ne connaît la politique de zones du serveur (le
@@ -1315,7 +1327,7 @@
       meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes,
       densite: densite, pnjsMorts: pnjsMorts,
       get zones() { return zones; }, zonesEtat: zonesEtat, zoneEn: zoneEn, reglesZoneEn: reglesZoneEn,
-      accorderPolitiqueZone: accorderPolitiqueZone,
+      accorderPolitiqueZone: accorderPolitiqueZone, definirFactionsPolitiques: definirFactionsPolitiques,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },
       coulerFeu: coulerFeu, get feuEnAttente() { return feuFile.size; }, pluieIci: pluieIci,
       get banque() { return banque; }, set banque(b) { banque = b; },

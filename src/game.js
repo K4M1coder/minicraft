@@ -829,9 +829,25 @@
         trajetsT = 0;
         var lieux = world.habitats.lieuxProches(p1.x, p1.z, 900).filter(function (l) { return l.kind === 'ville' || l.kind === 'megapole'; });
         trajetsProches = [];
+        // SPEC-ENV-002 : les volcans actifs proches coupent réellement les
+        // routes qui en approchent — une caravane dont le trajet la
+        // traverse disparaît (arrêtée) ou emprunte une autre destination
+        // encore praticable (redirigée), recalculé à chaque rafraîchissement
+        // (l'éruption commence/finit avec le temps, contrairement au tracé).
+        var volcansProches = MC.Volcanisme && world.bio && world.bio.volcansDansZone
+          ? world.bio.volcansDansZone(p1.x - 1600, p1.z - 1600, p1.x + 1600, p1.z + 1600).filter(function (v) { return v.actif; })
+          : [];
         lieux.forEach(function (l) {
           if (!trajetsCache.has(l.id)) trajetsCache.set(l.id, CV.trajetsDe(l, world.routes));
-          trajetsCache.get(l.id).forEach(function (tr) { trajetsProches.push(tr); });
+          var trs = trajetsCache.get(l.id);
+          volcansProches.forEach(function (v) {
+            var act = MC.Volcanisme.activite(v, g.time, SEED);
+            if (!act.eruption) return;
+            trs = MC.Routes.trajetsAffectesParEruption(trs, v, act)
+              .filter(function (r) { return r.etat !== 'arret'; })
+              .map(function (r) { return r.trajet; });
+          });
+          trs.forEach(function (tr) { trajetsProches.push(tr); });
         });
         // bateaux : entre les ports proches que relie l'eau
         var ports = world.habitats.lieuxProches(p1.x, p1.z, 1200).filter(function (l) {

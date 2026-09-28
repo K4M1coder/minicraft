@@ -3,7 +3,7 @@
   'use strict';
   var MC = G.MC, T = G.T;
   var describe = T.describe, it = T.it, A = T.assert;
-  var P = MC.Politique, Dj = MC.Donjons, Z = MC.Zones;
+  var P = MC.Politique, Dj = MC.Donjons, Z = MC.Zones, Eco = MC.Economie, Ent = MC.EntitySpecs, C2 = MC.Core;
 
   var SITES = [
     { id: 'ville:0,0', kind: 'ville', x: 100, z: 100, nom: 'Beaulac' },
@@ -363,6 +363,58 @@
       A.deep(P.offresAutorisees(e, fA.id, fB.id, offres), [], 'aucune offre pour un membre ennemi en guerre');
       e.relations.set(fA.id + '~' + fB.id, 'neutre');
       A.deep(P.offresAutorisees(e, fA.id, fB.id, offres), offres, 'rouvert après un changement de relation vers neutre');
+    });
+
+    it('SPEC-FACTION-015 (câblage réel) : MC.Economie.executerTroc refuse RÉELLEMENT le commerce d\'un marchand couvert par une faction en guerre', function () {
+      // Reproduit exactement la composition de server.js (case NP.MSG.TROC) :
+      // embargo = factionCouvrant(politique, pos) + commerceFermeAvec(...),
+      // combinée dans le ctx.embargo réel d'executerTroc — jamais un appel
+      // direct isolé à commerceFermeAvec.
+      var e = P.creer(4);
+      var posPnj = { x: 500, z: 500 };
+      var fLieu = factionSimple('f:lieu', posPnj.x, posPnj.z, 200);
+      var fJoueur = factionSimple('f:joueur-allie', 9000, 9000, 50);   // faction de joueurs vue côté politique
+      e.factions.set(fLieu.id, fLieu); e.factions.set(fJoueur.id, fJoueur);
+      var eco = Eco.creerEtat(4);
+      var inv = MC.Inventory.create(9);
+      function tenter() {
+        var factionCouvrante = P.factionCouvrant(e, posPnj.x, posPnj.z);
+        var embargo = !!(factionCouvrante && P.commerceFermeAvec(e, factionCouvrante.id, fJoueur.id));
+        return Eco.executerTroc(eco, inv, { lieuId: 'v:test', role: 'marchand', pnjId: 'pnj1', indice: 0, fois: 1, nom: 'Joueur', embargo: embargo });
+      }
+      var cleRel = fLieu.id < fJoueur.id ? fLieu.id + '~' + fJoueur.id : fJoueur.id + '~' + fLieu.id;
+      var avantGuerre = tenter();
+      A.notEqual(avantGuerre.motif, 'embargo', 'en paix, executerTroc ne refuse pas pour motif embargo');
+      e.relations.set(cleRel, 'guerre');
+      var pendantGuerre = tenter();
+      A.equal(pendantGuerre.ok, false, 'SPEC-FACTION-015 : executerTroc refuse RÉELLEMENT le commerce pendant la guerre');
+      A.equal(pendantGuerre.motif, 'embargo', 'motif embargo, comme FACTION-003/SPEC-PVP-006');
+      e.relations.set(cleRel, 'neutre');
+      var apresPaix = tenter();
+      A.notEqual(apresPaix.motif, 'embargo', 'SPEC-FACTION-015 : rouvert après un changement de relation vers neutre');
+    });
+
+    it('SPEC-DONJON-018 (câblage réel) : un VRAI gardien vaincu (entites.js, événement boss_vaincu) profite à la faction de son territoire', function () {
+      // Reproduit exactement la composition de server.js (entites.evenements()
+      // après entites.update()) : un gardien RÉELLEMENT tué (pas un appel
+      // direct à victoireGardien) émet l'événement, dont `donjon` désigne le
+      // vrai objet donjon à passer à MC.Donjons.victoireGardien.
+      var w = G.flatWorld(10, C2.B.STONE);
+      var ents = MC.createEntities(w);
+      var donjonFictif = { id: '7,7', x: 20, z: -10 };
+      var g = ents.spawn('boss_zombie', 0.5, 11, 0.5, { donjon: donjonFictif.id });
+      A.ok(ents.damage(g, 999, { x: 0, y: 11, z: 0 }), 'le coup est fatal (vraie mort, pas un appel isolé)');
+      var evts = ents.evenements().filter(function (x) { return x.type === 'boss_vaincu'; });
+      A.equal(evts.length, 1, 'un véritable événement boss_vaincu est émis par entites.js');
+      A.equal(evts[0].donjon, donjonFictif.id, 'il désigne le vrai donjon du gardien');
+
+      var e = P.creer(5);
+      var f = factionSimple('f:proprio', donjonFictif.x, donjonFictif.z, 150);
+      e.factions.set(f.id, f);
+      var terrAvant = f.territoire;
+      var r = Dj.victoireGardien(donjonFictif, e);   // exactement l'appel que fait server.js sur cet événement RÉEL
+      A.ok(r, 'la victoire réelle profite à la faction du territoire');
+      A.equal(f.territoire, terrAvant + 10, 'même gain qu\'un avant-poste, déclenché par un VRAI événement de jeu');
     });
 
     it('SPEC-DONJON-018 : un donjon dans le territoire d\'une faction lui est rattaché ; sa conquête l\'enrichit ou profite à un revendicant en guerre', function () {

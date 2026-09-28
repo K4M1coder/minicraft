@@ -45,6 +45,24 @@
       var entry2 = H.endommagerLieu(v2, loin, 42, 1000, 'tornade');
       A.equal(entry2.blocs, 0, 'hors du tracé réel : aucun dégât');
 
+      // lieu synthétique minuscule (moins de 20 blocs) : un plancher à 1 bloc
+      // dépasserait très largement 20 % — soit rien n'est endommagé, soit
+      // l'ampleur réelle reste bien dans [5 %, 20 %] (revue adversariale)
+      var minuscule = { id: 'test:minuscule', blocs: new Map([['0,0', [
+        0, 60, 0, 1, 0,   1, 60, 0, 1, 0,   2, 60, 0, 1, 0,   3, 60, 0, 1, 0,
+        0, 60, 1, 1, 0,   1, 60, 1, 1, 0,   2, 60, 1, 1, 0,   3, 60, 1, 1, 0,
+      ]]]) };   // 8 blocs pleins
+      var traceMinuscule = [{ x: 1, z: 0, rayon: 3, force: 1 }];
+      var entryMin = H.endommagerLieu(minuscule, traceMinuscule, 5, 1, 'tornade');
+      A.ok(entryMin.blocs === 0 || (entryMin.ampleur >= H.FRACTION_DEGATS_MIN - 1e-9 && entryMin.ampleur <= H.FRACTION_DEGATS_MAX + 1e-9),
+           'lieu minuscule : rien n\'est endommagé, ou l\'ampleur réelle reste dans 5-20 % : blocs=' + entryMin.blocs + ' ampleur=' + entryMin.ampleur);
+      // un lieu de 3 blocs : floor(3 * 20 %) = floor(0.6) = 0 — SANS plancher
+      // à 1, aucun dégât n'est appliqué (avec l'ancien Math.max(1, …), un
+      // bloc aurait été retiré, soit 33 % du lieu — largement hors bornes).
+      var infime = { id: 'test:infime', blocs: new Map([['0,0', [0, 60, 0, 1, 0, 1, 60, 0, 1, 0, 2, 60, 0, 1, 0]]]) };
+      var entryInfime = H.endommagerLieu(infime, [{ x: 1, z: 0, rayon: 3, force: 1 }], 5, 1, 'tornade');
+      A.equal(entryInfime.blocs, 0, 'floor(3 * 20 %) = 0 : aucun dégât plutôt que d\'en dépasser largement 20 %');
+
       // un tracé étroit ne touche qu'une petite fraction, strictement localisée
       var w3 = MC.createWorld(31), v3 = unVillage(w3);
       var etroit = [{ x: v3.x - v3.demi, z: v3.z - v3.demi, rayon: 3, force: 0 }];
