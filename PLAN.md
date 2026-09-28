@@ -129,7 +129,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L44** | Sécurité et fiabilité du serveur : rattrapage des exceptions, tampon et anti-flood bornés, portée vérifiée avant génération, jetons admin cryptographiques, en-têtes HTTP, sauvegarde atomique et asynchrone, purge des structures d'administration, découpage de `server.js` en modules, diffusion sans délai d'une redéfinition de zone | `SECU` `SERVEUR` | à faire |
 | **L45** | Économie vivante, progression des métiers et transport : prix dynamique borné, puits de monnaie, caravanes marchandes avec cargaison réelle, carburant et réparation des véhicules, risque d'attaque, péages de faction | `ECO` `METIER` `TRANSPORT` | à faire |
 | **L46** | Factions, quêtes, PvP et environnement interconnectés : territoire agissant sur les zones de jeu, embargo commercial en guerre, quêtes nées d'un besoin réel, enjeux et sanctions PvP, catastrophes qui endommagent bâtiments/routes/population, donjons rattachés au territoire | `FACTION` `QUETE` `PVP` `ENV` `DONJON` | à faire |
-| **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | à faire |
+| **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | fait |
 | **L48** | Rendu fiable et adaptatif : contexte WebGL perdu/restauré, réfraction et antialias/DPR pilotés par le FPS, mobs instanciés, détection d'un rendu logiciel, culling de chunks | `RENDU` | à faire |
 
 Les lots L14 à L22 sont désormais **fait** : toutes leurs fiches SPEC sont à
