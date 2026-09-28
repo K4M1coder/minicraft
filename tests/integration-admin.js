@@ -293,3 +293,55 @@ async function attendrePret(port) {
   if (echecs) { console.log(`${C.r}${echecs} échec(s)${C.x} sur ${total} tests\n`); process.exit(1); }
   console.log(`${C.g}${passes}/${total} tests d intégration passent${C.x}\n`);
 })();
+  // ── SPEC-SERVEUR-005 : purge périodique de admin.sessions sur un vrai serveur ──
+  /* MC.Admin.purger() est déjà testé PUR (isolé) dans tests/spec-admin.js —
+     ici, on prouve seulement que server.js l'appelle RÉELLEMENT depuis sa
+     boucle périodique (MC_ADMIN_PURGE_S/MC_ADMIN_PURGE_SESSIONS_MAX,
+     réglages de test au même titre que MC_SAUVEGARDE_MS) : des sessions
+     fermées en nombre au-delà du seuil disparaissent, une session encore
+     ouverte survit toujours. */
+  const PORT3 = PORT + 2;
+  const s3 = demarrer(['--port', String(PORT3), '--admin', 'secretB'], {
+    MC_ADMIN_PURGE_S: '1', MC_ADMIN_PURGE_SESSIONS_MAX: '2', MC_ADMIN_PURGE_SESSIONS_AGE_S: '999999',
+  });
+  try {
+    ok(await attendrePret(PORT3), 'SPEC-SERVEUR-005 : le serveur de purge démarre');
+
+    // une session qui reste ouverte tout du long
+    const ouverte = await connecter(PORT3);
+    ouverte.envoyer({ t: 'rejoindre', nom: 'RestéConnecté', locaux: 1 });
+    await ouverte.attendre('bienvenue');
+
+    // plusieurs sessions FERMÉES, largement au-delà du seuil (sessionsMax=2)
+    for (let i = 0; i < 5; i++) {
+      const cli = await connecter(PORT3);
+      cli.envoyer({ t: 'rejoindre', nom: 'Passager' + i, locaux: 1 });
+      await cli.attendre('bienvenue');
+      cli.fermer();
+      await dodo(30);
+    }
+
+    const avantPurge = await requeteJSON(PORT3, 'GET', '/admin/api/sessions', 'secretB', null);
+    eq(avantPurge.code, 200, 'SPEC-SERVEUR-005 : la console lit les sessions avant purge');
+    ok(avantPurge.json.data.length >= 6, 'SPEC-SERVEUR-005 : 6 sessions au moins avant la première purge (5 fermées + 1 ouverte)');
+
+    // laisse au moins un passage de la boucle de purge (MC_ADMIN_PURGE_S=1) s'exécuter
+    await dodo(1400);
+
+    const apresPurge = await requeteJSON(PORT3, 'GET', '/admin/api/sessions', 'secretB', null);
+    eq(apresPurge.code, 200, 'SPEC-SERVEUR-005 : la console lit les sessions après purge');
+    ok(apresPurge.json.data.length < avantPurge.json.data.length,
+       'SPEC-SERVEUR-005 : la purge périodique réelle a réduit le nombre de sessions',
+       `avant=${avantPurge.json.data.length} après=${apresPurge.json.data.length}`);
+    const survivante = apresPurge.json.data.find(s => s.nom === 'RestéConnecté');
+    ok(survivante && survivante.deconnecteLe === null,
+       'SPEC-SERVEUR-005 : la session toujours ouverte survit à la purge, même au-delà du seuil de taille');
+
+    ouverte.fermer();
+  } catch (e) {
+    echecs++;
+    details.push(`  ${C.r}✗ exception (purge SPEC-SERVEUR-005) : ${e.message}${C.x}`);
+  } finally {
+    try { s3.kill(); } catch (e) {}
+  }
+

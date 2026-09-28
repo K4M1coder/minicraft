@@ -146,6 +146,24 @@ let meteoT = null;
 let accEau = 0;
 let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
 let accFourMsg = 0;       // B1 (étape 7) : cadence de message des fourneaux posés (≤ 2 Hz, SPEC-SYNC-015)
+// SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
+// — cadence et seuils réglables (comme MC_SAUVEGARDE_MS) pour les tests
+// d'intégration, sans quoi il faudrait des dizaines de milliers de sessions
+// réelles pour observer une purge. `heure` (l'horloge du monde, en secondes
+// simulées) est l'unité déjà utilisée par MC.Admin.ouvrirSession/fermerSession
+// à l'appel — les seuils d'ancienneté par défaut sont donc exprimés dans
+// cette même unité (secondes), pas en millisecondes malgré le nom `*Ms` hérité
+// de src/admin.js (générique : il ne fait que comparer deux nombres).
+let accPurge = 0;
+const PURGE_ADMIN_S = parseInt(process.env.MC_ADMIN_PURGE_S, 10) || 3600;
+const PURGE_ADMIN_OPTS = {
+  sessionsMax: parseInt(process.env.MC_ADMIN_PURGE_SESSIONS_MAX, 10) || undefined,
+  sessionsAgeMs: parseInt(process.env.MC_ADMIN_PURGE_SESSIONS_AGE_S, 10) || 90 * 24 * 3600,
+  invitationsMax: parseInt(process.env.MC_ADMIN_PURGE_INVITATIONS_MAX, 10) || undefined,
+  invitationsAgeMs: parseInt(process.env.MC_ADMIN_PURGE_INVITATIONS_AGE_S, 10) || 30 * 24 * 3600,
+  sanctionsMax: parseInt(process.env.MC_ADMIN_PURGE_SANCTIONS_MAX, 10) || undefined,
+  sanctionsAgeMs: parseInt(process.env.MC_ADMIN_PURGE_SANCTIONS_AGE_S, 10) || 90 * 24 * 3600,
+};
 
 // ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
 /* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
@@ -2157,6 +2175,13 @@ setInterval(() => {
   heure += dt;
   // circuits : diffusé explicitement plus bas (comme l'eau), donc désactivé ici
   monde.tick(dt, 14, null, { temps: heure, circuits: false });
+
+  // SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
+  accPurge += dt;
+  if (accPurge >= PURGE_ADMIN_S) {
+    accPurge = 0;
+    MC.Admin.purger(admin, heure, PURGE_ADMIN_OPTS);
+  }
 
   /* Le serveur simule les créatures autour des joueurs : il lui faut donc le
      terrain autour d'eux. Sans cela, une créature hors des chunks du point
