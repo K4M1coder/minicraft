@@ -92,6 +92,14 @@
     // requêtes de maillage en vol : simplifié demandé, pour reposer sur le
     // chunk à l'intégration (le message `maillage` ne le reporte pas)
     var simplifieEnVol = Object.create(null);
+    // SPEC-SERVEUR-009 : chunks dont les overrides ont déjà été demandés au
+    // serveur (net.demanderOverrides) — évite de redemander à chaque image
+    // tant que la réponse n'est pas arrivée ni le chunk déchargé/rechargé.
+    var overridesDemandes = Object.create(null);
+    // débit des demandes d'overrides, sous le budget anti-flood du serveur
+    // (FLOOD_MAX_GENERAL = 30/s, server.js) — voir streamChunks.
+    var OVERRIDES_DEMANDE_BUDGET = 20;
+    var overridesFenetreDebut = 0, overridesFenetreN = 0;
     var erreursGen = 0, erreursMaille = 0;
     function fermerPools() {
       if (poolGeneration) { poolGeneration.fermer(); poolGeneration = null; }
@@ -232,6 +240,15 @@
         world.getChunk(cx, cz, true);
         world.setBlock(x, y, z, id);
         if (etat) world.setEtat(x, y, z, etat);
+      },
+      // SPEC-SERVEUR-009 : overrides d'un chunk demandé (BIENVENUE ne porte
+      // plus qu'un voisinage borné) — même application qu'onBloc, un à un.
+      onOverridesChunk: function (cx, cz, blocs) {
+        world.getChunk(cx, cz, true);
+        blocs.forEach(function (b) {
+          world.setBlock(b[0], b[1], b[2], b[3]);
+          if (b[4]) world.setEtat(b[0], b[1], b[2], b[4]);
+        });
       },
       onChat: function (m) { chat.recevoir(m); },
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
@@ -779,6 +796,7 @@
          le maillage ne connaît pas la graine (il ne lit que l'instantané
          reçu dans chaque `maille`), seule l'époque compte pour lui. */
       simplifieEnVol = Object.create(null);
+      overridesDemandes = Object.create(null);
       reinitialiserPools(mondeOpts && mondeOpts.zonePolitique);
       return world;
     }
@@ -1637,6 +1655,30 @@
          en deçà du brouillard. */
       var aGenerer = world.chunksVoulus(centres, R + 1);
       var aMailler = world.chunksVoulus(centres, R);
+
+      // SPEC-SERVEUR-009 : demande les overrides de chaque chunk nouvellement
+      // voulu AVANT de le générer/mailler — en ligne seulement (le solo n'a
+      // pas de serveur à interroger, ses overrides sont déjà dans `world`).
+      // Une seule demande par chunk : la réponse (onOverridesChunk) arrive de
+      // toute façon avant que le mailleur n'ait fini de tourner plusieurs
+      // images, largement avant que le chunk ne soit affiché à l'écran.
+      // Débit volontairement sous le budget anti-flood général du serveur
+      // (FLOOD_MAX_GENERAL = 30/s, server.js) : un arrivage massif (connexion,
+      // téléportation) ne fait pas taire silencieusement le serveur pour le
+      // reste de la seconde — les chunks reportés seront redemandés dès la
+      // prochaine image tant qu'ils restent voulus et non encore chargés.
+      if (net.enLigne()) {
+        var tOverridesNow = performance.now();
+        if (tOverridesNow - overridesFenetreDebut > 1000) { overridesFenetreDebut = tOverridesNow; overridesFenetreN = 0; }
+        for (var ridx = 0; ridx < aGenerer.length && overridesFenetreN < OVERRIDES_DEMANDE_BUDGET; ridx++) {
+          var rcx = aGenerer[ridx][1], rcz = aGenerer[ridx][2];
+          var rk = world.key(rcx, rcz);
+          if (world.chunks.has(rk) || overridesDemandes[rk]) continue;
+          overridesDemandes[rk] = true;
+          net.demanderOverrides(rcx, rcz);
+          overridesFenetreN++;
+        }
+      }
 
       integrerResultatsWorkers();
 

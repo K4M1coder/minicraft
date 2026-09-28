@@ -266,6 +266,30 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     ok(apres.texte.indexOf('toujours vivant') >= 0,
        'SPEC-NET-008 : le serveur survit aux messages invalides');
 
+    // ── SPEC-SERVEUR-009 : le chunk où Diane vient d'apparaître (qui contient
+    // le bloc BX,BY,BZ posé plus haut par Alice) lui est transmis sur simple
+    // demande (OVERRIDES_DEMANDE), avec une réponse bornée à CE seul chunk —
+    // voir tests/integration-admin.js pour la preuve que BIENVENUE elle-même
+    // reste de taille bornée face à un grand nombre de modifications éparses.
+    const d2 = await connecter(PORT);
+    d2.envoyer({ t: 'rejoindre', nom: 'Diane', locaux: 1 });
+    const bienvenueD = await d2.attendre('bienvenue');
+    ok(!!bienvenueD.toi, 'SPEC-SERVEUR-009 : Diane a bien rejoint');
+
+    const cxD = Math.floor(BX / 16), czD = Math.floor(BZ / 16);
+    d2.envoyer({ t: 'overrides_demande', cx: cxD, cz: czD });
+    const overridesD = await d2.attendre('overrides_chunk', 3000, m => m.cx === cxD && m.cz === czD);
+    ok(overridesD.blocs.some(x => x[0] === BX && x[1] === BY && x[2] === BZ && x[3] === 9),
+       'SPEC-SERVEUR-009 : le chunk demandé contient bien le bloc posé plus tôt',
+       JSON.stringify(overridesD.blocs).slice(0, 200));
+
+    // un chunk sans aucun override renvoie une liste vide (jamais une erreur)
+    d2.envoyer({ t: 'overrides_demande', cx: cxD + 500, cz: czD + 500 });
+    const overridesVide = await d2.attendre('overrides_chunk', 3000, m => m.cx === cxD + 500 && m.cz === czD + 500);
+    eq(overridesVide.blocs.length, 0, 'SPEC-SERVEUR-009 : un chunk sans override renvoie une liste vide');
+
+    d2.fermer();
+
     // ── SPEC-NET-015 : depart signale
     b.fermer();
     const depart = await a.attendre('quitte', 3000);

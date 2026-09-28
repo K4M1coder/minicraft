@@ -1051,6 +1051,25 @@ function antiFloodOk(c, m) {
   return floodVerifie(c, m, cle, FLOOD_FENETRE_MS, budget);
 }
 
+// SPEC-SERVEUR-009 : overrides de blocs — un voisinage borné à la connexion
+// (BIENVENUE), puis chunk par chunk sur demande du client (OVERRIDES_DEMANDE,
+// voir traiter() plus bas). `rayon` en CHUNKS (0 = un seul chunk, pour une
+// demande ponctuelle) ; borner par un rayon plutôt que tout renvoyer est ce
+// qui garde BIENVENUE de taille bornée quel que soit le nombre d'overrides.
+const RAYON_BIENVENUE_CHUNKS = 2;
+function overridesEnVue(cx0, cz0, rayon) {
+  const blocs = [];
+  monde.overrides.forEach((id, k) => {
+    const p = k.split(',');
+    const x = +p[0], z = +p[2];
+    const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+    if (Math.abs(cx - cx0) > rayon || Math.abs(cz - cz0) > rayon) return;
+    const etat = monde.etatsOverrides ? (monde.etatsOverrides.get(k) || 0) : 0;
+    blocs.push([x, +p[1], z, id, etat]);
+  });
+  return blocs;
+}
+
 // ── traitement des messages ──────────────────────────────────────────────────
 /* Bascules de test réservées aux suites d'intégration (désactivées par
    défaut, jamais en exploitation normale) : elles provoquent volontairement
@@ -1112,14 +1131,13 @@ function traiter(c, m) {
         c.joueurs.push(js);
       }
       c.pos = c.joueurs[0].joueur.state.pos;
-      // l'état complet du monde modifié, pour que le nouveau venu voie les
-      // constructions faites avant son arrivée
-      const blocs = [];
-      monde.overrides.forEach((id, k) => {
-        const p = k.split(',');
-        const etat = monde.etatsOverrides ? (monde.etatsOverrides.get(k) || 0) : 0;
-        blocs.push([+p[0], +p[1], +p[2], id, etat]);
-      });
+      // SPEC-SERVEUR-009 : seul un voisinage borné des overrides accompagne
+      // BIENVENUE — plus loin, le client les demande chunk par chunk au fur
+      // et à mesure qu'il charge son terrain (case OVERRIDES_DEMANDE
+      // plus bas), donc BIENVENUE reste de taille bornée quel que soit le
+      // nombre total de blocs modifiés dans le monde.
+      const cx0 = Math.floor(c.pos.x / 16), cz0 = Math.floor(c.pos.z / 16);
+      const blocs = overridesEnVue(cx0, cz0, RAYON_BIENVENUE_CHUNKS);
       envoyer(c, {
         t: NP.MSG.BIENVENUE,
         id: c.id, graine: CONF.graine, mode: CONF.mode, difficulte: CONF.difficulte,
@@ -1161,6 +1179,13 @@ function traiter(c, m) {
       /* Ancien message : le client imposait sa position. Le serveur fait
          désormais autorité — on n'en retient que le regard. */
       c.yaw = m.yaw; c.pitch = m.pitch;
+      break;
+
+    // SPEC-SERVEUR-009 : le client demande les overrides d'UN chunk qu'il
+    // vient de décider de charger (voir game.js streamChunks) — réponse
+    // bornée à ce seul chunk, jamais le monde entier.
+    case NP.MSG.OVERRIDES_DEMANDE:
+      envoyer(c, { t: NP.MSG.OVERRIDES_CHUNK, cx: m.cx, cz: m.cz, blocs: overridesEnVue(m.cx, m.cz, 0) });
       break;
 
     case NP.MSG.ENTREE: {

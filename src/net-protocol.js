@@ -298,6 +298,11 @@
     // SPEC-MECA-001 : contenu d'un distributeur (le serveur fait foi sur ce
     // qu'il éjecte sur signal — voir circuits.js/onDistribuer côté serveur).
     DISTRIB: 'distrib',
+    // SPEC-SERVEUR-009 : BIENVENUE ne porte plus qu'un voisinage borné des
+    // overrides de blocs — le client demande le reste chunk par chunk, au
+    // même rythme qu'il charge son terrain (voir game.js streamChunks) ;
+    // le serveur répond avec les seuls overrides de CE chunk.
+    OVERRIDES_DEMANDE: 'overrides_demande', OVERRIDES_CHUNK: 'overrides_chunk',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
@@ -398,6 +403,16 @@
         var txt = String(msg.texte === undefined ? '' : msg.texte).trim();
         if (!txt) return null;
         return { t: msg.t, texte: txt.slice(0, 160) };
+
+      // SPEC-SERVEUR-009 : coordonnées de CHUNK (pas de bloc) — bornées plus
+      // strictement qu'une coordonnée de bloc (COORD_MAX est déjà large pour
+      // un bloc, un chunk 16× plus grand n'a pas besoin de la même plage,
+      // mais rester sous la même borne suffit à écarter une valeur aberrante).
+      case MSG.OVERRIDES_DEMANDE:
+        if (!estEntier(msg.cx) || !estEntier(msg.cz) ||
+            Math.abs(msg.cx) > COORD_MAX || Math.abs(msg.cz) > COORD_MAX) return null;
+        return { t: msg.t, cx: msg.cx | 0, cz: msg.cz | 0 };
+
       default: return MC.ContratsV2 ? MC.ContratsV2.valider(msg) : null;
     }
   }

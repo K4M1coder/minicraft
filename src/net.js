@@ -51,6 +51,9 @@
       // fermeture (conteneur cassé, éventuellement remplacé par un autre —
       // jamais de resubscription fantôme sur la nouvelle clé).
       onConteneurFerme: opts.onConteneurFerme || function () {},
+      // SPEC-SERVEUR-009 : réponse à demanderOverrides — les seuls overrides
+      // du chunk (cx, cz) demandé, jamais le monde entier.
+      onOverridesChunk: opts.onOverridesChunk || function () {},
     };
 
     function statut(e, info) {
@@ -175,6 +178,11 @@
           hooks.onBloc(m.x, m.y, m.z, m.id, m.etat || 0);
           break;
 
+        // SPEC-SERVEUR-009 : overrides d'un chunk demandé (demanderOverrides)
+        case NP.MSG.OVERRIDES_CHUNK:
+          hooks.onOverridesChunk(m.cx, m.cz, m.blocs || []);
+          break;
+
         case NP.MSG.CHAT:
           hooks.onChat({ auteur: m.auteur, texte: m.texte, type: m.type, t: m.ts });
           break;
@@ -285,6 +293,13 @@
     function poserBloc(x, y, z, id, outil, j, etat) {
       return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0, etat: etat || 0 });
     }
+    /* SPEC-SERVEUR-009 : demande les overrides d'UN chunk (coordonnées de
+       chunk, pas de bloc) — appelé par game.js streamChunks au fur et à
+       mesure qu'il décide de charger un nouveau chunk, jamais en bloc à la
+       connexion (BIENVENUE ne porte plus qu'un voisinage borné). */
+    function demanderOverrides(cx, cz) {
+      return envoyer({ t: NP.MSG.OVERRIDES_DEMANDE, cx: cx, cz: cz });
+    }
     function envoyerChat(texte) {
       return envoyer({ t: NP.MSG.CHAT, texte: texte });
     }
@@ -332,6 +347,7 @@
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
       envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,

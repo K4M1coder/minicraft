@@ -285,14 +285,6 @@ async function attendrePret(port) {
     details.push(`  ${C.r}✗ exception (reprise) : ${e.message}${C.x}`);
   }
 
-  await dodo(200);
-  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
-
-  console.log(`\n${C.b}Integration admin${C.x}\n${details.join('\n')}\n`);
-  const total = passes + echecs;
-  if (echecs) { console.log(`${C.r}${echecs} échec(s)${C.x} sur ${total} tests\n`); process.exit(1); }
-  console.log(`${C.g}${passes}/${total} tests d intégration passent${C.x}\n`);
-})();
   // ── SPEC-SERVEUR-005 : purge périodique de admin.sessions sur un vrai serveur ──
   /* MC.Admin.purger() est déjà testé PUR (isolé) dans tests/spec-admin.js —
      ici, on prouve seulement que server.js l'appelle RÉELLEMENT depuis sa
@@ -345,3 +337,65 @@ async function attendrePret(port) {
     try { s3.kill(); } catch (e) {}
   }
 
+  // ── SPEC-SERVEUR-009 : BIENVENUE reste borné face à un grand nombre de
+  // modifications éparses dans le monde ────────────────────────────────────
+  /* Un monde préfabriqué (fichier --monde) avec des milliers d'overrides
+     dispersés sur des chunks TRÈS éloignés les uns des autres — impossible à
+     obtenir par de vraies poses de blocs (limitées par la portée d'un
+     joueur, voir SPEC-NET-027) mais représentatif d'une partie qui dure :
+     BIENVENUE ne doit PAS grossir avec le nombre total d'overrides du
+     monde, seulement avec le voisinage borné de la connexion — le reste se
+     demande chunk par chunk (voir tests/integration-net.js pour ce round-trip). */
+  const fichierMondeGros = path.join(tmp, 'monde-gros.json');
+  const overridesEparses = [];
+  const NB_OVERRIDES = 4000;
+  for (let i = 0; i < NB_OVERRIDES; i++) {
+    // dispersés tous les 400 blocs : largement hors du rayon borné autour
+    // de n'importe quel point de connexion proche de (0, 0)
+    overridesEparses.push([(i % 200) * 400, 5, Math.floor(i / 200) * 400, 9]);
+  }
+  fs.writeFileSync(fichierMondeGros, JSON.stringify({
+    v: 2, graine: 20260921, heure: 60, overrides: overridesEparses, etats: [], crops: [],
+  }));
+  const PORT4 = PORT + 3;
+  const s4 = demarrer(['--port', String(PORT4), '--admin', 'secretC', '--monde', fichierMondeGros]);
+  try {
+    ok(await attendrePret(PORT4), 'SPEC-SERVEUR-009 : le serveur démarre avec un monde à 4000 overrides épars');
+    const eve = await connecter(PORT4);
+    eve.envoyer({ t: 'rejoindre', nom: 'Eve', locaux: 1 });
+    const bienvenueEve = await eve.attendre('bienvenue');
+    const tailleBienvenue = JSON.stringify(bienvenueEve).length;
+    ok(tailleBienvenue < 50000,
+       `SPEC-SERVEUR-009 : BIENVENUE reste sous un seuil de taille (${tailleBienvenue} octets) malgré ${NB_OVERRIDES} overrides dans le monde`,
+       `blocs transmis : ${bienvenueEve.blocs.length}`);
+    ok(bienvenueEve.blocs.length < NB_OVERRIDES,
+       'SPEC-SERVEUR-009 : BIENVENUE ne transmet pas TOUS les overrides du monde',
+       `${bienvenueEve.blocs.length} / ${NB_OVERRIDES}`);
+
+    // un override lointain (le dernier de la liste, x=79600 z=7600), jamais
+    // demandé, n'apparaît pas dans BIENVENUE…
+    ok(!bienvenueEve.blocs.some(x => x[0] === 79600 && x[2] === 7600),
+       'SPEC-SERVEUR-009 : un override très éloigné n est pas inclus dans BIENVENUE');
+    // …mais arrive bien sur demande explicite de SON chunk
+    const cxLoin = Math.floor(79600 / 16), czLoin = Math.floor(7600 / 16);
+    eve.envoyer({ t: 'overrides_demande', cx: cxLoin, cz: czLoin });
+    const overridesLoin = await eve.attendre('overrides_chunk', 3000, m => m.cx === cxLoin && m.cz === czLoin);
+    ok(overridesLoin.blocs.some(x => x[0] === 79600 && x[2] === 7600 && x[3] === 9),
+       'SPEC-SERVEUR-009 : ce chunk lointain arrive bien via OVERRIDES_DEMANDE');
+
+    eve.fermer();
+  } catch (e) {
+    echecs++;
+    details.push(`  ${C.r}✗ exception (BIENVENUE bornée, SPEC-SERVEUR-009) : ${e.message}${C.x}`);
+  } finally {
+    try { s4.kill(); } catch (e) {}
+  }
+
+  await dodo(200);
+  try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
+
+  console.log(`\n${C.b}Integration admin${C.x}\n${details.join('\n')}\n`);
+  const total = passes + echecs;
+  if (echecs) { console.log(`${C.r}${echecs} échec(s)${C.x} sur ${total} tests\n`); process.exit(1); }
+  console.log(`${C.g}${passes}/${total} tests d intégration passent${C.x}\n`);
+})();
