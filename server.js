@@ -2102,6 +2102,41 @@ let accEtat = 0;
 let accSpawn = 0;
 let accChunks = 1;         // premier passage immédiat
 
+// SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
+// coffre marqué dans monde.coffresPilles (posé par la section conteneurs,
+// jamais modifiée ici) — pas l'instant exact du pillage, mais borné à la
+// cadence d'entretien du monde (~1 s, voir accChunks ci-dessus), négligeable
+// devant le long délai de régénération (plusieurs jours simulés).
+const coffresPilleDepuis = new Map();
+/* SPEC-DONJON-017 : un coffre de donjon pillé (marqué dans
+   monde.coffresPilles par remplirConteneurNeuf, section conteneurs — jamais
+   touchée ici) regarnit son contenu après un long délai. Plutôt que de
+   modifier cette section pour dater le pillage, on observe simplement
+   quand une clé y APPARAÎT (coffresPilleDepuis) et, une fois le délai du
+   donjon écoulé, on efface l'entrée de `coffresPilles` ET le conteneur déjà
+   créé dans `conteneursPoses` : à la prochaine ouverture,
+   `ouvrirConteneurPourJoueur` (section conteneurs) le retrouve absent,
+   en recrée un neuf et `remplirConteneurNeuf` le regarnit — exactement le
+   chemin qu'un coffre jamais ouvert emprunte déjà, sans qu'il faille
+   dupliquer cette logique ici. */
+function regenererCoffresDonjon() {
+  if (!monde.donjons || !monde.coffresPilles) return;
+  monde.coffresPilles.forEach(cle => {
+    if (!coffresPilleDepuis.has(cle)) coffresPilleDepuis.set(cle, heure);
+  });
+  coffresPilleDepuis.forEach((tPille, cle) => {
+    if (!monde.coffresPilles.has(cle)) { coffresPilleDepuis.delete(cle); return; }
+    const p = cle.split(',');
+    const c = monde.donjons.coffreA(+p[0], +p[1], +p[2]);
+    if (!c) { coffresPilleDepuis.delete(cle); return; }
+    const dureeJour = parseInt(process.env.MC_DONJON_JOUR_S, 10) || (MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200);
+    if (!monde.donjons.coffreRegenere(c.donjon, tPille, heure, dureeJour)) return;
+    monde.coffresPilles.delete(cle);
+    conteneursPoses.delete(cle);
+    coffresPilleDepuis.delete(cle);
+  });
+}
+
 function joueurReference() {
   for (const c of clients.values()) if (c.rejoint) return { pos: c.pos };
   return { pos: SPAWN };
@@ -2147,6 +2182,7 @@ setInterval(() => {
       if (ja) envoyer(ja.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: b });
       if (jb) envoyer(jb.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: a });
     });
+    regenererCoffresDonjon();
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;

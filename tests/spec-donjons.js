@@ -122,5 +122,38 @@
       var c = g0.coffres;
       A.ok(JSON.stringify(w.butinCoffre(c[0].x, c[0].y, c[0].z)) !== JSON.stringify(w.butinCoffre(c[1].x, c[1].y, c[1].z)), "butins distincts");
     });
+
+    it('SPEC-DONJON-017 : un coffre pillé régénère son contenu après un long délai, distinct de POP-002', function () {
+      var t = recenser();
+      var d = t.moyen[0], DUREE_JOUR = 1200;
+
+      // le délai est mesuré en jours simulés, et volontairement distinct du
+      // délai de repeuplement des habitants (POP-002) — jamais la même valeur
+      var delaiJours = w.donjons.delaiRegenCoffre(d);
+      A.gt(delaiJours, 0, 'un délai positif');
+      A.ok(delaiJours * DUREE_JOUR !== MC.Habitats.DELAI_REMPLACEMENT,
+           'le délai de régénération d un coffre diffère du délai de repeuplement POP-002');
+
+      // même donjon, même graine ⇒ toujours le même délai (déterministe)
+      A.equal(w.donjons.delaiRegenCoffre(d), delaiJours, 'délai déterministe par graine');
+
+      var tPille = 5000;
+      var delaiHeure = delaiJours * DUREE_JOUR;
+
+      // vide immédiatement après le pillage
+      A.notOk(w.donjons.coffreRegenere(d, tPille, tPille, DUREE_JOUR), 'toujours vide juste après le pillage');
+      // toujours vide avant l'écoulement du délai
+      A.notOk(w.donjons.coffreRegenere(d, tPille, tPille + delaiHeure - 1, DUREE_JOUR), 'toujours vide juste avant le délai');
+      // à nouveau garni une fois le délai écoulé
+      A.ok(w.donjons.coffreRegenere(d, tPille, tPille + delaiHeure, DUREE_JOUR), 'garni une fois le délai écoulé');
+
+      // composition déterministe par graine : le même coffre regarni donne
+      // exactement le même butin qu'à l'origine (butin() ne dépend que du
+      // donjon et de l'indice du coffre, jamais du nombre de pillages)
+      var coffre = d.coffres[0];
+      var avant = w.butinCoffre(coffre.x, coffre.y, coffre.z);
+      var apres = w.butinCoffre(coffre.x, coffre.y, coffre.z);
+      A.equal(JSON.stringify(avant), JSON.stringify(apres), 'composition déterministe après régénération');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

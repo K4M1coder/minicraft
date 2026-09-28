@@ -739,8 +739,32 @@
       return l;
     }
 
+    /* SPEC-DONJON-017 : un coffre pillé regarnit son contenu après un long
+       délai, mesuré en jours simulés — volontairement bien plus long, et
+       tiré d'un flux de hasard distinct (salt propre), que le délai de
+       repeuplement des habitants (POP-002, de l'ordre d'un jour). La
+       variation par donjon (0 à 3 jours de plus que la base) vient de la
+       même graine que le butin : déterministe, mais pas identique d'un
+       coffre à l'autre — sans quoi tous les coffres du monde regarnisent
+       pile au même instant. */
+    var DELAI_REGEN_JOURS_BASE = 4;
+    function delaiRegenCoffre(d) {
+      var h = N.hash3(d.x * 53 + 17, (d.y || 0) * 41 + 29, d.z * 31 - 11);
+      return DELAI_REGEN_JOURS_BASE + Math.floor(h * 4);   // 4 à 7 jours simulés
+    }
+    /* Le coffre pillé à `tPille` (heure du monde, même unité que `heureActuelle`)
+       est-il de nouveau garni à `heureActuelle` ? `dureeJour` : durée d'un
+       jour simulé dans cette même unité (MC.DayCycle.DAY_LENGTH côté
+       serveur/solo — 1200 par défaut si omis). Décision pure, réutilisée
+       telle quelle par le serveur (jamais dupliquée) : c'est elle que
+       vérifient les tests « toujours vide avant le délai, garni après ». */
+    function coffreRegenere(d, tPille, heureActuelle, dureeJour) {
+      return (heureActuelle - tPille) >= delaiRegenCoffre(d) * (dureeJour || 1200);
+    }
+
     return { deRegion: deRegion, dansZone: dansZone, appliquer: appliquer,
-             salleA: salleA, salleDe: salleDe, coffreA: coffreA, butin: butin };
+             salleA: salleA, salleDe: salleDe, coffreA: coffreA, butin: butin,
+             delaiRegenCoffre: delaiRegenCoffre, coffreRegenere: coffreRegenere };
   }
 
   MC.Donjons = { creer: creer, typePour: typePour, TYPES: TYPES, REGION: REGION, BOSS: BOSS, TAILLES: ['petit', 'moyen', 'grand'],
