@@ -743,6 +743,54 @@
              salleA: salleA, salleDe: salleDe, coffreA: coffreA, butin: butin };
   }
 
+  // ─── SPEC-DONJON-018 : rattachement territorial (politique.js) ────────────
+  /* Un donjon est fixe (sa position ne change jamais) : la faction dont le
+     territoire le couvre AU MOMENT DE L'APPEL en est propriétaire — recalculé
+     à chaque appel plutôt que mémorisé sur `d`, pour rester une fonction pure
+     qui ne mute jamais l'objet donjon (comme le reste de ce module). En cas
+     de recoupement, la faction au plus petit territoire (le siège le plus
+     « local ») l'emporte, à égalité par id — déterministe. */
+  function factionDuTerritoire(donjon, politiqueEtat) {
+    if (!donjon || !politiqueEtat || !politiqueEtat.factions) return null;
+    var meilleure = null;
+    politiqueEtat.factions.forEach(function (f) {
+      var d = Math.hypot(f.siege.x - donjon.x, f.siege.z - donjon.z);
+      if (d > f.territoire) return;
+      if (!meilleure || f.territoire < meilleure.territoire ||
+          (f.territoire === meilleure.territoire && f.id < meilleure.id)) meilleure = f;
+    });
+    return meilleure ? meilleure.id : null;
+  }
+  /* Effet de la victoire sur le gardien d'un donjon rattaché à une faction :
+     - sans revendicant (cas normal) : le même gain qu'un avant-poste réussi
+       (SPEC-FACTION-016), en réutilisant `MC.Politique.appliquerGainAvantPoste`
+       — aucune logique de territoire dupliquée ici ;
+     - avec un revendicant EN GUERRE contre la faction propriétaire pour ce
+       territoire (`revendicantId`) : la conquête sert sa revendication —
+       `MC.Politique.appliquerGainElimination` (déjà utilisée par un raid ou
+       une quête d'élimination réussis, FACTION-016/QUETE-002) transfère le
+       territoire exactement comme un raid gagné, à graine égale. Un
+       revendicant qui n'est pas en guerre pour ce territoire ne peut rien
+       revendiquer (repli sur le cas normal, le propriétaire encaisse seul). */
+  function victoireGardien(donjon, politiqueEtat, revendicantId) {
+    var P = MC.Politique;
+    var proprietaireId = factionDuTerritoire(donjon, politiqueEtat);
+    if (!proprietaireId || !P) return null;
+    var proprietaire = politiqueEtat.factions.get(proprietaireId);
+    if (!proprietaire) return null;
+    if (revendicantId && revendicantId !== proprietaireId) {
+      var revendicant = politiqueEtat.factions.get(revendicantId);
+      if (revendicant && P.relationEntre(politiqueEtat, revendicantId, proprietaireId) === 'guerre') {
+        P.appliquerGainElimination(politiqueEtat, revendicant, proprietaire);
+        return { faction: revendicantId, revendique: true, territoire: revendicant.territoire };
+      }
+    }
+    P.appliquerGainAvantPoste(proprietaire);
+    proprietaire.ressources.or += 5;
+    return { faction: proprietaireId, revendique: false, territoire: proprietaire.territoire };
+  }
+
   MC.Donjons = { creer: creer, typePour: typePour, TYPES: TYPES, REGION: REGION, BOSS: BOSS, TAILLES: ['petit', 'moyen', 'grand'],
-                 DEMI: DEMI, HAUT: HAUT, PORTEE: PORTEE };
+                 DEMI: DEMI, HAUT: HAUT, PORTEE: PORTEE,
+                 factionDuTerritoire: factionDuTerritoire, victoireGardien: victoireGardien };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

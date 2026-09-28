@@ -417,5 +417,38 @@
     return { appliquer: appliquer, connexionsDe: connexionsDe, cheminEntre: cheminEntre, routeAutorisee: routeAutorisee };
   }
 
-  MC.Routes = { creer: creer };
+  // ─── SPEC-ENV-002 : praticabilité d'une route près d'une éruption ─────────
+  /* Une route est un tracé fixe (`cheminEntre`) ; sa praticabilité, elle, est
+     une condition DYNAMIQUE (dépend de l'instant) — jamais mémorisée sur le
+     chemin en cache : recalculée à chaque appel, pure. `volcan` : { x, z } ;
+     `activite` : le résultat de `MC.Volcanisme.activite(volcan, t, graine)`
+     (`.eruption` non nul pendant une éruption en cours). */
+  var RAYON_ERUPTION_ROUTE = 40;   // distance du cratère où cendres/lave coupent la route
+  function segmentDansRayon(chemin, volcan, rayon) {
+    return !!(chemin && chemin.nodes && chemin.nodes.some(function (p) {
+      return Math.hypot(p.x - volcan.x, p.z - volcan.z) <= rayon;
+    }));
+  }
+  function routePraticable(chemin, volcan, activite, rayon) {
+    if (!activite || !activite.eruption) return true;         // pas d'éruption en cours : toujours praticable
+    return !segmentDansRayon(chemin, volcan, rayon || RAYON_ERUPTION_ROUTE);
+  }
+  /* Effet sur les caravanes (MC.Caravanes.trajetsDe) qui empruntaient une
+     route devenue impraticable : redirigées vers un AUTRE trajet du même
+     lieu de départ menant à la même destination (`b` identique) si son tracé,
+     lui, reste praticable ; arrêtées faute d'alternative. Un trajet praticable
+     n'est pas touché. Pure : ne modifie aucun trajet, ne fait que qualifier
+     chacun ({ trajet, etat: 'praticable'|'redirection'|'arret', original? }). */
+  function trajetsAffectesParEruption(trajets, volcan, activite, rayon) {
+    return (trajets || []).map(function (t) {
+      if (routePraticable(t, volcan, activite, rayon)) return { trajet: t, etat: 'praticable' };
+      var alt = (trajets || []).find(function (u) {
+        return u !== t && u.b === t.b && routePraticable(u, volcan, activite, rayon);
+      });
+      return alt ? { trajet: alt, original: t, etat: 'redirection' } : { trajet: t, etat: 'arret' };
+    });
+  }
+
+  MC.Routes = { creer: creer, routePraticable: routePraticable, trajetsAffectesParEruption: trajetsAffectesParEruption,
+                RAYON_ERUPTION_ROUTE: RAYON_ERUPTION_ROUTE };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

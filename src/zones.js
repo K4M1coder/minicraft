@@ -102,9 +102,20 @@
      de `creerEtat`. Toujours passés séparément — la carte ne change jamais
      après la génération du monde, l'état si (une redéfinition, une reprise
      de sauvegarde). */
-  function zoneEn(carte, etat, x, z) {
+  /* `politiqueEtat` (facultatif, SPEC-FACTION-014) : l'état de MC.Politique
+     (server.js/game.js le porte) — quand le territoire d'une faction couvre
+     (x, z), sa relation dominante (guerre active, ou paix stable sur un
+     territoire consolidé) module la zone générée. Priorité toujours à une
+     redéfinition explicite d'administrateur, vérifiée EN PREMIER : jamais
+     écrasée, quelle que soit l'influence politique du lieu. Point d'entrée
+     ajouté sans toucher au reste de zoneEn/classeBase. */
+  function zoneEn(carte, etat, x, z, politiqueEtat) {
     var region = etat && etat.regions.get(regionDe(x, z));
     if (region) return { zone: region.zone, redefinie: true };
+    if (politiqueEtat && MC.Politique && MC.Politique.influenceZone) {
+      var influence = MC.Politique.influenceZone(politiqueEtat, x, z);
+      if (influence) return { zone: influence, redefinie: false, faction: true };
+    }
     return { zone: carte ? carte.classeBase(x, z) : 'pvp_pve', redefinie: false };
   }
 

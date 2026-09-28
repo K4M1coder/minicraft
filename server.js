@@ -108,6 +108,11 @@ const guildes = MC.Guildes.creerEtat();
 // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
 // module et même état joués à l'identique en solo (game.js) et ici.
 const economie = MC.Economie.creerEtat(CONF.graine);
+// SPEC-QUETE-004 : tableau des quêtes ACTIVES de chaque joueur (nom -> [...]),
+// tenu et arbitré ICI, jamais par un client — accepterQuete/remettreQuete
+// (politique.js) sont les seules portes d'entrée qui font foi, empêchant
+// une double remise même si deux clients l'envoient en même temps.
+let quetesJoueurs = new Map();
 // B4 (docs/vague-2/B4.md) : butin, meurtres non consentis, réputation,
 // hors-la-loi, duels et victoires PvP. Déclaré ICI (avant `etatMonde`/
 // `appliquerEtatMonde`, appelée dès la reprise `--monde` plus bas dans ce
@@ -206,6 +211,9 @@ function etatMonde() {
     // politiques — en dernier, comme prévu par le plan. Duels et propositions
     // sont éphémères, jamais persistés (MC.PvpEnjeux.serialiser les omet déjà).
     pvp: MC.PvpEnjeux.serialiser(pvp),
+    // SPEC-QUETE-004 : le tableau de quêtes actives par joueur, persistant à
+    // la sauvegarde/reconnexion (nom -> [{ id, statut, … }]).
+    quetes: MC.Politique.serialiserQuetes(quetesJoueurs),
   };
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
@@ -256,6 +264,8 @@ function appliquerEtatMonde(data) {
     guildes.factions = gu.factions; guildes.joueurs = gu.joueurs;
     guildes.invitations = gu.invitations; guildes.prochainId = gu.prochainId;
   }
+  // SPEC-QUETE-004 : reprise du tableau de quêtes actives par joueur.
+  quetesJoueurs = MC.Politique.chargerQuetes(data.quetes);
   if (data.economie) {
     const eco = MC.Economie.charger(data.economie);
     economie.jour = eco.jour; economie.lieux = eco.lieux;
@@ -1354,6 +1364,15 @@ function traiter(c, m) {
         traiterDuel(c, m.texte);
         break;
       }
+      /* SPEC-QUETE-004 : /quete lister | accepter <id> | remettre <id> —
+         le serveur reste SEUL arbitre (MC.Politique.accepterQuete/remettreQuete),
+         jamais un client : un « remettre » qui arrive deux fois (deux
+         clients, un double clic) ne verse jamais deux fois la récompense
+         (remettreQuete ne retrouve plus de quête 'active' au second appel). */
+      if (typeof m.texte === 'string' && /^\/quete(\s|$)/.test(m.texte)) {
+        traiterQuete(c, m.texte);
+        break;
+      }
       /* /faction … : le serveur fait foi sur les factions de joueurs
          (SPEC-FACTION-009 à 013) ; la réponse ne va qu'à l'intéressé, et
          « dire » ne va qu'aux membres de sa faction principale. */
@@ -2029,6 +2048,44 @@ function issuePvp(vainqueur, vaincu, duel) {
 /* /duel <nom> | /duel accepter | /duel refuser (case CHAT, avant /faction).
    Jamais diffusé au chat général : une réponse système au seul intéressé (et
    à l'adversaire, quand il y en a un joignable). */
+/* SPEC-QUETE-004 : /quete lister | accepter <id> | remettre <id>. Les
+   propositions viennent de MC.Politique.quetesActives(politique) (quêtes de
+   faction, y compris de reconstruction/secours ajoutées côté lieu — voir
+   habitats.js:queteCatastrophe pour SPEC-QUETE-003, proposées de la même
+   façon par leur `id`) ; le tableau PAR JOUEUR (`quetesJoueurs`) est ce que
+   le serveur arbitre : accepterQuete/remettreQuete (politique.js) décident
+   seuls, jamais un client. */
+function traiterQuete(c, texte) {
+  const args = texte.trim().split(/\s+/).slice(1);
+  const sous = (args[0] || '').toLowerCase();
+  if (sous === 'lister' || !sous) {
+    const dispo = MC.Politique.quetesActives(politique);
+    const mien = MC.Politique.quetesActivesDeJoueur(quetesJoueurs, c.nom);
+    if (!dispo.length && !mien.length) { envoyerSysteme(c, 'Aucune quête pour le moment.'); return; }
+    dispo.forEach(q => envoyerSysteme(c, 'Proposée : [' + q.id + '] ' + q.titre + ' (récompense estimée ' + q.recompense + ')'));
+    mien.forEach(q => envoyerSysteme(c, 'En cours : [' + q.id + '] ' + q.titre + ' — ' + q.statut));
+    return;
+  }
+  if (sous === 'accepter') {
+    const id = args[1];
+    const quete = MC.Politique.quetesActives(politique).find(q => q.id === id);
+    if (!quete) { envoyerSysteme(c, 'Quête introuvable : ' + id); return; }
+    const r = MC.Politique.accepterQuete(quetesJoueurs, c.nom, quete);
+    envoyerSysteme(c, r.ok ? 'Quête acceptée : ' + quete.titre : 'Quête déjà acceptée.');
+    MC.Admin.journaliser(admin, { auteur: c.nom, action: 'quete_accepter', cible: id, details: r.ok, heure });
+    return;
+  }
+  if (sous === 'remettre') {
+    const id = args[1];
+    const reelle = MC.Politique.recompenseReelle(politique, MC.Politique.quetesActivesDeJoueur(quetesJoueurs, c.nom).find(q => q.id === id) || {}, { economie });
+    const r = MC.Politique.remettreQuete(quetesJoueurs, c.nom, id, reelle);
+    if (!r.ok) { envoyerSysteme(c, 'Rien à remettre pour cette quête (déjà remise, ou jamais acceptée).'); return; }
+    envoyerSysteme(c, 'Quête remise : ' + r.quete.titre + ' — récompense ' + r.quete.recompenseVersee + ' émeraude(s).');
+    MC.Admin.journaliser(admin, { auteur: c.nom, action: 'quete_remettre', cible: id, details: r.quete.recompenseVersee, heure });
+    return;
+  }
+  envoyerSysteme(c, 'Usage : /quete lister | accepter <id> | remettre <id>');
+}
 function traiterDuel(c, texte) {
   const args = texte.trim().split(/\s+/).slice(1);
   const sous = (args[0] || '').toLowerCase();

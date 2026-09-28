@@ -200,13 +200,19 @@
     f.ressources.or = Math.max(0, f.ressources.or - cout.or);
     f.ressources.nourriture = Math.max(0, f.ressources.nourriture - cout.nourriture);
   }
+  /* Gain d'un avant-poste réussi (SPEC-FACTION-016) : factorisé pour être
+     rejoué à l'identique par un donjon rattaché vaincu (SPEC-DONJON-018,
+     donjons.js:victoireGardien) sans dupliquer le calcul de territoire. */
+  function appliquerGainAvantPoste(f) {
+    f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 10);
+  }
   function appliquerAction(etat, f, action, jour) {
     if (action === 'caravane') { f.ressources.or += 1; annoncer(etat, f.nom + ' envoie une caravane commerciale.', [f.id]); return; }
     if (action === 'avant_poste') {
       prelever(f, COUT_ACTION_RESSOURCES);
       var hap = h01(etat.seed, f.id, 'avant_poste', jour);
       if (hap < 0.5) {
-        f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 10);
+        appliquerGainAvantPoste(f);
         annoncer(etat, f.nom + ' fonde un avant-poste et étend son territoire.', [f.id]);
       } else {
         annoncer(etat, f.nom + ' tente de fonder un avant-poste, sans succès.', [f.id]);
@@ -364,6 +370,134 @@
     return out;
   }
 
+  // ─── SPEC-FACTION-014 : influence du territoire sur la zone de jeu ────────
+  /* Le territoire consolidé d'une faction politique influence la zone de jeu
+     qui le recouvre : une faction en guerre active y rend le terrain plus
+     dangereux (pvp/pvp_pve), une faction en paix durable et au territoire
+     bien établi y rend le terrain plus sûr (pve/sûre). `zones.js:zoneEn`
+     applique ce résultat SEULEMENT quand aucune redéfinition d'administrateur
+     n'est posée sur la région (priorité toujours à l'admin, SPEC-ZONE-004). */
+  var SEUIL_TERRITOIRE_CONSOLIDE = 250;   // proche de TERRITOIRE_MAX (400) : bien établi
+  function relationsPaisibles(etat, factionId) {
+    var paisible = true;
+    etat.relations.forEach(function (r, cle) {
+      if (!paisible || (r !== 'guerre' && r !== 'rivalite')) return;
+      var parts = cle.split('~');
+      if (parts[0] === factionId || parts[1] === factionId) paisible = false;
+    });
+    return paisible;
+  }
+  /* La faction dont le territoire couvre (x, z), au plus proche (le plus
+     petit territoire qui couvre encore le point, pour départager deux
+     sièges dont les cercles se recoupent) — déterministe par id en cas
+     d'égalité stricte. */
+  function factionCouvrant(etat, x, z) {
+    var meilleure = null;
+    etat.factions.forEach(function (f) {
+      var d = Math.hypot(f.siege.x - x, f.siege.z - z);
+      if (d > f.territoire) return;
+      if (!meilleure || f.territoire < meilleure.territoire ||
+          (f.territoire === meilleure.territoire && f.id < meilleure.id)) meilleure = f;
+    });
+    return meilleure;
+  }
+  /* Zone suggérée par l'influence politique en (x, z), ou null si aucune
+     faction n'y a d'influence marquée (repli sur la carte générée). */
+  function influenceZone(etat, x, z) {
+    var f = factionCouvrant(etat, x, z);
+    if (!f) return null;
+    if (enGuerreActive(etat, f.id)) {
+      return f.territoire >= SEUIL_TERRITOIRE_CONSOLIDE ? 'pvp' : 'pvp_pve';
+    }
+    if (relationsPaisibles(etat, f.id)) {
+      return f.territoire >= SEUIL_TERRITOIRE_CONSOLIDE ? 'sure' : 'pve';
+    }
+    return null;
+  }
+
+  // ─── SPEC-FACTION-015 : embargo commercial entre factions en guerre ───────
+  /* Étend FACTION-003 (un camp de créatures ferme son commerce à un joueur
+     hostile) aux factions POLITIQUES et aux factions de joueurs qui leur
+     sont alliées (SPEC-FACTION-017 : `factionJoueurId` désigne la faction de
+     joueurs par laquelle l'appelant a résolu l'appartenance — jamais
+     recalculée ici, cette résolution reste hors de politique.js). Offres
+     rouvertes dès que la relation change (guerre → rivalité/neutre/alliance) :
+     rien n'est mémorisé, l'état courant seul décide. */
+  function commerceFermeAvec(etat, factionId, factionJoueurId) {
+    if (!factionJoueurId) return false;
+    return relationEntre(etat, factionId, factionJoueurId) === 'guerre';
+  }
+  function offresAutorisees(etat, factionId, factionJoueurId, offres) {
+    if (commerceFermeAvec(etat, factionId, factionJoueurId)) return [];
+    return (offres || []).slice();
+  }
+
+  // ─── SPEC-QUETE-004 : tableau de quêtes actives par joueur ────────────────
+  /* `tableau` : une Map joueurId -> [quête…]. Le serveur (ou la partie solo)
+     est seul arbitre : accepterQuete/remettreQuete sont les deux SEULES
+     portes d'entrée qui font foi — un client ne décide jamais localement
+     qu'une quête est acceptée ou remise, il ne fait que le PROPOSER, ce que
+     le serveur confirme ou refuse. */
+  function accepterQuete(tableau, joueurId, quete) {
+    if (!quete || !quete.id) return { ok: false, motif: 'quete_invalide' };
+    var l = tableau.get(joueurId) || [];
+    if (l.some(function (q) { return q.id === quete.id; })) return { ok: false, motif: 'deja_acceptee' };
+    var q = {}, k;
+    for (k in quete) q[k] = quete[k];
+    q.statut = 'active';
+    l.push(q);
+    tableau.set(joueurId, l);
+    return { ok: true, quete: q };
+  }
+  function quetesActivesDeJoueur(tableau, joueurId) { return (tableau.get(joueurId) || []).slice(); }
+  /* La remise : un seul appel réussit — un second appel (double clic, deux
+     clients du même compte, ou une simple relecture du même message réseau)
+     ne retrouve plus de quête 'active' à cet id et échoue proprement, sans
+     jamais verser la récompense deux fois. */
+  function remettreQuete(tableau, joueurId, queteId, recompenseReelle) {
+    var l = tableau.get(joueurId) || [], q = null, i;
+    for (i = 0; i < l.length; i++) { if (l[i].id === queteId && l[i].statut === 'active') { q = l[i]; break; } }
+    if (!q) return { ok: false, motif: 'introuvable' };
+    q.statut = 'remise';
+    q.recompenseVersee = recompenseReelle !== undefined ? recompenseReelle : q.recompense;
+    return { ok: true, quete: q };
+  }
+  function serialiserQuetes(tableau) { return Array.from(tableau.entries()); }
+  function chargerQuetes(data) { return new Map(data || []); }
+
+  // ─── SPEC-QUETE-005 : récompense au coût réel de l'objectif ───────────────
+  /* Remplace la formule arbitraire `5 + hasard*20` de `questesDe` (qui ne
+     sert plus qu'à AFFICHER une estimation à la proposition) par le coût réel
+     de ce qui est demandé, calculé au moment de la remise :
+       - livraison : le prix courant réel (SPEC-ECO-001, `MC.Economie.prixCourant`)
+         du lot demandé, via `opts.economie`/`opts.lieuEco`/`opts.offre` —
+         fournis par l'appelant (server.js/game.js), qui seul connaît l'état
+         économique et sait convertir 'or'/'nourriture' en objet d'inventaire ;
+       - élimination : une fraction du territoire de la cible, la vraie
+         mesure de ce qu'elle représentait pour l'auteur du raid (FACTION-016
+         retire 15 à la cible pour un raid classique — la même échelle sert
+         ici de référence) ;
+       - reconstruction (ENV-001/004, QUETE-003) : proportionnelle aux dégâts
+         mesurés (`quete.degats`, un compte de blocs), portés par l'appelant. */
+  function recompenseReelle(etat, quete, opts) {
+    opts = opts || {};
+    if (quete.type === 'livrer' && opts.economie && opts.objetId != null && MC.Economie) {
+      var lieuId = opts.lieuId || quete.faction;
+      var prix = MC.Economie.prixCourant(opts.economie, lieuId, { give: [{ id: opts.objetId, n: opts.montant || 8 }], get: null });
+      // `prixCourant` attend une offre give/get ; la ressource livrée vaut
+      // toujours ce qu'elle rapporterait à la vente — le côté get importe peu.
+      return Math.max(1, Math.round(Math.abs(prix)));
+    }
+    if (quete.type === 'eliminer') {
+      var cible = etat.factions.get(quete.cible);
+      if (cible) return Math.max(1, Math.round(cible.territoire * 0.5));
+    }
+    if ((quete.type === 'reconstruction' || quete.type === 'secours') && quete.degats) {
+      return Math.max(3, Math.round(quete.degats * (opts.valeurParBloc || 0.5)));
+    }
+    return quete.recompense;   // repli : rien de mieux à calculer, on garde l'estimation d'origine
+  }
+
   // ─── jugement du joueur (et de ses factions) par réputation ────────────
   /* Même principe que MC.Factions.creerReputations, mais keyé par faction
      politique : un même « suivi » peut représenter la réputation d'un joueur
@@ -415,5 +549,16 @@
     naitreDe: naitreDe, h01: h01, appliquerAction: appliquerAction,
     ciblePourRaid: ciblePourRaid, SEUIL_RESSOURCE_BAS: SEUIL_RESSOURCE_BAS,
     COUT_ACTION_RESSOURCES: COUT_ACTION_RESSOURCES,
+    appliquerGainAvantPoste: appliquerGainAvantPoste, appliquerGainElimination: appliquerGainElimination,
+    enGuerreActive: enGuerreActive,
+    // SPEC-FACTION-014 : influence du territoire sur la zone de jeu (zones.js)
+    influenceZone: influenceZone, factionCouvrant: factionCouvrant, SEUIL_TERRITOIRE_CONSOLIDE: SEUIL_TERRITOIRE_CONSOLIDE,
+    // SPEC-FACTION-015 : embargo commercial entre factions en guerre
+    commerceFermeAvec: commerceFermeAvec, offresAutorisees: offresAutorisees,
+    // SPEC-QUETE-004 : tableau de quêtes actives par joueur
+    accepterQuete: accepterQuete, quetesActivesDeJoueur: quetesActivesDeJoueur, remettreQuete: remettreQuete,
+    serialiserQuetes: serialiserQuetes, chargerQuetes: chargerQuetes,
+    // SPEC-QUETE-005 : récompense au coût réel
+    recompenseReelle: recompenseReelle,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
