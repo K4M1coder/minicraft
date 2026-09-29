@@ -507,9 +507,10 @@ let quetesCatastrophe = [];
    d'un joueur, une tornade/un cyclone actif qui le traverse endommage
    réellement ses bâtiments (ENV-001), fait migrer sa population vers le
    lieu viable le plus proche (ENV-004) et propose une quête de secours
-   (QUETE-003) ; un volcan actif à proximité coupe réellement les routes
-   qui en approchent (ENV-002, consultées par `avancerConvoisServeur` plus
-   bas et par `game.js:convois` côté client). */
+   (QUETE-003) ; cette fonction ne touche PAS aux routes elle-même (ENV-002
+   est câblée côté client, dans `src/game.js:convois`, seul vrai système de
+   caravane actif du jeu — voir `MC.Routes.trajetsAffectesParEruption`,
+   consultée là, pas ici). */
 function avancerCatastrophes() {
   if (!monde.habitats || !monde.meteo) return;
   const lieux = [];

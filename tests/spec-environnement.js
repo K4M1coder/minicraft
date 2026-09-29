@@ -118,6 +118,29 @@
       var faible = H.migrerPopulation(unVillage(MC.createWorld(31)), dest3, 0.0, 99);
       var fort = H.migrerPopulation(src3, dest3, 1.0, 99);
       A.ok(fort.migres >= faible.migres, 'gravité maximale migre au moins autant que gravité minimale');
+
+      // lieu synthétique minuscule (1 à 3 habitants, comme une habitation
+      // isolée réelle — LIEUX.maison, lots: 1) : un plancher à 1 migrant
+      // dépasserait très largement 30 % (100 % pour 1 habitant, 33 % pour
+      // 3) — sans plancher, aucune migration ne doit jamais dépasser 30 %.
+      function lieuMinuscule(n) {
+        var pnjs = [];
+        for (var i = 0; i < n; i++) pnjs.push({ id: 'test:' + n + ':' + i, role: 'habitant', lieu: 'test:src:' + n });
+        return { id: 'test:src:' + n, pnjs: pnjs };
+      }
+      [1, 2, 3].forEach(function (n) {
+        var minuscule = lieuMinuscule(n);
+        var voisin = { id: 'test:dest:' + n, pnjs: [] };
+        var r2 = H.migrerPopulation(minuscule, voisin, 1.0, 7);   // gravité max : le cas le plus favorable à un dépassement
+        A.ok(r2.migres === 0 || r2.migres / n <= H.MIGRATION_MAX + 1e-9,
+             'lieu de ' + n + ' habitant(s) : aucune migration, ou fraction réelle ≤ 30 % (migres=' + r2.migres + ')');
+        A.equal(minuscule.pnjs.length, n - r2.migres, 'la population source ne perd que ce qui a été compté');
+      });
+      // 1 seul habitant : floor(1 × 30 %) = 0 — personne ne migre plutôt
+      // que d'en perdre la totalité (100 %, l'ancien comportement à plancher).
+      var unSeul = lieuMinuscule(1);
+      var rUnSeul = H.migrerPopulation(unSeul, { id: 'test:dest:1b', pnjs: [] }, 1.0, 7);
+      A.equal(rUnSeul.migres, 0, 'floor(1 × 30 %) = 0 : personne ne migre plutôt que de dépasser largement la borne');
     });
 
     it('SPEC-ENV-002 : une éruption active près d\'une route la rend impraticable ; caravanes redirigées ou arrêtées, route reprise après l\'éruption', function () {

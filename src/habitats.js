@@ -1305,7 +1305,16 @@
   function migrerPopulation(source, dest, gravite, graine) {
     if (!source || !dest || !source.pnjs || !source.pnjs.length) return { migres: 0 };
     var fraction = MIGRATION_MIN + (MIGRATION_MAX - MIGRATION_MIN) * clamp01(gravite);
-    var n = Math.max(1, Math.min(source.pnjs.length, Math.round(source.pnjs.length * fraction)));
+    // AUCUN plancher à 1, et Math.floor (jamais round/max) : un lieu trop
+    // petit pour qu'un seul migrant reste sous 30 % de sa population ne perd
+    // personne plutôt que de dépasser largement la borne haute (même
+    // principe que endommagerLieu — revue adversariale : round/max(1, …)
+    // ferait migrer 100 % d'un lieu d'un seul habitant, ou 33 % d'un lieu de
+    // trois, très au-delà de 10-30 %). Atteignable en jeu réel : une
+    // habitation isolée (LIEUX.maison, lots: 1) ne compte souvent qu'un ou
+    // deux habitants.
+    var n = Math.min(source.pnjs.length, Math.floor(source.pnjs.length * fraction));
+    if (!n) return { migres: 0, sourceId: source.id, versId: dest.id };
     var candidats = source.pnjs.map(function (p, idx) { return { p: p, h: hacheEnv(graine, idx, source.pnjs.length, 11) }; });
     candidats.sort(function (a, b) { return a.h - b.h; });
     var partants = candidats.slice(0, n).map(function (c) { return c.p; });
