@@ -3295,6 +3295,61 @@
     A.equal(g.render.antialiasActif, true, 'réactivable manuellement dans les options');
   });
 
+  /* SPEC-RENDU-009 : sous le seuil de foule, chaque mob garde son maillage
+     complet (articulé) ; passé ce seuil, l'espèce entière bascule en un
+     seul THREE.InstancedMesh — vérifié ici en conditions réelles (vraie
+     scène, vrai renderer), pas en simulant juste le compte. */
+  e2e('SPEC-RENDU-009 : les mobs d’une même espèce en surnombre sont fusionnés en un seul InstancedMesh', async function (g) {
+    await reset(g);
+    var s = g.player.state;
+    s.flying = true;
+    // une distance de vue modeste et fixe, et une scène qu'on laisse se
+    // stabiliser (streaming en cours ailleurs dans la campagne e2e, s'il en
+    // reste, peut sinon faire bouger `appelsDessin` d'une image à l'autre
+    // indépendamment des moutons — cette mesure se calibre de toute façon
+    // sur elle-même ci-dessous plutôt que sur un seuil absolu).
+    g.render.setDistance(3);
+    g.streamChunks(true);
+    for (var wi = 0; wi < 10; wi++) await frames(1);
+    var appels0 = g.render.metriquesDessin.appelsDessin;
+
+    // sous le seuil (4 < 5) : maillages individuels complets
+    var peu = [];
+    for (var i = 0; i < 4; i++) peu.push(g.entities.spawn('sheep', s.pos.x + 2 + i, s.pos.y + 1, s.pos.z));
+    await frames(3);
+    var individuelsPeu = peu.filter(function (e) { return g.render.entityMeshes.has(e.eid); }).length;
+    A.equal(individuelsPeu, 4, 'sous le seuil (4 moutons) : chacun garde son maillage individuel');
+    A.notOk(g.render.instancesMobs.sheep && g.render.instancesMobs.sheep.mesh.count > 0, 'pas d’instance active sous le seuil');
+    var appels4 = g.render.metriquesDessin.appelsDessin;
+    // coût par mob individuel mesuré ICI (se calibre sur le bruit ambiant
+    // de cette exécution — chunks/météo — au lieu d'un seuil absolu)
+    var coutParMob = Math.max(1, (appels4 - appels0) / 4);
+
+    peu.forEach(function (e) { g.entities.remove(e); });
+    await frames(2);
+
+    // 20 moutons d'un coup : passe le seuil, bascule en instance
+    var vingt = [];
+    for (var j = 0; j < 20; j++) vingt.push(g.entities.spawn('sheep', s.pos.x + 2 + (j % 8), s.pos.y + 1, s.pos.z + 2 + Math.floor(j / 8)));
+    await frames(3);
+    var individuelsApres = vingt.filter(function (e) { return g.render.entityMeshes.has(e.eid); }).length;
+    A.equal(individuelsApres, 0, 'en surnombre (20 moutons) : plus aucun n’a de maillage individuel propre');
+    var info = g.render.instancesMobs.sheep;
+    A.ok(info, 'une instance partagée existe pour l’espèce « sheep »');
+    A.equal(info.mesh.count, 20, 'les 20 moutons sont tous représentés par l’instance : ' + info.mesh.count);
+    A.ok(g.render.scene.children.indexOf(info.mesh) >= 0, 'l’instance est bien dans la scène rendue');
+    var appels20 = g.render.metriquesDessin.appelsDessin;
+    // 20 moutons en maillages individuels auraient coûté environ
+    // 20 * coutParMob appels de plus qu'à vide ; l'instance partagée doit en
+    // coûter une toute petite fraction de ça (marge généreuse : moins que
+    // le coût de 8 moutons individuels, pour une seule espèce entière)
+    A.lt(appels20 - appels0, coutParMob * 8, 'l’instance partagée coûte bien moins que 20 moutons individuels (mesuré : '
+      + coutParMob.toFixed(1) + ' appels/mob individuel) : +' + (appels20 - appels0) + ' pour 20 moutons instanciés');
+
+    vingt.forEach(function (e) { g.entities.remove(e); });
+    await frames(1);
+  });
+
   /* SPEC-RENDU-004 : une nappe d'eau lointaine (au-delà du seuil interne) ne
      déclenche pas la réfraction ; approchée, elle la déclenche. */
   e2e('SPEC-RENDU-004 : la réfraction ne s’active qu’à moins d’une distance fixe de la caméra', async function (g) {

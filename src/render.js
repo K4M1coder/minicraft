@@ -1096,6 +1096,10 @@
     function libererToutesEntites() {
       entityMeshes.forEach(libererEntite);
       entityMeshes.clear();
+      // SPEC-RENDU-009 : les instances de foule n'ont plus d'entités
+      // derrière elles — masquées, pas détruites (capacité réutilisable dès
+      // la prochaine foule de la même espèce).
+      Object.keys(mobInstances).forEach(function (type) { mobInstances[type].mesh.count = 0; });
     }
 
     /* Joueurs distants : meme representation que les mobs, avec une etiquette
@@ -1190,6 +1194,62 @@
         if (mt.emissive && !m.userData.blesse) mt.emissive.copy(mt.userData.base).multiply(TORCHE).multiplyScalar(t);
       });
     }
+    /* ── SPEC-RENDU-009 : mobs fusionnés en InstancedMesh par espèce ───────
+       Un mob complet (mobMesh) coûte 10-14 appels de dessin (un par partie
+       du corps, chacun son maillage/matériau) — viable pour quelques
+       individus, ruineux pour une vingtaine (200+ appels). Passé un seuil
+       d'individus d'une MÊME espèce visibles à la fois (la liste reçue ici,
+       déjà limitée à la portée de jeu par l'appelant), on les fusionne en un
+       seul THREE.InstancedMesh : une silhouette pleine aux mêmes
+       proportions que le LOD « simple » déjà utilisé au loin par
+       `mobMesh`/`animerMembres` (SPEC-MOB-010), une matrice par individu —
+       au plus 2-3 appels de dessin pour l'espèce entière, quel que soit le
+       nombre d'individus.
+       Compromis assumé (comme le LOD « simple » qu'elle reprend) : un mob
+       instancié perd son articulation (membres figés), son clignotement de
+       blessure et sa teinte de variante individuelle — un maillage complet
+       reprend dès que l'espèce repasse sous le seuil. Les espèces à parties
+       transparentes/émissives (gelées, méduses…) et les véhicules restent
+       toujours en maillage complet (formes non représentables par une seule
+       boîte opaque). */
+    var UMBRAL_INSTANCE_MOB = 5;
+    var mobInstances = {};   // type -> { mesh, capacite, mat4, quat, scaleV }
+    var AXE_Y_MOB = new THREE.Vector3(0, 1, 0);
+    function garantirInstanceMob(type, spec, capaciteVoulue) {
+      var info = mobInstances[type];
+      if (info && info.capacite >= capaciteVoulue) return info;
+      var cap = Math.max(capaciteVoulue, (info && info.capacite) || 0, 8);
+      if (info) { scene.remove(info.mesh); disposerGeom(info.mesh); info.mesh.material.dispose(); }
+      var L = MOB_LOOK[type] || { forme: 'bipede', c: [0x888888, 0xaaaaaa] };
+      var w = spec.w, h = spec.h, col0 = (L.c && L.c[0]) || 0x888888;
+      var larg = Math.max(0.3, w * (L.forme === 'bipede' ? 0.8 : 1));
+      var prof = Math.max(0.3, w * (L.forme === 'quadrupede' ? 1.3 : 0.6));
+      var geo = tagGen(new THREE.BoxGeometry(larg, h * 0.95, prof));
+      geo.translate(0, h * 0.48, 0);
+      var matI = new THREE.MeshLambertMaterial({ color: col0 });
+      var mesh = new THREE.InstancedMesh(geo, matI, cap);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      // comme pour les arbres/silhouettes instanciés (mêmes limites de
+      // Three.js r128 avec InstancedMesh) : pas de boîte englobante par
+      // instance fiable pour le frustum culling automatique.
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      scene.add(mesh);
+      info = { mesh: mesh, capacite: cap, mat4: new THREE.Matrix4(), quat: new THREE.Quaternion(), scaleV: new THREE.Vector3(1, 1, 1) };
+      mobInstances[type] = info;
+      return info;
+    }
+    // formes non représentables par la boîte opaque instanciée (parties
+    // transparentes/émissives essentielles à leur lecture visuelle) : elles
+    // restent toujours en maillage complet, quel que soit leur nombre
+    var FORMES_SANS_INSTANCE = { cube: true, meduse: true };
+    function eligibleInstanciationMob(e, spec) {
+      if (e.type === 'item' || e.type === 'arrow') return false;
+      if (e.vehicule || (spec && spec.vehicule)) return false;
+      var L = MOB_LOOK[e.type];
+      if (L && FORMES_SANS_INSTANCE[L.forme]) return false;
+      return true;
+    }
     var dernierSync = 0, dtEntites = 0;
     function syncEntities(entities, net, lumiereEn, jour) {
       var maintenant = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1197,9 +1257,48 @@
       dernierSync = maintenant;
       if (net) syncDistants(net);
       var seen = new Set();
+
+      // Première passe : compter les individus par espèce parmi les entités
+      // éligibles, pour savoir quelles espèces basculent en maillage
+      // instancié CETTE image (SPEC-RENDU-009).
+      var parType = {};
+      for (var pi = 0; pi < entities.list.length; pi++) {
+        var pe = entities.list[pi];
+        if (!eligibleInstanciationMob(pe, entities.SPECS[pe.type])) continue;
+        (parType[pe.type] = parType[pe.type] || []).push(pe);
+      }
+      var typesInstancies = {};
+      Object.keys(parType).forEach(function (type) {
+        var liste = parType[type];
+        if (liste.length < UMBRAL_INSTANCE_MOB) return;
+        var spec = entities.SPECS[type];
+        var info = garantirInstanceMob(type, spec, liste.length);
+        typesInstancies[type] = true;
+        liste.forEach(function (e, i) {
+          var ech = e.bebe ? 0.55 : 1;
+          info.quat.setFromAxisAngle(AXE_Y_MOB, e.yaw || 0);
+          info.scaleV.setScalar(ech);
+          info.mat4.compose(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), info.quat, info.scaleV);
+          info.mesh.setMatrixAt(i, info.mat4);
+          // un mob qui bascule en instance abandonne son maillage articulé
+          // individuel (s'il en avait un, de quand l'espèce était sous le
+          // seuil) — il en récupère un neuf si l'espèce repasse sous le seuil
+          var ancien = entityMeshes.get(e.eid);
+          if (ancien) { libererEntite(ancien); entityMeshes.delete(e.eid); }
+        });
+        info.mesh.count = liste.length;
+        info.mesh.instanceMatrix.needsUpdate = true;
+      });
+      // une espèce qui n'est plus en surnombre cette image : instance masquée
+      // (capacité gardée pour une prochaine foule, pas de nouvelle allocation)
+      Object.keys(mobInstances).forEach(function (type) {
+        if (!typesInstancies[type]) mobInstances[type].mesh.count = 0;
+      });
+
       for (var i = 0; i < entities.list.length; i++) {
         var e = entities.list[i];
         seen.add(e.eid);
+        if (typesInstancies[e.type]) continue;   // rendu par le maillage instancié ci-dessus
         var m = entityMeshes.get(e.eid);
         if (!m) {
           m = tagGen(e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e));
@@ -2552,6 +2651,12 @@
       forceTorches: forceTorches,
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
+      // SPEC-RENDU-009 : instances de mobs fusionnés par espèce (test/inspection)
+      get instancesMobs() { return mobInstances; },
+      // SPEC-RENDU-014 : culling grossier d'occlusion — chunks masqués à la
+      // dernière image, et nombre de chunks actuellement porteurs d'un maillage
+      get chunksOcclus() { return compteurChunksOcclus; },
+      get chunksCharges() { return chunksActifs.size; },
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
       majVolcans: majVolcans, panaches: panaches, majFumees: majFumees, syncFigurants: syncFigurants, figurants: figurants,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,
