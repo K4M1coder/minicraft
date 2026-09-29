@@ -199,6 +199,52 @@
       A.equal(wg.carburant, 0, 'le wagonnet aussi tombe a sec en roulant');
       A.ok(Math.abs(wg.vitesse) < 1, 'et s arrete, moteur coupe (v=' + wg.vitesse.toFixed(2) + ')');
     });
+
+    it('SPEC-TRANSPORT-002 : une collision avarie le vehicule (vmax -30%), la reparation au forgeron efface l avarie', function () {
+      // un mur plein, droit devant, pour provoquer une VRAIE collision par le
+      // chemin réel de conduite (V.conduire, celui de chaque test ci-dessus) —
+      // jamais un appel direct à subirCollision.
+      var w = flatWorld(10, B.STONE);
+      for (var y = 11; y <= 15; y++) for (var x = -3; x <= 3; x++) w.setBlock(x, y, -6, B.STONE);
+      var ents = MC.createEntities(w);
+      var e = V.poser(ents, 'voiture', 0.5, 11, 0.5, 0);
+      var vmaxAvant = V.vmaxDans(V.DEFS.voiture, 'sol', e);
+      A.notOk(e.avarie, 'saine au départ');
+      A.equal(vmaxAvant, V.DEFS.voiture.vmax, 'vitesse maximale nominale, saine');
+
+      // on la lance à pleine vitesse droit dans le mur
+      rouler(e, w, { avant: 1 }, 4);
+      A.ok(e.avarie, 'la collision l a avariée');
+      A.ok(e.avarieGravite >= 1, 'une gravité de choc mesurée');
+      var vmaxApres = V.vmaxDans(V.DEFS.voiture, 'sol', e);
+      A.close(vmaxApres, V.DEFS.voiture.vmax * 0.7, 1e-9, 'vmaxDans() perd exactement 30 %');
+
+      // une collision trop faible (vitesse quasi nulle) ne laisse aucune trace
+      var e2 = V.poser(ents, 'voiture', 10.5, 11, 0.5, 0);
+      A.notOk(V.subirCollision(e2, 0.5), 'un frôlement à faible vitesse : pas d avarie');
+      A.notOk(e2.avarie);
+
+      // réparation au forgeron (habitats.js:servir, le VRAI service — pas un
+      // appel isolé à MC.Vehicules.reparer) : coût exact prélevé, avarie effacée
+      var cout = MC.Vehicules.coutReparation(e);
+      A.gt(cout, 0, 'un coût de réparation positif, lié à la gravité');
+      var inv = Inv.create(9);
+      inv.add(I.EMERALD, cout + 5);
+      var soldeAvant = inv.count(I.EMERALD);
+      var r = MC.Habitats.servir('reparer', { inv: inv, etat: { selected: 0 }, vehicule: e });
+      A.ok(r.ok, 'réparation acceptée : ' + r.message);
+      A.equal(inv.count(I.EMERALD), soldeAvant - cout, 'solde débité du coût exact');
+      A.notOk(e.avarie, 'plus avarié');
+      A.equal(V.vmaxDans(V.DEFS.voiture, 'sol', e), V.DEFS.voiture.vmax, 'vmaxDans() restaurée à 100 %');
+
+      // sans assez d émeraudes, la réparation est refusée et l avarie reste
+      var e3 = V.poser(ents, 'voiture', 20.5, 11, 0.5, 0);
+      V.subirCollision(e3, 20);
+      var invPauvre = Inv.create(9);
+      var r2 = MC.Habitats.servir('reparer', { inv: invPauvre, etat: { selected: 0 }, vehicule: e3 });
+      A.notOk(r2.ok, 'sans le compte, pas de réparation');
+      A.ok(e3.avarie, 'toujours avarié');
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════

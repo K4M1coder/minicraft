@@ -415,6 +415,42 @@
     return null;
   }
 
+  // ─── SPEC-TRANSPORT-005 : péage sur une route de commerce ─────────────────
+  /* Une route de type commerce (ROUTE-002) qui traverse le territoire d'une
+     faction politique EN PAIX (donc jamais en guerre active — TRANSPORT-003
+     prévaut alors : la caravane risque une attaque, pas un péage) prélève un
+     péage borné en émeraudes sur le véhicule qui l'emprunte, versé aux
+     ressources de cette faction. Le montant croît avec le territoire (une
+     faction mieux établie tient mieux sa route), toujours entre PEAGE_MIN et
+     PEAGE_MAX — jamais de quoi ruiner un joueur pour un simple passage. */
+  var PEAGE_MIN = 1, PEAGE_MAX = 5, PEAGE_PAR_TERRITOIRE = 80;
+  function peageDe(f) {
+    if (!f) return 0;
+    return Math.max(PEAGE_MIN, Math.min(PEAGE_MAX, Math.round(f.territoire / PEAGE_PAR_TERRITOIRE) || PEAGE_MIN));
+  }
+  /* `role` : le type de route emprunté (seul 'commerce' est taxé, ROUTE-002) ;
+     (x, z) : le point du tronçon où le joueur se trouve. Renvoie
+     { factionId, montant } si un péage s'applique ici, sinon null — hors de
+     tout territoire, ou territoire d'une faction en guerre active (dont la
+     caravane/le joueur risque déjà une attaque, TRANSPORT-003). */
+  function peageSegment(etat, role, x, z) {
+    if (role !== 'commerce') return null;
+    var f = factionCouvrant(etat, x, z);
+    if (!f || enGuerreActive(etat, f.id)) return null;
+    var montant = peageDe(f);
+    return montant > 0 ? { factionId: f.id, montant: montant } : null;
+  }
+  /* Verse le péage aux ressources de la faction (f.ressources.or) — le
+     joueur, lui, est débité par l'appelant (server.js/game.js, seuls à
+     connaître son inventaire réel). Renvoie le montant réellement versé (0
+     si la faction n'existe plus, ou si `montant` n'est pas positif). */
+  function appliquerPeage(etat, factionId, montant) {
+    var f = etat.factions.get(factionId);
+    if (!f || !(montant > 0)) return 0;
+    f.ressources.or += montant;
+    return montant;
+  }
+
   // ─── SPEC-FACTION-015 : embargo commercial entre factions en guerre ───────
   /* Étend FACTION-003 (un camp de créatures ferme son commerce à un joueur
      hostile) aux factions POLITIQUES et aux factions de joueurs qui leur
@@ -560,5 +596,8 @@
     serialiserQuetes: serialiserQuetes, chargerQuetes: chargerQuetes,
     // SPEC-QUETE-005 : récompense au coût réel
     recompenseReelle: recompenseReelle,
+    // SPEC-TRANSPORT-005 : péage sur une route de commerce en territoire de faction
+    peageDe: peageDe, peageSegment: peageSegment, appliquerPeage: appliquerPeage,
+    PEAGE_MIN: PEAGE_MIN, PEAGE_MAX: PEAGE_MAX,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

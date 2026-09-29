@@ -1209,6 +1209,15 @@
         return r;
       }
       case 'reparer': {
+        /* SPEC-TRANSPORT-002 : un véhicule avarié (collision) se répare ici
+           en priorité, si le joueur est actuellement à son bord — sinon,
+           comportement inchangé (l'outil en main, METIER-002). */
+        if (ctx.vehicule && MC.Vehicules && ctx.vehicule.avarie) {
+          var coutV = MC.Vehicules.coutReparation(ctx.vehicule);
+          if (!payer(coutV)) return { ok: false, message: 'La réparation du véhicule coûte ' + coutV + ' émeraude' + (coutV > 1 ? 's' : '') + '.' };
+          MC.Vehicules.reparer(ctx.vehicule);
+          return { ok: true, message: 'Véhicule réparé : comme neuf.' };
+        }
         var s = inv && inv.slots[st ? st.selected : 0];
         var max = s ? C.durabilityOf(s.id) : 0;
         if (!s || !max) return { ok: false, message: 'Tenez en main l\'outil à réparer.' };

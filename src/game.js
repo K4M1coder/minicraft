@@ -1092,6 +1092,8 @@
         habitats: world.habitats, reperes: world.reperes, x: st.pos.x, z: st.pos.z,
         lieu: world.habitats ? world.habitats.lieuA(Math.floor(st.pos.x), Math.floor(st.pos.z)) : null,
         pvMax: player.MAX_HP || 20,
+        // SPEC-TRANSPORT-002 : réparer le véhicule qu'on conduit, s'il y en a un
+        vehicule: st.monture || null,
       });
       if (r.temps !== undefined && !net.enLigne()) g.time = r.temps;
       if (r.ouvrir === 'banque') {
