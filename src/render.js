@@ -478,7 +478,15 @@
        scène/le GPU pour un chunk, partagé par les deux origines (même
        résultat, même code). `passes` : { opaque, lumineux, cutout, blend }
        (MC.ContratsV2.PASSES_MAILLAGE), chacune une passe typée ou `null`. */
+    // SPEC-RENDU-014 : chunks actuellement porteurs d'au moins un maillage —
+    // le seul registre que render.js tient lui-même (les chunks vivent sur
+    // `world`, hors de ce module) ; c'est sur cet ensemble que le culling
+    // grossier d'occlusion (plus bas) décide, à chaque image, lesquels
+    // masquer sans passer par l'orchestration de streaming (hors périmètre
+    // de ce lot, voir SPECS.md).
+    var chunksActifs = new Set();
     function appliquerMaillage(chunk, passes, lumiere, simplifie) {
+      chunksActifs.add(chunk);
       chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
       // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
       chunk.lumiere = lumiere;
@@ -544,6 +552,7 @@
     }
 
     function disposeChunk(chunk) {
+      chunksActifs.delete(chunk);
       PASSES.forEach(function (p) {
         var k = p[0];
         if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); disposerGeom(chunk[k]); chunk[k] = null; }
@@ -2548,7 +2557,42 @@
     // source que le panneau F3) est sous un seuil déclaré.
     var compteurImagesRefraction = 0;
     var SEUIL_FPS_REFRACTION = 40;
+    /* SPEC-RENDU-014 : culling grossier d'occlusion — une colonne de chunks
+       entièrement cachée par le relief proche (ex. une falaise pleine face à
+       la caméra) n'est pas soumise au rendu, en plus du frustum culling
+       (SPEC-RENDU-013). S'appuie sur la même grille de relief lointain que
+       le terrain au-delà des chunks (`grilleLointaine`, alimentée par
+       `majLointain`) plutôt qu'une donnée dédiée — le test d'occlusion lui-
+       même (`MC.Lointain.occlusionColonne`) est une fonction pure, testée
+       sous Node indépendamment du renderer. Tant que la grille n'est pas
+       encore prête (tout début de partie), rien n'est masqué (repli sûr).
+       Volontairement borné à la vue caméra unique (appelée depuis
+       `rendreVue`, jamais depuis la boucle multi-vues de `renderViews`) :
+       en écran partagé, un chunk masqué pour la caméra d'un joueur reste
+       visible dans le maillage partagé de la scène, donc potentiellement
+       nécessaire à l'autre joueur — appliquer ce culling par-dessus
+       plusieurs caméras simultanées cacherait à tort un chunk que l'une
+       d'elles voit. */
+    var compteurChunksOcclus = 0;
+    function cullerOcclusionChunks(camPos) {
+      compteurChunksOcclus = 0;
+      var pret = grilleLointaine && grilleLointaine.pret;
+      chunksActifs.forEach(function (chunk) {
+        var occlus = false;
+        if (pret) {
+          var cx = chunk.cx * C.CHUNK_X + C.CHUNK_X / 2, cz = chunk.cz * C.CHUNK_Z + C.CHUNK_Z / 2;
+          var cibleH = grilleLointaine.hauteur(cx, cz);
+          if (cibleH != null) {
+            occlus = MC.Lointain.occlusionColonne(grilleLointaine.hauteur, camPos, cx, cz, cibleH, { pas: C.CHUNK_X });
+          }
+        }
+        if (occlus) compteurChunksOcclus++;
+        PASSES.forEach(function (p) { var m = chunk[p[0]]; if (m) m.visible = !occlus; });
+      });
+      return compteurChunksOcclus;
+    }
     function rendreVue(cam) {
+      cullerOcclusionChunks(cam.position);
       var e = eauProche(cam);
       eauEnVue = e.n; eauDistance = e.distance;
       var eauProcheAssez = MC.Qualite ? MC.Qualite.eauRefractanteVisible(eauDistance, SEUIL_DISTANCE_REFRACTION) : eauDistance <= SEUIL_DISTANCE_REFRACTION;

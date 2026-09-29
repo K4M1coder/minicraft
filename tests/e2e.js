@@ -3350,6 +3350,75 @@
     await frames(1);
   });
 
+  /* SPEC-RENDU-014 : culling grossier d'occlusion — vérifie que le mécanisme
+     tourne réellement à chaque image dans le chemin de rendu normal (pas
+     une fonction pure jamais appelée) : les compteurs exposés par render.js
+     reflètent l'état courant, et une colonne de chunks franchement occluse
+     par un relief proche perd sa visibilité. Le test géométrique exact
+     (mur fabriqué, colonnes derrière) vit sous Node (tests/spec-rendu.js,
+     logique pure de lointain.js) — ici, on vérifie l'intégration réelle sur
+     le vrai terrain généré, en cherchant une pente assez raide pour masquer
+     au moins une colonne derrière elle (comme les autres tests de
+     géographie de cette suite, sur la graine fixe du monde de test). */
+  e2e('SPEC-RENDU-014 : le culling d’occlusion tourne dans le chemin de rendu réel et masque des chunks derrière une pente raide', async function (g) {
+    var s = await reset(g);
+    s.flying = true;
+    g.render.setDistance(8);
+    g.streamChunks(true);
+    for (var i = 0; i < 20; i++) await frames(1);
+    A.gt(g.render.chunksCharges, 0, 'des chunks sont chargés');
+    A.equal(typeof g.render.chunksOcclus, 'number', 'le compteur d’occlusion est bien tenu à jour par le rendu réel');
+    // la grille de relief lointain (grilleLointaine, source du test
+    // d'occlusion) se construit progressivement, par lots, au fil des
+    // images (LOINTAIN_BUDGET, game.js) — on attend qu'elle soit prête,
+    // comme les autres tests qui en dépendent (ex. « le relief lointain
+    // est là » plus haut dans cette suite), avant de chercher une occlusion.
+    for (var wi = 0; wi < 90 && !g.render.lointain; wi++) await frames(1);
+    A.ok(g.render.lointain, 'la grille de relief lointain est prête');
+
+    // recherche d’une position de caméra et d’un VRAI centre de chunk (grille
+    // 16×16, comme `chunksActifs` en tiendra) réellement occlus par le relief
+    // intermédiaire, avec le même test géométrique que le renderer
+    // (`MC.Lointain.occlusionColonne`, appliqué à `echantillonLointain` —
+    // exactement la source que `majLointain` donne à `grilleLointaine` en
+    // jeu). Comme la recherche d’eau isolée de SPEC-RENDU-004 ci-dessus : un
+    // relief même modeste (quelques blocs de dénivelé) occlut déjà une
+    // colonne lointaine vue depuis une caméra proche du sol — pas besoin
+    // d’une falaise franche pour un test représentatif. Bornée à 90 blocs
+    // (dans le rayon de rendu réglé plus haut) pour être sûr que la cible
+    // trouvée soit un chunk réellement chargé.
+    var hauteurFn = function (x, z) { return g.world.echantillonLointain(x, z).h; };
+    var trouve = null;
+    for (var r = 4; r < 160 && !trouve; r += 4) {
+      for (var a = 0; a < 24 && !trouve; a++) {
+        var ang = a / 24 * 6.283;
+        var bx = Math.round(s.pos.x + Math.cos(ang) * r), bz = Math.round(s.pos.z + Math.sin(ang) * r);
+        var camPos = { x: bx, y: hauteurFn(bx, bz) + 2, z: bz };
+        for (var ccx = -5; ccx <= 5 && !trouve; ccx++) {
+          for (var ccz = -5; ccz <= 5 && !trouve; ccz++) {
+            var cx = ccx * 16 + 8 + Math.round(bx / 16) * 16, cz = ccz * 16 + 8 + Math.round(bz / 16) * 16;
+            if (Math.hypot(cx - camPos.x, cz - camPos.z) > 90) continue;
+            var cibleH = hauteurFn(cx, cz);
+            if (MC.Lointain.occlusionColonne(hauteurFn, camPos, cx, cz, cibleH, { pas: 16 })) {
+              trouve = { camPos: camPos, cx: cx, cz: cz };
+            }
+          }
+        }
+      }
+    }
+    A.ok(trouve, 'une position de caméra et un centre de chunk réellement occlus existent sur cette graine');
+    s.pos.x = trouve.camPos.x; s.pos.z = trouve.camPos.z; s.pos.y = trouve.camPos.y;
+    s.yaw = Math.atan2(trouve.cx - trouve.camPos.x, trouve.cz - trouve.camPos.z); s.pitch = 0;
+    g.streamChunks(true);
+    for (var k = 0; k < 20; k++) await frames(1);
+    A.gt(g.render.chunksOcclus, 0, 'au moins un chunk masqué par le relief : ' + g.render.chunksOcclus + '/' + g.render.chunksCharges);
+    var invisibles = 0;
+    g.world.chunks.forEach(function (c) {
+      g.render.PASSES.forEach(function (p) { var m = c[p[0]]; if (m && !m.visible) invisibles++; });
+    });
+    A.gt(invisibles, 0, 'au moins un maillage de chunk réellement rendu invisible');
+  });
+
   /* SPEC-RENDU-004 : une nappe d'eau lointaine (au-delà du seuil interne) ne
      déclenche pas la réfraction ; approchée, elle la déclenche. */
   e2e('SPEC-RENDU-004 : la réfraction ne s’active qu’à moins d’une distance fixe de la caméra', async function (g) {
