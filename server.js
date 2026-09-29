@@ -564,6 +564,59 @@ function avancerEconomie() {
     banques.forEach(b => { if (b && b.slots) MC.Economie.appliquerFraisBanque(b.slots, 1); });
   }
 }
+// ── caravanes marchandes : passage économique réel et risque d'attaque ──────
+/* SPEC-ECO-004 (fusionnée sans jamais être déclenchée en jeu — game.js:convois
+   n'en affiche que le rendu visuel, § convois plus haut) et SPEC-TRANSPORT-003 :
+   pour chaque route de commerce/axe partant d'une ville que des joueurs
+   connectés ont approchée, chaque départ déjà ARRIVÉ à destination
+   (MC.Caravanes.arriveesJusqua) déplace réellement sa cargaison
+   (MC.Economie.passageCaravane), idempotent par trajet (registre ci-dessous,
+   distinct de `economie.departs` qui, lui, protège passageCaravane elle-même
+   d'un double appel). Le tronçon est jugé dangereux — attaque possible —
+   exactement comme zones.js le fait pour la zone de jeu : `monde.zoneEn`
+   incorpore déjà l'influence d'un territoire de faction en guerre
+   (SPEC-FACTION-014), donc un seul test ('pvp'/'pvp_pve') couvre les deux
+   conditions de la fiche (territoire en guerre OU zone pvp). */
+const arriveesCaravanesTraitees = new Map();   // trajet.id -> dernier index d'arrivée traité
+function avancerCaravanes() {
+  if (!monde.habitats || !monde.routes || !MC.Caravanes || !monde.zoneEn) return;
+  const villes = [];
+  tousLesJoueurs().forEach(({ js }) => {
+    const p = js.joueur.state.pos;
+    monde.habitats.lieuxProches(p.x, p.z, 900).forEach(l => {
+      if ((l.kind === 'ville' || l.kind === 'megapole') && !villes.some(v => v.id === l.id)) villes.push(l);
+    });
+  });
+  villes.forEach(v => {
+    MC.Caravanes.trajetsDe(v, monde.routes).forEach(tr => {
+      const depuis = arriveesCaravanesTraitees.has(tr.id) ? arriveesCaravanesTraitees.get(tr.id) : null;
+      const arrivees = MC.Caravanes.arriveesJusqua(tr, heure, depuis);
+      if (!arrivees.length) return;
+      arriveesCaravanesTraitees.set(tr.id, arrivees[arrivees.length - 1]);
+      if (arriveesCaravanesTraitees.size > 4000) arriveesCaravanesTraitees.clear();
+      const cumul = tr.cumul || MC.Caravanes.longueurs(tr.noeuds);
+      const mi = MC.Caravanes.pointA(tr.noeuds, cumul, cumul[cumul.length - 1] / 2);
+      const zoneMi = monde.zoneEn(mi.x, mi.z).zone;
+      const danger = zoneMi === 'pvp' || zoneMi === 'pvp_pve';
+      // id de destination : dernier segment de l'id du trajet ('r:<origine>><dest>') —
+      // le MÊME identifiant de lieu que MC.Habitats/le troc (ent.lieu, SPEC-SYNC-023),
+      // pour que ce passage agisse sur la VRAIE économie du village, pas une copie
+      // parallèle jamais vue par les joueurs qui y commercent.
+      const destId = tr.id.slice(tr.id.lastIndexOf('>') + 1);
+      arrivees.forEach(k => {
+        const r = MC.Economie.passageCaravane(economie, tr, k, {
+          origine: { id: v.id, biome: v.biome, x: v.x, z: v.z },
+          destination: { id: destId, biome: v.biome, x: mi.x, z: mi.z },
+          danger,
+        });
+        if (r.attaque) {
+          const m = chat.systeme('Une caravane venue de ' + v.nom + ' a été attaquée en chemin.');
+          if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+        }
+      });
+    });
+  });
+}
 /* Offres d'un PNJ pour un joueur nommé (SPEC-SYNC-023, action `consulter`) :
    `e` l'entité PNJ (role, lieu, pnj — voir peuplerLieux plus bas), `nom` le
    nom canonique du joueur (remise METIER-004, jamais diffusé aux autres). */
@@ -2381,6 +2434,7 @@ setInterval(() => {
     peuplerLieux();
     avancerPolitique();
     avancerEconomie();
+    avancerCaravanes();
     avancerCatastrophes();
     // B4 : propositions de duel caduques (silencieuses) et duels terminés
     // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
