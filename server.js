@@ -498,11 +498,27 @@ const spawnCol = monde.findSpawnColumn();
 for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) {
   monde.getChunk(Math.floor(spawnCol[0] / 16) + cx, Math.floor(spawnCol[1] / 16) + cz, true);
 }
-const SPAWN = {
-  x: spawnCol[0] + 0.5,
-  y: monde.groundAt(spawnCol[0], spawnCol[1], true) + 1.2,
-  z: spawnCol[1] + 0.5,
-};
+/* MC_TEST_SPAWN='x,y,z' : réservé aux suites d'intégration (même principe que
+   MC_TEST_INV/MC_TEST_PANNE, désactivé par défaut) — impose le point
+   d'apparition, par exemple à l'intérieur d'un donjon déjà généré pour la
+   graine choisie, sans quoi aucun test ne peut approcher à portée d'un
+   coffre de donjon réel (aucune mécanique d'escalade ou de téléportation
+   n'existe côté client pour l'atteindre autrement). N'affecte jamais la
+   génération elle-même, seulement où le premier joueur apparaît. */
+let SPAWN;
+const MC_TEST_SPAWN = process.env.MC_TEST_SPAWN ? process.env.MC_TEST_SPAWN.split(',').map(Number) : null;
+if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.isFinite)) {
+  SPAWN = { x: MC_TEST_SPAWN[0], y: MC_TEST_SPAWN[1], z: MC_TEST_SPAWN[2] };
+  for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) {
+    monde.getChunk(Math.floor(SPAWN.x / 16) + cx, Math.floor(SPAWN.z / 16) + cz, true);
+  }
+} else {
+  SPAWN = {
+    x: spawnCol[0] + 0.5,
+    y: monde.groundAt(spawnCol[0], spawnCol[1], true) + 1.2,
+    z: spawnCol[1] + 0.5,
+  };
+}
 
 // ── clients ──────────────────────────────────────────────────────────────────
 let prochainId = 1;
@@ -2153,31 +2169,22 @@ let accChunks = 1;         // premier passage immédiat
 const coffresPilleDepuis = new Map();
 /* SPEC-DONJON-017 : un coffre de donjon pillé (marqué dans
    monde.coffresPilles par remplirConteneurNeuf, section conteneurs — jamais
-   touchée ici) regarnit son contenu après un long délai. Plutôt que de
-   modifier cette section pour dater le pillage, on observe simplement
-   quand une clé y APPARAÎT (coffresPilleDepuis) et, une fois le délai du
-   donjon écoulé, on efface l'entrée de `coffresPilles` ET le conteneur déjà
-   créé dans `conteneursPoses` : à la prochaine ouverture,
-   `ouvrirConteneurPourJoueur` (section conteneurs) le retrouve absent,
-   en recrée un neuf et `remplirConteneurNeuf` le regarnit — exactement le
-   chemin qu'un coffre jamais ouvert emprunte déjà, sans qu'il faille
-   dupliquer cette logique ici. */
+   touchée ici) regarnit son contenu après un long délai. Toute la logique
+   (dater le pillage à sa première détection, décider du délai, désabonner
+   les joueurs qui l'avaient ouvert — même précaution que la casse d'un
+   conteneur, revue adversariale item 3, ~l. 1344-1367 — puis l'effacer de
+   `conteneursPoses`) vit dans MC.Donjons.regenererCoffres, PURE et testée
+   sous Node avec de fausses collections (tests/spec-donjons.js) : ici, on ne
+   fait que lui passer les VRAIES. À la prochaine ouverture, le coffre
+   effacé de `conteneursPoses` est retrouvé absent par
+   `ouvrirConteneurPourJoueur` (section conteneurs), qui en recrée un neuf
+   que `remplirConteneurNeuf` regarnit — exactement le chemin qu'un coffre
+   jamais ouvert emprunte déjà, sans qu'il faille dupliquer cette logique
+   ici. */
 function regenererCoffresDonjon() {
   if (!monde.donjons || !monde.coffresPilles) return;
-  monde.coffresPilles.forEach(cle => {
-    if (!coffresPilleDepuis.has(cle)) coffresPilleDepuis.set(cle, heure);
-  });
-  coffresPilleDepuis.forEach((tPille, cle) => {
-    if (!monde.coffresPilles.has(cle)) { coffresPilleDepuis.delete(cle); return; }
-    const p = cle.split(',');
-    const c = monde.donjons.coffreA(+p[0], +p[1], +p[2]);
-    if (!c) { coffresPilleDepuis.delete(cle); return; }
-    const dureeJour = parseInt(process.env.MC_DONJON_JOUR_S, 10) || (MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200);
-    if (!monde.donjons.coffreRegenere(c.donjon, tPille, heure, dureeJour)) return;
-    monde.coffresPilles.delete(cle);
-    conteneursPoses.delete(cle);
-    coffresPilleDepuis.delete(cle);
-  });
+  const dureeJour = parseInt(process.env.MC_DONJON_JOUR_S, 10) || (MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200);
+  monde.donjons.regenererCoffres(monde.coffresPilles, coffresPilleDepuis, conteneursPoses, heure, dureeJour, fermerConteneurPourAbonnes);
 }
 
 function joueurReference() {

@@ -155,5 +155,58 @@
       var apres = w.butinCoffre(coffre.x, coffre.y, coffre.z);
       A.equal(JSON.stringify(avant), JSON.stringify(apres), 'composition déterministe après régénération');
     });
+
+    it('SPEC-DONJON-017 : regenererCoffres() (server.js regenererCoffresDonjon) exercée directement, avec un faux conteneursPoses', function () {
+      // server.js n'appelle plus que MC.Donjons.creer(...).regenererCoffres
+      // avec ses VRAIES collections (coffresPilles, coffresPilleDepuis,
+      // conteneursPoses) — ce test l'exerce elle-même avec de FAUSSES
+      // collections, sur un VRAI coffre de donjon (déterministe par graine),
+      // sans lancer de serveur ni naviguer jusqu'à un donjon réel.
+      var t = recenser();
+      var d = t.moyen[0], DUREE_JOUR = 1200;
+      var coffre = d.coffres[0];
+      var cle = coffre.x + ',' + coffre.y + ',' + coffre.z;
+      var delaiHeure = w.donjons.delaiRegenCoffre(d) * DUREE_JOUR;
+      var tPille = 10000;
+
+      var coffresPilles = new Set([cle]);
+      var coffresPilleDepuis = new Map();
+      var conteneursPoses = new Map([[cle, { type: 'chest', slots: [] }]]);
+      var fermetures = [];
+      var onFermer = function (c) { fermetures.push(c); };
+
+      // premier passage, juste après le pillage : rien ne bouge encore, mais
+      // la première détection date bien l'entrée (coffresPilleDepuis)
+      w.donjons.regenererCoffres(coffresPilles, coffresPilleDepuis, conteneursPoses, tPille, DUREE_JOUR, onFermer);
+      A.ok(coffresPilles.has(cle), 'toujours marqué pillé, encore avant le délai');
+      A.ok(conteneursPoses.has(cle), 'le conteneur existe toujours, encore avant le délai');
+      A.equal(fermetures.length, 0, 'onFermer jamais appelé avant le délai');
+      A.equal(coffresPilleDepuis.get(cle), tPille, 'la première détection date le pillage');
+
+      // toujours avant le délai : re-appeler ne change toujours rien
+      w.donjons.regenererCoffres(coffresPilles, coffresPilleDepuis, conteneursPoses, tPille + delaiHeure - 1, DUREE_JOUR, onFermer);
+      A.ok(coffresPilles.has(cle), 'toujours pillé juste avant le délai');
+      A.equal(fermetures.length, 0, 'onFermer toujours pas appelé juste avant le délai');
+
+      // le délai est écoulé : le coffre régénère — onFermer AVANT la
+      // suppression du conteneur (c'est le correctif : un abonné doit être
+      // désabonné avant, jamais après ou jamais du tout)
+      w.donjons.regenererCoffres(coffresPilles, coffresPilleDepuis, conteneursPoses, tPille + delaiHeure, DUREE_JOUR, onFermer);
+      A.notOk(coffresPilles.has(cle), 'retiré de coffresPilles une fois le délai écoulé');
+      A.notOk(conteneursPoses.has(cle), 'le conteneur est effacé — recréé neuf à la prochaine ouverture');
+      A.notOk(coffresPilleDepuis.has(cle), 'l entrée « pillé depuis » est nettoyée');
+      A.deep(fermetures, [cle], 'onFermer (fermerConteneurPourAbonnes en production) appelé exactement une fois, pour cette clé');
+
+      // un coffre qui n'est PAS un coffre de donjon (coffreA renvoie null) —
+      // ni régénéré, ni onFermer jamais appelé pour lui
+      var cleInvalide = '999999,5,999999';
+      var pillesInvalide = new Set([cleInvalide]);
+      var conteneursInvalide = new Map([[cleInvalide, { type: 'chest', slots: [] }]]);
+      var fermeturesInvalide = [];
+      w.donjons.regenererCoffres(pillesInvalide, new Map(), conteneursInvalide, tPille + delaiHeure * 10, DUREE_JOUR,
+                                  function (c) { fermeturesInvalide.push(c); });
+      A.ok(conteneursInvalide.has(cleInvalide), 'un coffre hors donjon n est jamais touché par la régénération');
+      A.equal(fermeturesInvalide.length, 0, 'onFermer jamais appelé pour un coffre qui n est pas un coffre de donjon');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

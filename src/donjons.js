@@ -762,9 +762,48 @@
       return (heureActuelle - tPille) >= delaiRegenCoffre(d) * (dureeJour || 1200);
     }
 
+    /* Orchestration COMPLÈTE de la régénération, pure hormis les trois
+       collections et le callback qu'on lui passe — c'est ce qui la rend
+       testable sous Node avec de faux `coffresPilles`/`conteneursPoses`,
+       sans lancer de serveur ni générer de vrai donjon (tests/spec-donjons.js).
+       server.js (regenererCoffresDonjon) n'est plus qu'un appel de cette
+       fonction avec ses VRAIES collections — aucune logique dupliquée.
+
+       `coffresPilles` : Set (clé 'x,y,z') — coffres actuellement marqués
+         pillés (posé ailleurs, jamais ici).
+       `coffresPilleDepuis` : Map clé → heure de première détection pillée
+         (mutée : nouvelles entrées ajoutées, entrées consommées retirées).
+       `conteneursPoses` : Map clé → conteneur — l'entrée est supprimée quand
+         le coffre regarnit, pour qu'une prochaine ouverture le recrée neuf.
+       `onFermer(cle)` : appelé AVANT la suppression de `conteneursPoses`,
+         le temps que l'appelant désabonne tout joueur qui avait ce coffre
+         ouvert (même précaution que la casse d'un conteneur posé — un
+         abonné qui garde l'écran ouvert ne doit jamais hériter en silence
+         du conteneur recréé à la prochaine ouverture par quelqu'un d'autre). */
+    function regenererCoffres(coffresPilles, coffresPilleDepuis, conteneursPoses, heureActuelle, dureeJour, onFermer) {
+      coffresPilles.forEach(function (cle) {
+        if (!coffresPilleDepuis.has(cle)) coffresPilleDepuis.set(cle, heureActuelle);
+      });
+      var aTraiter = [];
+      coffresPilleDepuis.forEach(function (tPille, cle) { aTraiter.push([cle, tPille]); });
+      aTraiter.forEach(function (entree) {
+        var cle = entree[0], tPille = entree[1];
+        if (!coffresPilles.has(cle)) { coffresPilleDepuis.delete(cle); return; }
+        var p = cle.split(',');
+        var c = coffreA(+p[0], +p[1], +p[2]);
+        if (!c) { coffresPilleDepuis.delete(cle); return; }
+        if (!coffreRegenere(c.donjon, tPille, heureActuelle, dureeJour)) return;
+        coffresPilles.delete(cle);
+        if (onFermer) onFermer(cle);
+        conteneursPoses.delete(cle);
+        coffresPilleDepuis.delete(cle);
+      });
+    }
+
     return { deRegion: deRegion, dansZone: dansZone, appliquer: appliquer,
              salleA: salleA, salleDe: salleDe, coffreA: coffreA, butin: butin,
-             delaiRegenCoffre: delaiRegenCoffre, coffreRegenere: coffreRegenere };
+             delaiRegenCoffre: delaiRegenCoffre, coffreRegenere: coffreRegenere,
+             regenererCoffres: regenererCoffres };
   }
 
   MC.Donjons = { creer: creer, typePour: typePour, TYPES: TYPES, REGION: REGION, BOSS: BOSS, TAILLES: ['petit', 'moyen', 'grand'],

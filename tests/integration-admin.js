@@ -391,6 +391,59 @@ async function attendrePret(port) {
     try { s4.kill(); } catch (e) {}
   }
 
+  // ── SPEC-DONJON-017 : régénération réelle + désabonnement (CONTENEUR_FERMER) ──
+  /* La graine 344 place, près de (0,0), une hutte de sorcière (donjon
+     'petit', une seule pièce, construite AU-DESSUS du sol — le seul type de
+     donjon atteignable sans mécanique d'escalade ni de téléportation, dont
+     ce jeu ne dispose pas côté réseau) : coffre réel à (221,37,-67).
+     MC_TEST_SPAWN (réservé aux tests, même principe que MC_TEST_INV/
+     MC_TEST_PANNE) fait apparaître le joueur DANS la pièce, au point de
+     réveil du donjon lui-même (donc à coup sûr sur un sol solide, à portée
+     du coffre) — la génération du monde n'est pas truquée, seul le point
+     d'apparition l'est. MC_DONJON_JOUR_S=1 ramène le délai de régénération
+     (normalement plusieurs jours simulés) à quelques secondes réelles. */
+  const PORT5 = PORT + 4;
+  const s5 = demarrer(
+    ['--port', String(PORT5), '--admin', 'secretD', '--graine', '344'],
+    { MC_TEST_SPAWN: '219.5,37,-64.5', MC_DONJON_JOUR_S: '1' });
+  try {
+    ok(await attendrePret(PORT5), 'SPEC-DONJON-017 : le serveur démarre (graine 344, apparition dans un donjon réel)');
+
+    const COFFRE = { x: 221, y: 37, z: -67 };
+    const cleCoffre = `${COFFRE.x},${COFFRE.y},${COFFRE.z}`;
+
+    const explorateur = await connecter(PORT5);
+    explorateur.envoyer({ t: 'rejoindre', nom: 'Explorateur', locaux: 1 });
+    await explorateur.attendre('bienvenue');
+
+    // première ouverture : pille RÉELLEMENT le coffre (remplirConteneurNeuf,
+    // jamais modifié par ce lot) et abonne l'explorateur — cont_etat en retour
+    explorateur.envoyer({ t: 'cont_ouvrir', x: COFFRE.x, y: COFFRE.y, z: COFFRE.z, j: 0 });
+    const etatInitial = await explorateur.attendre('cont_etat', 5000, m => m.cle === cleCoffre);
+    ok(etatInitial.type === 'chest' && Array.isArray(etatInitial.slots) && etatInitial.slots.some(s => s),
+       'SPEC-DONJON-017 : le coffre réel du donjon s ouvre et se pille (loot de donjon présent)',
+       JSON.stringify(etatInitial.slots || []).slice(0, 200));
+
+    // laisse la boucle périodique (accChunks, ~1 Hz) et le délai raccourci
+    // (4 à 7 jours simulés × MC_DONJON_JOUR_S=1 s) s'écouler
+    const fermeture = await explorateur.attendre('cont_fermer', 12000, m => m.cle === cleCoffre);
+    ok(!!fermeture, 'SPEC-DONJON-017 : l abonné encore ouvert reçoit CONTENEUR_FERMER à la régénération du coffre',
+       JSON.stringify(fermeture));
+
+    // le coffre régénéré est de nouveau garni — une réouverture le prouve
+    explorateur.envoyer({ t: 'cont_ouvrir', x: COFFRE.x, y: COFFRE.y, z: COFFRE.z, j: 0 });
+    const etatRegen = await explorateur.attendre('cont_etat', 5000, m => m.cle === cleCoffre);
+    ok(etatRegen.slots.some(s => s), 'SPEC-DONJON-017 : le coffre rouvert après régénération est de nouveau garni',
+       JSON.stringify(etatRegen.slots || []).slice(0, 200));
+
+    explorateur.fermer();
+  } catch (e) {
+    echecs++;
+    details.push(`  ${C.r}✗ exception (régénération de coffre, SPEC-DONJON-017) : ${e.message}${C.x}`);
+  } finally {
+    try { s5.kill(); } catch (e) {}
+  }
+
   await dodo(200);
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
 

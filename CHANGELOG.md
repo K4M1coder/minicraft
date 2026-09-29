@@ -442,6 +442,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- SPEC-DONJON-017 (revue) : un joueur qui gardait l'écran d'un coffre de donjon ouvert au moment de sa régénération restait anormalement « abonné » à la clé déjà effacée de `conteneursPoses` — `regenererCoffresDonjon` (`server.js`) appelle désormais `fermerConteneurPourAbonnes` avant de l'effacer, comme le fait déjà la casse d'un conteneur posé. L'algorithme complet est extrait en une fonction pure `MC.Donjons.creer(...).regenererCoffres(...)`, testée sous Node avec de fausses collections (`tests/spec-donjons.js`) et par un test d'intégration sur un vrai donjon généré (`tests/integration-admin.js`, graine 344).
 - SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
   relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
   mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
