@@ -359,8 +359,13 @@
 
   /* SPEC-ECO-004/METIER-005 : déplace le surplus réel (au-delà de la
      référence) d'un lieu vers un autre, idempotent par `etat.departs`.
-     ctx = { origine, origineCtx, destination, destinationCtx } (objets lieu
-     explicites, ou identifiants si déjà connus). */
+     ctx = { origine, origineCtx, destination, destinationCtx, danger } (objets
+     lieu explicites, ou identifiants si déjà connus). `danger` (SPEC-
+     TRANSPORT-003, fourni par l'appelant — economie.js ne connaît ni
+     politique.js ni zones.js) : vrai si le trajet croise un territoire de
+     faction en guerre ou une zone pvp, ce qui expose la caravane à une
+     attaque simulée qui rogne la cargaison réellement livrée (un garde dans
+     sa composition réduit ce risque). */
   function passageCaravane(etat, trajet, indexDepart, ctx) {
     var dernier = etat.departs.has(trajet.id) ? etat.departs.get(trajet.id) : -1;
     if (indexDepart <= dernier) return { deplace: 0, rejoue: true };
@@ -375,8 +380,14 @@
     var so = stockDe(Lo, cargaison.id), sd = stockDe(Ld, cargaison.id);
     var surplus = Math.max(0, so.stock - so.ref);
     var n = Math.min(cargaison.n, surplus);
+    var attaque = false;
+    if (n > 0 && MC.Caravanes.subitAttaque) {
+      var membres = MC.Caravanes.composition(trajet.role, trajet.id + ':' + indexDepart);
+      attaque = MC.Caravanes.subitAttaque(trajet, indexDepart, !!(ctx && ctx.danger), MC.Caravanes.aGarde(membres));
+      if (attaque) n = Math.max(0, n - Math.round(n * MC.Caravanes.PERTE_ATTAQUE));
+    }
     if (n > 0) { so.stock -= n; sd.stock += n; }
-    return { objet: cargaison.id, n: n };
+    return { objet: cargaison.id, n: n, attaque: attaque };
   }
 
   function masseDe(etat) {

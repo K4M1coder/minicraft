@@ -122,7 +122,55 @@
     return { id: +cles[idx], n: n };
   }
 
+  // ─── SPEC-TRANSPORT-003 : risque d'attaque d'une caravane marchande ───────
+  /* Une caravane qui traverse un territoire de faction en guerre ou une zone
+     pvp (ZONE-001) risque une attaque simulée. `danger` (fourni par
+     l'appelant — caravanes.js ne connaît ni politique.js ni zones.js) résume
+     ce risque de terrain ; un garde dans la composition (`composition()`) le
+     réduit nettement. Pure et déterministe par (trajet, index de départ) :
+     le même départ, rejoué, subit toujours le même sort. */
+  var P_ATTAQUE_DANGER = 0.35;     // territoire en guerre ou zone pvp
+  var P_ATTAQUE_PAISIBLE = 0.04;   // paix, zone sûre/pve
+  var REDUCTION_GARDE = 0.65;      // un garde dans le convoi réduit le risque de 65 %
+  var PERTE_ATTAQUE = 0.4;         // fraction de la cargaison perdue, en cas d'attaque
+  function aGarde(membres) {
+    return (membres || []).some(function (m) { return m.role === 'garde'; });
+  }
+  function risqueAttaque(danger, garde) {
+    var p = danger ? P_ATTAQUE_DANGER : P_ATTAQUE_PAISIBLE;
+    return garde ? p * (1 - REDUCTION_GARDE) : p;
+  }
+  function subitAttaque(trajet, indexDepart, danger, garde) {
+    return hache(trajet.id + '|attaque|' + indexDepart) < risqueAttaque(danger, garde);
+  }
+
+  /* Départs déjà ARRIVÉS à destination à l'instant `t` (le temps qu'un
+     convoi parcoure tout le trajet, cf. `enRoute`) — sert à un appelant
+     périodique (server.js) à ne traiter chaque caravane qu'une seule fois,
+     au moment où sa cargaison est réputée livrée. `depuis` (exclu) borne le
+     balayage aux départs vraiment nouveaux, sans jamais remonter au déluge. */
+  function arriveesJusqua(trajet, t, depuis) {
+    var noeuds = trajet.noeuds;
+    if (!noeuds || noeuds.length < 2) return [];
+    var cumul = trajet.cumul || (trajet.cumul = longueurs(noeuds));
+    var total = cumul[cumul.length - 1], v = VITESSE[trajet.role] || VITESSE.commerce;
+    var duree = total / v, decalage = hache(trajet.id) * PERIODE;
+    var k1 = Math.floor((t - decalage - duree) / PERIODE);
+    var k0 = Math.max(depuis == null ? -1 : depuis + 1, Math.floor((t - decalage - duree) / PERIODE) - 500);
+    var out = [];
+    for (var k = k0; k <= k1; k++) {
+      if (hache(trajet.id + ':' + k) < 0.25) continue;   // ce jour-là, personne n'est parti
+      out.push(k);
+    }
+    return out;
+  }
+
   MC.Caravanes = { enRoute: enRoute, trajetsDe: trajetsDe, voieEau: voieEau, composition: composition,
                    longueurs: longueurs, pointA: pointA, cargaisonDe: cargaisonDe,
-                   PERIODE: PERIODE, VITESSE: VITESSE, ESPACEMENT: ESPACEMENT };
+                   PERIODE: PERIODE, VITESSE: VITESSE, ESPACEMENT: ESPACEMENT,
+                   // SPEC-TRANSPORT-003
+                   aGarde: aGarde, risqueAttaque: risqueAttaque, subitAttaque: subitAttaque,
+                   arriveesJusqua: arriveesJusqua, PERTE_ATTAQUE: PERTE_ATTAQUE,
+                   P_ATTAQUE_DANGER: P_ATTAQUE_DANGER, P_ATTAQUE_PAISIBLE: P_ATTAQUE_PAISIBLE,
+                   REDUCTION_GARDE: REDUCTION_GARDE };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

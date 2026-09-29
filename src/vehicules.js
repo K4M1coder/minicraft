@@ -19,8 +19,9 @@
      moteur n'obéit plus aux commandes : le véhicule freine et retombe
      exactement comme un véhicule abandonné (VEHIC-009). */
   var DEFS = {
+    // le bateau embarque lui aussi une petite soute (SPEC-TRANSPORT-004)
     bateau:     { nom: 'Bateau', objet: I.BATEAU, w: 1.4, h: 0.7, vmax: 7, accel: 5, virage: 1.9,
-                  milieu: 'eau', siege: 0.25, flotte: true, pv: 4, carburant: 30 },
+                  milieu: 'eau', siege: 0.25, flotte: true, pv: 4, carburant: 30, soute: 9 },
     moto:       { nom: 'Moto', objet: I.MOTO, w: 0.9, h: 1.0, vmax: 16, accel: 10, virage: 2.6,
                   milieu: 'sol', siege: 0.45, marche: true, pv: 6, carburant: 60 },
     voiture:    { nom: 'Voiture', objet: I.VOITURE, w: 1.8, h: 1.3, vmax: 14, accel: 7, virage: 1.8,
@@ -73,6 +74,66 @@
     if (e.carburant < 0) e.carburant = 0;
   }
 
+  /* SPEC-TRANSPORT-002 : une collision franche avarie le véhicule — sa vitesse
+     maximale (vmaxDans) chute de 30 % tant qu'il n'est pas réparé au forgeron.
+     La gravité de l'avarie (1..3) dépend de la vitesse d'impact et fixe le
+     coût de la réparation ; un choc trop léger (en-deçà de SEUIL_COLLISION,
+     un simple frottement contre un coin) ne laisse aucune trace. */
+  var SEUIL_COLLISION = 4;                        // m/s, en-deçà : pas d'avarie
+  var PENALITE_AVARIE = 0.7;                       // 30 % de vitesse en moins, avarié
+  var COUT_REPARATION = { 1: 5, 2: 10, 3: 20 };    // émeraudes, selon la gravité du choc
+  function graviteChoc(vitesse) {
+    var v = Math.abs(vitesse);
+    if (v < SEUIL_COLLISION) return 0;
+    if (v < 9) return 1;
+    if (v < 15) return 2;
+    return 3;
+  }
+  /* Appelée quand le déplacement du véhicule vient d'être bloqué net (un mur) :
+     `vitesseAvant`, la vitesse au moment du choc, en décide la gravité. Une
+     avarie déjà présente ne peut qu'empirer (jamais s'atténuer toute seule). */
+  function subirCollision(e, vitesseAvant) {
+    var g = graviteChoc(vitesseAvant);
+    if (!g) return false;
+    e.avarie = true;
+    e.avarieGravite = Math.max(e.avarieGravite || 0, g);
+    return true;
+  }
+  function coutReparation(e) {
+    if (!e || !e.avarie) return 0;
+    return COUT_REPARATION[e.avarieGravite] || COUT_REPARATION[1];
+  }
+  /* Réparation au forgeron (METIER-002) : remet le véhicule à 100 % de sa
+     vitesse maximale. Renvoie le coût exact qu'elle vient d'effacer (0 si le
+     véhicule n'était pas avarié — rien à payer, rien à faire). */
+  function reparer(e) {
+    var cout = coutReparation(e);
+    if (!cout) return 0;
+    e.avarie = false;
+    e.avarieGravite = 0;
+    return cout;
+  }
+
+  /* SPEC-TRANSPORT-004 : une caravane (ou un joueur) qui subit une attaque
+     (SPEC-TRANSPORT-003) en chemin voit la cargaison de la soute du véhicule
+     rognée d'autant — la MÊME fraction que pour la cargaison abstraite d'une
+     caravane marchande (MC.Caravanes.PERTE_ATTAQUE), appliquée cette fois à
+     un inventaire réel. Retire `fraction` de chaque pile, jamais plus que ce
+     qu'elle contient ; renvoie le nombre total d'objets perdus. */
+  function pillerSoute(e, fraction) {
+    if (!e || !e.soute || !(fraction > 0)) return 0;
+    var perdu = 0;
+    e.soute.slots.forEach(function (s, i) {
+      if (!s || !s.n) return;
+      var n = Math.min(s.n, Math.round(s.n * fraction));
+      if (n <= 0) return;
+      s.n -= n;
+      perdu += n;
+      if (s.n <= 0) e.soute.slots[i] = null;
+    });
+    return perdu;
+  }
+
   // où l'engin se trouve : eau, sol, ou dans les airs
   function milieuDe(world, e, d) {
     if (P.inWater(world, e.pos, d.h)) return 'eau';
@@ -82,12 +143,17 @@
   }
 
   /* Vitesse maximale selon le milieu : un bateau échoué ou une voiture dans
-     un lac se traînent. L'avion roule au sol pour décoller. */
-  function vmaxDans(d, milieu) {
-    if (d.milieu === 'air') return d.vmax;
-    if (d.milieu === milieu) return d.vmax;
-    if (d.milieu === 'sol' && milieu === 'air') return d.vmax;        // en plein saut
-    return d.vmax * 0.12;
+     un lac se traînent. L'avion roule au sol pour décoller. `e` (facultatif,
+     SPEC-TRANSPORT-002) : le véhicule concret — avarié, sa vitesse plafonne
+     30 % plus bas, jusqu'à sa réparation au forgeron. */
+  function vmaxDans(d, milieu, e) {
+    var vm;
+    if (d.milieu === 'air') vm = d.vmax;
+    else if (d.milieu === milieu) vm = d.vmax;
+    else if (d.milieu === 'sol' && milieu === 'air') vm = d.vmax;     // en plein saut
+    else vm = d.vmax * 0.12;
+    if (e && e.avarie) vm *= PENALITE_AVARIE;
+    return vm;
   }
 
   /* Un pas de conduite. `cmd` : { avant, arriere, gauche, droite, monter,
@@ -99,7 +165,7 @@
     if (d.rails) return rouler(e, dt, world, cmd || {}, d);
     var c = (e.carburant === 0) ? {} : (cmd || {});
     var milieu = milieuDe(world, e, d);
-    var vm = vmaxDans(d, milieu);
+    var vm = vmaxDans(d, milieu, e);
 
     // ── accélérateur et frein ──
     var cible = c.avant ? vm : (c.arriere ? -vm * 0.4 : 0);
@@ -158,8 +224,9 @@
         bloque = false;
       }
     }
-    // un mur arrête net : la vitesse ne reste pas « en mémoire » contre lui
-    if (bloque) e.vitesse *= 0.3;
+    // un mur arrête net : la vitesse ne reste pas « en mémoire » contre lui,
+    // et un choc franc laisse une avarie (SPEC-TRANSPORT-002)
+    if (bloque) { subirCollision(e, e.vitesse); e.vitesse *= 0.3; }
     e.onGround = !!hit.landed || (e.onGround && !hit.y && Math.abs(e.vel.y) < 1e-3);
     if (hit.landed) e.onGround = true;
     return milieu;
@@ -303,7 +370,8 @@
       if (!e.vehicule || e.dead) return;
       out.push([e.vehicule, +e.pos.x.toFixed(2), +e.pos.y.toFixed(2), +e.pos.z.toFixed(2),
                 +e.yaw.toFixed(3), e.soute ? e.soute.serialize() : 0,
-                e.carburant != null ? +e.carburant.toFixed(2) : undefined]);
+                e.carburant != null ? +e.carburant.toFixed(2) : undefined,
+                e.avarie ? e.avarieGravite : 0]);
     });
     return out;
   }
@@ -314,6 +382,7 @@
       if (!e) return;
       if (e.soute && v[5]) e.soute.load(v[5]);
       if (v[6] != null) e.carburant = v[6];               // sinon : plein (anciennes sauvegardes)
+      if (v[7]) { e.avarie = true; e.avarieGravite = v[7]; }
       n++;
     });
     return n;
@@ -323,5 +392,11 @@
                    gabarits: gabarits, poser: poser, conduire: conduire, milieuDe: milieuDe,
                    vmaxDans: vmaxDans, surfaceEau: surfaceEau, siege: siege, monter: monter,
                    descendre: descendre, caler: caler, vitesseKmh: vitesseKmh,
-                   serialiser: serialiser, restaurer: restaurer, rouler: rouler, railEn: railEn };
+                   serialiser: serialiser, restaurer: restaurer, rouler: rouler, railEn: railEn,
+                   // SPEC-TRANSPORT-002 : collision, avarie, réparation au forgeron
+                   SEUIL_COLLISION: SEUIL_COLLISION, PENALITE_AVARIE: PENALITE_AVARIE,
+                   COUT_REPARATION: COUT_REPARATION, graviteChoc: graviteChoc,
+                   subirCollision: subirCollision, coutReparation: coutReparation, reparer: reparer,
+                   // SPEC-TRANSPORT-004 : pertes d'une attaque (SPEC-TRANSPORT-003) sur la soute
+                   pillerSoute: pillerSoute };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
