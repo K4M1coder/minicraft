@@ -1281,7 +1281,12 @@ function traiter(c, m) {
         setTimeout(() => fermer(c, 'entree refusee : ' + decision.motif), 50);
         break;
       }
-      if ([...clients.values()].filter(x => x.rejoint).length >= CONF.maxJoueurs) {
+      // SPEC-SERVEUR-010 : `maxJoueurs` borne le nombre de JOUEURS présents
+      // (écran partagé compris), pas le nombre de connexions — une connexion
+      // à 4 joueurs locaux en occupe 4, jamais 1. Toute l'équipe est admise
+      // ou refusée d'un bloc : jamais une place partielle (un connecté sans
+      // ses coéquipiers serait plus déroutant qu'un refus net).
+      if (placesOccupees() + m.locaux > CONF.maxJoueurs) {
         envoyer(c, { t: NP.MSG.REFUS, motif: 'serveur_complet' });
         journal(`x ${m.nom} (${c.ip}) refusé — serveur complet (${CONF.maxJoueurs})`);
         setTimeout(() => fermer(c, 'serveur complet'), 50);
@@ -2178,6 +2183,16 @@ function tousLesJoueurs() {
   const l = [];
   clients.forEach(c => { if (c.rejoint && c.joueurs) c.joueurs.forEach((js, j) => l.push({ c, j, js })); });
   return l;
+}
+// SPEC-SERVEUR-010 : nombre de JOUEURS déjà admis (écran partagé compris),
+// pas de connexions — testé en conditions réelles (tests/integration-
+// capacite.js) : `server.js` a des effets de bord au chargement (écoute
+// immédiate), donc jamais `require()` directement, comme le reste de la
+// suite (toujours un vrai processus lancé via `spawn`, jamais isolé).
+function placesOccupees() {
+  let n = 0;
+  clients.forEach(c => { if (c.rejoint) n += c.locaux || 1; });
+  return n;
 }
 
 /* SPEC-COMBAT-002 : le PvP n'est permis que si le serveur l'autorise
