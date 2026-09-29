@@ -473,6 +473,16 @@ function envelopperFonctions(vmCtx) {
   const MCns = vmCtx.MC;
   const compteur = Object.create(null);
   const actif = { v: false };
+  // `entrees` : un {obj, cle, orig, enveloppe} par fonction enveloppée — sert
+  // à RESTAURER l'original (pas seulement couper le comptage) pour un test
+  // `budget-perf` (voir restaurer/reenvelopper ci-dessous). `actif.v = false`
+  // seul économise le comptage mais PAS l'indirection d'appel elle-même
+  // (une frame de plus + Function.prototype.apply) : mesuré, cette
+  // indirection à elle seule ajoute plusieurs ms sur un test qui enchaîne
+  // des dizaines de milliers d'appels bon marché (génération de chunk),
+  // assez pour faire dépasser un budget de temps serré (SPEC-PERF-001) —
+  // d'où la restauration complète, pas un simple drapeau, pour CE cas précis.
+  const entrees = [];
   function enveloppeDe(qualifie, orig) {
     return function () {
       if (actif.v) compteur[qualifie] = (compteur[qualifie] || 0) + 1;
@@ -486,16 +496,25 @@ function envelopperFonctions(vmCtx) {
       // niveau : `MC.makeNoise`, `MC.createWorld`…), pas seulement à travers
       // un espace `MC.<Module>.<fn>` — sans ce cas, aucun appel à ces
       // fabriques n'est jamais observé (constaté : tests du bruit procédural).
-      if (typeof val === 'function') { MCns[cle] = enveloppeDe('MC.' + cle, val); return; }
+      if (typeof val === 'function') {
+        const env = enveloppeDe('MC.' + cle, val);
+        MCns[cle] = env;
+        entrees.push({ obj: MCns, cle, orig: val, enveloppe: env });
+        return;
+      }
       if (!val || typeof val !== 'object') return;
       Object.keys(val).forEach((fnName) => {
         const orig = val[fnName];
         if (typeof orig !== 'function') return;
-        val[fnName] = enveloppeDe('MC.' + cle + '.' + fnName, orig);
+        const env = enveloppeDe('MC.' + cle + '.' + fnName, orig);
+        val[fnName] = env;
+        entrees.push({ obj: val, cle: fnName, orig, enveloppe: env });
       });
     });
   }
-  return { compteur, actif };
+  function restaurer() { entrees.forEach(e => { e.obj[e.cle] = e.orig; }); }
+  function reenvelopper() { entrees.forEach(e => { e.obj[e.cle] = e.enveloppe; }); }
+  return { compteur, actif, restaurer, reenvelopper };
 }
 /* Surcoût MESURÉ (pas estimé) de l'enveloppe : chronomètre N appels d'une
    fonction de référence pure et bon marché (MC.Core.isSolid) AVANT
@@ -536,16 +555,19 @@ const res = ctx.T.run(nomsAExecuter, {
       // SPEC-BANC-062 : un test qui mesure un budget de TEMPS (millisecondes)
       // n'a de sens que SANS l'enveloppe (comme G12, tests/gates.js, qui
       // tourne dans un processus séparé pour la même raison) — étiquette
-      // `budget-perf` (tests/spec-perf.js, tests/spec-ombres.js) : la fenêtre
-      // d'observation ne s'ouvre PAS pour ce test précis, sans rien changer
-      // pour le reste de la campagne.
+      // `budget-perf` (tests/spec-perf.js, tests/spec-ombres.js) : les
+      // fonctions sont RESTAURÉES (pas seulement le comptage coupé) pour ce
+      // test précis, car l'indirection d'appel elle-même a un coût mesurable
+      // sur un budget serré (voir le commentaire d'envelopperFonctions) ;
+      // remises en place par finTest, sans rien changer pour le reste de la
+      // campagne.
       const budgetPerf = cat && (cat.etiquettes || []).indexOf('budget-perf') >= 0;
-      observateurFonctions.actif.v = !budgetPerf;
+      if (budgetPerf) observateurFonctions.restaurer(); else observateurFonctions.actif.v = true;
     }
   },
   etape: (groupe, nom, libelle, n, total) => ecrire('    ↳ ' + nom + ' — ' + libelle + (n ? ' (' + n + (total ? '/' + total : '') + ')' : '')),
   finTest: (groupe, nom, ok, ms, detail) => {
-    if (observateurFonctions) observateurFonctions.actif.v = false;
+    if (observateurFonctions) { observateurFonctions.actif.v = false; observateurFonctions.reenvelopper(); }
     if (ms > SEUIL_LENT * 1000) ecrire('  ⚠ lent (' + secondes(ms) + ') : ' + nom);
     const cat = catalogue.find(c => c.groupe === groupe && c.nom === nom);
     // fusion (SPEC-BANC-062) : fonctions DÉCLARÉES (fiche) ∪ OBSERVÉES (cette

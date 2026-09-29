@@ -216,9 +216,19 @@
           remplacerMonde(m.graine, { zonePolitique: m.zone });
           composerEquipe(equipe.length || 1, regles);
           ui.toast('Graine du serveur : ' + m.graine + ' — monde reconstruit');
-        } else if (m.zone && world.accorderPolitiqueZone) {
-          // même graine : on aligne juste la carte des zones sur celle du serveur
-          world.accorderPolitiqueZone(m.zone);
+        } else {
+          if (m.zone && world.accorderPolitiqueZone) {
+            // même graine : on aligne juste la carte des zones sur celle du serveur
+            world.accorderPolitiqueZone(m.zone);
+          }
+          // SPEC-SERVEUR-009 : une reconnexion au même monde (même graine) ne
+          // rebâtit rien, donc les chunks déjà chargés avant la coupure ne
+          // repasseront JAMAIS par le chemin « nouvellement voulu » de
+          // streamChunks — sans ce vidage, un bloc modifié par un autre
+          // joueur pendant la déconnexion, dans un chunk déjà chargé avant
+          // elle, ne serait plus jamais redemandé ni reçu. On force donc une
+          // redemande complète de tous les chunks déjà en mémoire.
+          overridesDemandes = Object.create(null);
         }
         g.time = m.heure || 0;
         (m.blocs || []).forEach(function (b) {
@@ -1656,24 +1666,30 @@
       var aGenerer = world.chunksVoulus(centres, R + 1);
       var aMailler = world.chunksVoulus(centres, R);
 
-      // SPEC-SERVEUR-009 : demande les overrides de chaque chunk nouvellement
-      // voulu AVANT de le générer/mailler — en ligne seulement (le solo n'a
-      // pas de serveur à interroger, ses overrides sont déjà dans `world`).
-      // Une seule demande par chunk : la réponse (onOverridesChunk) arrive de
-      // toute façon avant que le mailleur n'ait fini de tourner plusieurs
-      // images, largement avant que le chunk ne soit affiché à l'écran.
+      // SPEC-SERVEUR-009 : demande les overrides de chaque chunk voulu qui
+      // n'a pas encore été demandé — en ligne seulement (le solo n'a pas de
+      // serveur à interroger, ses overrides sont déjà dans `world`). Le seul
+      // garde-fou est `overridesDemandes` (PAS `world.chunks.has(rk)`) :
+      // un chunk déjà chargé reste éligible tant qu'il n'a pas encore été
+      // demandé — c'est ce qui permet à onBienvenue (reconnexion à la même
+      // graine, SPEC-SERVEUR-009) de forcer une redemande de tous les chunks
+      // déjà en mémoire en vidant simplement `overridesDemandes`, sans avoir
+      // à décharger le monde. Une seule demande par chunk tant qu'il reste
+      // chargé : la réponse (onOverridesChunk) arrive de toute façon avant
+      // que le mailleur n'ait fini de tourner plusieurs images, largement
+      // avant que le chunk ne soit affiché à l'écran.
       // Débit volontairement sous le budget anti-flood général du serveur
       // (FLOOD_MAX_GENERAL = 30/s, server.js) : un arrivage massif (connexion,
-      // téléportation) ne fait pas taire silencieusement le serveur pour le
-      // reste de la seconde — les chunks reportés seront redemandés dès la
-      // prochaine image tant qu'ils restent voulus et non encore chargés.
+      // téléportation, reconnexion) ne fait pas taire silencieusement le
+      // serveur pour le reste de la seconde — les chunks reportés seront
+      // redemandés dès la prochaine image tant qu'ils restent voulus.
       if (net.enLigne()) {
         var tOverridesNow = performance.now();
         if (tOverridesNow - overridesFenetreDebut > 1000) { overridesFenetreDebut = tOverridesNow; overridesFenetreN = 0; }
         for (var ridx = 0; ridx < aGenerer.length && overridesFenetreN < OVERRIDES_DEMANDE_BUDGET; ridx++) {
           var rcx = aGenerer[ridx][1], rcz = aGenerer[ridx][2];
           var rk = world.key(rcx, rcz);
-          if (world.chunks.has(rk) || overridesDemandes[rk]) continue;
+          if (overridesDemandes[rk]) continue;
           overridesDemandes[rk] = true;
           net.demanderOverrides(rcx, rcz);
           overridesFenetreN++;

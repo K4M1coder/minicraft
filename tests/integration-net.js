@@ -290,9 +290,59 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
     d2.fermer();
 
+    // ── SPEC-SERVEUR-009 (régression corrigée) : un client qui se reconnecte
+    // à la MÊME graine doit redemander les overrides des chunks déjà chargés
+    // avant la coupure, sinon un bloc modifié par un autre joueur pendant sa
+    // déconnexion ne lui parviendrait plus jamais (avant ce lot, BIENVENUE
+    // envoyait tout ; désormais BIENVENUE est borné, donc un chunk déjà en
+    // mémoire chez le client ne repasse plus par le chemin « nouvellement
+    // voulu » de streamChunks). Le correctif vit côté client (game.js
+    // onBienvenue vide `overridesDemandes` sur reconnexion à même graine,
+    // et streamChunks ne garde plus que ce registre comme garde-fou — voir
+    // les commentaires de src/game.js) : ce test, en protocole pur (sans
+    // navigateur, game.js n'étant pas chargeable sous Node — voir
+    // tests/spec-couverture.js), REJOUE exactement le comportement attendu
+    // du client corrigé (redemander le chunk déjà chargé après reconnexion)
+    // et prouve que le SERVEUR le sert correctement : la clé du correctif,
+    // c'est qu'aucune mise en cache serveur ne fait obstacle à cette
+    // redemande — condition nécessaire à ce que le correctif client suffise.
+    const fred = await connecter(PORT);
+    fred.envoyer({ t: 'rejoindre', nom: 'Fred', locaux: 1 });
+    const bienvenueFred = await fred.attendre('bienvenue');
+    const cxF = Math.floor(BX / 16), czF = Math.floor(BZ / 16);
+    fred.envoyer({ t: 'overrides_demande', cx: cxF, cz: czF });
+    const chunkAvantDeco = await fred.attendre('overrides_chunk', 3000, m => m.cx === cxF && m.cz === czF);
+    ok(chunkAvantDeco.blocs.some(x => x[0] === BX && x[1] === BY && x[2] === BZ),
+       'SPEC-SERVEUR-009 (reconnexion) : Fred charge le chunk avant de se déconnecter');
+    fred.fermer();
+    await dodo(200);
+
+    // un autre joueur modifie ce MÊME chunk pendant que Fred est hors ligne —
+    // Chloe (c2), connectée mais jamais déplacée depuis son arrivée (portée
+    // de pose toujours valide, contrairement à Alice qui a marché entre-temps)
+    const BX2 = BX + 1;
+    c2.envoyer({ t: 'bloc', x: BX2, y: BY, z: BZ, id: 13 });
+    await c2.attendre('bloc', 3000, m => m.x === BX2 && m.z === BZ);
+
+    // Fred se reconnecte — même serveur, donc même graine — et redemande
+    // (comme le client corrigé) le chunk qu'il avait déjà chargé
+    const fred2 = await connecter(PORT);
+    fred2.envoyer({ t: 'rejoindre', nom: 'Fred', locaux: 1 });
+    const bienvenueFred2 = await fred2.attendre('bienvenue');
+    eq(bienvenueFred2.graine, bienvenueFred.graine, 'SPEC-SERVEUR-009 (reconnexion) : même graine qu avant la coupure');
+    fred2.envoyer({ t: 'overrides_demande', cx: cxF, cz: czF });
+    const chunkApresReco = await fred2.attendre('overrides_chunk', 3000, m => m.cx === cxF && m.cz === czF);
+    ok(chunkApresReco.blocs.some(x => x[0] === BX2 && x[1] === BY && x[2] === BZ && x[3] === 13),
+       'SPEC-SERVEUR-009 (reconnexion) : le bloc posé PENDANT la déconnexion de Fred, dans un chunk qu il avait déjà chargé, lui parvient bien après reconnexion',
+       JSON.stringify(chunkApresReco.blocs).slice(0, 200));
+    fred2.fermer();
+
     // ── SPEC-NET-015 : depart signale
+    // prédicat sur le nom : Diane et Fred sont déjà partis plus haut (scénario
+    // de reconnexion, SPEC-SERVEUR-009), leurs 'quitte' à Alice ne doivent pas
+    // être confondus avec celui de Bob ici.
     b.fermer();
-    const depart = await a.attendre('quitte', 3000);
+    const depart = await a.attendre('quitte', 3000, m => m.nom === 'Bob');
     eq(depart.nom, 'Bob', 'SPEC-NET-015 : le depart de Bob est signale');
 
     a.fermer(); c2.fermer();
