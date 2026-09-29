@@ -3262,6 +3262,39 @@
     A.equal(culled, trouve, 'tous ont le frustum culling actif : ' + culled + '/' + trouve);
   });
 
+  /* SPEC-RENDU-006 : le contexte WebGL se crée désormais sans MSAA (voir la
+     note près de sa création, src/render.js) — le lissage vient d'une passe
+     de post-traitement (FXAA léger) que `setAntialias` bascule réellement,
+     sans jamais recréer le renderer/canvas. La preuve d'un VRAI basculement
+     GPU (pas juste une option mémorisée) : la passe ajoute un appel de
+     dessin plein écran de plus (`renderer.info.render.calls`) quand elle
+     tourne, aucun quand elle est coupée. */
+  e2e('SPEC-RENDU-006 : setAntialias bascule réellement une passe de post-traitement (appels de dessin en plus/en moins)', async function (g) {
+    await reset(g);
+    g.render.setDistance(3);
+    g.streamChunks(true);
+    for (var i = 0; i < 3; i++) await frames(1);
+    var rendererAvant = g.render.renderer;
+
+    g.render.setAntialias(true);
+    await frames(2);
+    A.equal(g.render.antialiasActif, true, 'option activée');
+    var avecAA = g.render.metriquesDessin.appelsDessin;
+
+    g.render.setAntialias(false);
+    await frames(2);
+    A.equal(g.render.antialiasActif, false, 'option désactivée');
+    var sansAA = g.render.metriquesDessin.appelsDessin;
+
+    A.equal(g.render.renderer, rendererAvant, 'même instance de renderer — pas de reconstruction du contexte');
+    A.gt(avecAA, sansAA, 'la passe FXAA ajoute au moins un appel de dessin : ' + avecAA + ' (actif) > ' + sansAA + ' (coupé)');
+
+    // réactivable manuellement (la fiche l'exige explicitement)
+    g.render.setAntialias(true);
+    await frames(1);
+    A.equal(g.render.antialiasActif, true, 'réactivable manuellement dans les options');
+  });
+
   /* SPEC-RENDU-004 : une nappe d'eau lointaine (au-delà du seuil interne) ne
      déclenche pas la réfraction ; approchée, elle la déclenche. */
   e2e('SPEC-RENDU-004 : la réfraction ne s’active qu’à moins d’une distance fixe de la caméra', async function (g) {

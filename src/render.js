@@ -48,8 +48,28 @@
       return cameras[i];
     }
     // le GPU choisi (SPEC-OPTION-004) : le navigateur n'en retient que la préférence
-    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: opts.powerPreference || 'high-performance' });
+    // SPEC-RENDU-006 : l'antialias MSAA du contexte WebGL se fixe à la création
+    // et ne peut plus se basculer ensuite sans recréer `renderer.domElement`
+    // (ce qui orphelinerait les écouteurs posés dessus par src/input.js, hors
+    // périmètre de ce lot). Le lissage se fait donc désormais par une passe de
+    // post-traitement (FXAA léger, voir `passeAntialias` plus bas) : le
+    // contexte lui-même se crée sans MSAA, et `optionsRendu.antialias`
+    // (piloté par le FPS mesuré, SPEC-RENDU-006) active ou non cette passe
+    // sans jamais reconstruire le renderer ni son canvas.
+    var renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: opts.powerPreference || 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // SPEC-RENDU-006/PERF-015 : plusieurs `renderer.render()` peuvent
+    // désormais composer une seule image affichée (la passe FXAA légère
+    // rend d'abord la scène dans un tampon, PUIS le carré plein écran qui la
+    // relissent — deux appels à `render()` pour une image) ; par défaut,
+    // Three.js remet `info.render.calls` à zéro à CHAQUE `render()`, donc le
+    // dernier appel (le carré de post-traitement, 1 seul appel de dessin)
+    // écraserait le vrai total de l'image pour le panneau F3 et l'adaptatif
+    // (SPEC-PERF-015/SPEC-RENDU-015). On désactive la remise à zéro
+    // automatique et on la fait nous-mêmes une fois par image complète
+    // (`renderViews`, plus bas) : la somme de tous les `render()` de
+    // l'image, comme avant l'ajout de cette passe.
+    renderer.info.autoReset = false;
     // ombres portées du soleil (ou de la lune) sur le terrain proche
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -2343,6 +2363,54 @@
       sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
       return { scene: sc, camera: cam, mat: mat };
     })();
+    // ── SPEC-RENDU-006 : antialias par post-traitement (FXAA léger) ────────
+    // Le contexte se crée sans MSAA (voir la note près de sa création) : le
+    // lissage vient d'une passe qui relit l'image rendue dans un tampon et la
+    // relisse aux contours (détection de contraste de luminance sur les 4
+    // voisins), exactement le second choix documenté pour cette fiche
+    // (« passe FXAA basculée off »). Coupée, l'image part directement au
+    // tampon par défaut (un appel de dessin en moins par image, la voie déjà
+    // prise avant ce lot) ; activée, elle ajoute un tampon intermédiaire et
+    // un dessin plein écran de plus — un coût qui vaut la peine tant que le
+    // FPS le permet, cédé en premier après la réfraction (SPEC-RENDU-008).
+    var rtAntialias = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+    var passeAntialias = (function () {
+      var sc = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var mat = new THREE.ShaderMaterial({
+        uniforms: { image: { value: null }, resolution: { value: new THREE.Vector2(1, 1) } },
+        depthTest: false, depthWrite: false,
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: [
+          'uniform sampler2D image; uniform vec2 resolution; varying vec2 vUv;',
+          'float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }',
+          'void main() {',
+          '  vec2 texel = 1.0 / resolution;',
+          '  vec3 cC = texture2D(image, vUv).rgb;',
+          '  vec3 cN = texture2D(image, vUv + vec2(0.0, texel.y)).rgb;',
+          '  vec3 cS = texture2D(image, vUv - vec2(0.0, texel.y)).rgb;',
+          '  vec3 cE = texture2D(image, vUv + vec2(texel.x, 0.0)).rgb;',
+          '  vec3 cW = texture2D(image, vUv - vec2(texel.x, 0.0)).rgb;',
+          '  float lC = luma(cC), lN = luma(cN), lS = luma(cS), lE = luma(cE), lW = luma(cW);',
+          '  float lMin = min(lC, min(min(lN, lS), min(lE, lW)));',
+          '  float lMax = max(lC, max(max(lN, lS), max(lE, lW)));',
+          '  vec3 blur = (cC + cN + cS + cE + cW) / 5.0;',
+          '  float m = smoothstep(0.045, 0.2, lMax - lMin);',
+          '  gl_FragColor = vec4(mix(cC, blur, m), 1.0);',
+          '}'].join('\n'),
+      });
+      sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      return { scene: sc, camera: cam, mat: mat };
+    })();
+    function rendreAvecAntialias(cam) {
+      renderer.getDrawingBufferSize(tailleTampon);
+      if (rtAntialias.width !== tailleTampon.x || rtAntialias.height !== tailleTampon.y) rtAntialias.setSize(tailleTampon.x, tailleTampon.y);
+      renderer.setRenderTarget(rtAntialias);
+      renderer.render(scene, cam);
+      renderer.setRenderTarget(null);
+      passeAntialias.mat.uniforms.image.value = rtAntialias.texture;
+      passeAntialias.mat.uniforms.resolution.value.set(tailleTampon.x, tailleTampon.y);
+      renderer.render(passeAntialias.scene, passeAntialias.camera);
+    }
     var sousLEau = false, eauEnVue = 0, eauDistance = Infinity;
     // SPEC-RENDU-004 : au-delà de ce seuil, l'eau reste visible mais sans
     // réfraction en temps réel — inutile de payer la passe pour une surface
@@ -2404,15 +2472,31 @@
         var ok = premiereFois || !MC.Qualite || MC.Qualite.refractionFrequenceOK(compteurImagesRefraction, optionsRendu.fpsP50, SEUIL_FPS_REFRACTION);
         if (ok) { passeRefraction(cam); rtRefraction.__rempli = true; }
       }
-      renderer.render(scene, cam);
+      // SPEC-RENDU-006 : la passe FXAA légère ne s'applique qu'à la vue
+      // caméra normale — la vue sous-marine a déjà son propre calque plein
+      // écran (ondulation), et l'empiler avec une seconde passe reviendrait
+      // à restructurer ce chemin déjà spécial (voir la note de sortie de ce
+      // lot dans SPECS.md sur le risque d'une refonte complète des passes).
+      if (optionsRendu.antialias) rendreAvecAntialias(cam);
+      else renderer.render(scene, cam);
     }
-    var optionsRendu = { refraction: true, fpsP50: null };
+    // SPEC-RENDU-006 : `antialias` par défaut à true — remplace l'ancien
+    // MSAA forcé à la création du contexte (maintenant toujours false, voir
+    // plus haut) ; piloté par le FPS mesuré (game.js, via `setAntialias`),
+    // réglable manuellement dans les options.
+    var optionsRendu = { refraction: true, fpsP50: null, antialias: true };
+    function setAntialias(v) { optionsRendu.antialias = !!v; return optionsRendu.antialias; }
 
     function renderViews(vues) {
       // SPEC-RENDU-001 : le rendu s'arrête proprement pendant la perte du
       // contexte GPU — aucun appel `renderer.render` tant qu'il n'est pas
       // restauré (webglcontextrestored).
       if (contextePerdu) return 0;
+      // une image complète peut désormais tenir sur plusieurs `render()`
+      // (passe de réfraction, passe antialias, vue sous l'eau…) : la remise
+      // à zéro manuelle (autoReset coupé plus haut) se fait UNE fois ici,
+      // pas à chaque `render()` interne — voir la note près de sa coupure.
+      renderer.info.reset();
       var taille = hostSize();
       if (!vues || vues.length <= 1) {
         renderer.setScissorTest(false);
@@ -2439,7 +2523,7 @@
       return vues.length;
     }
 
-    function render() { if (contextePerdu) return; placerCiel(camera); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); renderer.render(scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2458,6 +2542,8 @@
       get RENDER_DIST() { return RENDER_DIST; },
       // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
       setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps,
+      // SPEC-RENDU-006 : antialias par post-traitement, piloté par le FPS
+      setAntialias: setAntialias, get antialiasActif() { return optionsRendu.antialias; },
       // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel
       get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
       // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte

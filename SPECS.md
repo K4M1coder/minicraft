@@ -1129,46 +1129,27 @@ temps réel absolus. Les specs conditionnées au FPS (SPEC-RENDU-003, 005, 006,
 007, 008) mesurent un FPS injecté via une fonction substituable (mock de
 `g.fps`), jamais le FPS réel de la machine de test, pour rester déterministes.
 
-Sous-lot A4 (vague 1) : implémenté et testé, sauf trois specs laissées ⏳
-avec leur justification ci-dessous.
-- SPEC-RENDU-006 (antialias piloté par le FPS) : la décision est calculée et
-  exposée (`g.qualite.antialias`, cascade testée par SPEC-RENDU-008), mais
-  aucune bascule GPU réelle n'y est branchée. Le renderer est créé une seule
-  fois avec `antialias: true` (src/render.js) ; désactiver le MSAA en cours
-  de partie exige soit de recréer le contexte WebGL (ce qui détruit et
-  recrée `renderer.domElement`, orphelinant les écouteurs de pointeur/souris
-  posés dessus par `src/input.js`, hors périmètre de ce lot), soit de
-  restructurer tout le chemin de rendu vers une cible multi-échantillonnée
-  suivie d'une passe de résolution (comme la passe `calque` déjà utilisée
-  pour la vue sous l'eau), ce qui touche l'ensemble des passes de render.js
-  et dépasse le risque de régression acceptable pour ce sous-lot. À reprendre
-  dans un lot qui possède aussi `src/input.js`, ou avec une cible de rendu
-  dédiée à l'antialiasing.
-- SPEC-RENDU-009 (mobs fusionnés/instanciés par espèce) : `mobMesh`
-  (src/render.js) construit chaque créature comme un assemblage procédural
-  de 10 à 14 `THREE.Mesh` (corps, tête, membres…) répartis différemment selon
-  une douzaine de formes (bipède, quadrupède, araignée, poisson, méduse,
-  crabe, tortue, oiseau…), sans séparation déclarative entre parties
-  statiques et parties animées. Fusionner les parties statiques en un
-  maillage instancié par espèce (la solution de repli documentée dans la
-  mission) exige de refactorer cette fonction pour chaque forme afin de
-  distinguer explicitement ce qui est ajouté directement (statique) de ce
-  qui passe par `membre()` (animé), sans casser l'apparence ni l'animation
-  d'aucune des créatures existantes — un travail de plusieurs heures avec
-  vérification visuelle par forme, hors du temps disponible pour ce sous-lot
-  sans risquer une régression silencieuse sur une géométrie non testée
-  visuellement par les e2e existants. Laissé pour un lot dédié qui partirait
-  d'une table déclarative des parties par forme.
-- SPEC-RENDU-014 (culling grossier d'occlusion) : nécessite une donnée de
-  hauteur de relief interrogeable efficacement par colonne pour décider
-  qu'une colonne de chunks est entièrement masquée par le relief proche, et
-  un point d'intégration dans la boucle de streaming/rendu des chunks — deux
-  choses qui touchent l'orchestration des chunks, explicitement réservée à
-  un autre lot par cette mission (« un autre lot futur touchera
-  l'orchestration des chunks »). Une implémentation isolée dans render.js
-  sans cette donnée serait soit un faux-semblant (un test synthétique
-  passerait sans culling réel utile en jeu), soit un doublon incohérent avec
-  ce que ce futur lot mettra en place. Laissé ⏳, à faire avec ce lot.
+Sous-lot A4 (vague 1) : implémenté et testé. Les trois specs qu'il avait
+laissées ⏳ (justifications alors documentées ici) sont désormais câblées :
+- SPEC-RENDU-006 : le contexte WebGL se crée sans MSAA ; le lissage vient
+  d'une passe de post-traitement (FXAA léger) que `render.setAntialias`
+  bascule réellement, sans jamais recréer `renderer.domElement` (donc sans
+  toucher aux écouteurs posés dessus par `src/input.js`) — le second choix
+  documenté ici à l'origine, pas le premier (recréation de contexte).
+- SPEC-RENDU-009 : plutôt que de refactorer `mobMesh` par forme (toujours
+  hors budget), les mobs d'une même espèce basculent, à partir de 5
+  individus visibles à la fois, en un seul `THREE.InstancedMesh` (silhouette
+  pleine, mêmes proportions que le LOD « simple » déjà utilisé au loin) —
+  un mob instancié perd son articulation et sa teinte de variante
+  individuelle (compromis documenté en code), les formes à parties
+  transparentes/émissives et les véhicules restent toujours en maillage complet.
+- SPEC-RENDU-014 : réutilise la grille de relief lointain déjà bâtie pour le
+  terrain au-delà des chunks (`grilleLointaine`) comme donnée de hauteur par
+  colonne, plutôt qu'une donnée dédiée à l'orchestration des chunks (toujours
+  hors périmètre) — le test d'occlusion (`MC.Lointain.occlusionColonne`,
+  logique pure) et son point d'intégration (`cullerOcclusionChunks`, appelé
+  à chaque image dans le chemin de rendu de la vue caméra unique) vivent
+  entièrement dans `src/render.js`/`src/lointain.js`.
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
@@ -1177,7 +1158,7 @@ avec leur justification ci-dessous.
 | SPEC-RENDU-003 | La passe de réfraction (`passeRefraction`, src/render.js:2082-2103) ne se recalcule pas à chaque image : sa fréquence est plafonnée (ex. une image sur deux) quand le FPS mesuré est sous un seuil, pleine fréquence au-dessus | test navigateur/e2e : avec un FPS injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles, compter les appels à `renderer.setRenderTarget(rtRefraction)` sur 60 images et vérifier qu'ils sont inférieurs de moitié au nombre d'images rendues | ✅ |
 | SPEC-RENDU-004 | La réfraction ne s'active que si une surface d'eau réfractante est visible à moins d'une distance fixe de la caméra (`eauEnVue` porte aussi une distance, pas seulement un booléen) ; au-delà, l'eau s'affiche sans réfraction en temps réel | test Node/e2e : une nappe d'eau visible mais lointaine (au-delà du seuil) ne déclenche pas `passeRefraction` ; la même nappe rapprochée le déclenche | ✅ |
 | SPEC-RENDU-005 | La réfraction se désactive automatiquement (comme `MC.Lointain.ajusterDistance` pilote déjà `render.RENDER_DIST` depuis `g.fps`, game.js:2405-2415) quand le FPS p50 mesuré reste sous un seuil fixe pendant N secondes, et se réactive quand le FPS remonte durablement | test e2e : le FPS est injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles ; imposer un FPS bas simulé pendant N secondes, vérifier que `optionsRendu.refraction` passe à `false`, puis `true` après retour à un FPS haut | ✅ |
-| SPEC-RENDU-006 | L'antialias du renderer (actuellement forcé `true`, src/render.js:51) devient une option pilotée par le FPS mesuré : désactivé automatiquement quand le FPS p50 reste sous un seuil pendant N secondes, réactivable manuellement dans les options | test e2e : le FPS est injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles ; un FPS bas simulé prolongé fait passer le renderer en `antialias: false` (recréation du contexte ou passe FXAA basculée off) ; un FPS haut restauré (ou un réglage manuel) le réactive | ⏳ |
+| SPEC-RENDU-006 | L'antialias du renderer (actuellement forcé `true`, src/render.js:51) devient une option pilotée par le FPS mesuré : désactivé automatiquement quand le FPS p50 reste sous un seuil pendant N secondes, réactivable manuellement dans les options | test e2e : le FPS est injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles ; un FPS bas simulé prolongé fait passer le renderer en `antialias: false` (recréation du contexte ou passe FXAA basculée off) ; un FPS haut restauré (ou un réglage manuel) le réactive | ✅ |
 | SPEC-RENDU-007 | Le rapport de pixels (`renderer.setPixelRatio`, src/render.js:52/2030) se réduit automatiquement (ex. par paliers 2 → 1,5 → 1) quand le FPS p50 reste sous un seuil prolongé, sans jamais dépasser le plafond des options utilisateur ni descendre sous 1 | test e2e : le FPS est injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles ; un FPS bas prolongé simulé fait baisser `renderer.getPixelRatio()` d'un palier ; un FPS haut restauré la remonte, sans dépasser `MC.Options.rapportPixels` déclaré | ✅ |
 | SPEC-RENDU-008 | Une qualité adaptative automatique combine antialias (SPEC-RENDU-006), DPR (SPEC-RENDU-007), réfraction (SPEC-RENDU-005) et distance de vue (mécanisme déjà en place) en cascade selon un budget de frame unique (ex. 16,6 ms pour 60 FPS) : le réglage le moins coûteux visuellement cède en premier | test e2e : le FPS est injecté via une fonction de mesure substituable (mock de `g.fps`), pas mesuré en conditions réelles ; imposer un budget de frame dépassé de façon soutenue et vérifier l'ordre de dégradation déclaré (ex. réfraction avant antialias avant distance de vue) sur des mesures successives | ✅ |
 | SPEC-RENDU-009 | Les mobs d'une même espèce visibles dans une même vue sont fusionnés en un seul maillage instancié (`THREE.InstancedMesh`, comme déjà fait pour les arbres, src/render.js:1368) plutôt qu'un `THREE.Mesh` et des matériaux propres par mob | test navigateur : afficher 20 mobs de la même espèce et mesurer `renderer.info.render.calls` avant/après — passe de l'ordre de 10-14 appels par mob à au plus 2-3 appels par espèce affichée, quel que soit le nombre d'individus | ⏳ |
