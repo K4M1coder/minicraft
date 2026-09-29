@@ -453,6 +453,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- SPEC-RENDU-014 (revue adversariale) : un chunk masqué par le culling d'occlusion en vue unique restait caché indéfiniment aux deux joueurs après passage en écran partagé — la boucle multi-vues n'applique jamais l'occlusion, à raison, mais n'annulait pas non plus l'état hérité. La visibilité de tous les chunks actifs est désormais réinitialisée à l'entrée en multi-vues.
 - SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
   relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
   mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.

@@ -3417,6 +3417,21 @@
       g.render.PASSES.forEach(function (p) { var m = c[p[0]]; if (m && !m.visible) invisibles++; });
     });
     A.gt(invisibles, 0, 'au moins un maillage de chunk réellement rendu invisible');
+
+    // Correctif revue adversariale : l'occlusion n'est jamais APPLIQUÉE en
+    // multi-vues, mais un chunk déjà masqué (visible=false hérité de la vue
+    // unique juste avant) doit être réellement REND VISIBLE dès la bascule
+    // en écran partagé — sinon un trou de terrain persiste pour tous les
+    // joueurs, sans rapport avec ce que voit chacune des nouvelles caméras.
+    fausseManette([{ axes: [0, 0, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
+    await frames(3);
+    var invisiblesApres = 0;
+    g.world.chunks.forEach(function (c) {
+      g.render.PASSES.forEach(function (p) { var m = c[p[0]]; if (m && !m.visible) invisiblesApres++; });
+    });
+    A.equal(invisiblesApres, 0, 'aucun chunk ne reste caché à tort après le passage en écran partagé : ' + invisiblesApres);
+    soloRetabli(g); await frames(2);
   });
 
   /* SPEC-RENDU-004 : une nappe d'eau lointaine (au-delà du seuil interne) ne

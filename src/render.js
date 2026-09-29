@@ -2649,6 +2649,18 @@
         return 1;
       }
       refractionActive.value = 0;
+      // SPEC-RENDU-014 (correctif revue adversariale) : l'occlusion n'est
+      // jamais APPLIQUÉE en multi-vues (voir cullerOcclusionChunks, plus
+      // haut), mais un chunk masqué en vue unique juste avant la bascule
+      // vers l'écran partagé (visible=false hérité, jamais réécrit par la
+      // boucle ci-dessous) resterait sinon caché indéfiniment aux DEUX
+      // joueurs — un trou de terrain durable, pas juste une image. On
+      // réinitialise donc explicitement la visibilité de tous les chunks
+      // actifs à l'entrée en multi-vues.
+      chunksActifs.forEach(function (chunk) {
+        PASSES.forEach(function (p) { var m = chunk[p[0]]; if (m) m.visible = true; });
+      });
+      compteurChunksOcclus = 0;
       var H = taille[1];
       renderer.setScissorTest(true);
       for (var i = 0; i < vues.length; i++) {
