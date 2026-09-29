@@ -460,6 +460,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- SPEC-TRANSPORT-005 (revue adversariale) : la colonne « vérification » de SPECS.md laissait croire qu'un joueur est réellement prélevé en jeu — précisée : les fonctions d'intégration (`peageSegment`/`appliquerPeage`) sont réelles et testées isolément, mais pas encore câblées (véhicules solo uniquement, factions politiques serveur-only, limitations préexistantes).
 - SPEC-FACTION-017 (relecture) : `declarerRelation` (`guildes.js`) pose la
   relation réciproque côté PNJ dans `etatPolitique.relations`, sous une clé
   mêlant un id de faction de joueurs (ex. `g1`) à celui d'une faction PNJ.
