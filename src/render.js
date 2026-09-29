@@ -48,8 +48,28 @@
       return cameras[i];
     }
     // le GPU choisi (SPEC-OPTION-004) : le navigateur n'en retient que la préférence
-    var renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: opts.powerPreference || 'high-performance' });
+    // SPEC-RENDU-006 : l'antialias MSAA du contexte WebGL se fixe à la création
+    // et ne peut plus se basculer ensuite sans recréer `renderer.domElement`
+    // (ce qui orphelinerait les écouteurs posés dessus par src/input.js, hors
+    // périmètre de ce lot). Le lissage se fait donc désormais par une passe de
+    // post-traitement (FXAA léger, voir `passeAntialias` plus bas) : le
+    // contexte lui-même se crée sans MSAA, et `optionsRendu.antialias`
+    // (piloté par le FPS mesuré, SPEC-RENDU-006) active ou non cette passe
+    // sans jamais reconstruire le renderer ni son canvas.
+    var renderer = new THREE.WebGLRenderer({ antialias: false, powerPreference: opts.powerPreference || 'high-performance' });
     renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+    // SPEC-RENDU-006/PERF-015 : plusieurs `renderer.render()` peuvent
+    // désormais composer une seule image affichée (la passe FXAA légère
+    // rend d'abord la scène dans un tampon, PUIS le carré plein écran qui la
+    // relissent — deux appels à `render()` pour une image) ; par défaut,
+    // Three.js remet `info.render.calls` à zéro à CHAQUE `render()`, donc le
+    // dernier appel (le carré de post-traitement, 1 seul appel de dessin)
+    // écraserait le vrai total de l'image pour le panneau F3 et l'adaptatif
+    // (SPEC-PERF-015/SPEC-RENDU-015). On désactive la remise à zéro
+    // automatique et on la fait nous-mêmes une fois par image complète
+    // (`renderViews`, plus bas) : la somme de tous les `render()` de
+    // l'image, comme avant l'ajout de cette passe.
+    renderer.info.autoReset = false;
     // ombres portées du soleil (ou de la lune) sur le terrain proche
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFShadowMap;
@@ -458,7 +478,15 @@
        scène/le GPU pour un chunk, partagé par les deux origines (même
        résultat, même code). `passes` : { opaque, lumineux, cutout, blend }
        (MC.ContratsV2.PASSES_MAILLAGE), chacune une passe typée ou `null`. */
+    // SPEC-RENDU-014 : chunks actuellement porteurs d'au moins un maillage —
+    // le seul registre que render.js tient lui-même (les chunks vivent sur
+    // `world`, hors de ce module) ; c'est sur cet ensemble que le culling
+    // grossier d'occlusion (plus bas) décide, à chaque image, lesquels
+    // masquer sans passer par l'orchestration de streaming (hors périmètre
+    // de ce lot, voir SPECS.md).
+    var chunksActifs = new Set();
     function appliquerMaillage(chunk, passes, lumiere, simplifie) {
+      chunksActifs.add(chunk);
       chunk.sourcesLumiere = lumiere ? lumiere.sources : 0;
       // gardée sur le chunk : les créatures qui s'y tiennent en prennent leur éclat
       chunk.lumiere = lumiere;
@@ -524,6 +552,7 @@
     }
 
     function disposeChunk(chunk) {
+      chunksActifs.delete(chunk);
       PASSES.forEach(function (p) {
         var k = p[0];
         if (chunk[k]) { maillagesEau.delete(chunk[k]); scene.remove(chunk[k]); disposerGeom(chunk[k]); chunk[k] = null; }
@@ -1076,6 +1105,10 @@
     function libererToutesEntites() {
       entityMeshes.forEach(libererEntite);
       entityMeshes.clear();
+      // SPEC-RENDU-009 : les instances de foule n'ont plus d'entités
+      // derrière elles — masquées, pas détruites (capacité réutilisable dès
+      // la prochaine foule de la même espèce).
+      Object.keys(mobInstances).forEach(function (type) { mobInstances[type].mesh.count = 0; });
     }
 
     /* Joueurs distants : meme representation que les mobs, avec une etiquette
@@ -1170,6 +1203,62 @@
         if (mt.emissive && !m.userData.blesse) mt.emissive.copy(mt.userData.base).multiply(TORCHE).multiplyScalar(t);
       });
     }
+    /* ── SPEC-RENDU-009 : mobs fusionnés en InstancedMesh par espèce ───────
+       Un mob complet (mobMesh) coûte 10-14 appels de dessin (un par partie
+       du corps, chacun son maillage/matériau) — viable pour quelques
+       individus, ruineux pour une vingtaine (200+ appels). Passé un seuil
+       d'individus d'une MÊME espèce visibles à la fois (la liste reçue ici,
+       déjà limitée à la portée de jeu par l'appelant), on les fusionne en un
+       seul THREE.InstancedMesh : une silhouette pleine aux mêmes
+       proportions que le LOD « simple » déjà utilisé au loin par
+       `mobMesh`/`animerMembres` (SPEC-MOB-010), une matrice par individu —
+       au plus 2-3 appels de dessin pour l'espèce entière, quel que soit le
+       nombre d'individus.
+       Compromis assumé (comme le LOD « simple » qu'elle reprend) : un mob
+       instancié perd son articulation (membres figés), son clignotement de
+       blessure et sa teinte de variante individuelle — un maillage complet
+       reprend dès que l'espèce repasse sous le seuil. Les espèces à parties
+       transparentes/émissives (gelées, méduses…) et les véhicules restent
+       toujours en maillage complet (formes non représentables par une seule
+       boîte opaque). */
+    var UMBRAL_INSTANCE_MOB = 5;
+    var mobInstances = {};   // type -> { mesh, capacite, mat4, quat, scaleV }
+    var AXE_Y_MOB = new THREE.Vector3(0, 1, 0);
+    function garantirInstanceMob(type, spec, capaciteVoulue) {
+      var info = mobInstances[type];
+      if (info && info.capacite >= capaciteVoulue) return info;
+      var cap = Math.max(capaciteVoulue, (info && info.capacite) || 0, 8);
+      if (info) { scene.remove(info.mesh); disposerGeom(info.mesh); info.mesh.material.dispose(); }
+      var L = MOB_LOOK[type] || { forme: 'bipede', c: [0x888888, 0xaaaaaa] };
+      var w = spec.w, h = spec.h, col0 = (L.c && L.c[0]) || 0x888888;
+      var larg = Math.max(0.3, w * (L.forme === 'bipede' ? 0.8 : 1));
+      var prof = Math.max(0.3, w * (L.forme === 'quadrupede' ? 1.3 : 0.6));
+      var geo = tagGen(new THREE.BoxGeometry(larg, h * 0.95, prof));
+      geo.translate(0, h * 0.48, 0);
+      var matI = new THREE.MeshLambertMaterial({ color: col0 });
+      var mesh = new THREE.InstancedMesh(geo, matI, cap);
+      mesh.castShadow = true; mesh.receiveShadow = true;
+      // comme pour les arbres/silhouettes instanciés (mêmes limites de
+      // Three.js r128 avec InstancedMesh) : pas de boîte englobante par
+      // instance fiable pour le frustum culling automatique.
+      mesh.frustumCulled = false;
+      mesh.count = 0;
+      scene.add(mesh);
+      info = { mesh: mesh, capacite: cap, mat4: new THREE.Matrix4(), quat: new THREE.Quaternion(), scaleV: new THREE.Vector3(1, 1, 1) };
+      mobInstances[type] = info;
+      return info;
+    }
+    // formes non représentables par la boîte opaque instanciée (parties
+    // transparentes/émissives essentielles à leur lecture visuelle) : elles
+    // restent toujours en maillage complet, quel que soit leur nombre
+    var FORMES_SANS_INSTANCE = { cube: true, meduse: true };
+    function eligibleInstanciationMob(e, spec) {
+      if (e.type === 'item' || e.type === 'arrow') return false;
+      if (e.vehicule || (spec && spec.vehicule)) return false;
+      var L = MOB_LOOK[e.type];
+      if (L && FORMES_SANS_INSTANCE[L.forme]) return false;
+      return true;
+    }
     var dernierSync = 0, dtEntites = 0;
     function syncEntities(entities, net, lumiereEn, jour) {
       var maintenant = typeof performance !== 'undefined' ? performance.now() : Date.now();
@@ -1177,9 +1266,48 @@
       dernierSync = maintenant;
       if (net) syncDistants(net);
       var seen = new Set();
+
+      // Première passe : compter les individus par espèce parmi les entités
+      // éligibles, pour savoir quelles espèces basculent en maillage
+      // instancié CETTE image (SPEC-RENDU-009).
+      var parType = {};
+      for (var pi = 0; pi < entities.list.length; pi++) {
+        var pe = entities.list[pi];
+        if (!eligibleInstanciationMob(pe, entities.SPECS[pe.type])) continue;
+        (parType[pe.type] = parType[pe.type] || []).push(pe);
+      }
+      var typesInstancies = {};
+      Object.keys(parType).forEach(function (type) {
+        var liste = parType[type];
+        if (liste.length < UMBRAL_INSTANCE_MOB) return;
+        var spec = entities.SPECS[type];
+        var info = garantirInstanceMob(type, spec, liste.length);
+        typesInstancies[type] = true;
+        liste.forEach(function (e, i) {
+          var ech = e.bebe ? 0.55 : 1;
+          info.quat.setFromAxisAngle(AXE_Y_MOB, e.yaw || 0);
+          info.scaleV.setScalar(ech);
+          info.mat4.compose(new THREE.Vector3(e.pos.x, e.pos.y, e.pos.z), info.quat, info.scaleV);
+          info.mesh.setMatrixAt(i, info.mat4);
+          // un mob qui bascule en instance abandonne son maillage articulé
+          // individuel (s'il en avait un, de quand l'espèce était sous le
+          // seuil) — il en récupère un neuf si l'espèce repasse sous le seuil
+          var ancien = entityMeshes.get(e.eid);
+          if (ancien) { libererEntite(ancien); entityMeshes.delete(e.eid); }
+        });
+        info.mesh.count = liste.length;
+        info.mesh.instanceMatrix.needsUpdate = true;
+      });
+      // une espèce qui n'est plus en surnombre cette image : instance masquée
+      // (capacité gardée pour une prochaine foule, pas de nouvelle allocation)
+      Object.keys(mobInstances).forEach(function (type) {
+        if (!typesInstancies[type]) mobInstances[type].mesh.count = 0;
+      });
+
       for (var i = 0; i < entities.list.length; i++) {
         var e = entities.list[i];
         seen.add(e.eid);
+        if (typesInstancies[e.type]) continue;   // rendu par le maillage instancié ci-dessus
         var m = entityMeshes.get(e.eid);
         if (!m) {
           m = tagGen(e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e));
@@ -2343,6 +2471,54 @@
       sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
       return { scene: sc, camera: cam, mat: mat };
     })();
+    // ── SPEC-RENDU-006 : antialias par post-traitement (FXAA léger) ────────
+    // Le contexte se crée sans MSAA (voir la note près de sa création) : le
+    // lissage vient d'une passe qui relit l'image rendue dans un tampon et la
+    // relisse aux contours (détection de contraste de luminance sur les 4
+    // voisins), exactement le second choix documenté pour cette fiche
+    // (« passe FXAA basculée off »). Coupée, l'image part directement au
+    // tampon par défaut (un appel de dessin en moins par image, la voie déjà
+    // prise avant ce lot) ; activée, elle ajoute un tampon intermédiaire et
+    // un dessin plein écran de plus — un coût qui vaut la peine tant que le
+    // FPS le permet, cédé en premier après la réfraction (SPEC-RENDU-008).
+    var rtAntialias = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
+    var passeAntialias = (function () {
+      var sc = new THREE.Scene(), cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+      var mat = new THREE.ShaderMaterial({
+        uniforms: { image: { value: null }, resolution: { value: new THREE.Vector2(1, 1) } },
+        depthTest: false, depthWrite: false,
+        vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: [
+          'uniform sampler2D image; uniform vec2 resolution; varying vec2 vUv;',
+          'float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }',
+          'void main() {',
+          '  vec2 texel = 1.0 / resolution;',
+          '  vec3 cC = texture2D(image, vUv).rgb;',
+          '  vec3 cN = texture2D(image, vUv + vec2(0.0, texel.y)).rgb;',
+          '  vec3 cS = texture2D(image, vUv - vec2(0.0, texel.y)).rgb;',
+          '  vec3 cE = texture2D(image, vUv + vec2(texel.x, 0.0)).rgb;',
+          '  vec3 cW = texture2D(image, vUv - vec2(texel.x, 0.0)).rgb;',
+          '  float lC = luma(cC), lN = luma(cN), lS = luma(cS), lE = luma(cE), lW = luma(cW);',
+          '  float lMin = min(lC, min(min(lN, lS), min(lE, lW)));',
+          '  float lMax = max(lC, max(max(lN, lS), max(lE, lW)));',
+          '  vec3 blur = (cC + cN + cS + cE + cW) / 5.0;',
+          '  float m = smoothstep(0.045, 0.2, lMax - lMin);',
+          '  gl_FragColor = vec4(mix(cC, blur, m), 1.0);',
+          '}'].join('\n'),
+      });
+      sc.add(new THREE.Mesh(new THREE.PlaneGeometry(2, 2), mat));
+      return { scene: sc, camera: cam, mat: mat };
+    })();
+    function rendreAvecAntialias(cam) {
+      renderer.getDrawingBufferSize(tailleTampon);
+      if (rtAntialias.width !== tailleTampon.x || rtAntialias.height !== tailleTampon.y) rtAntialias.setSize(tailleTampon.x, tailleTampon.y);
+      renderer.setRenderTarget(rtAntialias);
+      renderer.render(scene, cam);
+      renderer.setRenderTarget(null);
+      passeAntialias.mat.uniforms.image.value = rtAntialias.texture;
+      passeAntialias.mat.uniforms.resolution.value.set(tailleTampon.x, tailleTampon.y);
+      renderer.render(passeAntialias.scene, passeAntialias.camera);
+    }
     var sousLEau = false, eauEnVue = 0, eauDistance = Infinity;
     // SPEC-RENDU-004 : au-delà de ce seuil, l'eau reste visible mais sans
     // réfraction en temps réel — inutile de payer la passe pour une surface
@@ -2381,7 +2557,42 @@
     // source que le panneau F3) est sous un seuil déclaré.
     var compteurImagesRefraction = 0;
     var SEUIL_FPS_REFRACTION = 40;
+    /* SPEC-RENDU-014 : culling grossier d'occlusion — une colonne de chunks
+       entièrement cachée par le relief proche (ex. une falaise pleine face à
+       la caméra) n'est pas soumise au rendu, en plus du frustum culling
+       (SPEC-RENDU-013). S'appuie sur la même grille de relief lointain que
+       le terrain au-delà des chunks (`grilleLointaine`, alimentée par
+       `majLointain`) plutôt qu'une donnée dédiée — le test d'occlusion lui-
+       même (`MC.Lointain.occlusionColonne`) est une fonction pure, testée
+       sous Node indépendamment du renderer. Tant que la grille n'est pas
+       encore prête (tout début de partie), rien n'est masqué (repli sûr).
+       Volontairement borné à la vue caméra unique (appelée depuis
+       `rendreVue`, jamais depuis la boucle multi-vues de `renderViews`) :
+       en écran partagé, un chunk masqué pour la caméra d'un joueur reste
+       visible dans le maillage partagé de la scène, donc potentiellement
+       nécessaire à l'autre joueur — appliquer ce culling par-dessus
+       plusieurs caméras simultanées cacherait à tort un chunk que l'une
+       d'elles voit. */
+    var compteurChunksOcclus = 0;
+    function cullerOcclusionChunks(camPos) {
+      compteurChunksOcclus = 0;
+      var pret = grilleLointaine && grilleLointaine.pret;
+      chunksActifs.forEach(function (chunk) {
+        var occlus = false;
+        if (pret) {
+          var cx = chunk.cx * C.CHUNK_X + C.CHUNK_X / 2, cz = chunk.cz * C.CHUNK_Z + C.CHUNK_Z / 2;
+          var cibleH = grilleLointaine.hauteur(cx, cz);
+          if (cibleH != null) {
+            occlus = MC.Lointain.occlusionColonne(grilleLointaine.hauteur, camPos, cx, cz, cibleH, { pas: C.CHUNK_X });
+          }
+        }
+        if (occlus) compteurChunksOcclus++;
+        PASSES.forEach(function (p) { var m = chunk[p[0]]; if (m) m.visible = !occlus; });
+      });
+      return compteurChunksOcclus;
+    }
     function rendreVue(cam) {
+      cullerOcclusionChunks(cam.position);
       var e = eauProche(cam);
       eauEnVue = e.n; eauDistance = e.distance;
       var eauProcheAssez = MC.Qualite ? MC.Qualite.eauRefractanteVisible(eauDistance, SEUIL_DISTANCE_REFRACTION) : eauDistance <= SEUIL_DISTANCE_REFRACTION;
@@ -2404,15 +2615,31 @@
         var ok = premiereFois || !MC.Qualite || MC.Qualite.refractionFrequenceOK(compteurImagesRefraction, optionsRendu.fpsP50, SEUIL_FPS_REFRACTION);
         if (ok) { passeRefraction(cam); rtRefraction.__rempli = true; }
       }
-      renderer.render(scene, cam);
+      // SPEC-RENDU-006 : la passe FXAA légère ne s'applique qu'à la vue
+      // caméra normale — la vue sous-marine a déjà son propre calque plein
+      // écran (ondulation), et l'empiler avec une seconde passe reviendrait
+      // à restructurer ce chemin déjà spécial (voir la note de sortie de ce
+      // lot dans SPECS.md sur le risque d'une refonte complète des passes).
+      if (optionsRendu.antialias) rendreAvecAntialias(cam);
+      else renderer.render(scene, cam);
     }
-    var optionsRendu = { refraction: true, fpsP50: null };
+    // SPEC-RENDU-006 : `antialias` par défaut à true — remplace l'ancien
+    // MSAA forcé à la création du contexte (maintenant toujours false, voir
+    // plus haut) ; piloté par le FPS mesuré (game.js, via `setAntialias`),
+    // réglable manuellement dans les options.
+    var optionsRendu = { refraction: true, fpsP50: null, antialias: true };
+    function setAntialias(v) { optionsRendu.antialias = !!v; return optionsRendu.antialias; }
 
     function renderViews(vues) {
       // SPEC-RENDU-001 : le rendu s'arrête proprement pendant la perte du
       // contexte GPU — aucun appel `renderer.render` tant qu'il n'est pas
       // restauré (webglcontextrestored).
       if (contextePerdu) return 0;
+      // une image complète peut désormais tenir sur plusieurs `render()`
+      // (passe de réfraction, passe antialias, vue sous l'eau…) : la remise
+      // à zéro manuelle (autoReset coupé plus haut) se fait UNE fois ici,
+      // pas à chaque `render()` interne — voir la note près de sa coupure.
+      renderer.info.reset();
       var taille = hostSize();
       if (!vues || vues.length <= 1) {
         renderer.setScissorTest(false);
@@ -2422,6 +2649,18 @@
         return 1;
       }
       refractionActive.value = 0;
+      // SPEC-RENDU-014 (correctif revue adversariale) : l'occlusion n'est
+      // jamais APPLIQUÉE en multi-vues (voir cullerOcclusionChunks, plus
+      // haut), mais un chunk masqué en vue unique juste avant la bascule
+      // vers l'écran partagé (visible=false hérité, jamais réécrit par la
+      // boucle ci-dessous) resterait sinon caché indéfiniment aux DEUX
+      // joueurs — un trou de terrain durable, pas juste une image. On
+      // réinitialise donc explicitement la visibilité de tous les chunks
+      // actifs à l'entrée en multi-vues.
+      chunksActifs.forEach(function (chunk) {
+        PASSES.forEach(function (p) { var m = chunk[p[0]]; if (m) m.visible = true; });
+      });
+      compteurChunksOcclus = 0;
       var H = taille[1];
       renderer.setScissorTest(true);
       for (var i = 0; i < vues.length; i++) {
@@ -2439,7 +2678,7 @@
       return vues.length;
     }
 
-    function render() { if (contextePerdu) return; placerCiel(camera); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); renderer.render(scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2458,6 +2697,8 @@
       get RENDER_DIST() { return RENDER_DIST; },
       // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
       setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps,
+      // SPEC-RENDU-006 : antialias par post-traitement, piloté par le FPS
+      setAntialias: setAntialias, get antialiasActif() { return optionsRendu.antialias; },
       // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel
       get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
       // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte
@@ -2466,6 +2707,12 @@
       forceTorches: forceTorches,
       PASSES: PASSES,
       entityMeshes: entityMeshes, syncReperes: syncReperes, colonnesReperes: colonnes, animerMembres: animerMembres,
+      // SPEC-RENDU-009 : instances de mobs fusionnés par espèce (test/inspection)
+      get instancesMobs() { return mobInstances; },
+      // SPEC-RENDU-014 : culling grossier d'occlusion — chunks masqués à la
+      // dernière image, et nombre de chunks actuellement porteurs d'un maillage
+      get chunksOcclus() { return compteurChunksOcclus; },
+      get chunksCharges() { return chunksActifs.size; },
       majLointain: majLointain, setDistance: setDistance, majMeteo: majMeteo, eclair: eclair, majBrume: majBrume,
       majVolcans: majVolcans, panaches: panaches, majFumees: majFumees, syncFigurants: syncFigurants, figurants: figurants,
       setChamp: setChamp, setOmbres: setOmbres, setResolution: setResolution, setDisposition: setDisposition,

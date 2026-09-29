@@ -104,10 +104,61 @@ const chat = MC.Chat.creer({ max: 120 });
 // SPEC-FACTION-006 à 013 : factions PNJ (royaumes, guildes marchandes, ordres,
 // bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
 const politique = MC.Politique.creer(CONF.graine);
+// SPEC-FACTION-014 : le monde consulte désormais l'état politique à chaque
+// calcul de zone (zoneEn/reglesZoneEn) — jamais recalculé nulle part
+// ailleurs. Une référence mutable : `politique` continue d'être modifiée en
+// place jour après jour (tourDuMonde), monde.definirFactionsPolitiques ne
+// se rappelle donc qu'une fois.
+if (monde.definirFactionsPolitiques) monde.definirFactionsPolitiques(politique);
+/* MC_TEST_QUETE=1 : injecte une faction politique déterministe (ressources
+   sous le seuil bas, objectif 'commercer') au démarrage, SEULEMENT pour que
+   tests/integration-quetes.js exerce le VRAI chemin (traiterQuete →
+   MC.Politique.questesDe/accepterQuete/remettreQuete → inventaire réel) sans
+   dépendre d'une ville explorée procéduralement — le même principe que
+   MC_TEST_INV (voir plus bas) pour l'inventaire, jamais en exploitation. */
+if (process.env.MC_TEST_QUETE) {
+  const idF = 'test:quete-e2e';
+  politique.factions.set(idF, {
+    id: idF, type: 'ordre', nom: 'Faction de test', caractere: 'pragmatique',
+    siege: { x: 0, z: 0, site: idF }, territoire: 100,
+    ressources: { or: 5, nourriture: 5 }, objectif: 'commercer', objectifs: ['commercer'],
+    naissance: 0,
+  });
+}
+/* MC_TEST_CATASTROPHE=1 : place un lieu habité SYNTHÉTIQUE (mais de forme
+   réelle — mêmes champs que MC.Habitats.creer en produit) à une position
+   fixe, et fait apparaître une tornade RÉELLE à cet endroit via
+   `monde.meteo.tornades` (une vraie fonction du monde, simplement patchée
+   pour renvoyer un événement en plus des siens) — SEULEMENT pour que
+   tests/integration-quetes.js exerce le VRAI chemin serveur
+   (avancerCatastrophes → MC.Habitats.endommagerLieu/migrerPopulation/
+   queteCatastrophe → diffusion chat → /quete lister), sans attendre qu'une
+   vraie tornade procédurale croise une vraie ville explorée — le même
+   principe que MC_TEST_INV/MC_TEST_QUETE, jamais en exploitation. */
+let MC_TEST_LIEU_CATASTROPHE = null;
+if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
+  MC_TEST_LIEU_CATASTROPHE = {
+    id: 'test:lieu-catastrophe', kind: 'village', nom: 'Bourg de test', x: 0, z: 0, demi: 40,
+    blocs: new Map([['0,0', (function () {
+      var a = []; for (var i = 0; i < 40; i++) a.push(i, 60, 0, 1, 0); return a;
+    })()]]),
+    pnjs: [{ id: 'test:lieu-catastrophe#0', role: 'habitant', nom: 'Test', x: 0, y: 60, z: 0, lieu: 'test:lieu-catastrophe' }],
+    batiments: [],
+  };
+  const lieuxProchesOrig = monde.habitats.lieuxProches.bind(monde.habitats);
+  monde.habitats.lieuxProches = (x, z, rayon) => lieuxProchesOrig(x, z, rayon).concat([MC_TEST_LIEU_CATASTROPHE]);
+  const tornadesOrig = monde.meteo.tornades.bind(monde.meteo);
+  monde.meteo.tornades = (t) => tornadesOrig(t).concat([{ id: 'test-tornade', x: 0, z: 0, rayon: 60, force: 1, vie: 10, sens: 1 }]);
+}
 const guildes = MC.Guildes.creerEtat();
 // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
 // module et même état joués à l'identique en solo (game.js) et ici.
 const economie = MC.Economie.creerEtat(CONF.graine);
+// SPEC-QUETE-004 : tableau des quêtes ACTIVES de chaque joueur (nom -> [...]),
+// tenu et arbitré ICI, jamais par un client — accepterQuete/remettreQuete
+// (politique.js) sont les seules portes d'entrée qui font foi, empêchant
+// une double remise même si deux clients l'envoient en même temps.
+let quetesJoueurs = new Map();
 // B4 (docs/vague-2/B4.md) : butin, meurtres non consentis, réputation,
 // hors-la-loi, duels et victoires PvP. Déclaré ICI (avant `etatMonde`/
 // `appliquerEtatMonde`, appelée dès la reprise `--monde` plus bas dans ce
@@ -224,6 +275,9 @@ function etatMonde() {
     // politiques — en dernier, comme prévu par le plan. Duels et propositions
     // sont éphémères, jamais persistés (MC.PvpEnjeux.serialiser les omet déjà).
     pvp: MC.PvpEnjeux.serialiser(pvp),
+    // SPEC-QUETE-004 : le tableau de quêtes actives par joueur, persistant à
+    // la sauvegarde/reconnexion (nom -> [{ id, statut, … }]).
+    quetes: MC.Politique.serialiserQuetes(quetesJoueurs),
   };
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
@@ -274,6 +328,8 @@ function appliquerEtatMonde(data) {
     guildes.factions = gu.factions; guildes.joueurs = gu.joueurs;
     guildes.invitations = gu.invitations; guildes.prochainId = gu.prochainId;
   }
+  // SPEC-QUETE-004 : reprise du tableau de quêtes actives par joueur.
+  quetesJoueurs = MC.Politique.chargerQuetes(data.quetes);
   if (data.economie) {
     const eco = MC.Economie.charger(data.economie);
     economie.jour = eco.jour; economie.lieux = eco.lieux;
@@ -455,6 +511,59 @@ function avancerPolitique() {
     const m = chat.systeme(a.texte);
     if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   });
+}
+// ── catastrophes environnementales (SPEC-ENV-001/002/004, SPEC-QUETE-003) ──
+// clé "lieuId:evenementId" déjà appliquée — un cyclone/une tornade dure
+// plusieurs minutes/heures : sans ce registre, chaque tick le réappliquerait.
+const catastrophesAppliquees = new Set();
+// quêtes de reconstruction/secours proposées par les lieux touchés (à côté
+// de MC.Politique.quetesActives(politique), qui ne connaît que les quêtes de
+// FACTION — celles-ci sont proposées par un LIEU, pas par une faction).
+let quetesCatastrophe = [];
+/* Déclenchée par la VRAIE météo/le VRAI volcanisme du monde (monde.meteo,
+   monde.bio), jamais par un appel isolé : pour chaque lieu habité proche
+   d'un joueur, une tornade/un cyclone actif qui le traverse endommage
+   réellement ses bâtiments (ENV-001), fait migrer sa population vers le
+   lieu viable le plus proche (ENV-004) et propose une quête de secours
+   (QUETE-003) ; cette fonction ne touche PAS aux routes elle-même (ENV-002
+   est câblée côté client, dans `src/game.js:convois`, seul vrai système de
+   caravane actif du jeu — voir `MC.Routes.trajetsAffectesParEruption`,
+   consultée là, pas ici). */
+function avancerCatastrophes() {
+  if (!monde.habitats || !monde.meteo) return;
+  const lieux = [];
+  tousLesJoueurs().forEach(({ js }) => {
+    const p = js.joueur.state.pos;
+    monde.habitats.lieuxProches(p.x, p.z, 1500).forEach(l => { if (lieux.indexOf(l) < 0) lieux.push(l); });
+  });
+  if (!lieux.length) return;
+  const evenements = (monde.meteo.tornades ? monde.meteo.tornades(heure) : [])
+    .map(t => Object.assign({ genre: 'tornade' }, t))
+    .concat((monde.meteo.cyclones ? monde.meteo.cyclones(heure) : []).map(c => Object.assign({ genre: 'cyclone' }, c)));
+  lieux.forEach(l => {
+    evenements.forEach(evt => {
+      const d = Math.hypot(evt.x - l.x, evt.z - l.z);
+      if (d > (l.demi || 0) + (evt.rayon || 0)) return;
+      const cle = l.id + ':' + evt.id;
+      if (catastrophesAppliquees.has(cle)) return;
+      catastrophesAppliquees.add(cle);
+      if (catastrophesAppliquees.size > 5000) catastrophesAppliquees.clear();
+      const entry = MC.Habitats.endommagerLieu(l, [{ x: evt.x, z: evt.z, rayon: evt.rayon, force: evt.force }],
+                                                CONF.graine, heure, evt.genre);
+      if (!entry || !entry.blocs) return;
+      const voisins = monde.habitats.lieuxProches(l.x, l.z, 3000).filter(v => v.id !== l.id && v.pnjs && v.pnjs.length);
+      if (voisins.length) MC.Habitats.migrerPopulation(l, voisins[0], entry.ampleur, CONF.graine);
+      const q = MC.Habitats.queteCatastrophe(l, entry);
+      if (q && !quetesCatastrophe.some(x => x.id === q.id)) {
+        quetesCatastrophe.push(q);
+        if (quetesCatastrophe.length > 40) quetesCatastrophe.shift();
+        const m = chat.systeme(l.nom + ' a été frappé par ' + (evt.genre === 'cyclone' ? 'un cyclone' : 'une tornade') +
+                                ' : une quête de secours est proposée (/quete lister).');
+        if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+      }
+    });
+  });
+  quetesCatastrophe = quetesCatastrophe.filter(q => MC.Habitats.queteActive(q, heure));
 }
 // ── économie (B2, L45) ───────────────────────────────────────────────────────
 /* SPEC-ECO/METIER : avance l'économie d'un jour de jeu à la fois (comme
@@ -1413,6 +1522,15 @@ function traiter(c, m) {
         traiterDuel(c, m.texte);
         break;
       }
+      /* SPEC-QUETE-004 : /quete lister | accepter <id> | remettre <id> —
+         le serveur reste SEUL arbitre (MC.Politique.accepterQuete/remettreQuete),
+         jamais un client : un « remettre » qui arrive deux fois (deux
+         clients, un double clic) ne verse jamais deux fois la récompense
+         (remettreQuete ne retrouve plus de quête 'active' au second appel). */
+      if (typeof m.texte === 'string' && /^\/quete(\s|$)/.test(m.texte)) {
+        traiterQuete(c, m.texte);
+        break;
+      }
       /* /faction … : le serveur fait foi sur les factions de joueurs
          (SPEC-FACTION-009 à 013) ; la réponse ne va qu'à l'intéressé, et
          « dire » ne va qu'aux membres de sa faction principale. */
@@ -1544,7 +1662,17 @@ function traiter(c, m) {
       if (!seqNouveau(js, m.seq)) break;
       // B4 (SPEC-PVP-006) : hors-la-loi envers une faction dont le territoire
       // couvre le lieu du PNJ → embargo (motif 'embargo', economie.js § 8).
-      const embargo = MC.PvpEnjeux.embargo(pvp, c.nom, politique, ent.pos.x, ent.pos.z);
+      // SPEC-FACTION-015 : le même motif s'applique quand la faction politique
+      // qui couvre le PNJ est EN GUERRE contre la faction de joueurs (guildes.js)
+      // principale du joueur — extension de FACTION-003 aux factions politiques
+      // et aux factions de joueurs qui leur sont alliées/ennemies (guildes.js:
+      // declarerRelation pose déjà cette relation dans `politique.relations`,
+      // la même Map que `MC.Politique.relationEntre` relit).
+      const factionLieuTroc = MC.Politique.factionCouvrant(politique, ent.pos.x, ent.pos.z);
+      const factionJoueurTroc = MC.Guildes.factionsDe(guildes, c.nom).principale;
+      const embargoFaction = !!(factionLieuTroc && factionJoueurTroc &&
+        MC.Politique.commerceFermeAvec(politique, factionLieuTroc, factionJoueurTroc));
+      const embargo = embargoFaction || MC.PvpEnjeux.embargo(pvp, c.nom, politique, ent.pos.x, ent.pos.z);
       const r = MC.Economie.executerTroc(economie, etatJoueurServeur(js).inv, {
         lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: m.offre, fois: m.fois || 1,
         nom: c.nom, embargo,
@@ -2004,7 +2132,7 @@ function tousLesJoueurs() {
    (SPEC-ZONE-001) — un joueur réfugié en zone sûre reste protégé même si
    son agresseur, lui, se tient en zone PvP. */
 function pvpAutorise(posA, posB) {
-  return !!CONF.pvp && (!MC.Zones || MC.Zones.pvpAutorise(monde.zones, monde.zonesEtat, posA, posB));
+  return !!CONF.pvp && (!MC.Zones || MC.Zones.pvpAutorise(monde.zones, monde.zonesEtat, posA, posB, politique));
 }
 // un identifiant stable pour désigner un joueur cible dans un message ATTAQUE
 function cleJoueur(id, j) { return id + '/' + (j || 0); }
@@ -2088,6 +2216,120 @@ function issuePvp(vainqueur, vaincu, duel) {
 /* /duel <nom> | /duel accepter | /duel refuser (case CHAT, avant /faction).
    Jamais diffusé au chat général : une réponse système au seul intéressé (et
    à l'adversaire, quand il y en a un joignable). */
+/* SPEC-QUETE-004 : /quete lister | accepter <id> | remettre <id>. Les
+   propositions viennent de MC.Politique.quetesActives(politique) (quêtes de
+   faction, y compris de reconstruction/secours ajoutées côté lieu — voir
+   habitats.js:queteCatastrophe pour SPEC-QUETE-003, proposées de la même
+   façon par leur `id`) ; le tableau PAR JOUEUR (`quetesJoueurs`) est ce que
+   le serveur arbitre : accepterQuete/remettreQuete (politique.js) décident
+   seuls, jamais un client. */
+// SPEC-QUETE-001/QUETE-005 : ressource abstraite de faction -> objet réel
+// livré par le joueur (le même vocabulaire que politique.js:ressourceCiblePourLivraison).
+// jamais I.EMERALD lui-même pour 'or' : MC.Economie.prixCourant traite une
+// offre dont give[0].id === EMERALD comme un ACHAT (estAchat), qui lirait
+// alors offre.get (toujours null ici) — le lingot d'or est la vraie
+// ressource physique derrière la trésorerie d'une faction (banquier,
+// habitats.js), l'émeraude n'étant que sa monnaie d'échange.
+const RESSOURCE_ITEM_QUETE = { or: C.I.GOLD_INGOT, nourriture: C.I.WHEAT };
+const MONTANT_LIVRAISON_QUETE = 10;
+const RAYON_RECONSTRUCTION_QUETE = 48;
+function quetesDisponibles() {
+  return MC.Politique.quetesActives(politique).concat(quetesCatastrophe.filter(q => MC.Habitats.queteActive(q, heure)));
+}
+/* SPEC-QUETE-002/003/004/005 : vérifie RÉELLEMENT l'objectif avant de rendre
+   la quête remise — jamais une simple formalité. Renvoie { ok, motif?,
+   recompense? } ; en cas de succès, applique aussi l'effet réel sur l'état
+   du monde (livraison à la faction, élimination de la cible, rien de plus à
+   appliquer pour une reconstruction constatée sur place) et calcule la
+   récompense réelle (QUETE-005) à partir de CE succès, jamais avant. */
+function verifierEtAppliquerObjectif(js, quete) {
+  if (quete.type === 'livrer') {
+    const objetId = RESSOURCE_ITEM_QUETE[quete.ressource];
+    if (objetId == null) return { ok: false, motif: 'objectif_non_verifiable' };
+    const inv = js.joueur.state.inv;
+    if (!inv || inv.count(objetId) < MONTANT_LIVRAISON_QUETE) {
+      return { ok: false, motif: 'ressource_manquante', requis: MONTANT_LIVRAISON_QUETE };
+    }
+    inv.remove(objetId, MONTANT_LIVRAISON_QUETE);
+    MC.Politique.livrerQuete(politique, quete.faction, quete.ressource, MONTANT_LIVRAISON_QUETE);
+    const recompense = MC.Politique.recompenseReelle(politique, quete,
+      { economie, objetId, montant: MONTANT_LIVRAISON_QUETE, lieuId: quete.faction });
+    return { ok: true, recompense };
+  }
+  if (quete.type === 'eliminer') {
+    // reussirQueteElimination revalide elle-même que la cible promise est
+    // toujours une faction connue et toujours en guerre/rivalité — un
+    // conflit apaisé entre-temps refuse la remise (motif null -> refus ici).
+    const cibleId = MC.Politique.reussirQueteElimination(politique, quete.faction, quete.cible);
+    if (!cibleId) return { ok: false, motif: 'objectif_non_atteint' };
+    const recompense = MC.Politique.recompenseReelle(politique, quete, { economie });
+    return { ok: true, recompense };
+  }
+  // 'reconstruction'/'secours' : vérifiées à part dans traiterQuete (position
+  // du joueur par rapport au lieu sinistré, pas un objectif d'inventaire).
+  return { ok: false, motif: 'objectif_non_verifiable' };
+}
+function traiterQuete(c, texte) {
+  const args = texte.trim().split(/\s+/).slice(1);
+  const sous = (args[0] || '').toLowerCase();
+  if (sous === 'lister' || !sous) {
+    const dispo = quetesDisponibles();
+    const mien = MC.Politique.quetesActivesDeJoueur(quetesJoueurs, c.nom);
+    if (!dispo.length && !mien.length) { envoyerSysteme(c, 'Aucune quête pour le moment.'); return; }
+    dispo.forEach(q => envoyerSysteme(c, 'Proposée : [' + q.id + '] ' + q.titre + ' (récompense estimée ' + q.recompense + ')'));
+    mien.forEach(q => envoyerSysteme(c, 'En cours : [' + q.id + '] ' + q.titre + ' — ' + q.statut));
+    return;
+  }
+  if (sous === 'accepter') {
+    const id = args[1];
+    const quete = quetesDisponibles().find(q => q.id === id);
+    if (!quete) { envoyerSysteme(c, 'Quête introuvable : ' + id); return; }
+    const r = MC.Politique.accepterQuete(quetesJoueurs, c.nom, quete);
+    envoyerSysteme(c, r.ok ? 'Quête acceptée : ' + quete.titre : 'Quête déjà acceptée.');
+    MC.Admin.journaliser(admin, { auteur: c.nom, action: 'quete_accepter', cible: id, details: r.ok, heure });
+    return;
+  }
+  if (sous === 'remettre') {
+    const id = args[1];
+    const quete = MC.Politique.quetesActivesDeJoueur(quetesJoueurs, c.nom).find(q => q.id === id && q.statut === 'active');
+    if (!quete) { envoyerSysteme(c, 'Rien à remettre pour cette quête (déjà remise, ou jamais acceptée).'); return; }
+    const moi = joueurParNom(c.nom);
+    if (!moi) { envoyerSysteme(c, 'Rien à remettre pour cette quête (déjà remise, ou jamais acceptée).'); return; }
+    // SPEC-QUETE-002/003/004 : l'objectif RÉEL est vérifié ici, avant toute
+    // remise — une remise prématurée (rien livré, cible pas éliminée, hors
+    // de portée du lieu sinistré) est refusée, sans marquer la quête remise
+    // (elle reste 'active' : le joueur peut réessayer une fois l'objectif atteint).
+    let resultat;
+    if (quete.type === 'reconstruction' || quete.type === 'secours') {
+      const st = moi.js.joueur.state;
+      const d = (quete.x !== undefined && quete.z !== undefined) ? Math.hypot(st.pos.x - quete.x, st.pos.z - quete.z) : Infinity;
+      if (d > RAYON_RECONSTRUCTION_QUETE) {
+        resultat = { ok: false, motif: 'trop_loin_du_lieu' };
+      } else {
+        resultat = { ok: true, recompense: MC.Politique.recompenseReelle(politique, quete, {}) };
+      }
+    } else {
+      resultat = verifierEtAppliquerObjectif(moi.js, quete);
+    }
+    if (!resultat.ok) {
+      envoyerSysteme(c, 'Objectif non atteint : ' + quete.titre + ' (' + resultat.motif + ').');
+      MC.Admin.journaliser(admin, { auteur: c.nom, action: 'quete_remettre_refusee', cible: id, details: resultat.motif, heure });
+      return;
+    }
+    const r = MC.Politique.remettreQuete(quetesJoueurs, c.nom, id, resultat.recompense);
+    if (!r.ok) { envoyerSysteme(c, 'Rien à remettre pour cette quête (déjà remise, ou jamais acceptée).'); return; }
+    // SPEC-QUETE-004/005 : la récompense est réellement créditée à
+    // l'inventaire serveur du joueur — jamais seulement annoncée en chat.
+    if (r.quete.recompenseVersee > 0) {
+      moi.js.joueur.state.inv.add(C.I.EMERALD, Math.round(r.quete.recompenseVersee));
+      envoyerInvMaj(moi.c, moi.j, {});
+    }
+    envoyerSysteme(c, 'Quête remise : ' + r.quete.titre + ' — récompense ' + r.quete.recompenseVersee + ' émeraude(s).');
+    MC.Admin.journaliser(admin, { auteur: c.nom, action: 'quete_remettre', cible: id, details: r.quete.recompenseVersee, heure });
+    return;
+  }
+  envoyerSysteme(c, 'Usage : /quete lister | accepter <id> | remettre <id>');
+}
 function traiterDuel(c, texte) {
   const args = texte.trim().split(/\s+/).slice(1);
   const sous = (args[0] || '').toLowerCase();
@@ -2231,6 +2473,7 @@ setInterval(() => {
     peuplerLieux();
     avancerPolitique();
     avancerEconomie();
+    avancerCatastrophes();
     // B4 : propositions de duel caduques (silencieuses) et duels terminés
     // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
     // encore connectés.
@@ -2376,6 +2619,28 @@ setInterval(() => {
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
     hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
+  // SPEC-DONJON-018 : la victoire RÉELLE sur un gardien (événement 'boss_vaincu'
+  // du journal d'entites.js, jamais un appel direct isolé) marque le donjon
+  // vaincu (pré-existant : jamais fait par le serveur avant ce lot, seulement
+  // au chargement d'une sauvegarde) ET profite à la faction dont le
+  // territoire couvre ce donjon, s'il y en a une.
+  entites.evenements().forEach(evt => {
+    if (evt.type !== 'boss_vaincu') return;
+    const msgV = chat.systeme(evt.nom + ' est vaincu !');
+    if (msgV) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msgV.texte, type: 'systeme', ts: msgV.t });
+    if (!evt.donjon || !monde.donjonsVaincus || monde.donjonsVaincus.has(evt.donjon)) return;
+    monde.donjonsVaincus.add(evt.donjon);
+    const parts = evt.donjon.split(',');
+    const d = monde.donjons && monde.donjons.deRegion ? monde.donjons.deRegion(+parts[0], +parts[1]) : null;
+    if (d && MC.Donjons.victoireGardien) {
+      const r = MC.Donjons.victoireGardien(d, politique);
+      if (r) {
+        const f = politique.factions.get(r.faction);
+        const msgF = chat.systeme((f ? f.nom : r.faction) + (r.revendique ? ' revendique le territoire de ' : ' tire profit de ') + d.id + '.');
+        if (msgF) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msgF.texte, type: 'systeme', ts: msgF.t });
+      }
+    }
+  });
   // les coups des créatures, appliqués aux joueurs qu'ils visaient — B4
   // (SPEC-PVP-001 à 003) : un coup de FLÈCHE tiré par un JOUEUR (`d.par`) suit
   // le même chemin qu'un coup de mêlée (butin, meurtre, victoire), sans le

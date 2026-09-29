@@ -144,5 +144,49 @@
       A.equal(d.dpr, 1, 'DPR déjà au plancher');
     });
 
+    // ── SPEC-RENDU-014 : culling grossier d'occlusion (logique pure, lointain.js) ──
+    // Le test réel (visibilité des maillages de chunk dans le vrai renderer)
+    // vit en e2e (tests/e2e.js) ; ici, le principe géométrique lui-même —
+    // « un mur de relief plein devant une colonne l'occlut, une colonne à
+    // découvert ne l'est jamais » — est vérifié à froid, sans THREE ni DOM.
+    var LO = MC.Lointain;
+    it('SPEC-RENDU-014 : une colonne cachée derrière un mur de relief plein est occluse', function () {
+      // un mur (hauteur 40) à 30 blocs de la caméra, la cible à 100 blocs,
+      // droit derrière le mur, largement plus bas que lui
+      function mur(x, z) { return x > 25 && x < 35 ? 40 : 5; }
+      var cam = { x: 0, y: 6, z: 0 };
+      var occlus = LO.occlusionColonne(mur, cam, 100, 0, 6, { pas: 8 });
+      A.ok(occlus, 'la colonne derrière le mur est occluse');
+    });
+
+    it('SPEC-RENDU-014 : une colonne à découvert (pas de relief intermédiaire) n’est jamais occluse', function () {
+      function plat(x, z) { return 5; }
+      var cam = { x: 0, y: 6, z: 0 };
+      var occlus = LO.occlusionColonne(plat, cam, 100, 0, 6, { pas: 8 });
+      A.notOk(occlus, 'terrain plat : rien ne masque la colonne');
+    });
+
+    it('SPEC-RENDU-014 : une colonne trop proche de la caméra n’est jamais occluse (jamais son propre chunk)', function () {
+      function mur(x, z) { return 40; }   // un relief très haut partout, y compris tout près
+      var cam = { x: 0, y: 6, z: 0 };
+      var occlus = LO.occlusionColonne(mur, cam, 5, 0, 6, { pas: 8 });
+      A.notOk(occlus, 'une colonne à 5 blocs (sous le pas d’échantillonnage) reste toujours visible');
+    });
+
+    it('SPEC-RENDU-014 : plusieurs colonnes alignées derrière un mur plein sont TOUTES occluses, celles devant ne le sont pas', function () {
+      function mur(x, z) { return x > 25 && x < 35 ? 50 : 5; }
+      var cam = { x: 0, y: 6, z: 0 };
+      var devant = [10, 15, 20].map(function (x) { return LO.occlusionColonne(mur, cam, x, 0, 6, { pas: 8 }); });
+      var derriere = [50, 70, 90, 110].map(function (x) { return LO.occlusionColonne(mur, cam, x, 0, 6, { pas: 8 }); });
+      A.ok(devant.every(function (v) { return !v; }), 'aucune colonne avant le mur n’est occluse : ' + devant);
+      A.ok(derriere.every(function (v) { return v; }), 'toutes les colonnes derrière le mur sont occluses : ' + derriere);
+    });
+
+    it('SPEC-RENDU-014 : sans donnée de hauteur exploitable (null), pas de faux positif', function () {
+      function inconnue() { return null; }
+      var cam = { x: 0, y: 6, z: 0 };
+      A.notOk(LO.occlusionColonne(inconnue, cam, 100, 0, 6, { pas: 8 }), 'hauteur inconnue : jamais occluse (repli sûr)');
+    });
+
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

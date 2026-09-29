@@ -1229,9 +1229,137 @@
     return { ok: false, message: 'Je ne peux rien pour vous.' };
   }
 
+  // ─── catastrophes environnementales (SPEC-ENV-001/004, SPEC-QUETE-003) ────
+  function clamp01(v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
+  /* Hachage déterministe indépendant de MC.Noise, comme volcanisme.js:hache —
+     ces fonctions n'ont pas accès au bruit du monde (elles agissent après
+     coup sur un lieu déjà construit), seulement à la graine du monde. */
+  function hacheEnv(a, b, c, d) {
+    var h = Math.imul((a | 0) + 1, 2654435761) ^ Math.imul((b | 0) + 1, 2246822519) ^
+            Math.imul((c | 0) + 1, 3266489917) ^ Math.imul((d | 0) + 1, 668265263);
+    h = Math.imul(h ^ (h >>> 15), 2246822519);
+    h ^= h >>> 13;
+    return ((h ^ (h >>> 16)) >>> 0) / 4294967296;
+  }
+
+  /* SPEC-ENV-001 : une tornade (NUAGE-004) ou un cyclone (NUAGE-003) qui
+     traverse un lieu habité endommage 5 à 20 % de ses bâtiments — des blocs
+     RETIRÉS (mis à l'air), STRICTEMENT parmi ceux qui tombent sur le tracé
+     réel de l'événement (jamais ailleurs dans le lieu). `trace` : une suite
+     de points `{x, z, rayon, force}` (la trajectoire échantillonnée, par
+     exemple depuis `MC.Meteo.tornades`/`cyclones` — force la plus forte du
+     passage fixe l'intensité). Déterministe : même lieu, même tracé, même
+     graine ⇒ mêmes blocs endommagés, sur tous les postes. Journalise
+     l'événement dans `l.catastrophes` (SPEC-QUETE-003). */
+  var FRACTION_DEGATS_MIN = 0.05, FRACTION_DEGATS_MAX = 0.20;
+  function endommagerLieu(l, trace, graine, heure, type) {
+    if (!l || !trace || !trace.length) return null;
+    var candidats = [];
+    l.blocs.forEach(function (arr, cle) {
+      for (var i = 0; i < arr.length; i += 5) {
+        if (!arr[i + 3]) continue;               // déjà de l'air : rien à endommager
+        var x = arr[i], z = arr[i + 2], touche = false;
+        for (var t = 0; t < trace.length && !touche; t++) {
+          var p = trace[t];
+          if (Math.hypot(x - p.x, z - p.z) <= (p.rayon || 6)) touche = true;
+        }
+        if (touche) candidats.push({ cle: cle, i: i, x: x, z: z });
+      }
+    });
+    var total = 0; l.blocs.forEach(function (arr) { total += arr.length / 5; });
+    var intensite = clamp01(trace.reduce(function (m, p) { return Math.max(m, p.force !== undefined ? p.force : 0.5); }, 0));
+    var fraction = FRACTION_DEGATS_MIN + (FRACTION_DEGATS_MAX - FRACTION_DEGATS_MIN) * intensite;
+    if (!candidats.length || !total) {
+      var vide = { lieu: l.id, heure: heure || 0, ampleur: 0, blocs: 0, type: type || 'tornade' };
+      l.catastrophes = l.catastrophes || []; l.catastrophes.push(vide);
+      return vide;
+    }
+    candidats.forEach(function (c, idx) { c.h = hacheEnv(graine, c.x, c.z, idx); });
+    candidats.sort(function (a, b) { return a.h - b.h; });
+    // AUCUN plancher à 1, et Math.floor (jamais round) : un lieu trop petit
+    // pour qu'un seul bloc endommagé reste sous 20 % de son total ne subit
+    // AUCUN dégât plutôt que d'en subir un qui dépasserait largement la borne
+    // haute (revue adversariale — round(0.6)=1=33 % d'un lieu de 3 blocs).
+    // `cible / total` reste ainsi TOUJOURS ≤ fraction ≤ FRACTION_DEGATS_MAX.
+    var cible = Math.min(candidats.length, Math.floor(total * fraction));
+    for (var k = 0; k < cible; k++) {
+      var arr2 = l.blocs.get(candidats[k].cle);
+      arr2[candidats[k].i + 3] = 0; arr2[candidats[k].i + 4] = 0;
+    }
+    var entry = { lieu: l.id, heure: heure || 0, ampleur: cible ? cible / total : 0, blocs: cible, type: type || 'tornade' };
+    l.catastrophes = l.catastrophes || [];
+    l.catastrophes.push(entry);
+    if (l.catastrophes.length > 20) l.catastrophes.shift();
+    return entry;
+  }
+
+  /* SPEC-ENV-004 : une éruption ou une tornade qui détruit des cultures d'un
+     lieu habité fait migrer 10 à 30 % de ses habitants (proportionnellement à
+     `gravite`, 0..1) vers un AUTRE lieu habité viable (choisi par l'appelant,
+     typiquement le plus proche via `lieuxProches`) — réduit durablement la
+     population de `source` (POP-002 reprend ensuite le repeuplement progressif
+     via `pnjsManquants`), augmente d'autant celle de `dest`. Ne change jamais
+     la capacité d'un lieu (le nombre de postes définis à sa construction),
+     seulement qui les occupe. */
+  var MIGRATION_MIN = 0.10, MIGRATION_MAX = 0.30;
+  function migrerPopulation(source, dest, gravite, graine) {
+    if (!source || !dest || !source.pnjs || !source.pnjs.length) return { migres: 0 };
+    var fraction = MIGRATION_MIN + (MIGRATION_MAX - MIGRATION_MIN) * clamp01(gravite);
+    // AUCUN plancher à 1, et Math.floor (jamais round/max) : un lieu trop
+    // petit pour qu'un seul migrant reste sous 30 % de sa population ne perd
+    // personne plutôt que de dépasser largement la borne haute (même
+    // principe que endommagerLieu — revue adversariale : round/max(1, …)
+    // ferait migrer 100 % d'un lieu d'un seul habitant, ou 33 % d'un lieu de
+    // trois, très au-delà de 10-30 %). Atteignable en jeu réel : une
+    // habitation isolée (LIEUX.maison, lots: 1) ne compte souvent qu'un ou
+    // deux habitants.
+    var n = Math.min(source.pnjs.length, Math.floor(source.pnjs.length * fraction));
+    if (!n) return { migres: 0, sourceId: source.id, versId: dest.id };
+    var candidats = source.pnjs.map(function (p, idx) { return { p: p, h: hacheEnv(graine, idx, source.pnjs.length, 11) }; });
+    candidats.sort(function (a, b) { return a.h - b.h; });
+    var partants = candidats.slice(0, n).map(function (c) { return c.p; });
+    var idsPartants = {};
+    partants.forEach(function (p) { idsPartants[p.id] = true; });
+    source.pnjs = source.pnjs.filter(function (p) { return !idsPartants[p.id]; });
+    partants.forEach(function (p) {
+      var np = {}, k; for (k in p) np[k] = p[k];
+      np.lieu = dest.id;
+      dest.pnjs.push(np);
+    });
+    return { migres: partants.length, sourceId: source.id, versId: dest.id };
+  }
+
+  /* SPEC-QUETE-003 : une catastrophe qui endommage un lieu habité (ENV-001)
+     génère une quête de reconstruction (dégâts francs) ou de secours (dégâts
+     légers), proposée par ce lieu, limitée dans le temps, avec une
+     récompense proportionnée aux dégâts mesurés (`entry.blocs`, le journal
+     renvoyé par `endommagerLieu`). `MC.Politique.recompenseReelle` (type
+     'reconstruction'/'secours') affine cette estimation au moment de la
+     remise, si l'appelant le souhaite — cette fonction-ci ne fait que
+     proposer, comme `MC.Politique.questesDe`. */
+  var DUREE_QUETE_CATASTROPHE = 3 * DELAI_REMPLACEMENT;   // trois jours de jeu
+  function queteCatastrophe(l, entry) {
+    if (!l || !entry || !entry.blocs) return null;
+    var grave = entry.ampleur > 0.12;
+    var libelleType = entry.type === 'eruption' ? 'une éruption' : entry.type === 'cyclone' ? 'un cyclone' : 'une tornade';
+    return {
+      id: l.id + ':catastrophe:' + Math.round(entry.heure), lieu: l.id, x: l.x, z: l.z,
+      type: grave ? 'reconstruction' : 'secours',
+      titre: l.nom + (grave ? ' demande de l\'aide pour se reconstruire après ' : ' a besoin de secours après ') + libelleType + '.',
+      degats: entry.blocs, ampleur: entry.ampleur, depuis: entry.heure, expire: entry.heure + DUREE_QUETE_CATASTROPHE,
+      recompense: Math.max(3, Math.round(entry.blocs * 0.5)),
+    };
+  }
+  function queteActive(q, heure) { return !!q && heure >= q.depuis && heure < q.expire; }
+
   MC.Habitats = { STYLES: STYLES, URBAIN: URBAIN, LIEUX: LIEUX, BATIMENTS: BATIMENTS, ROLES: ROLES,
                   ARTISANS: ARTISANS, LOISIRS: LOISIRS, ORDRE_LIEUX: ORDRE_LIEUX,
                   stylePour: stylePour, creer: creer, pnjsManquants: pnjsManquants, servir: servir,
                   DELAI_REMPLACEMENT: DELAI_REMPLACEMENT,
-                  RAYON_INFO: RAYON_INFO };
+                  RAYON_INFO: RAYON_INFO,
+                  // SPEC-ENV-001/004, SPEC-QUETE-003
+                  endommagerLieu: endommagerLieu, migrerPopulation: migrerPopulation,
+                  queteCatastrophe: queteCatastrophe, queteActive: queteActive,
+                  FRACTION_DEGATS_MIN: FRACTION_DEGATS_MIN, FRACTION_DEGATS_MAX: FRACTION_DEGATS_MAX,
+                  MIGRATION_MIN: MIGRATION_MIN, MIGRATION_MAX: MIGRATION_MAX };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -3,7 +3,7 @@
   'use strict';
   var MC = G.MC, T = G.T;
   var describe = T.describe, it = T.it, A = T.assert;
-  var P = MC.Politique;
+  var P = MC.Politique, Dj = MC.Donjons, Z = MC.Zones, Eco = MC.Economie, Ent = MC.EntitySpecs, C2 = MC.Core;
 
   var SITES = [
     { id: 'ville:0,0', kind: 'ville', x: 100, z: 100, nom: 'Beaulac' },
@@ -317,6 +317,193 @@
       A.equal(res, cibleAnnoncee, 'la réussite vise la cible promise à la proposition, pas celle du jour de résolution');
       A.equal(e.factions.get(cibleAnnoncee).territoire, terrAvantAnnoncee - 15, 'la cible promise perd bien du territoire');
       A.equal(e.factions.get(autreCandidat).territoire, terrAvantAutre, 'l\'autre candidate (celle que viserait le jour de résolution) est intacte');
+    });
+  });
+
+  // ─── L46 : factions, quêtes, donjons interconnectés ────────────────────
+  function factionSimple(id, x, z, territoire) {
+    return { id: id, type: 'ordre', nom: 'Faction ' + id, caractere: 'pragmatique',
+             siege: { x: x, z: z, site: id }, territoire: territoire,
+             ressources: { or: 50, nourriture: 50 }, objectif: 'defendre', objectifs: ['defendre'],
+             naissance: 0 };
+  }
+  describe('Specs — L46 (factions, quêtes, donjons interconnectés)', function () {
+    it('SPEC-FACTION-014 : le territoire d\'une faction influence la zone, sans écraser une redéfinition admin', function () {
+      var e = P.creer(1);
+      var fGuerre = factionSimple('f:guerre', 0, 0, 300), fRival = factionSimple('f:rival', 5000, 5000, 300);
+      var fPaix = factionSimple('f:paix', 1000, 1000, 300);
+      e.factions.set(fGuerre.id, fGuerre); e.factions.set(fRival.id, fRival); e.factions.set(fPaix.id, fPaix);
+      var cleG = fGuerre.id < fRival.id ? fGuerre.id + '~' + fRival.id : fRival.id + '~' + fGuerre.id;
+      e.relations.set(cleG, 'guerre');
+      A.equal(P.influenceZone(e, 0, 0), 'pvp', 'territoire consolidé en guerre : zone dangereuse (pvp)');
+      A.equal(P.influenceZone(e, 1000, 1000), 'sure', 'territoire consolidé en paix stable : zone sûre');
+      A.equal(P.influenceZone(e, 999999, 999999), null, 'hors de tout territoire : aucune influence');
+      A.equal(P.factionCouvrant(e, 0, 0).id, fGuerre.id, 'factionCouvrant désigne la faction dont le territoire couvre le point');
+      A.equal(P.factionCouvrant(e, 999999, 999999), null, 'null hors de tout territoire');
+      A.equal(P.enGuerreActive(e, fGuerre.id), true, 'enGuerreActive : vrai pour une faction en guerre active');
+      A.equal(P.enGuerreActive(e, fPaix.id), false, 'enGuerreActive : faux pour une faction en paix');
+
+      // via zones.js:zoneEn, avec priorité à une redéfinition d'administrateur
+      var carte = { classeBase: function () { return 'pvp_pve'; } };
+      var etatZ = Z.creerEtat({});
+      A.equal(Z.zoneEn(carte, etatZ, 0, 0, e).zone, 'pvp', 'zoneEn applique l\'influence politique');
+      Z.definirRegion(etatZ, 0, 0, 'sure', 'admin', 10);
+      A.equal(Z.zoneEn(carte, etatZ, 0, 0, e).zone, 'sure', 'une redéfinition admin prime toujours sur l\'influence politique');
+      A.ok(Z.zoneEn(carte, etatZ, 0, 0, e).redefinie, 'toujours marquée redéfinie');
+    });
+
+    it('SPEC-FACTION-015 : une faction en guerre ferme son commerce à un membre ennemi, rouvert après la paix', function () {
+      var e = P.creer(1);
+      var fA = factionSimple('f:A', 0, 0, 100), fB = factionSimple('f:B', 10, 10, 100);
+      e.factions.set(fA.id, fA); e.factions.set(fB.id, fB);
+      var offres = [{ give: [], get: [] }];
+      A.deep(P.offresAutorisees(e, fA.id, fB.id, offres), offres, 'en paix/neutre, le commerce reste ouvert');
+      e.relations.set(fA.id + '~' + fB.id, 'guerre');
+      A.equal(P.commerceFermeAvec(e, fA.id, fB.id), true, 'guerre : le commerce est fermé');
+      A.deep(P.offresAutorisees(e, fA.id, fB.id, offres), [], 'aucune offre pour un membre ennemi en guerre');
+      e.relations.set(fA.id + '~' + fB.id, 'neutre');
+      A.deep(P.offresAutorisees(e, fA.id, fB.id, offres), offres, 'rouvert après un changement de relation vers neutre');
+    });
+
+    it('SPEC-FACTION-015 (câblage réel) : MC.Economie.executerTroc refuse RÉELLEMENT le commerce d\'un marchand couvert par une faction en guerre', function () {
+      // Reproduit exactement la composition de server.js (case NP.MSG.TROC) :
+      // embargo = factionCouvrant(politique, pos) + commerceFermeAvec(...),
+      // combinée dans le ctx.embargo réel d'executerTroc — jamais un appel
+      // direct isolé à commerceFermeAvec.
+      var e = P.creer(4);
+      var posPnj = { x: 500, z: 500 };
+      var fLieu = factionSimple('f:lieu', posPnj.x, posPnj.z, 200);
+      var fJoueur = factionSimple('f:joueur-allie', 9000, 9000, 50);   // faction de joueurs vue côté politique
+      e.factions.set(fLieu.id, fLieu); e.factions.set(fJoueur.id, fJoueur);
+      var eco = Eco.creerEtat(4);
+      var inv = MC.Inventory.create(9);
+      function tenter() {
+        var factionCouvrante = P.factionCouvrant(e, posPnj.x, posPnj.z);
+        var embargo = !!(factionCouvrante && P.commerceFermeAvec(e, factionCouvrante.id, fJoueur.id));
+        return Eco.executerTroc(eco, inv, { lieuId: 'v:test', role: 'marchand', pnjId: 'pnj1', indice: 0, fois: 1, nom: 'Joueur', embargo: embargo });
+      }
+      var cleRel = fLieu.id < fJoueur.id ? fLieu.id + '~' + fJoueur.id : fJoueur.id + '~' + fLieu.id;
+      var avantGuerre = tenter();
+      A.notEqual(avantGuerre.motif, 'embargo', 'en paix, executerTroc ne refuse pas pour motif embargo');
+      e.relations.set(cleRel, 'guerre');
+      var pendantGuerre = tenter();
+      A.equal(pendantGuerre.ok, false, 'SPEC-FACTION-015 : executerTroc refuse RÉELLEMENT le commerce pendant la guerre');
+      A.equal(pendantGuerre.motif, 'embargo', 'motif embargo, comme FACTION-003/SPEC-PVP-006');
+      e.relations.set(cleRel, 'neutre');
+      var apresPaix = tenter();
+      A.notEqual(apresPaix.motif, 'embargo', 'SPEC-FACTION-015 : rouvert après un changement de relation vers neutre');
+    });
+
+    it('SPEC-DONJON-018 (câblage réel) : un VRAI gardien vaincu (entites.js, événement boss_vaincu) profite à la faction de son territoire', function () {
+      // Reproduit exactement la composition de server.js (entites.evenements()
+      // après entites.update()) : un gardien RÉELLEMENT tué (pas un appel
+      // direct à victoireGardien) émet l'événement, dont `donjon` désigne le
+      // vrai objet donjon à passer à MC.Donjons.victoireGardien.
+      var w = G.flatWorld(10, C2.B.STONE);
+      var ents = MC.createEntities(w);
+      var donjonFictif = { id: '7,7', x: 20, z: -10 };
+      var g = ents.spawn('boss_zombie', 0.5, 11, 0.5, { donjon: donjonFictif.id });
+      A.ok(ents.damage(g, 999, { x: 0, y: 11, z: 0 }), 'le coup est fatal (vraie mort, pas un appel isolé)');
+      var evts = ents.evenements().filter(function (x) { return x.type === 'boss_vaincu'; });
+      A.equal(evts.length, 1, 'un véritable événement boss_vaincu est émis par entites.js');
+      A.equal(evts[0].donjon, donjonFictif.id, 'il désigne le vrai donjon du gardien');
+
+      var e = P.creer(5);
+      var f = factionSimple('f:proprio', donjonFictif.x, donjonFictif.z, 150);
+      e.factions.set(f.id, f);
+      var terrAvant = f.territoire;
+      var r = Dj.victoireGardien(donjonFictif, e);   // exactement l'appel que fait server.js sur cet événement RÉEL
+      A.ok(r, 'la victoire réelle profite à la faction du territoire');
+      A.equal(f.territoire, terrAvant + 10, 'même gain qu\'un avant-poste, déclenché par un VRAI événement de jeu');
+    });
+
+    it('SPEC-DONJON-018 : un donjon dans le territoire d\'une faction lui est rattaché ; sa conquête l\'enrichit ou profite à un revendicant en guerre', function () {
+      var e = P.creer(2);
+      var fA = factionSimple('f:A', 0, 0, 200);
+      e.factions.set(fA.id, fA);
+      var donjon = { id: '0,0', x: 20, z: -10 };
+      A.equal(Dj.factionDuTerritoire(donjon, e), fA.id, 'le donjon est rattaché à la faction dont le territoire le couvre');
+      A.equal(Dj.factionDuTerritoire({ id: 'loin', x: 99999, z: 99999 }, e), null, 'hors de tout territoire : pas de rattachement');
+
+      // appliquerGainAvantPoste, directement : le même calcul que victoireGardien réutilise
+      var fTest = factionSimple('f:test-avp', 0, 0, 100);
+      P.appliquerGainAvantPoste(fTest);
+      A.equal(fTest.territoire, 110, 'appliquerGainAvantPoste ajoute 10, plafonné à TERRITOIRE_MAX');
+
+      // cas normal : le propriétaire encaisse le même gain qu'un avant-poste réussi
+      var terrAvant = fA.territoire, orAvant = fA.ressources.or;
+      var r = Dj.victoireGardien(donjon, e);
+      A.equal(r.faction, fA.id);
+      A.notOk(r.revendique);
+      A.equal(fA.territoire, Math.min(400, terrAvant + 10), 'même gain de territoire qu\'un avant-poste (FACTION-016)');
+      A.gt(fA.ressources.or, orAvant, 'des ressources en plus');
+
+      // cas revendication : une faction en guerre pour ce territoire s'en empare, comme un raid gagné
+      var fR = factionSimple('f:rivale', 5000, 5000, 100);
+      e.factions.set(fR.id, fR);
+      e.relations.set(fA.id + '~' + fR.id, 'guerre');
+      var terrAAvant = fA.territoire, terrRAvant = fR.territoire;
+      var r2 = Dj.victoireGardien(donjon, e, fR.id);
+      A.equal(r2.faction, fR.id, 'le revendicant en guerre récupère la conquête');
+      A.ok(r2.revendique);
+      A.equal(fR.territoire, terrRAvant + 15, 'même gain qu\'une élimination réussie (appliquerGainElimination)');
+      A.equal(fA.territoire, Math.max(20, terrAAvant - 15), 'le propriétaire en perd d\'autant');
+
+      // un revendicant qui n'est PAS en guerre pour ce territoire ne peut rien revendiquer
+      var fN = factionSimple('f:neutre', 6000, 6000, 100);
+      e.factions.set(fN.id, fN);
+      var terrNAvant = fN.territoire;
+      var r3 = Dj.victoireGardien(donjon, e, fN.id);
+      A.notOk(r3.revendique, 'sans guerre pour ce territoire, pas de revendication');
+      A.equal(fN.territoire, terrNAvant, 'la faction neutre ne gagne rien');
+    });
+
+    it('SPEC-QUETE-004 : tableau de quêtes actives par joueur, acceptées et remises une seule fois (arbitrage serveur)', function () {
+      var tableau = new Map();
+      var quete = { id: 'q1', faction: 'f:A', type: 'livrer', ressource: 'or', titre: 'Livraison', recompense: 12 };
+      var acc = P.accepterQuete(tableau, 'Alice', quete);
+      A.ok(acc.ok, 'la quête est acceptée');
+      A.equal(P.quetesActivesDeJoueur(tableau, 'Alice').length, 1, 'apparaît dans le tableau du joueur');
+      A.equal(P.quetesActivesDeJoueur(tableau, 'Alice')[0].statut, 'active');
+      var accDouble = P.accepterQuete(tableau, 'Alice', quete);
+      A.notOk(accDouble.ok, 'une même quête ne s\'accepte pas deux fois');
+      A.equal(accDouble.motif, 'deja_acceptee');
+
+      var rem1 = P.remettreQuete(tableau, 'Alice', 'q1', 20);
+      A.ok(rem1.ok, 'la remise réussit');
+      A.equal(rem1.quete.statut, 'remise');
+      A.equal(rem1.quete.recompenseVersee, 20);
+      // double remise (deux clients, ou un double clic) : le second échoue toujours
+      var rem2 = P.remettreQuete(tableau, 'Alice', 'q1', 20);
+      A.notOk(rem2.ok, 'la seconde remise échoue : jamais versée deux fois');
+      A.equal(rem2.motif, 'introuvable');
+
+      // persistance : sérialisation/rechargement identiques
+      var data = P.serialiserQuetes(tableau);
+      var recharge = P.chargerQuetes(data);
+      A.deep(P.quetesActivesDeJoueur(recharge, 'Alice'), P.quetesActivesDeJoueur(tableau, 'Alice'), 'le rechargement reproduit le tableau');
+    });
+
+    it('SPEC-QUETE-005 : la récompense d\'une quête se calcule sur le coût réel de l\'objectif, jamais la formule arbitraire d\'origine', function () {
+      var e = P.creer(3);
+      var fCible = factionSimple('f:cible', 0, 0, 200);
+      e.factions.set(fCible.id, fCible);
+      var queteElim = { id: 'qe', type: 'eliminer', cible: fCible.id, recompense: 999 };
+      var reelle = P.recompenseReelle(e, queteElim, {});
+      A.equal(reelle, Math.round(fCible.territoire * 0.5), 'élimination : proportionnelle au territoire réel de la cible');
+      A.notEqual(reelle, 999, 'jamais l\'estimation arbitraire d\'origine');
+
+      var queteReconstruction = { id: 'qr', type: 'reconstruction', degats: 40, recompense: 999 };
+      var reelle2 = P.recompenseReelle(e, queteReconstruction, {});
+      A.equal(reelle2, Math.round(40 * 0.5), 'reconstruction : proportionnelle aux dégâts mesurés');
+
+      // reproductible par graine : même donnée, même résultat
+      var reelle3 = P.recompenseReelle(e, queteElim, {});
+      A.equal(reelle3, reelle, 'reproductible à état égal');
+
+      // repli : type inconnu / rien de mieux à calculer -> estimation d'origine conservée
+      var queteInconnue = { id: 'qi', type: 'mystere', recompense: 7 };
+      A.equal(P.recompenseReelle(e, queteInconnue, {}), 7);
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
