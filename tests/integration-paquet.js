@@ -95,6 +95,33 @@ async function attendrePret(port) {
 
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
 
+  // ── SPEC-PACK-004 : un paquet .zip nommé par version, à chaque publication ─
+  const tmp2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-release-'));
+  try {
+    const releases = path.join(tmp2, 'releases');
+    const r = paquet.construireZipRelease('9.9.9-test', releases);
+    ok(fs.existsSync(r.chemin), 'SPEC-PACK-004 : un fichier .zip nommé par version est produit',
+       r.chemin);
+    ok(path.basename(r.chemin) === 'minicraft-v9.9.9-test.zip',
+       'SPEC-PACK-004 : le nom du fichier porte exactement la version publiée', path.basename(r.chemin));
+    const ZIP = require(path.join(RACINE, 'tools', 'zip.js'));
+    const entrees = ZIP.lireZip(fs.readFileSync(r.chemin));
+    ok(entrees.some(e => e.nom === 'index.html'), 'SPEC-PACK-004 : le zip contient index.html');
+    ok(entrees.some(e => e.nom === 'server.js'), 'SPEC-PACK-004 : le zip contient server.js');
+    ok(entrees.some(e => e.nom === 'src/core.js'), 'SPEC-PACK-004 : le zip contient les modules src/');
+    ok(entrees.some(e => e.nom === 'start.cmd') && entrees.some(e => e.nom === 'start.sh'),
+       'SPEC-PACK-004 : le zip contient les deux lanceurs');
+    ok(!entrees.some(e => e.nom.indexOf('sea/') === 0),
+       'SPEC-PACK-004 : le dossier sea/ (binaire node, inachevé sans postject) n\'est jamais dans le zip partagé',
+       entrees.filter(e => e.nom.indexOf('sea') >= 0).map(e => e.nom).join(', '));
+    ok(!fs.existsSync(path.join(tmp2, '.tmp-release-9.9.9-test')),
+       'SPEC-PACK-004 : le dossier de construction temporaire est nettoyé après zippage');
+  } catch (e) {
+    echecs++; details.push(`  ${C.r}✗ construireZipRelease a levé : ${e.message}${C.x}\n${e.stack}`);
+  } finally {
+    try { fs.rmSync(tmp2, { recursive: true, force: true }); } catch (e) {}
+  }
+
   console.log(`\n${C.b}Integration paquet${C.x}\n${details.join('\n')}\n`);
   const total = passes + echecs;
   if (echecs) { console.log(`${C.r}${echecs} échec(s)${C.x} sur ${total} tests\n`); process.exit(1); }

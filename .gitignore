@@ -8,3 +8,8 @@ node_modules/
 # chaque campagne, jamais versionnés — seuls les N derniers sont gardés
 # (tools/resultats-tests.js), sauf un cahier marqué « conservé »
 tests/resultats/
+
+# paquets construits (SPEC-PACK-001/004, tools/paquet.js) : archives
+# binaires reconstruisibles à volonté (node tools/paquet.js), jamais dans
+# git — un paquet par publication vit dans dist/releases/, gardé localement
+dist/

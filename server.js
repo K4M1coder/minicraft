@@ -946,10 +946,13 @@ function traiterVersion(req, res) {
    pas cette fonction, qui décide de reconstruire ou non selon la mtime du
    dossier source (§2 : le registre peut grossir, jamais de lecture complète
    du disque à chaque appel). */
-const HIST = require('./tools/historique.js');
+// require paresseux (comme RT/registre.js plus bas) : tools/ n'est pas
+// embarqué dans un paquet joué (tools/paquet.js), donc server.js ne doit
+// PAS exiger tools/historique.js pour démarrer — seulement si une route
+// historique est vraiment appelée (adresse locale uniquement, voir plus bas).
 let indiceHistorique = null;
 function obtenirIndiceHistorique() {
-  if (!indiceHistorique) indiceHistorique = HIST.creerIndex();
+  if (!indiceHistorique) indiceHistorique = require('./tools/historique.js').creerIndex();
   return indiceHistorique;
 }
 function parametresRequete(req) {
@@ -961,6 +964,7 @@ function traiterHistorique(req, res) {
   const url = req.url.split('?')[0];
   if (url !== '/tests/historique/lignes' && url !== '/tests/historique/series' && url !== '/tests/historique/images') return false;
   const RT = require('./tools/resultats-tests.js');
+  const HIST = require('./tools/historique.js');
   if (!RT.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return true; }
   if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
   const q = parametresRequete(req);

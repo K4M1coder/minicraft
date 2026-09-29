@@ -123,6 +123,17 @@ if (require.main === module) {
     git('commit -q -m "chore(release): v' + apres + '"');
     git('tag -a v' + apres + ' -m "v' + apres + '"');
     console.log(avant + ' → ' + apres + ' (cran ' + cran + ', ' + commits.length + ' commit(s)) — étiquette v' + apres);
+    // SPEC-PACK-004 : un paquet testable/partageable pour CHAQUE publication,
+    // sans étape manuelle — jamais commité (dist/, voir .gitignore), jamais
+    // bloquant : un échec de paquet ne doit pas remettre en cause la
+    // publication déjà commitée et étiquetée.
+    try {
+      const paquet = require('./paquet.js');
+      const r = paquet.construireZipRelease(apres);
+      console.log('  paquet : ' + r.chemin + ' (' + r.fichiers + ' fichiers, ' + (r.octets / 1024).toFixed(0) + ' Ko)');
+    } catch (e) {
+      console.log('  ⚠ paquet non construit : ' + e.message + ' — la publication reste valide, construisez-le à la main : node tools/paquet.js --zip-release ' + apres);
+    }
     process.exit(0);
   }
   console.error('action inconnue : ' + action + ' (--prevoir, --publier [x|y|z], --verifier, --installer)');

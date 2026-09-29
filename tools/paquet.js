@@ -22,11 +22,19 @@
      Linux   : npx postject dist/minicraft NODE_SEA_BLOB dist/sea/prep.blob \
                --sentinel-fuse NODE_SEA_FUSE_fce680ab2cc467b6e072b8b5df1996b2
 
+   Produit AUSSI une archive .zip de la version portable (jamais du dossier
+   `sea/` — le binaire `node` copié y pèse des dizaines de Mo pour un
+   exécutable de toute façon inachevé sans `postject`, inutile à partager) :
+   un fichier unique, nommé par version, prêt à distribuer ou à tester tel
+   quel — voir `construireZipRelease`, appelée automatiquement par
+   `node tools/version.js --publier` (jamais commitée : voir .gitignore).
+
    Usage :  node tools/paquet.js [dossier-de-sortie]   (défaut : dist/) */
 'use strict';
 const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
+const ZIP = require('./zip.js');
 
 const RACINE = path.join(__dirname, '..');
 
@@ -134,20 +142,76 @@ function construire(destDir, opts) {
   return { dossier: destDir, fichiers: copies, lanceurs: lanceurs, sea: sea };
 }
 
-module.exports = { construire, listerSrc, copierArbre, ecrireLanceurs, preparerSEA, commandePostject, nomExecutable };
+/* Zippe RÉCURSIVEMENT tout `destDir` (résultat de `construire`), à
+   l'exception du sous-dossier `sea/` (voir l'en-tête du fichier). Utilise le
+   zippeur maison de `tools/zip.js` (déjà réutilisé par l'export docx),
+   jamais de dépendance npm. `entrees` (chemins relatifs) triées pour un zip
+   reproductible d'une construction à l'autre sur les mêmes fichiers. */
+function listerFichiers(dir, base) {
+  base = base || dir;
+  let out = [];
+  fs.readdirSync(dir, { withFileTypes: true }).forEach((d) => {
+    const complet = path.join(dir, d.name);
+    if (d.isDirectory()) {
+      if (path.relative(base, complet) === 'sea') return;
+      out = out.concat(listerFichiers(complet, base));
+    } else {
+      out.push(complet);
+    }
+  });
+  return out;
+}
+function construireZip(destDir, cheminZip) {
+  const fichiers = listerFichiers(destDir).sort();
+  const entrees = fichiers.map((f) => ({
+    nom: path.relative(destDir, f).split(path.sep).join('/'),
+    contenu: fs.readFileSync(f),
+  }));
+  fs.mkdirSync(path.dirname(cheminZip), { recursive: true });
+  fs.writeFileSync(cheminZip, ZIP.creerZip(entrees));
+  return { chemin: cheminZip, fichiers: entrees.length, octets: fs.statSync(cheminZip).size };
+}
+
+/* Construit puis zippe une version PORTABLE nommée par version, dans
+   `dossierReleases` (défaut `dist/releases/`, jamais commité). Appelée par
+   `tools/version.js --publier` juste après avoir posé l'étiquette — un
+   fichier prêt à tester ou à partager pour CHAQUE publication, sans étape
+   manuelle. Construit dans un dossier temporaire propre (jamais `dist/`
+   directement, pour ne pas mélanger plusieurs versions dans le même arbre
+   avant zippage) puis le retire. */
+function construireZipRelease(version, dossierReleases) {
+  dossierReleases = dossierReleases || path.join(RACINE, 'dist', 'releases');
+  const tmp = path.join(RACINE, 'dist', '.tmp-release-' + version);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  construire(tmp, { sansSEA: true });    // SEA best-effort inutile pour un zip partageable (inachevé sans postject)
+  const cheminZip = path.join(dossierReleases, `minicraft-v${version}.zip`);
+  const r = construireZip(tmp, cheminZip);
+  fs.rmSync(tmp, { recursive: true, force: true });
+  return r;
+}
+
+module.exports = { construire, listerSrc, copierArbre, ecrireLanceurs, preparerSEA, commandePostject, nomExecutable, construireZip, construireZipRelease };
 
 if (require.main === module) {
-  const dest = path.resolve(RACINE, process.argv[2] || 'dist');
-  const sansSEA = process.argv.includes('--sans-sea');
-  console.log(`Construction de l'archive portable dans ${dest}…`);
-  const r = construire(dest, { sansSEA });
-  console.log(`  ${r.fichiers.length} fichiers copiés, lanceurs : ${r.lanceurs.join(', ')}`);
-  if (r.sea.ok) {
-    console.log(`  binaire Node copié : ${r.sea.executable}`);
-    console.log('  pour finir l\'exécutable autonome (nécessite le paquet npm "postject", non installé ici) :');
-    console.log('    ' + r.sea.commande);
+  const version = process.argv.includes('--zip-release')
+    ? process.argv[process.argv.indexOf('--zip-release') + 1] : null;
+  if (version) {
+    console.log(`Construction de l'archive .zip de la version ${version}…`);
+    const r = construireZipRelease(version);
+    console.log(`  ${r.fichiers} fichiers, ${(r.octets / 1024).toFixed(0)} Ko → ${r.chemin}`);
   } else {
-    console.log(`  exécutable autonome non préparé : ${r.sea.motif}`);
+    const dest = path.resolve(RACINE, process.argv[2] || 'dist');
+    const sansSEA = process.argv.includes('--sans-sea');
+    console.log(`Construction de l'archive portable dans ${dest}…`);
+    const r = construire(dest, { sansSEA });
+    console.log(`  ${r.fichiers.length} fichiers copiés, lanceurs : ${r.lanceurs.join(', ')}`);
+    if (r.sea.ok) {
+      console.log(`  binaire Node copié : ${r.sea.executable}`);
+      console.log('  pour finir l\'exécutable autonome (nécessite le paquet npm "postject", non installé ici) :');
+      console.log('    ' + r.sea.commande);
+    } else {
+      console.log(`  exécutable autonome non préparé : ${r.sea.motif}`);
+    }
+    console.log('Terminé. Lancer le jeu : ' + (process.platform === 'win32' ? path.join(dest, 'start.cmd') : path.join(dest, 'start.sh')));
   }
-  console.log('Terminé. Lancer le jeu : ' + (process.platform === 'win32' ? path.join(dest, 'start.cmd') : path.join(dest, 'start.sh')));
 }
