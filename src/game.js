@@ -3057,6 +3057,10 @@
           render.eau.options.refraction = decisions.refraction;
           render.eau.options.fpsP50 = g.perf.fpsP50;
           render.setDPR(decisions.dpr);
+          // SPEC-RENDU-006 : simple transmission de la décision déjà calculée
+          // (même cascade que refraction/DPR ci-dessus) — la logique vit dans
+          // qualite.js, seul le câblage est ici.
+          render.setAntialias(decisions.antialias);
         }
       }
       // SPEC-PERF-015 : appels de dessin / triangles de la dernière image, et

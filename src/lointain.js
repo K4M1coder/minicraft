@@ -197,7 +197,38 @@
     return r;
   }
 
+  /* ─── SPEC-RENDU-014 : culling grossier d'occlusion ──────────────────────
+     Une colonne (chunk) est jugée entièrement masquée quand le relief, à un
+     point intermédiaire entre la caméra et son centre, dépasse la ligne de
+     mire directe vers ce centre — le principe habituel d'un test
+     d'occlusion par carte de hauteurs (« horizon culling »), ici au pas
+     grossier de la grille lointaine déjà utilisée pour le relief au-delà
+     des chunks (`creerGrille`/`hauteur` ci-dessus), pas une donnée dédiée.
+     Logique pure : `hauteurFn(x, z)` est injectée (interpolée depuis une
+     grille réelle en jeu, ou une fabrication de test), jamais mesurée ici. */
+  function occlusionColonne(hauteurFn, camPos, cibleX, cibleZ, cibleH, opts) {
+    opts = opts || {};
+    var pasEch = opts.pas > 0 ? opts.pas : 16;
+    var marge = opts.marge != null ? opts.marge : 1;
+    var ignorerAvant = opts.ignorerAvant != null ? opts.ignorerAvant : pasEch * 1.5;
+    var dx = cibleX - camPos.x, dz = cibleZ - camPos.z;
+    var dist = Math.hypot(dx, dz);
+    if (!(dist > ignorerAvant)) return false;         // colonne trop proche : jamais occluse
+    var n = Math.floor(dist / pasEch);
+    for (var i = 1; i < n; i++) {
+      var d = i * pasEch;
+      if (d <= ignorerAvant || d >= dist) continue;
+      var t = d / dist;
+      var x = camPos.x + dx * t, z = camPos.z + dz * t;
+      var h = hauteurFn(x, z);
+      if (h == null || !isFinite(h)) continue;
+      var hVue = camPos.y + (cibleH - camPos.y) * t;  // hauteur de la ligne de mire à ce pas
+      if (h > hVue + marge) return true;               // le relief intermédiaire dépasse la vue directe
+    }
+    return false;
+  }
+
   MC.Lointain = { creerGrille: creerGrille, maillage: maillage, couleurLointaine: couleurLointaine,
                   ajusterDistance: ajusterDistance, VUE: VUE, imposteurs: imposteurs, silhouettes: silhouettes,
-                  ESSENCES: ESSENCES, essenceDe: essenceDe };
+                  ESSENCES: ESSENCES, essenceDe: essenceDe, occlusionColonne: occlusionColonne };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
