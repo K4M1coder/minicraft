@@ -25,7 +25,13 @@
   var JETON_VERSION = (typeof window !== 'undefined' && window.MC_VERSION) || String(Date.now());
   function urlWorker(nom) { return BASE_SRC + nom + '.js?v=' + JETON_VERSION; }
 
-  function createGame(host) {
+  /* `options.poste` (MC.Poste, fourni par index.html) est la liaison avec le
+     serveur de jeu local : quand il est présent, TOUT passe par le serveur
+     (parties sur disque, monde, pause) ; la page de test (tests/index.html) ne
+     le fournit pas et garde la simulation locale historique tant que les lots
+     B-* d'élimination des branches `net.enLigne()` n'ont pas tout retiré. */
+  function createGame(host, options) {
+    var poste = (options && options.poste) || null;
     var atlas = MC.buildAtlas();
 
     /* SPEC-OPTION-008 : l'espace de rendu ne descend jamais sous 800×600,
@@ -324,7 +330,11 @@
         if (e === 'en ligne') ui.toast('En ligne');
         else if (e === 'erreur') ui.toast('Reseau : ' + (info || 'erreur'), 'warn');
         else if (e === 'hors ligne') {
-          if (info) {
+          if (info && poste) {
+            // il n'y a plus de « solo » local : sans serveur, on retourne au menu, qui dit ce qui se passe
+            ui.toast('Connexion au serveur perdue', 'warn');
+            if (!arrete && !attenteTerrain && input.state !== 'menu') input.setState('menu');
+          } else if (info) {
             ui.toast('Reseau : ' + info + ' — retour en solo', 'warn');
             chat.systeme('Connexion perdue. La partie continue en solo.');
           }
@@ -481,7 +491,11 @@
       onSelectSlot: selectSlot,
       onPlay: startGame,
       onResume: resume,
-      onSave: function () { doSave(true); },
+      onSave: function () {
+        // le serveur sauvegarde à chaque pause (SPEC-ARCHI-012) : l'entrée dans ce menu l'a déjà fait
+        if (poste) ui.toast('Partie sauvegardée par le serveur (à chaque pause, puis toutes les 45 s)');
+        else doSave(true);
+      },
       onQuit: toMenu,
       onRespawn: respawn,
       onSound: function (n) { audio.play(n); },
@@ -489,10 +503,16 @@
       onMulti: function () { ui.menuMulti({ pseudo: g.nomJoueur }); },
       onRetourMenu: function () { afficherMenu(); },
       onContinuerFin: function () { continuerApresFin(); },
-      onCharger: chargerPartie,
-      onSupprimer: supprimerPartie,
-      onCreer: creerPartie,
+      onCharger: function (id) { return poste ? chargerPartieServeur(id) : chargerPartie(id); },
+      onSupprimer: function (id) { return poste ? supprimerPartieServeur(id) : supprimerPartie(id); },
+      onCreer: function (o) { return poste ? creerPartieServeur(o) : creerPartie(o); },
       onRejoindre: rejoindreServeur,
+      // le poste : réseau à chaud, arrêt, import et export des parties (SPEC-ARCHI-005, 008, 015)
+      onReseau: function (ouvrir) { changerReseau(ouvrir); },
+      onArret: function () { quitterLeJeu(); },
+      onImporterLocales: function () { importerPartiesLocales(); },
+      onExporterLocales: function () { exporterPartiesLocales(); },
+      onImporterFichier: function (texte) { importerFichierParties(texte); },
       onFabrique: function (id) { signalerSucces({ type: 'fabriquer', id: id }); },
       onEchange: function () { signalerSucces({ type: 'echange' }); },
       // B1 (docs/vague-2/B1.md § 6) : chaque interaction de l'écran
@@ -644,16 +664,30 @@
     appliquerOptions();
 
     // ─── états ───────────────────────────────────────────────────────────────
+    /* État du réseau tel que l'affiche le menu (SPEC-ARCHI-039) : lu dans
+       ETAT_RESEAU, jamais déduit de `net.enLigne()`. Sans poste (page de test),
+       une connexion de jeu ne peut être que celle d'un serveur distant. */
+    function reseauAffiche() {
+      if (poste) return poste.etatReseau(!!g.hoteDistant);
+      return net.etat === 'en ligne' ? MC.ContratsArchi.ETAT_RESEAU.DISTANT : undefined;
+    }
+    function infosPause() {
+      return {
+        nom: g.nomPartie, graine: world.seed,
+        mode: regles.mode.nom, difficulte: regles.difficulte.nom,
+        poste: !!poste, reseau: reseauAffiche(),
+      };
+    }
     function onStateChange(next) {
+      // SPEC-ARCHI-009 : le poste dit au serveur s'il doit geler le monde (menus) ou le faire vivre
+      if (poste) poste.surEtatSession(next);
       if (next === 'playing') { ui.hideScreen(); }
-      else if (next === 'paused') {
-        ui.menuPause({
-          nom: g.nomPartie, graine: world.seed,
-          mode: regles.mode.nom, difficulte: regles.difficulte.nom,
-          enLigne: net.enLigne(),
-        });
+      else if (next === 'paused') { ui.menuPause(infosPause()); }
+      else if (next === 'menu') {
+        // revenir au menu quitte la partie du serveur (sauvegardée par la pause)
+        if (poste && net.etat !== 'hors ligne') net.deconnecter();
+        afficherMenu();
       }
-      else if (next === 'menu') { afficherMenu(); }
       else if (next === 'dead') { ui.ecranMort(); }
       if (next !== 'ui' && ui.isContainerOpen()) forceCloseContainer();
     }
@@ -662,10 +696,193 @@
        rejoindre. Toute la logique de persistance vit dans Saves ; ici on ne
        fait que du cablage. */
     function afficherMenu() {
+      if (poste) { afficherMenuServeur(); return; }
       var st = storage();
       ui.menuParties(st ? MC.Saves.lister(st) : []);
     }
     g.afficherMenu = afficherMenu;
+    g.poste = poste;
+
+    // ─── parties sur disque, côté serveur (chantier ARCHI, SPEC-ARCHI-013/015) ───
+    var arrete = false;                    // « Quitter le jeu » : plus aucun menu, le serveur s'arrête
+    var attenteTerrain = null;             // { ... } tant que l'écran d'attente de la partie est affiché
+    function afficherMenuServeur() {
+      if (arrete) return;
+      var stockage = storage();
+      poste.lister().then(function (parties) {
+        if (arrete || input.state !== 'menu' || attenteTerrain) return;   // l'utilisateur est passé ailleurs entre-temps
+        ui.menuParties(parties, {
+          poste: true, reseau: poste.etatReseau(!!g.hoteDistant),
+          locales: stockage ? poste.partiesLocalesAImporter(stockage).length : 0,
+        });
+      }, function () {
+        if (arrete) return;
+        ui.ecranAttente({
+          titre: 'Serveur injoignable', erreur: true,
+          etapes: [{ nom: 'Serveur de jeu', etat: 'erreur' }],
+          detail: 'Le serveur de jeu ne répond plus. Relancez <code>node server.js</code> (ou <code>start.cmd</code> / <code>start.sh</code>), puis réessayez.',
+          actions: [{ texte: 'Réessayer', primaire: true, fn: afficherMenuServeur }],
+        });
+      });
+    }
+    function erreurPoste(titre, e) {
+      ui.ecranAttente({
+        titre: titre, erreur: true,
+        detail: 'Cause : <code>' + String((e && (e.motif || e.message)) || e).replace(/[<>&]/g, '') + '</code>',
+        actions: [{ texte: 'Retour au menu', primaire: true, fn: function () { attenteTerrain = null; afficherMenu(); } }],
+      });
+    }
+    function pseudoLocal() {
+      try { return window.localStorage.getItem('minicraft.pseudo') || 'Joueur'; } catch (e) { return 'Joueur'; }
+    }
+    function creerPartieServeur(opts) {
+      // le récit (mode histoire) n'existe pas encore côté serveur (lot P-HIST) : on le dit plutôt que de créer une partie amputée
+      if (opts.mode === 'histoire') {
+        ui.toast("Le mode histoire n'est pas encore disponible : il doit d'abord être porté sur le serveur.", 'warn');
+        return;
+      }
+      var graine = MC.Modes.graineDepuisTexte(opts.graineTexte);
+      ui.ecranAttente({ titre: opts.nom || 'Nouvelle partie', sousTitre: 'Création de la partie…' });
+      poste.creerPartie({
+        nom: opts.nom, mode: opts.mode, difficulte: opts.difficulte, graine: graine,
+        histoire: opts.mode === 'histoire' ? construireParametresHistoire(opts.histoire) : null,
+      }).then(function (meta) { jouerPartieServeur(meta, opts.joueurs || 1); },
+              function (e) { erreurPoste('Création impossible', e); });
+    }
+    function chargerPartieServeur(id) {
+      poste.lister().then(function (parties) {
+        var meta = parties.filter(function (m) { return m.id === id; })[0];
+        if (!meta) { ui.toast('Partie introuvable', 'warn'); afficherMenu(); return; }
+        jouerPartieServeur(meta, 1);
+      }, function (e) { erreurPoste('Chargement impossible', e); });
+    }
+    function supprimerPartieServeur(id) {
+      poste.supprimerPartie(id).then(function () {
+        if (g.partieId === id) g.partieId = null;
+        ui.toast('Partie supprimée');
+        afficherMenu();
+      }, function (e) { erreurPoste('Suppression impossible', e); });
+    }
+    /* Charge la partie sur le serveur (il se relance sur elle), aligne le monde
+       et les règles du client sur ses métadonnées, puis s'y connecte EXACTEMENT
+       comme à un serveur distant (SPEC-ARCHI-006). L'écran d'attente montre les
+       étapes jusqu'aux premiers chunks maillés (SPEC-ARCHI-017). */
+    function jouerPartieServeur(meta, joueurs) {
+      var etapes = [{ nom: 'Serveur de jeu', etat: 'cours' }, { nom: 'Connexion', etat: 'attente' },
+                    { nom: 'Génération du terrain', etat: 'attente' }];
+      function montrer(erreur) {
+        ui.ecranAttente({ titre: meta.nom, sousTitre: 'Chargement de la partie', etapes: etapes.map(function (e) { return { nom: e.nom, etat: e.etat }; }) });
+      }
+      attenteTerrain = { meta: meta, etapes: etapes, montrer: montrer };
+      montrer();
+      poste.chargerPartie(meta.id).then(function () {
+        etapes[0].etat = 'ok'; etapes[1].etat = 'cours'; montrer();
+        appliquerPartie(meta);
+        remplacerMonde(meta.graine);
+        for (var k in furnaces) delete furnaces[k];
+        for (var k2 in chests) delete chests[k2];
+        for (var ke in expositions) delete expositions[ke];
+        for (var kd in distributeurs) delete distributeurs[kd];
+        g.histoire = null;
+        g.succes = MC.Succes.creer();
+        chat.vider();
+        rejoindreServeur({ hote: '', pseudo: g.nomJoueur || pseudoLocal(), joueurs: joueurs });
+        montrer();                                       // rejoindreServeur passe en 'playing' (efface l'écran) : on le remet
+        surveillerTerrain();
+      }, function (e) { attenteTerrain = null; erreurPoste('Chargement impossible', e); });
+    }
+    /* Attend BIENVENUE puis les premiers chunks maillés autour du joueur, sans
+       jamais rester figé : au bout de 25 s on y va quand même et on le dit. */
+    function surveillerTerrain() {
+      var at = attenteTerrain;
+      if (!at) return;
+      var debut = Date.now();
+      var iv = setInterval(function () {
+        if (attenteTerrain !== at) { clearInterval(iv); return; }
+        var enLigne = net.etat === 'en ligne';
+        if (enLigne && at.etapes[1].etat !== 'ok') { at.etapes[1].etat = 'ok'; at.etapes[2].etat = 'cours'; at.montrer(); }
+        if (net.etat === 'erreur' || (net.etat === 'hors ligne' && Date.now() - debut > 1500)) {
+          clearInterval(iv); attenteTerrain = null;
+          erreurPoste('Connexion refusée', { motif: net.erreur || 'connexion impossible' });
+          return;
+        }
+        var pret = enLigne && render.chunksCharges >= 9;
+        if (pret || Date.now() - debut > 25000) {
+          clearInterval(iv); attenteTerrain = null;
+          ui.hideScreen();
+          if (input.state !== 'playing') input.setState('playing');
+        }
+      }, 100);
+    }
+    // ─── actions du poste : réseau à chaud, arrêt, import, export ─────────────
+    function changerReseau(ouvrir) {
+      poste.definirReseau(ouvrir).then(function (r) {
+        if (!r) { ui.messagePoste('Le serveur n\'a pas répondu.', true); return; }
+        ui.toast(r.etat === 'ouvert' ? 'Réseau ouvert — port ' + r.port : 'Réseau fermé');
+      });
+    }
+    function quitterLeJeu() {
+      arrete = true;
+      if (net.etat !== 'hors ligne') net.deconnecter();
+      poste.arreter();
+      ui.ecranArrete();
+    }
+    function compteRendu(r) {
+      var n = (r.importees || []).length, i = (r.ignorees || []).length;
+      var txt = n + ' partie' + (n > 1 ? 's' : '') + ' importée' + (n > 1 ? 's' : '');
+      if (i) txt += ' · ' + i + ' ignorée' + (i > 1 ? 's' : '') + ' (' + r.ignorees.map(function (x) { return x.motif; }).join(' ; ') + ')';
+      return txt;
+    }
+    function importerPartiesLocales() {
+      var st = storage();
+      if (!st) return;
+      poste.importerLocales(st).then(function (r) {
+        afficherMenu();
+        setTimeout(function () { ui.messagePoste(compteRendu(r), !!(r.ignorees || []).length); }, 300);
+      }, function (e) { ui.messagePoste('Import impossible : ' + (e.motif || e.message), true); });
+    }
+    /* Télécharge un fichier texte (Blob + lien) ; faux si le navigateur refuse. */
+    function telechargerTexte(nom, texte) {
+      try {
+        var url = URL.createObjectURL(new Blob([texte], { type: 'application/json' }));
+        var a = document.createElement('a');
+        a.href = url; a.download = nom;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a);
+        setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+        return true;
+      } catch (e) { return false; }
+    }
+    /* « Exporter mes parties » (lot A0-pré, SPEC-ARCHI-015 b) : disponible AUSSI
+       sans serveur de jeu — c'est ce qui sauve les parties de l'ancien mode solo
+       (le localStorage ne se partage pas entre origines). */
+    function exporterPartiesLocales() {
+      var st = storage();
+      var ok = false;
+      if (st) {
+        if (poste) ok = poste.telechargerExport(st);
+        else ok = telechargerTexte('minicraft-parties.json', JSON.stringify(MC.PartiesFichier.exporter(st)));
+      }
+      if (!ok) ui.messagePoste('Téléchargement indisponible dans ce navigateur.', true);
+      else ui.messagePoste('Fichier minicraft-parties.json téléchargé — à importer dans la nouvelle version du jeu.');
+    }
+    function importerFichierParties(texte) {
+      var doc;
+      try { doc = JSON.parse(texte); } catch (e) { ui.messagePoste('Ce fichier n\'est pas un export de parties MiniCraft (JSON illisible).', true); return; }
+      poste.importerExport(doc).then(function (r) {
+        afficherMenu();
+        setTimeout(function () { ui.messagePoste(compteRendu(r), !!(r.ignorees || []).length); }, 300);
+      }, function (e) { ui.messagePoste('Import impossible : ' + (e.motif || e.message), true); });
+    }
+    if (poste) {
+      // l'ouverture/fermeture du réseau (ici ou depuis un autre écran) rafraîchit l'écran qui l'affiche
+      var reseauVu = poste.etat.reseau;
+      poste.surChangement(function (e) {
+        if (e.reseau === reseauVu) return;
+        reseauVu = e.reseau;
+        if (input.state === 'paused') ui.menuPause(infosPause());
+        else if (input.state === 'menu' && !attenteTerrain && ui.estMenuParties()) afficherMenu();
+      });
+    }
 
     function appliquerPartie(meta) {
       g.partieId = meta.id;
@@ -769,6 +986,9 @@
 
     function rejoindreServeur(opts) {
       g.nomJoueur = opts.pseudo;
+      // SPEC-ARCHI-039 : un hôte saisi = une AUTRE machine ; vide = le serveur qui sert cette page
+      g.hoteDistant = !!(opts.hote && String(opts.hote).trim());
+      try { window.localStorage.setItem('minicraft.pseudo', opts.pseudo); } catch (e) { /* stockage bloqué */ }
       g.inventaireSolo = serialiserInventaireSolo();
       composerEquipe(opts.joueurs || 1, regles);
       equipe.forEach(function (j) {
@@ -2643,27 +2863,36 @@
         joueurs: noms,
       };
     }
+    /* ─── actions des commandes, un gestionnaire par action (lot A0, « aiguillage ») ───
+       Sans changement de comportement : l'ancien `switch` devient une table.
+       Chaque lot B-* n'édite que le gestionnaire de SES lignes :
+         heure (B-ENV), faction (B-RESEAU), duel (B-VIE) ; les autres sont
+         indépendants du réseau de jeu. */
+    function actionCommandeHeure(a) { if (!net.enLigne()) g.time = a.valeur; }
+    function actionCommandeVider() { chat.vider(); }
+    function actionCommandeRejoindre(a) { net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); }
+    function actionCommandeQuitter() { net.deconnecter(); }
+    function actionCommandeRendu(a) { render.reglerRealiste(a.realiste); }
+    // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
+    function actionCommandeFaction(a) {
+      if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); return; }
+      g.guildes = g.guildes || MC.Guildes.creerEtat();
+      var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
+      chat.systeme(rf.message);
+    }
+    function actionCommandeAdmin(a) { net.admin(a.action, a.args); }
+    // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)
+    function actionCommandeDuel(a) {
+      if (net.enLigne()) { net.envoyerChat('/duel ' + (a.brut || '')); return; }
+      chat.systeme('Le duel exige d\'être en ligne.');
+    }
+    var ACTIONS_COMMANDE = {
+      heure: actionCommandeHeure, vider: actionCommandeVider, rejoindre: actionCommandeRejoindre,
+      quitter: actionCommandeQuitter, rendu: actionCommandeRendu, faction: actionCommandeFaction,
+      admin: actionCommandeAdmin, duel: actionCommandeDuel,
+    };
     function appliquerActionCommande(a) {
-      switch (a.type) {
-        case 'heure': if (!net.enLigne()) g.time = a.valeur; break;
-        case 'vider': chat.vider(); break;
-        case 'rejoindre': net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); break;
-        case 'quitter': net.deconnecter(); break;
-        case 'rendu': render.reglerRealiste(a.realiste); break;
-        // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
-        case 'faction':
-          if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); break; }
-          g.guildes = g.guildes || MC.Guildes.creerEtat();
-          var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
-          chat.systeme(rf.message);
-          break;
-        case 'admin': net.admin(a.action, a.args); break;
-        // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)
-        case 'duel':
-          if (net.enLigne()) { net.envoyerChat('/duel ' + (a.brut || '')); break; }
-          chat.systeme('Le duel exige d\'être en ligne.');
-          break;
-      }
+      if (a && Object.prototype.hasOwnProperty.call(ACTIONS_COMMANDE, a.type)) ACTIONS_COMMANDE[a.type](a);
     }
     function executerCommande(cmd) {
       var res = MC.Commandes.executer(cmd, contexteCommande());
@@ -2958,6 +3187,118 @@
     // ─── boucle ──────────────────────────────────────────────────────────────
     var last = performance.now(), acc = 0, frames = 0, spawnT = 0, autoSaveT = 0;
 
+    /* ─── frame() découpée par thème (lot A0, « aiguillage » — SPEC-ARCHI-034…) ───
+       Sans changement de comportement : chaque sous-fonction reprend, dans le
+       même ordre, le bloc qu'elle remplace. Les lots B-* d'élimination des
+       branches `net.enLigne()` n'éditent chacun que SA fonction :
+         frameJoueurs     — simulation des joueurs locaux, journal d'inventaire (B-INV)
+         frameEntites     — créatures, butin, dégâts, donjons, succès (B-VIE)
+         frameTemps       — heure, durée de partie, économie (B-INV, B-ENV)
+         frameMonde       — world.tick, apparitions (B-ENV)
+         frameConteneurs  — cuisson des fourneaux (B-INV)
+         frameFinDePartie — sauvegarde automatique, mort, cauchemar (B-RESEAU, B-VIE)
+         frameMondeInterface — le monde continue inventaire ouvert (B-ENV, B-INV)
+         frameReseau      — interpolation des joueurs distants (B-RESEAU) */
+    function frameJoueurs(dt) {
+      // chaque joueur local est simule, quelle que soit sa source d'entrees
+      for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
+      // B1 : envoi groupé, en fin d'image, des diminutions journalisées
+      // pendant la simulation (B1.md § 6) — jamais avant, un INV_MAJ arrivé
+      // entre-temps effacerait un journal vidé trop tôt
+      if (net.enLigne()) for (var qj = 0; qj < equipe.length; qj++) purgerJournalInv(equipe[qj]);
+    }
+
+    function frameEntites(dt) {
+      // entites et butin : le butin va au joueur le plus proche
+      // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)
+      var ev = net.enLigne() ? { damage: 0, picked: [] }
+                             : entities.update(dt, player.state, { reputation: world.reputation,
+                               hiver: !!(DC.saison && DC.saison(g.time).nom === 'hiver') });
+      if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
+      for (var i = 0; i < ev.picked.length; i++) {
+        var p2 = ev.picked[i];
+        var dest = joueurLePlusProche(p2.entity ? p2.entity.pos : player.state.pos);
+        var reste = dest.pickUp(p2.id, p2.n, p2.data);
+        if (reste > 0) entities.dropItem(dest.state.pos.x, dest.state.pos.y + 0.5,
+                                         dest.state.pos.z, p2.id, reste, null, p2.data);
+        else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
+      }
+      entities.mergeItems();
+      surveillerDonjons();
+      tickerSucces(dt);
+    }
+
+    function frameTemps(dt) {
+      // temps, apparitions, cultures
+      g.time += dt;
+      g.duree = (g.duree || 0) + dt;
+      // L45 : frais de garde de la banque et pousse/trésor de l'économie, au
+      // changement de jour seulement (jamais en ligne : c'est le serveur qui y fait foi)
+      if (g.economie && !net.enLigne()) {
+        var jourEco = Math.floor(g.time / DC.DAY_LENGTH);
+        if (g.dernierJourEco === undefined) g.dernierJourEco = jourEco;
+        else if (jourEco > g.dernierJourEco) {
+          if (world.banque) MC.Economie.appliquerFraisBanque(world.banque.slots, jourEco - g.dernierJourEco);
+          var saisonJour = DC.saison ? DC.saison(g.time).nom : 'ete';
+          for (var jourAvance = g.dernierJourEco + 1; jourAvance <= jourEco; jourAvance++) {
+            MC.Economie.tickJour(g.economie, jourAvance, saisonJour);
+          }
+          g.dernierJourEco = jourEco;
+        }
+      }
+    }
+
+    function frameMonde(dt) {
+      world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time,
+                                  circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
+      spawnT += dt;
+      if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
+        spawnT = 0;
+        if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
+          entities.trySpawn(player.state, DC.isNight(g.time), null,
+                            MC.Modes.plafondsEntites(regles));
+          if (regles.monstres) entities.trySpawnSouterrain(player.state, null, MC.Modes.plafondsEntites(regles));
+        }
+        if (!DC.isNight(g.time)) entities.burnUndead(false);
+      }
+    }
+
+    function frameConteneurs(dt) {
+      // B1 (étape 8, B1.md § 12) : en ligne, c'est le SERVEUR qui fait
+      // cuire les fourneaux posés (registre `conteneursPoses`) — les
+      // simuler aussi ici les ferait cuire deux fois plus vite.
+      if (!net.enLigne()) {
+        for (var fk in furnaces) {
+          if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
+        }
+      }
+    }
+
+    function frameFinDePartie(dt) {
+      autoSaveT += dt;
+      if (autoSaveT >= 60) { autoSaveT = 0; doSave(false); }
+
+      // mort : en cauchemar, un seul joueur suffit a perdre la partie
+      if (MC.Split.partiePerdue(equipe, regles)) {
+        var finT = g.histoire && !finRecit(g.histoire) ? MC.Recits.signaler(g.histoire, { type: 'mort' }) : [];
+        perdrePartie();
+        finT.forEach(function (n) { if (n.type === 'fin') finHistoire(n); });
+      }
+      else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
+    }
+
+    function frameMondeInterface(dt) {
+      world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time,
+                                  circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
+      if (!net.enLigne()) {
+        for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
+      }
+    }
+
+    function frameReseau(dt) {
+      if (net.enLigne()) net.interpoler(dt);
+    }
+
     function frame(now) {
       requestAnimationFrame(frame);
       var dt = Math.min((now - last) / 1000, 0.05);   // clamp : évite l'explosion après un onglet inactif
@@ -2978,93 +3319,21 @@
       }
 
       if (actif) {
-        // chaque joueur local est simule, quelle que soit sa source d'entrees
-        for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
-        // B1 : envoi groupé, en fin d'image, des diminutions journalisées
-        // pendant la simulation (B1.md § 6) — jamais avant, un INV_MAJ arrivé
-        // entre-temps effacerait un journal vidé trop tôt
-        if (net.enLigne()) for (var qj = 0; qj < equipe.length; qj++) purgerJournalInv(equipe[qj]);
-
-        // entites et butin : le butin va au joueur le plus proche
-        // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)
-        var ev = net.enLigne() ? { damage: 0, picked: [] }
-                               : entities.update(dt, player.state, { reputation: world.reputation,
-                                 hiver: !!(DC.saison && DC.saison(g.time).nom === 'hiver') });
-        if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
-        for (var i = 0; i < ev.picked.length; i++) {
-          var p2 = ev.picked[i];
-          var dest = joueurLePlusProche(p2.entity ? p2.entity.pos : player.state.pos);
-          var reste = dest.pickUp(p2.id, p2.n, p2.data);
-          if (reste > 0) entities.dropItem(dest.state.pos.x, dest.state.pos.y + 0.5,
-                                           dest.state.pos.z, p2.id, reste, null, p2.data);
-          else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
-        }
-        entities.mergeItems();
-        surveillerDonjons();
-        tickerSucces(dt);
-
-        // temps, apparitions, cultures
-        g.time += dt;
-        g.duree = (g.duree || 0) + dt;
-        // L45 : frais de garde de la banque et pousse/trésor de l'économie, au
-        // changement de jour seulement (jamais en ligne : c'est le serveur qui y fait foi)
-        if (g.economie && !net.enLigne()) {
-          var jourEco = Math.floor(g.time / DC.DAY_LENGTH);
-          if (g.dernierJourEco === undefined) g.dernierJourEco = jourEco;
-          else if (jourEco > g.dernierJourEco) {
-            if (world.banque) MC.Economie.appliquerFraisBanque(world.banque.slots, jourEco - g.dernierJourEco);
-            var saisonJour = DC.saison ? DC.saison(g.time).nom : 'ete';
-            for (var jourAvance = g.dernierJourEco + 1; jourAvance <= jourEco; jourAvance++) {
-              MC.Economie.tickJour(g.economie, jourAvance, saisonJour);
-            }
-            g.dernierJourEco = jourEco;
-          }
-        }
-        world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time,
-                                    circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
-        spawnT += dt;
-        if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
-          spawnT = 0;
-          if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
-            entities.trySpawn(player.state, DC.isNight(g.time), null,
-                              MC.Modes.plafondsEntites(regles));
-            if (regles.monstres) entities.trySpawnSouterrain(player.state, null, MC.Modes.plafondsEntites(regles));
-          }
-          if (!DC.isNight(g.time)) entities.burnUndead(false);
-        }
-
-        // B1 (étape 8, B1.md § 12) : en ligne, c'est le SERVEUR qui fait
-        // cuire les fourneaux posés (registre `conteneursPoses`) — les
-        // simuler aussi ici les ferait cuire deux fois plus vite.
-        if (!net.enLigne()) {
-          for (var fk in furnaces) {
-            if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
-          }
-        }
-
-        autoSaveT += dt;
-        if (autoSaveT >= 60) { autoSaveT = 0; doSave(false); }
-
-        // mort : en cauchemar, un seul joueur suffit a perdre la partie
-        if (MC.Split.partiePerdue(equipe, regles)) {
-          var finT = g.histoire && !finRecit(g.histoire) ? MC.Recits.signaler(g.histoire, { type: 'mort' }) : [];
-          perdrePartie();
-          finT.forEach(function (n) { if (n.type === 'fin') finHistoire(n); });
-        }
-        else if (MC.Split.tousMorts(equipe)) { audio.play('mort'); input.setState('dead'); }
+        frameJoueurs(dt);
+        frameEntites(dt);
+        frameTemps(dt);
+        frameMonde(dt);
+        frameConteneurs(dt);
+        frameFinDePartie(dt);
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
-        world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time,
-                                    circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
-        if (!net.enLigne()) {
-          for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
-        }
+        frameMondeInterface(dt);
         render.setHighlight(null);
       } else {
         render.setHighlight(null);
       }
 
-      if (net.enLigne()) net.interpoler(dt);
+      frameReseau(dt);
       /* On passe TOUJOURS l objet reseau, meme hors ligne : ses tables sont
          alors vides et la meme boucle de reconciliation retire les maillages
          des joueurs partis. Appeler la synchronisation seulement en ligne
@@ -3139,6 +3408,8 @@
 
     // démarrage : menu, monde prêt derrière
     placeAtSpawn();
+    // le poste connaît l'état de session dès le départ : le menu est un état de pause (SPEC-ARCHI-009)
+    if (poste) poste.surEtatSession(input.state);
     afficherMenu();
     requestAnimationFrame(frame);
 

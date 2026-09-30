@@ -13,5 +13,21 @@
     "p95MsMax": 110,
     "reductionMoyenneMin": 0.20,
     "reductionPlanMin": 20
+  },
+  "sauvegarde": {
+    "blocs": [10000, 100000, 1000000],
+    "msMax": { "10000": 25, "100000": 50, "1000000": 700 }
+  },
+  "latence": {
+    "echantillons": 2000,
+    "echauffement": 200,
+    "pingMoyMsMax": 2,
+    "pingP95MsMax": 5,
+    "entreeMoyMsMax": 17,
+    "entreeP95MsMax": 34
+  },
+  "demarrage": {
+    "essais": 5,
+    "msMax": 3000
   }
 }

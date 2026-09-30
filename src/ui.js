@@ -982,23 +982,77 @@
         '</div></div>';
     }
 
-    function menuParties(parties) {
+    /* ── Poste (chantier ARCHI) : état du réseau et actions propres au serveur
+       de jeu local. Le libellé vient d'ETAT_RESEAU (jamais de net.enLigne()). */
+    function libelleReseau(etat) {
+      if (etat === 'ouvert') return 'ouvert au réseau';
+      if (etat === 'distant') return 'serveur distant';
+      return 'fermé (vous seul)';
+    }
+    function boutonsReseau(infos) {
+      if (!infos || !infos.poste || infos.reseau === 'distant') return '';
+      return '<button id="btn-reseau">' + (infos.reseau === 'ouvert' ? 'Fermer au réseau' : 'Ouvrir au réseau') + '</button>';
+    }
+    function brancherPoste(infos) {
+      if (!infos || !infos.poste) return;
+      var br = overlay.querySelector('#btn-reseau');
+      if (br) br.onclick = function () { hooks.onReseau && hooks.onReseau(infos.reseau !== 'ouvert'); };
+      var ba = overlay.querySelector('#btn-arret');
+      if (ba) ba.onclick = function () { hooks.onArret && hooks.onArret(); };
+    }
+    // message de retour d'une action du poste (import, réseau…) : dans l'écran s'il est là, sinon en bulle
+    function messagePoste(texte, avertissement) {
+      var el = overlay.querySelector('#msg-poste');
+      if (el) { el.textContent = texte; el.className = 'hint' + (avertissement ? ' warn' : ''); }
+      else toast(texte, avertissement ? 'warn' : undefined);
+    }
+
+    function menuParties(parties, infos) {
       var liste = parties.length
         ? parties.map(lignePartie).join('')
         : '<p class="vide">Aucune partie enregistrée.</p>';
+      var locales = infos && infos.locales ? infos.locales : 0;
       showScreen(
         '<div class="panel large">' +
         '<h1>MiniCraft</h1>' +
-        '<p class="sub">vos parties</p>' +
+        '<p class="sub">vos parties' + (infos && infos.poste ? ' · réseau <b>' + libelleReseau(infos.reseau) + '</b>' : '') + '</p>' +
+        (locales ? '<div class="bandeau"><p>' + locales + ' partie' + (locales > 1 ? 's' : '') +
+          ' trouvée' + (locales > 1 ? 's' : '') + ' dans ce navigateur (ancien mode solo).</p><div class="row">' +
+          '<button id="btn-import-locales" class="primary">Les importer dans le jeu</button>' +
+          '<button id="btn-export-locales">Exporter (fichier)</button></div></div>' : '') +
         '<div class="parties">' + liste + '</div>' +
         '<div class="row">' +
         '<button id="btn-nouvelle" class="primary">Nouvelle partie</button>' +
         '<button id="btn-multi">Multijoueur</button>' +
         '<button id="btn-aide">Commandes</button>' +
         '<button id="btn-options">Options</button>' +
+        (infos && infos.poste ? '<button id="btn-import-fichier">Importer un fichier…</button>' + boutonsReseau(infos) +
+          '<button id="btn-arret">Quitter le jeu</button>'
+          // SPEC-ARCHI-015 (b), lot A0-pré : l'ancien client (parties dans le navigateur) sait les exporter
+          : (parties.length ? '<button id="btn-export-locales">Exporter mes parties</button>' : '')) +
         '</div>' +
+        '<p class="hint" id="msg-poste"></p>' +
         '<p class="hint" id="lock-hint"></p></div>');
       overlay.querySelector('#btn-options').onclick = function () { ecranOptions(); };
+      brancherPoste(infos);
+      var bl = overlay.querySelector('#btn-import-locales');
+      if (bl) bl.onclick = function () { hooks.onImporterLocales && hooks.onImporterLocales(); };
+      var be = overlay.querySelector('#btn-export-locales');
+      if (be) be.onclick = function () { hooks.onExporterLocales && hooks.onExporterLocales(); };
+      var bf = overlay.querySelector('#btn-import-fichier');
+      if (bf) bf.onclick = function () {
+        var champ = document.createElement('input');
+        champ.type = 'file'; champ.accept = '.json,application/json';
+        champ.onchange = function () {
+          var fichier = champ.files && champ.files[0];
+          if (!fichier) return;
+          var lecteur = new FileReader();
+          lecteur.onload = function () { hooks.onImporterFichier && hooks.onImporterFichier(String(lecteur.result)); };
+          lecteur.onerror = function () { messagePoste('Fichier illisible.', true); };
+          lecteur.readAsText(fichier);
+        };
+        champ.click();
+      };
 
       overlay.querySelector('#btn-nouvelle').onclick = function () { hooks.onNouvelle && hooks.onNouvelle(); };
       overlay.querySelector('#btn-multi').onclick = function () { hooks.onMulti && hooks.onMulti(); };
@@ -1233,6 +1287,41 @@
       if (bn) bn.onclick = function () { hooks.onPlay && hooks.onPlay(true); };
     }
 
+    /* SPEC-ARCHI-017 : écran d'attente à étapes visibles (serveur, connexion,
+       génération du terrain) ; en cas d'échec il dit la cause et propose une
+       action — jamais un écran figé. `etapes` : [{ nom, etat }] avec etat dans
+       'attente' | 'cours' | 'ok' | 'erreur' ; `actions` : [{ texte, fn, primaire }]. */
+    function ecranAttente(opts) {
+      opts = opts || {};
+      var marques = { attente: '○', cours: '◔', ok: '●', erreur: '✕' };
+      var lignes = (opts.etapes || []).map(function (e) {
+        return '<li class="etape ' + (e.etat || 'attente') + '"><span class="marque">' + (marques[e.etat] || '○') + '</span> ' + ech(e.nom) + '</li>';
+      }).join('');
+      var actions = (opts.actions || []).map(function (a, i) {
+        return '<button class="' + (a.primaire ? 'primary' : '') + '" data-action="' + i + '">' + ech(a.texte) + '</button>';
+      }).join('');
+      showScreen(
+        '<div class="panel attente' + (opts.erreur ? ' erreur' : '') + '" id="ecran-attente">' +
+        '<h1>' + ech(opts.titre || 'MiniCraft') + '</h1>' +
+        (opts.sousTitre ? '<p class="sub">' + ech(opts.sousTitre) + '</p>' : '') +
+        (lignes ? '<ul class="etapes">' + lignes + '</ul>' : '') +
+        (opts.detail ? '<p class="detail">' + opts.detail + '</p>' : '') +
+        (actions ? '<div class="row">' + actions + '</div>' : '') +
+        '</div>');
+      Array.prototype.forEach.call(overlay.querySelectorAll('button[data-action]'), function (b) {
+        b.onclick = function () {
+          var a = (opts.actions || [])[parseInt(b.getAttribute('data-action'), 10)];
+          if (a && a.fn) a.fn();
+        };
+      });
+    }
+    // « Quitter le jeu » : le serveur s'arrête, l'onglet peut être fermé
+    function ecranArrete() {
+      ecranAttente({ titre: 'Jeu arrêté', sousTitre: 'Votre partie est sauvegardée.',
+                     detail: 'Le serveur de jeu s\'est arrêté. Vous pouvez fermer cet onglet. ' +
+                             'Pour rejouer, relancez <code>node server.js</code> (ou <code>start.cmd</code> / <code>start.sh</code>).' });
+    }
+
     var dernieresInfosPause = {};
     function menuPause(infos) {
       infos = infos || dernieresInfosPause;
@@ -1244,7 +1333,8 @@
         (infos.nom ? ech(infos.nom) + ' — ' : '') +
         (infos.mode || '') + (infos.difficulte ? ' · ' + infos.difficulte : '') +
         (infos.graine !== undefined ? ' · graine <code>' + infos.graine + '</code>' : '') +
-        (infos.enLigne ? ' · <b>en ligne</b>' : '') + '</p>' +
+        (infos.reseau ? ' · réseau <b>' + libelleReseau(infos.reseau) + '</b>'
+                      : (infos.enLigne ? ' · <b>en ligne</b>' : '')) + '</p>' +
         commandes() +
         '<div class="row">' +
         '<button id="btn-resume" class="primary">Reprendre</button>' +
@@ -1252,10 +1342,14 @@
         '<button id="btn-affichage">Affichage</button>' +
         '<button id="btn-options">Options</button>' +
         '<button id="btn-succes">Succès</button>' +
+        boutonsReseau(infos) +
         '<button id="btn-quit">Menu principal</button>' +
+        (infos.poste ? '<button id="btn-arret">Quitter le jeu</button>' : '') +
         '</div>' +
+        '<p class="hint" id="msg-poste"></p>' +
         '<p class="hint" id="lock-hint"></p>' +
         '</div>');
+      brancherPoste(infos);
       overlay.querySelector('#btn-resume').onclick = function () { hooks.onResume && hooks.onResume(); };
       overlay.querySelector('#btn-save').onclick = function () { hooks.onSave && hooks.onSave(); };
       overlay.querySelector('#btn-affichage').onclick = function () { ecranAffichage(); };
@@ -2019,6 +2113,8 @@
       panneauSucces: panneauSucces, fermerSucces: fermerSucces, succesOuverts: succesOuverts,
       menuPrincipal: menuPrincipal, menuParties: menuParties, menuNouvelle: menuNouvelle,
       menuMulti: menuMulti, ecranAide: ecranAide, menuPause: menuPause, ecranMort: ecranMort,
+      ecranAttente: ecranAttente, ecranArrete: ecranArrete, messagePoste: messagePoste,
+      estMenuParties: function () { return !!overlay.querySelector('#btn-nouvelle') && !!overlay.querySelector('.parties'); },
       ecranOptions: ecranOptions, majTouches: majTouches, zoneHud: zoneHud,
       ecranAffichage: ecranAffichage, appliquerHud: appliquerHud,
       hideScreen: hideScreen, setLockHint: setLockHint,

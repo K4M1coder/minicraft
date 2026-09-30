@@ -162,6 +162,22 @@
   #boot { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
           z-index: 20; background: #0b0e13; font-size: 14px; opacity: .7; }
 
+  /* ─── écran d'attente et d'erreur du démarrage (SPEC-ARCHI-016/017) ────── */
+  .attente { min-width: min(92vw, 420px); }
+  .attente .etapes { list-style: none; margin: 14px auto 6px; padding: 0; text-align: left; display: inline-block; }
+  .attente .etape { padding: 4px 0; opacity: .55; font-size: 14px; }
+  .attente .etape.cours, .attente .etape.ok { opacity: 1; }
+  .attente .etape .marque { display: inline-block; width: 1.4em; color: #6cc06c; }
+  .attente .etape.cours .marque { color: #e0a33f; }
+  .attente .etape.erreur { opacity: 1; color: #ff8a80; }
+  .attente .etape.erreur .marque { color: #e0453f; }
+  .attente .detail { font-size: 13px; line-height: 1.6; opacity: .85; margin: 12px 0; max-width: 460px; }
+  .attente .detail code { background: rgba(255,255,255,.08); padding: 1px 6px; border-radius: 4px; }
+  .attente.erreur h1 { background: linear-gradient(90deg, #e0453f, #e0a33f); -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .bandeau { border: 1px solid rgba(255,255,255,.18); border-radius: 8px; padding: 10px 14px; margin: 0 0 14px; background: rgba(255,255,255,.04); font-size: 13px; }
+  .bandeau p { margin-bottom: 8px; }
+  .hint.warn { color: #ff8a80; opacity: .95; }
+
   /* ─── échanges avec un villageois ─────────────────────────────────────── */
   .trades { display: flex; flex-direction: column; gap: 6px; }
   .trade { display: flex; align-items: center; gap: 8px; padding: 6px 10px;

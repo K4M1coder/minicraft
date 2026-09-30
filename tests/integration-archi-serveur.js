@@ -311,7 +311,11 @@ async function scenarioMemeProtocole() {
     const fs = require('fs'), path = require('path');
     ['src/game.js', 'src/net.js'].forEach(f => {
       const txt = fs.readFileSync(path.join(A.RACINE, f), 'utf8');
-      ok(!/require\s*\(\s*['"][^'"]*server(\.js)?['"]/.test(txt) && !/server\.js/.test(txt.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '')), 'SPEC-ARCHI-006 : ' + f + ' ne référence jamais server.js (aucun accès direct au monde du serveur)');
+      // ni chargement du module serveur (require/import/balise script), ni accès à ses objets : seul le protocole les relie
+      const code = txt.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
+      const charge = /\brequire\s*\(/.test(code) || /(^|[;\s])import\s+(\{|\*|\w+\s+from)|\bimport\s*\(/m.test(code) || /src\s*=\s*['"][^'"]*server\.js/.test(code)
+        || /\bsauvegarderMondeSync\b|\betatMonde\b|\bappliquerEtatMonde\b/.test(code);
+      ok(!charge, 'SPEC-ARCHI-006 : ' + f + ' ne charge jamais server.js ni ne touche à l\'état du monde du serveur (seul le protocole les relie)');
     });
     await ferme.arreter(); await ouvert.arreter();
   } finally { supprimerDossier(d1); supprimerDossier(d2); }

@@ -60,18 +60,28 @@ function copierArbre(destDir) {
     fs.copyFileSync(path.join(RACINE, 'src', f), path.join(destDir, 'src', f));
     copies.push('src/' + f);
   });
+  /* SPEC-ARCHI-016 : le mode local fermé range les parties dans `parties/`
+     (index + un fichier de monde par partie, SPEC-ARCHI-013) ; le dossier est
+     livré vide, avec un mot d'explication, plutôt que créé à la première partie. */
+  fs.mkdirSync(path.join(destDir, 'parties'), { recursive: true });
+  fs.writeFileSync(path.join(destDir, 'parties', 'LISEZMOI.txt'),
+    'Vos parties MiniCraft sont rangées ici : un index (index.json) et un fichier de monde par partie.\n' +
+    'Copiez ce dossier pour sauvegarder ou déplacer vos parties ; ne le modifiez pas pendant que le jeu tourne.\n');
+  copies.push('parties/LISEZMOI.txt');
   return copies;
 }
 
 const LANCEUR_CMD =
 `@echo off
-rem MiniCraft — lanceur Windows. Sans argument : sert le jeu et ouvre le navigateur.
+rem MiniCraft — lanceur Windows. Sans argument : démarre le serveur de jeu LOCAL (fermé au réseau,
+rem boucle locale seulement) et ouvre le navigateur. Le serveur s'arrête quand l'onglet est fermé.
 cd /d "%~dp0"
 node server.js %*
 `;
 const LANCEUR_SH =
 `#!/bin/sh
-# MiniCraft — lanceur macOS/Linux. Sans argument : sert le jeu et ouvre le navigateur.
+# MiniCraft — lanceur macOS/Linux. Sans argument : démarre le serveur de jeu LOCAL (fermé au réseau,
+# boucle locale seulement) et ouvre le navigateur. Le serveur s'arrête quand l'onglet est fermé.
 cd "$(dirname "$0")"
 exec node server.js "$@"
 `;

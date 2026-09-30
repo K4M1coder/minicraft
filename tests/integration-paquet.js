@@ -58,6 +58,22 @@ async function attendrePret(port) {
   ok(fs.readFileSync(path.join(dest, 'start.sh'), 'utf8').indexOf('node server.js') >= 0,
      'SPEC-PACK-001 : le lanceur macOS/Linux démarre bien le serveur');
 
+  // ── SPEC-ARCHI-016 : le lanceur démarre le mode local fermé par défaut, et l'archive embarque ce dont il a besoin
+  ['start.cmd', 'start.sh'].forEach(f => {
+    const txt = fs.readFileSync(path.join(dest, f), 'utf8');
+    const lignes = txt.split(/\r?\n/).filter(l => /node server\.js/.test(l) && !/^\s*(rem|#)/i.test(l));
+    ok(lignes.length === 1 && !/--ouvert|--serveur|--port/.test(lignes[0]),
+       'SPEC-ARCHI-016 : ' + f + ' lance le mode par défaut (local fermé au réseau), sans --ouvert ni --serveur', lignes.join(' | '));
+  });
+  ok(fs.existsSync(path.join(dest, 'parties', 'LISEZMOI.txt')), "SPEC-ARCHI-016 : l'archive embarque le dossier des parties");
+  ['contrats-archi.js', 'parties-fichier.js', 'poste.js'].forEach(f => {
+    ok(fs.existsSync(path.join(dest, 'src', f)), "SPEC-ARCHI-016 : l'archive embarque src/" + f);
+  });
+  ok(fs.existsSync(path.join(dest, 'README.md')) && !/python -m http\.server/.test(fs.readFileSync(path.join(dest, 'README.md'), 'utf8')),
+     'SPEC-ARCHI-016 : le README embarqué ne présente plus python -m http.server comme moyen de jouer');
+  const pageAcc = fs.readFileSync(path.join(dest, 'index.html'), 'utf8');
+  ok(/node server\.js/.test(pageAcc) && /start\.cmd/.test(pageAcc), "SPEC-ARCHI-016 : la page d'accueil embarquée explique comment lancer le serveur");
+
   // ── l'archive produite sert vraiment le jeu ──────────────────────────────
   const srv = spawn(process.execPath, [path.join(dest, 'server.js'), '--port', String(PORT)],
     { cwd: dest, stdio: ['ignore', 'pipe', 'pipe'] });

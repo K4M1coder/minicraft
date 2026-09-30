@@ -17,20 +17,42 @@ commit, la porte G10 vérifie l'accord entre le jeu et le journal).
 
 ## Lancer
 
-**En solo**, un simple serveur de fichiers suffit :
+**Node.js est requis pour jouer, même seul** (SPEC-ARCHI-016). Techniquement le
+jeu passe TOUJOURS par un serveur de jeu — le même programme, la même
+architecture, que vous jouiez seul (réseau *fermé*), à plusieurs en écran
+partagé, ou avec d'autres joueurs (réseau *ouvert*, jusqu'à 100). Ce serveur
+simule le monde, range vos parties sur disque et sert la page du jeu.
 
 ```bash
-cd minicraft
-python -m http.server 8777
-# http://127.0.0.1:8777/index.html
+node server.js          # ou start.cmd (Windows) / start.sh (macOS, Linux) / l'exécutable fourni
+# http://localhost:8080 — le navigateur s'ouvre tout seul
 ```
 
-**Avec le multijoueur**, lancez le serveur de jeu — il sert aussi les fichiers :
+Ouvrir `index.html` directement (double-clic, `file://`) ou le servir avec un
+simple serveur de fichiers **ne lance plus de partie** : la page affiche alors un
+écran qui explique comment démarrer le serveur.
 
-```bash
-node server.js
-# http://localhost:8080  ·  les autres joueurs : http://<votre-ip>:8080
-```
+**Réseau fermé par défaut.** Sans option, le serveur n'écoute que la boucle
+locale (`127.0.0.1` et `::1`, jamais `0.0.0.0`) et refuse toute page tierce
+(contrôle de l'en-tête `Origin`) : personne d'autre ne peut s'y connecter. Un
+seul poste (un onglet) est admis à la fois. Le monde se met en **pause** dès que
+vous ouvrez le menu (jamais quand vous ouvrez l'inventaire) et le jeu se
+sauvegarde à chaque pause, puis toutes les 45 s. Fermer l'onglet sauvegarde et
+arrête le serveur dix secondes plus tard ; « Quitter le jeu » l'arrête tout de suite.
+
+**Ouvrir au réseau.** Depuis le menu (pause ou principal), *Ouvrir au réseau*
+ouvre le serveur aux autres machines **sans redémarrer** ni couper votre partie :
+`http://<votre-ip>:8080` pour les autres joueurs. *Fermer au réseau* renvoie chez
+eux les joueurs distants. Dans un monde ouvert il n'y a plus de pause (d'autres
+joueurs y vivent) et le serveur ne s'arrête plus tout seul. Pour héberger dès le
+lancement : `node server.js --ouvert` (ou `--serveur` pour un serveur dédié).
+
+**Parties.** Elles vivent dans le dossier `parties/` (un index et un fichier de
+monde par partie ; `--dossier-parties` le déplace). Vos anciennes parties
+(solo, stockées dans le navigateur) : le menu propose de les **importer** si le
+navigateur les trouve sur la même adresse ; sinon, exportez-les depuis l'ancienne
+version (bouton *Exporter mes parties*, fichier `minicraft-parties.json`) puis
+utilisez *Importer un fichier…* dans le nouveau menu.
 
 Lancé **sans aucun paramètre**, le serveur ouvre automatiquement le jeu dans le
 navigateur (SPEC-PACK-001) ; dès qu'un paramètre est donné (même juste
@@ -40,10 +62,13 @@ Options de la ligne de commande (SPEC-PACK-002) — `--aide` les liste aussi :
 
 | Paramètre | Rôle | Défaut |
 | --- | --- | --- |
-| `--serveur` | serveur seul, sans partie locale | désactivé |
-| `--port <n>` | port d'écoute | `8080` |
+| `--ouvert` | ouvre le serveur au réseau dès le lancement | fermé (boucle locale seule) |
+| `--serveur` | serveur dédié, sans partie locale (toujours ouvert) | désactivé |
+| `--port <n>` | port d'écoute (`0` = port libre au choix, imprimé sur une ligne `MC_PORT=<n>`) | `8080`, puis le premier libre jusqu'à `8099` |
+| `--partie <id>` | charge une partie du dossier des parties | aucune |
+| `--dossier-parties <dossier>` | dossier des parties | `parties` |
 | `--graine <n>` | graine de génération du monde | aléatoire |
-| `--monde <fichier>` | fichier de sauvegarde du monde (persistance, SPEC-SERVEUR-001) | aucune |
+| `--monde <fichier>` | fichier de monde unique (serveur dédié, SPEC-SERVEUR-001) | aucun |
 | `--max-joueurs <n>` | nombre maximal de joueurs simultanés | `8` |
 | `--pvp <on\|off>` | joueur contre joueur | `off` |
 | `--liste-blanche` | seuls les joueurs inscrits entrent | désactivée |
@@ -51,12 +76,12 @@ Options de la ligne de commande (SPEC-PACK-002) — `--aide` les liste aussi :
 | `--aide` | affiche la liste et s'arrête | — |
 
 ```bash
-node server.js --port 8080 --graine 4242 --monde parties/survie.json --max-joueurs 12 --liste-blanche --admin "un-secret-long"
+node server.js --ouvert --port 8080 --graine 4242 --monde parties/survie.json --max-joueurs 12 --liste-blanche --admin "un-secret-long"
 ```
 
 Un paramètre inconnu ou une valeur invalide arrête le programme avec un
-message clair (code de sortie non nul) ; `--aide` affiche la liste et
-s'arrête proprement (code 0).
+message clair (code de sortie non nul) ; un port imposé (`--port`) déjà occupé
+aussi. `--aide` affiche la liste et s'arrête proprement (code 0).
 
 L'ancien usage positionnel `node server.js 8080` reste accepté, par
 compatibilité.
@@ -64,10 +89,6 @@ compatibilité.
 Options historiques par variable d'environnement (graine/mode/difficulté de
 la partie, indépendantes des paramètres ci-dessus) : `MC_GRAINE`, `MC_MODE`,
 `MC_DIFFICULTE`.
-
-> L'ouverture directe par double-clic (`file://`) devrait fonctionner en solo — ni
-> module ES, ni `fetch` — mais cela **n'a pas pu être vérifié** ici, l'outil de test
-> bloquant le protocole `file:`.
 
 ### Serveur seul persistant (SPEC-SERVEUR-001)
 
@@ -117,7 +138,8 @@ node tools/paquet.js dist --sans-sea
 Produit toujours une **archive portable** : `dist/` contenant `index.html`,
 `admin.html`, `server.js`, `src/*`, et un lanceur par système —
 `start.cmd` (Windows) et `start.sh` (macOS/Linux), tous deux équivalents à
-`node server.js` sans paramètre (sert le jeu, ouvre le navigateur).
+`node server.js` sans paramètre (serveur local fermé au réseau, ouvre le navigateur),
+et un dossier `parties/` vide qui accueillera vos parties.
 
 Tente en plus de préparer un **exécutable autonome** pour l'OS courant via
 Node SEA (`node --experimental-sea-config`, disponible nativement depuis
@@ -519,7 +541,8 @@ touches (six bits), prédit son propre mouvement avec les mêmes modules, puis r
 les entrées non confirmées sur chaque état reçu : l'écart est nul quand tout va bien.
 Un budget de temps empêche d'accélérer sa simulation. Le rendu reste entièrement
 dans le navigateur. Les joueurs distants sont affichés avec leur nom. Combinable avec l'écran partagé :
-un poste peut rejoindre à quatre. La perte de connexion bascule en solo sans planter.
+un poste peut rejoindre à quatre. Quand la connexion au serveur se perd, le jeu retourne
+au menu, qui dit ce qui se passe (serveur injoignable) et propose de réessayer.
 
 ---
 
@@ -601,8 +624,9 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 
 - L'obscurité n'influence pas l'apparition des monstres en surface, qui dépend
   de l'heure seule.
-- Le mode histoire se joue en solo (hors ligne), en trois archétypes (épopée,
-  enquête, colonie).
+- Le mode histoire (trois archétypes : épopée, enquête, colonie) n'est pas encore
+  porté sur le serveur : il ne se joue que sur la page de test (chantier « solo =
+  serveur », lot P-HIST).
 - La météo ne change pas le vol des avions.
 - En ligne, inventaire, craft, fourneaux et cultures restent côté client ; le
   serveur valide positions, stats, blocs et combats, pas le contenu des sacs.
@@ -620,8 +644,10 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
   « utiliser » et l'on descend avec le bouton de vol.
 - Les créatures ne poursuivent que le joueur 1 d'un écran partagé.
 - Pas de greedy meshing ; tout tourne sur le thread principal.
-- Les sauvegardes solo sont locales au navigateur ; le serveur persiste son monde
-  avec `--monde <fichier>`.
+- Les parties vivent sur le disque du serveur (dossier `parties/`) ; seules les
+  anciennes parties du navigateur passent par l'import (voir « Lancer »). Le serveur
+  conserve sans encore les jouer les cartes explorées, l'histoire, les succès et les
+  véhicules d'une partie importée.
 - Le journal d'administration ne couvre pas encore coffres et échanges.
 - Le PvP ne s'applique qu'en ligne : en écran partagé, les joueurs locaux ne se
   combattent pas.

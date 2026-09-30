@@ -519,8 +519,8 @@ let derniereEmpreinte = null;
 let derniereHeureSauvee = null;
 let sauvegardeRedemandee = null;       // raison d'une sauvegarde événementielle demandée pendant une écriture en vol
 function empreinteEtat(json) { return json.replace(/"heure":[-0-9.eE+]+/, '"heure":0'); }
-function apresSauvegarde(raison) {
-  journal('sauvegarde du monde (' + raison + ')');
+function apresSauvegarde(raison, ms, octets) {
+  journal('sauvegarde du monde (' + raison + ')' + (ms !== undefined ? ' — sérialisation ' + ms.toFixed(1) + ' ms, ' + Math.round(octets / 1024) + ' Ko' : ''));
   if (partieActive) MC.Saves.majMeta(stockageParties, partieActive.id, { duree: Math.round(dureeJeu) });
 }
 let dureeJeu = 0;                      // secondes de jeu réellement écoulées (hors pause, avec un joueur), pour l'index des parties
@@ -532,8 +532,10 @@ function sauvegarderMondeAsync(raison, evenement) {
     return;
   }
   let data;
+  const t0 = process.hrtime.bigint();
   try { data = JSON.stringify(etatMonde()); }
   catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
+  const msSerialisation = Number(process.hrtime.bigint() - t0) / 1e6;     // SPEC-ARCHI-012 : banc tests/bench-sauvegarde.js
   const emp = empreinteEtat(data);
   if (derniereEmpreinte !== null && emp === derniereEmpreinte && (!evenement || heure === derniereHeureSauvee)) {
     journal('sauvegarde omise (' + raison + ') : rien n a change depuis la précédente');
@@ -545,7 +547,7 @@ function sauvegarderMondeAsync(raison, evenement) {
   const heureEcrite = heure;
   const fin = (ok) => {
     sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
-    if (ok) { derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison); }
+    if (ok) { derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison, msSerialisation, data.length); }
     if (sauvegardeRedemandee) { const r = sauvegardeRedemandee; sauvegardeRedemandee = null; sauvegarderMondeAsync(r, true); }
   };
   try { fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
@@ -804,6 +806,16 @@ function abriServeur(x, z) {
   return -1;
 }
 
+/* MC_TEST_BLOCS=N : fabrique N blocs modifiés (overrides) au démarrage — réservé au
+   banc de sauvegarde (tests/bench-sauvegarde.js, SPEC-ARCHI-012), jamais en
+   exploitation. Loin de l'origine, ils ne touchent ni le spawn ni un chunk chargé. */
+if (process.env.MC_TEST_BLOCS) {
+  const n = parseInt(process.env.MC_TEST_BLOCS, 10) || 0;
+  for (let i = 0; i < n; i++) {
+    monde.overrides.set((100000 + (i % 1000)) + ',' + (20 + (i % 60)) + ',' + (100000 + Math.floor(i / 1000)), 1 + (i % 40));
+  }
+}
+
 /* Le serveur a besoin d'un « joueur de référence » pour l'IA des mobs
    (poursuite, apparition). On prend le premier client connecté ; sans client,
    la simulation tourne au ralenti autour de l'origine. */
@@ -859,13 +871,14 @@ function definirPause(actif, parAbsence) {
   diffuser(messagePause());
   journal(actif ? 'monde en pause' : 'reprise du monde');
 }
-function armerAbsence() {
+function armerAbsence(delaiMs) {
   if (minuteurAbsence) return;
-  journal(`plus aucun client — arrêt dans ${GRACE_ARRET_MS / 1000} s sans reconnexion`);
+  const delai = delaiMs || GRACE_ARRET_MS;
+  journal(`plus aucun client — arrêt dans ${delai / 1000} s sans reconnexion`);
   minuteurAbsence = setTimeout(() => {
     minuteurAbsence = null;
     if (clients.size === 0 && !reseauOuvert) arreter('absence de client');
-  }, GRACE_ARRET_MS);
+  }, delai);
 }
 /* Un client se (re)connecte : le délai de grâce est annulé, et une pause posée
    par l'absence (pas par le joueur) est levée — l'actualisation de la page
@@ -3376,7 +3389,7 @@ demarrerEcoute().then(() => {
     ouvrirNavigateur(`http://localhost:${portActuel}`);
   }
   // lancé par une bascule de partie : le navigateur doit se reconnecter, sinon on ne reste pas orphelin
-  if (RELANCE && !reseauOuvert) armerAbsence();
+  if (RELANCE && !reseauOuvert) armerAbsence(Math.max(GRACE_ARRET_MS, 30000));   // relance interne : le navigateur a le temps de se reconnecter
 }).catch((e) => {
   const motif = e && e.code === 'EADDRINUSE'
     ? (PARAMS.portFixe ? `le port ${PARAMS.port} est déjà utilisé` : `aucun port libre entre ${PARAMS.port} et ${CA.BORNES.PORT_REPLI_MAX}`)

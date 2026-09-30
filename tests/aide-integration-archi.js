@@ -75,6 +75,7 @@ function connecter(port, opts) {
     const cle = crypto.randomBytes(16).toString('base64');
     const hote = opts.hote || '127.0.0.1';
     const sock = net.connect(port, hote, () => {
+      sock.setNoDelay(true);               // comme un navigateur : sans Nagle, une petite trame part aussitôt (sinon +1 tic de latence mesuré)
       sock.write(
         'GET / HTTP/1.1\r\n' +
         `Host: ${opts.hoteHttp || (hote.indexOf(':') >= 0 ? '[' + hote + ']' : hote) + ':' + port}\r\n` +
@@ -140,11 +141,12 @@ function connecter(port, opts) {
         const d = NP.decoder(tampon);
         if (!d) break;
         tampon = tampon.slice(d.consomme);
-        if (d.opcode === NP.OP.PONG) { client.pongs++; continue; }
+        if (d.opcode === NP.OP.PONG) { client.pongs++; if (client.surPong) client.surPong(); continue; }
         if (d.opcode !== NP.OP.TEXTE) continue;
         let msg;
         try { msg = JSON.parse(NP.utf8Decoder(d.charge)); } catch (e) { continue; }
         messages.push(msg);
+        if (client.surMessage) client.surMessage(msg);
         for (let k = attentes.length - 1; k >= 0; k--) {
           if (attentes[k].test(msg)) { attentes[k].res(msg); attentes.splice(k, 1); }
         }

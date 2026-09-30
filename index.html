@@ -10,7 +10,22 @@
 <body>
 
 <div id="host"></div>
-<div id="boot">Chargement…</div>
+<!-- Écran d'attente (SPEC-ARCHI-017) : visible dès le chargement de la page, il montre les étapes
+     (chargement, serveur, connexion), puis disparaît quand le menu du jeu est prêt. En cas d'échec
+     il dit la cause et propose une action (SPEC-ARCHI-016) : jamais un écran figé. -->
+<div id="boot">
+  <div class="panel attente" id="boot-panel" style="opacity:1">
+    <h1>MiniCraft</h1>
+    <p class="sub" id="boot-sous">Démarrage…</p>
+    <ul class="etapes" id="boot-etapes">
+      <li class="etape cours" data-etape="chargement"><span class="marque">◔</span> Chargement du jeu</li>
+      <li class="etape attente" data-etape="serveur"><span class="marque">○</span> Serveur de jeu</li>
+      <li class="etape attente" data-etape="connexion"><span class="marque">○</span> Connexion</li>
+    </ul>
+    <p class="detail" id="boot-detail"></p>
+    <div class="row" id="boot-actions"></div>
+  </div>
+</div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <script>
@@ -22,34 +37,122 @@
 window.MC_VERSION = String(Date.now());
 (function () {
   var SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'entities', 'metiers', 'economie',
-             'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'net', 'ambiance', 'audio', 'qualite', 'atlas', 'workers', 'render',
+             'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'net', 'ambiance', 'audio', 'qualite', 'atlas', 'workers', 'render',
              'ui', 'input', 'game', 'debug'];
   var boot = document.getElementById('boot');
+  var etapesEl = document.getElementById('boot-etapes');
+  var MARQUES = { attente: '○', cours: '◔', ok: '●', erreur: '✕' };
+
+  function etape(nom, etat) {
+    var li = etapesEl.querySelector('[data-etape="' + nom + '"]');
+    if (!li) return;
+    li.className = 'etape ' + etat;
+    li.querySelector('.marque').textContent = MARQUES[etat] || '○';
+  }
+  function sous(t) { document.getElementById('boot-sous').textContent = t; }
+  function detail(html) { document.getElementById('boot-detail').innerHTML = html || ''; }
+  function actions(liste) {
+    var zone = document.getElementById('boot-actions');
+    zone.innerHTML = '';
+    (liste || []).forEach(function (a) {
+      var b = document.createElement('button');
+      b.textContent = a.texte;
+      if (a.primaire) b.className = 'primary';
+      b.onclick = a.fn;
+      zone.appendChild(b);
+    });
+  }
+  function reessayer() { location.reload(); }
+  /* Échec de démarrage : la cause, ce qu'il faut faire, et un bouton pour réessayer. */
+  function echec(etapeEnCause, titre, html) {
+    etape(etapeEnCause, 'erreur');
+    boot.style.display = 'flex';
+    boot.querySelector('#boot-panel').className = 'panel attente erreur';
+    boot.querySelector('h1').textContent = titre;
+    sous('');
+    detail(html);
+    actions([{ texte: 'Réessayer', primaire: true, fn: reessayer }]);
+  }
+  window.MC_BOOT = { etape: etape, echec: echec };
+
   function load(i) {
     if (i >= SRC.length) return start();
     var sc = document.createElement('script');
     sc.src = 'src/' + SRC[i] + '.js?v=' + window.MC_VERSION;
     sc.onload = function () { load(i + 1); };
-    sc.onerror = function () { fatal('Impossible de charger <code>src/' + SRC[i] + '.js</code>.'); };
+    sc.onerror = function () {
+      echec('chargement', 'Chargement impossible', 'Impossible de charger <code>src/' + SRC[i] + '.js</code>. ' +
+            'Le jeu doit être servi par son serveur : lancez <code>node server.js</code>.');
+    };
     document.head.appendChild(sc);
   }
-  function fatal(msg) {
-    boot.style.display = 'flex'; boot.style.opacity = 1;
-    boot.innerHTML = '<div style="max-width:520px;text-align:center;line-height:1.6">' + msg + '</div>';
-  }
-  function start() {
-    if (typeof THREE === 'undefined') {
-      return fatal("<b>Three.js n'a pas pu &ecirc;tre charg&eacute;.</b><br>V&eacute;rifiez la connexion, ou placez " +
-                   "<code>three.min.js</code> &agrave; c&ocirc;t&eacute; de ce fichier et adaptez la balise script.");
-    }
+
+  /* Fichier téléchargé par le navigateur (export des parties, SPEC-ARCHI-015). */
+  function telecharger(nom, texte) {
     try {
-      window.GAME = MC.createGame(document.getElementById('host'));
+      var url = URL.createObjectURL(new Blob([texte], { type: 'application/json' }));
+      var a = document.createElement('a');
+      a.href = url; a.download = nom;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+      return true;
+    } catch (e) { return false; }
+  }
+
+  var EXPLICATION = 'MiniCraft a besoin de son <b>serveur de jeu local</b>, même pour jouer seul : ' +
+    'c&rsquo;est lui qui simule le monde et qui range vos parties. Lancez-le avec ' +
+    '<code>node server.js</code> (ou <code>start.cmd</code> sous Windows, <code>start.sh</code> sous Linux et macOS, ' +
+    'ou l&rsquo;exécutable fourni), puis ouvrez l&rsquo;adresse qu&rsquo;il affiche (par défaut ' +
+    '<code>http://localhost:8080</code>).';
+
+  function start() {
+    etape('chargement', 'ok');
+    if (typeof THREE === 'undefined') {
+      return echec('chargement', 'Three.js indisponible',
+        "<b>Three.js n'a pas pu &ecirc;tre charg&eacute;.</b><br>V&eacute;rifiez la connexion, ou placez " +
+        "<code>three.min.js</code> &agrave; c&ocirc;t&eacute; de ce fichier et adaptez la balise script.");
+    }
+    // SPEC-ARCHI-016/017 : le serveur de jeu d'abord ; sans lui, aucune simulation ne démarre
+    etape('serveur', 'cours');
+    sous('Recherche du serveur de jeu…');
+    var poste = MC.Poste.creer({
+      WebSocket: window.WebSocket, fetch: window.fetch.bind(window), location: window.location, telecharger: telecharger,
+    });
+    poste.attendreServeur(MC.Poste.DELAI_SERVEUR_MS).then(function (r) {
+      if (!r.ok) {
+        if (r.cause === 'fichier' || r.cause === 'absent') {
+          return echec('serveur', 'Lancez le jeu avec son serveur', EXPLICATION);
+        }
+        return echec('serveur', 'Serveur injoignable',
+          'Le serveur de jeu ne répond pas (délai de 15 s dépassé). Vérifiez qu&rsquo;il est lancé ' +
+          '(<code>node server.js</code>) et que le port n&rsquo;est pas occupé par un autre programme, puis réessayez.');
+      }
+      etape('serveur', 'ok');
+      etape('connexion', 'cours');
+      sous('Connexion au serveur…');
+      poste.connecter();
+      var t0 = Date.now();
+      (function attendreLiaison() {
+        if (poste.etat.connecte) { demarrerJeu(poste); return; }
+        if (Date.now() - t0 > 8000) {
+          return echec('connexion', 'Connexion impossible',
+            'Le serveur répond mais la liaison de jeu (WebSocket) ne s&rsquo;établit pas. ' +
+            'Un pare-feu ou un mandataire peut la bloquer ; relancez le serveur et réessayez.');
+        }
+        setTimeout(attendreLiaison, 50);
+      })();
+    });
+  }
+
+  function demarrerJeu(poste) {
+    etape('connexion', 'ok');
+    try {
+      window.GAME = MC.createGame(document.getElementById('host'), { poste: poste });
       // SPEC-BANC-017 : même pilotage manuel qu'en test, à la console.
       window.MC_DEBUG = MC.Debug.creer(window.GAME);
       boot.style.display = 'none';
     } catch (e) {
-      fatal('<b>Erreur au d&eacute;marrage.</b><br><code style="font-size:12px">' +
-            (e && e.message ? e.message : e) + '</code>');
+      echec('connexion', 'Erreur au démarrage', '<code style="font-size:12px">' + (e && e.message ? e.message : e) + '</code>');
       throw e;
     }
   }
