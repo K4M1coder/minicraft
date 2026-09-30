@@ -330,6 +330,12 @@
       A.notOk(K.commandeAutorisee({ enLigne: true, role: null }));
       A.ok(K.commandeAutorisee({ enLigne: false, mode: 'creatif' }));
       A.notOk(K.commandeAutorisee({ enLigne: false, mode: 'survie' }));
+      // SPEC-ARCHI-033 : une seule règle pour le solo fermé et le réseau — administrateur,
+      // ou hôte local en créatif ; jamais un joueur distant, jamais l'hôte en survie
+      A.ok(K.commandeAutorisee({ enLigne: true, role: null, mode: 'creatif', hote: true }));
+      A.notOk(K.commandeAutorisee({ enLigne: true, role: null, mode: 'creatif', hote: false }));
+      A.notOk(K.commandeAutorisee({ enLigne: true, role: null, mode: 'survie', hote: true }));
+      A.ok(K.commandeAutorisee({ enLigne: true, role: 'admin', mode: 'survie', hote: false }));
       A.ok(K.commandeDeclenche(1, 0), 'front montant : déclenche');
       A.notOk(K.commandeDeclenche(1, 1), 'signal déjà haut : pas de nouveau déclenchement');
       A.notOk(K.commandeDeclenche(0, 1), 'front descendant : rien');

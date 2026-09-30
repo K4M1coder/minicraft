@@ -113,6 +113,10 @@
      un invariant DOCUMENTÉ ici (au lieu d'un 80 littéral perdu dans
      server.js) et vérifié par un test pur (voir tests/spec-secu.js). */
   var MAX_MOBS_DIFFUSES = 80;
+  /* MAX_ITEMS_DIFFUSES (SPEC-SYNC-026) : les objets au sol ont leur PROPRE
+     plafond, à part de celui des créatures — sinon un objet lâché à côté d'un
+     joueur pouvait être écarté d'ETAT par 80 créatures plus proches. */
+  var MAX_ITEMS_DIFFUSES = 64;
   // PORTEE_MOBS_DIFFUSES : au-delà, une entité n'est plus envoyée à un client
   // (voir server.js — habitants des villes lointaines).
   var PORTEE_MOBS_DIFFUSES = 96;
@@ -329,9 +333,12 @@
         if (!estEntier(msg.id) || msg.id < 0 || msg.id > 65535) return null;
         // `outil` : ce que le joueur tient, pour que le serveur calcule le butin
         // `etat` : orientation, niveau… — un octet (SPEC-SAVE-017), 0 par défaut
-        return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, id: msg.id | 0,
+        var blocValide = { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, id: msg.id | 0,
                  j: joueurLocal(msg.j), outil: estEntier(msg.outil) && msg.outil >= 0 ? msg.outil | 0 : 0,
                  etat: estEntier(msg.etat) && msg.etat >= 0 && msg.etat <= 255 ? msg.etat | 0 : 0 };
+        // `i` : la case d'inventaire dont vient le bloc posé (SPEC-SYNC-028) — facultatif
+        if (estEntier(msg.i) && msg.i >= 0 && msg.i < 64) blocValide.i = msg.i | 0;
+        return blocValide;
       case MSG.ENTREE:
         // une image de simulation : numéro, durée, touches, regard
         if (!estEntier(msg.s) || msg.s < 0) return null;
@@ -362,7 +369,7 @@
         if (!estFini(msg.dx) || !estFini(msg.dy) || !estFini(msg.dz)) return null;
         var n = Math.hypot(msg.dx, msg.dy, msg.dz);
         if (n < 0.5 || n > 1.5) return null;
-        var genres = ['fleche', 'sortilege'];
+        var genres = ['fleche', 'galet', 'sortilege'];
         return { t: msg.t, j: joueurLocal(msg.j), dx: msg.dx / n, dy: msg.dy / n, dz: msg.dz / n,
                  vitesse: estFini(msg.vitesse) ? Math.max(10, Math.min(50, +msg.vitesse)) : 34,
                  degats: estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 5,
@@ -436,7 +443,7 @@
     estRequeteWebSocket: estRequeteWebSocket,
     origineAutorisee: origineAutorisee,
     CSP_STATIQUE: CSP_STATIQUE, entetesSecuriteStatiques: entetesSecuriteStatiques,
-    MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
+    MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, MAX_ITEMS_DIFFUSES: MAX_ITEMS_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
     selectionnerMobsProches: selectionnerMobsProches,
     ETAT_HZ_MIN: ETAT_HZ_MIN, SEUIL_FILE_OCTETS: SEUIL_FILE_OCTETS,
     PALIERS_ETAT_HZ: PALIERS_ETAT_HZ, calculerEtatHz: calculerEtatHz,

@@ -4,6 +4,7 @@
 
    Usage : node tests/integration-admin.js [port] */
 'use strict';
+process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
 const http = require('http');
 const crypto = require('crypto');

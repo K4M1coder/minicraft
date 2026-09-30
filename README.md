@@ -628,10 +628,9 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
   porté sur le serveur : il ne se joue que sur la page de test (chantier « solo =
   serveur », lot P-HIST).
 - La météo ne change pas le vol des avions.
-- En ligne, inventaire, craft, fourneaux et cultures restent côté client ; le
-  serveur valide positions, stats, blocs et combats, pas le contenu des sacs.
-- Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
-  le sont.
+- Inventaire, fabrication, conteneurs (coffres, fourneaux, banque…), commerce et
+  objets au sol sont tenus par le serveur, en solo comme en réseau ; seules les
+  cultures restent simulées côté client (chantier « solo = serveur », lot B-ENV).
 - L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
   partager un clavier et une souris.
 - Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne
