@@ -283,7 +283,10 @@ A sauter, L3 courir, LT miner, RT utiliser, LB/RB changer d'objet, Y inventaire.
 
 **Commandes du chat** : `/aide` `/heure` `/jour` `/nuit` `/ou` `/graine` `/vider`
 `/meteo` `/succes` `/rendu [realiste|simple]` `/rejoindre [adresse]` `/quitter` `/qui`,
-et `/admin …` pour un administrateur ou un modérateur connecté.
+et `/admin …` pour un administrateur ou un modérateur connecté. `/jour` et `/nuit`
+sont des demandes au serveur : elles n'aboutissent qu'en mode créatif ou pour un
+administrateur, en solo comme en réseau. Dormir dans un lit (la nuit) fait passer
+la nuit quand TOUS les joueurs présents dorment.
 
 **Options.** Sensibilité, volume, champ de vision, distance de vue maximale,
 rendu réaliste lointain, ombres ; GPU (préférence haute performance ou
@@ -340,8 +343,7 @@ thermique, câbles, batteries, lampes, pistons, blocs de commande.
 
 **Les profondeurs.** Flore sous-marine selon la profondeur, la température
 et la lumière ; récifs frangeants, barrières, atolls et lagons ; volcans
-actifs qui fument, grondent, crachent des bombes et laissent des coulées
-figées en basalte.
+actifs qui fument, grondent et entrent en éruption (visible et audible).
 
 **Modes.** *Survie* : faim, dégâts, usure des outils, blocs consommés.
 *Créatif* : vol, invulnérabilité, casse instantanée, blocs illimités.
@@ -628,16 +630,15 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
   porté sur le serveur : il ne se joue que sur la page de test (chantier « solo =
   serveur », lot P-HIST).
 - La météo ne change pas le vol des avions.
-- Inventaire, fabrication, conteneurs (coffres, fourneaux, banque…), commerce et
-  objets au sol sont tenus par le serveur, en solo comme en réseau ; seules les
-  cultures restent simulées côté client (chantier « solo = serveur », lot B-ENV).
+- Inventaire, fabrication, conteneurs (coffres, fourneaux, banque…), commerce, objets au sol et cultures sont tenus par le
+  serveur, en solo comme en réseau ; le client ne fait que les afficher.
+- Les éruptions de volcans sont visuelles et sonores seulement : les bombes et les
+  coulées de lave ont été supprimées (le serveur n'a pas d'équivalent).
 - L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
   partager un clavier et une souris.
 - Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne
   trouve pas en jouant (terre labourée par exemple) ; seuls les stades de croissance
   du blé en sont écartés.
-- Les gardiens de donjon ne s'éveillent qu'en solo et en écran partagé : en ligne,
-  les créatures appartiennent au serveur, qui ne les simule pas encore.
 - Les véhicules ne sont pas disponibles en ligne (le serveur ne les simule pas).
 - L'avion et le sous-marin se pilotent au clavier ; à la manette, on monte avec
   « utiliser » et l'on descend avec le bouton de vol.

@@ -1139,13 +1139,18 @@
         if (circuitsT >= 0.2) { circuitsT = 0; tickCircuits(opts && opts.circuitsCtx); }
       }
       var temps = opts && opts.temps;
+      var surBloc = opts && opts.surBloc;   // SPEC-ARCHI-034 : le serveur diffuse ce que le monde fait pousser ou brûler
       // le feu avance deux fois par seconde (SPEC-CONSTR-007)
       if (MC.Feu && !(opts && opts.feu === false)) {
         feuT += dt;
-        if (feuT >= 0.5) { feuT = 0; coulerFeu(48, temps, r); }
+        if (feuT >= 0.5) {
+          feuT = 0;
+          var faitsFeu = coulerFeu(48, temps, r);
+          if (surBloc) faitsFeu.forEach(function (ch) { surBloc(ch[0], ch[1], ch[2], ch[3], ch[4] || 0); });
+        }
       }
       var mult = multCroissance(temps);
-      crops.forEach(function (c2) {
+      if (!(opts && opts.cultures === false)) crops.forEach(function (c2) {
         if (mult === null) return;                    // pas l'hiver
         c2.t += dt;
         if (c2.t < st * mult) return;
@@ -1158,6 +1163,7 @@
         if (s === undefined || s >= 3) return;
         setBlock(c2.x, c2.y, c2.z, C.WHEAT_STAGES[s + 1]);
         grown.push([c2.x, c2.y, c2.z, s + 1]);
+        if (surBloc) surBloc(c2.x, c2.y, c2.z, C.WHEAT_STAGES[s + 1], 0);
       });
       if (MC.DayCycle && temps !== undefined) {
         gelT += dt;

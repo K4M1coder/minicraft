@@ -45,12 +45,13 @@ async function jusqua(lire, ms, pas) {
   }
 }
 const etatToi = (cl) => { const e = cl.dernier('etat'); return e && e.toi && e.toi[0]; };
-function monde(hp, faim, inv) {
+const NUIT = MC.DayCycle.DAY_LENGTH * 0.75;      // plein cœur de la nuit du premier jour
+function monde(hp, faim, inv, heure) {
   const SLOTS = MC.ContratsV2.BORNES.SLOTS_INV;
   const cases = new Array(SLOTS).fill(0);
   (inv || []).forEach((p, i) => { cases[i] = p; });
   return {
-    v: 2, graine: 20260921, heure: 60, overrides: [], etats: [], crops: [],
+    v: 2, graine: 20260921, heure: heure === undefined ? 60 : heure, overrides: [], etats: [], crops: [],
     soloJoueur: { v: 1, inv: cases, equip: {}, etat: { hp, hunger: faim, air: 10 } },
   };
 }
@@ -118,7 +119,7 @@ async function mourirPuisRenaitre(avecLit, litDetruit) {
   const d = A.dossierTemp('mc-vie-rn-');
   const f = path.join(d, 'monde.json');
   try {
-    fs.writeFileSync(f, JSON.stringify(monde(1, 0)));
+    fs.writeFileSync(f, JSON.stringify(monde(1, 0, [], avecLit ? NUIT : 60)));
     const s = await demarrer(['--monde', f, '--dossier-parties', d], { MC_DIFFICULTE: 'normal' });
     const { client: cl, bienvenue } = await rejoindre(s.port, 'Bob', 1);
     const dep = bienvenue.toi[0];
@@ -128,6 +129,9 @@ async function mourirPuisRenaitre(avecLit, litDetruit) {
       const rep = await poserBloc(cl, bed, B.LIT);
       eq(rep.id, B.LIT, 'préparation : le lit est posé');
       cl.envoyer({ t: 'dormir', j: 0, actif: true });
+      // lit ET sommeil ensemble (SPEC-ARCHI-025 + 026) : le joueur seul est la majorité, la nuit passe...
+      const jour = await cl.attendre('chat', 5000, m => /jour se lève/i.test(m.texte || '')).catch(() => null);
+      ok(!!jour, 'SPEC-ARCHI-025/026 : se coucher dans un lit fait passer la nuit (le sommeil de B-ENV est conservé)');
       if (litDetruit) {
         cl.envoyer({ t: 'bloc', x: bed.x, y: bed.y, z: bed.z, id: 0, j: 0 });
         await cl.attendre('bloc', 3000, m => m.x === bed.x && m.y === bed.y && m.z === bed.z && m.id === 0);
@@ -149,7 +153,7 @@ async function mourirPuisRenaitre(avecLit, litDetruit) {
       ok(vivant.pv === 20 && vivant.faim === 20 && vivant.air === 10, 'SPEC-ARCHI-026 : vie, faim et air remis par le serveur', JSON.stringify(vivant));
       if (avecLit && !litDetruit) {
         ok(Math.abs(vivant.x - (bed.x + 0.5)) < 0.01 && Math.abs(vivant.z - (bed.z + 0.5)) < 0.01 && Math.abs(vivant.y - (bed.y + 1.05)) < 0.01,
-           'SPEC-ARCHI-026 : le lieu de renaissance est le lit, décidé par le serveur', JSON.stringify([vivant.x, vivant.y, vivant.z, bed]));
+           'SPEC-ARCHI-026 : le lieu de renaissance est le lit où le joueur s a couché, décidé par le serveur', JSON.stringify([vivant.x, vivant.y, vivant.z, bed]));
       } else {
         ok(Math.abs(vivant.x - dep.x) < 0.01 && Math.abs(vivant.y - dep.y) < 0.01 && Math.abs(vivant.z - dep.z) < 0.01,
            litDetruit ? 'SPEC-ARCHI-026 : le lit a été détruit, retour au point d\'apparition' : 'SPEC-ARCHI-026 : sans lit, renaissance au point d\'apparition du serveur',

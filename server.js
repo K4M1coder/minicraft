@@ -193,6 +193,7 @@ if (process.env.MC_TEST_QUETE) {
    vraie tornade procédurale croise une vraie ville explorée — le même
    principe que MC_TEST_INV/MC_TEST_QUETE, jamais en exploitation. */
 let MC_TEST_LIEU_CATASTROPHE = null;
+if (process.env.MC_TEST_CATASTROPHE) setImmediate(() => journal('ATTENTION : MC_TEST_CATASTROPHE actif — un lieu et une tornade FICTIFS sont ajoutés (réglage de test, jamais en exploitation)'));
 if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
   MC_TEST_LIEU_CATASTROPHE = {
     id: 'test:lieu-catastrophe', kind: 'village', nom: 'Bourg de test', x: 0, z: 0, demi: 40,
@@ -206,6 +207,16 @@ if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
   monde.habitats.lieuxProches = (x, z, rayon) => lieuxProchesOrig(x, z, rayon).concat([MC_TEST_LIEU_CATASTROPHE]);
   const tornadesOrig = monde.meteo.tornades.bind(monde.meteo);
   monde.meteo.tornades = (t) => tornadesOrig(t).concat([{ id: 'test-tornade', x: 0, z: 0, rayon: 60, force: 1, vie: 10, sens: 1 }]);
+}
+/* MC_TEST_ECLAIR=1 : un éclair toutes les 2 s de monde, qui tombe SUR le joueur
+   (la portée, l'abri et les dégâts restent ceux du serveur, `foudroie` réel) —
+   SEULEMENT pour que tests/integration-archi-env.js exerce le vrai chemin de
+   la foudre sans attendre un orage de la météo procédurale. Jamais en
+   exploitation (même principe que MC_TEST_CATASTROPHE). */
+if (process.env.MC_TEST_ECLAIR) setImmediate(() => journal('ATTENTION : MC_TEST_ECLAIR actif — un éclair FICTIF tombe sur chaque joueur toutes les 2 s (réglage de test, jamais en exploitation)'));
+if (process.env.MC_TEST_ECLAIR && monde.meteo) {
+  monde.meteo.eclairs = (t0, t1) => (Math.floor(t1 / 2) > Math.floor(t0 / 2) ? [{ id: Math.floor(t1 / 2), force: 1, t: t1 }] : []);
+  monde.meteo.lieuEclair = (e, px, pz) => ({ x: Math.floor(px), z: Math.floor(pz) });
 }
 const guildes = MC.Guildes.creerEtat();
 // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
@@ -732,6 +743,70 @@ function avancerCatastrophes() {
   });
   quetesCatastrophe = quetesCatastrophe.filter(q => MC.Habitats.queteActive(q, heure));
 }
+/* SPEC-ARCHI-022 : les tornades POUSSENT et ARRACHENT côté serveur — seul le
+   serveur modifie vitesse et blocs ; le client ne fait que le rendu. Même
+   poussée que l'ancienne simulation cliente (aspiration, rotation, soulèvement
+   de `Meteo.pousseeTornade`), appliquée aux joueurs qui ne volent pas et à
+   toutes les créatures ; les plantes et feuillages du cœur d'une tornade
+   proche d'un joueur sont arrachés (BLOC diffusé). */
+let accArrachage = 0;
+function appliquerTornades(dt, joueurs) {
+  const me = monde.meteo;
+  if (!me || !me.tornades || !me.pousseeTornade || !joueurs.length) return;
+  const ts = me.tornades(heure);
+  if (!ts.length) return;
+  const pousser = (pos, vel, k) => {
+    if (!ts.some(t => Math.hypot(t.x - pos.x, t.z - pos.z) < t.rayon * 2.2)) return;   // hors de portée d'action
+    const sol = monde.heightAt(Math.floor(pos.x), Math.floor(pos.z));
+    const f = me.pousseeTornade(pos.x, Math.max(0, pos.y - sol), pos.z, heure, ts);
+    if (Math.abs(f.x) + Math.abs(f.y) + Math.abs(f.z) < 0.01) return;
+    vel.x += f.x * dt * 3 * k; vel.z += f.z * dt * 3 * k;
+    vel.y = Math.min(12, vel.y + f.y * dt * 5 * k);
+  };
+  joueurs.forEach(({ js }) => { const st = js.joueur.state; if (!st.dead && !st.flying) pousser(st.pos, st.vel, 1); });
+  entites.list.forEach(e => { if (!e.dead && e.pos && e.vel) pousser(e.pos, e.vel, 1.3); });
+  accArrachage += dt;
+  if (accArrachage < 0.2) return;
+  accArrachage = 0;
+  ts.forEach(t => {
+    if (!joueurs.some(({ js }) => Math.hypot(t.x - js.joueur.state.pos.x, t.z - js.joueur.state.pos.z) <= 160)) return;
+    for (let k = 0; k < 4; k++) {
+      const a = Math.random() * 6.2832, r = Math.random() * t.rayon;
+      const x = Math.floor(t.x + Math.cos(a) * r), z = Math.floor(t.z + Math.sin(a) * r);
+      if (!monde.estCharge(x, z)) continue;
+      let y = Math.min(C.WORLD_H - 1, monde.heightAt(x, z) + 12);
+      while (y > 1 && !monde.getBlock(x, y, z)) y--;
+      const d = C.BLOCKS[monde.getBlock(x, y, z)];
+      if (d && (d.plant || d.leaves) && !d.aquatique) {
+        monde.setBlock(x, y, z, 0);
+        diffuser({ t: NP.MSG.BLOC, x, y, z, id: 0 });
+      }
+    }
+  });
+}
+/* SPEC-ARCHI-034 : les gardes et gardiens des donjons s'éveillent côté serveur
+   (auparavant réservé au jeu hors ligne : en ligne aucun gardien n'apparaissait).
+   Mêmes conditions qu'avant : un donjon vaincu ne se réveille pas ; les gardes
+   d'une salle s'éveillent une fois. */
+function surveillerDonjonsServeur() {
+  if (!regles.monstres) return;
+  tousLesJoueurs().forEach(({ js }) => {
+    const p = js.joueur.state;
+    if (p.dead) return;
+    const pc = monde.pieceDonjon && monde.pieceDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+    if (pc && !monde.donjonsVaincus.has(pc.donjon.id) && entites.invoquerGardes(pc.donjon, pc.index).length) {
+      const m = chat.systeme('Des gardes vous barrent la route !');
+      if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+    }
+    const d = monde.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+    if (!d || monde.donjonsVaincus.has(d.id)) return;
+    const b = entites.invoquerGardien(d);
+    if (b) {
+      const m = chat.systeme(entites.SPECS[b.type].nom + " s'éveille !");
+      if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+    }
+  });
+}
 // ── économie (B2, L45) ───────────────────────────────────────────────────────
 /* SPEC-ECO/METIER : avance l'économie d'un jour de jeu à la fois (comme
    avancerPolitique), rattrapée d'un coup si besoin, sur les lieux déjà
@@ -933,6 +1008,33 @@ function diffuser(msg, saufId) {
   clients.forEach(c => {
     if (c.id === saufId || !c.vivant) return;
     try { c.socket.write(trame); } catch (e) { fermer(c, 'ecriture impossible'); }
+  });
+}
+/* SPEC-SYNC-018/019 : les changements de blocs que le MONDE décide (croissance
+   des cultures, étapes du feu) ne vont qu'aux clients dont un joueur est à
+   moins de PORTEE_BLOCS_MONDE blocs, en UNE écriture par client et par tic
+   (les trames sont concaténées), plafonnée à BLOCS_MONDE_MAX_PAR_TIC blocs par
+   client : au-delà, le surplus est abandonné pour ce client (il retrouve l'état
+   exact par les overrides quand il recharge le chunk). */
+const PORTEE_BLOCS_MONDE = parseInt(process.env.MC_TEST_PORTEE_BLOCS, 10) || 96, BLOCS_MONDE_MAX_PAR_TIC = 128;
+if (process.env.MC_TEST_PORTEE_BLOCS) setImmediate(() => journal('ATTENTION : MC_TEST_PORTEE_BLOCS actif — portée de diffusion des blocs du monde réduite à ' + PORTEE_BLOCS_MONDE + ' blocs (réglage de test, jamais en exploitation)'));
+let blocsMondeEnAttente = [];
+function noterBlocMonde(x, y, z, id, etat) { blocsMondeEnAttente.push({ x, y, z, id, etat: etat || 0 }); }
+function diffuserBlocsMonde() {
+  const liste = blocsMondeEnAttente;
+  if (!liste.length) return;
+  blocsMondeEnAttente = [];
+  const trames = liste.map(b => NP.encoder(JSON.stringify({ t: NP.MSG.BLOC, x: b.x, y: b.y, z: b.z, id: b.id, etat: b.etat }), NP.OP.TEXTE, Buffer.alloc));
+  clients.forEach(c => {
+    if (!c.vivant || !c.rejoint || !c.joueurs) return;
+    const pos = c.joueurs.map(x => x.joueur.state.pos);
+    const choisies = [];
+    for (let i = 0; i < liste.length && choisies.length < BLOCS_MONDE_MAX_PAR_TIC; i++) {
+      const b = liste[i];
+      if (pos.some(p => Math.hypot(p.x - b.x, p.z - b.z) < PORTEE_BLOCS_MONDE)) choisies.push(trames[i]);
+    }
+    if (!choisies.length) return;
+    try { c.socket.write(Buffer.concat(choisies)); } catch (e) { fermer(c, 'ecriture impossible'); }
   });
 }
 function envoyer(c, msg) {
@@ -1733,6 +1835,7 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 const MESSAGES_GELES = new Set([
   'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'DISTRIB', 'CRAFT', 'EQUIP',
   'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
+  'DORMIR',
 ].map(k => NP.MSG[k]).filter(Boolean));
 
 /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -1804,27 +1907,6 @@ function parametresTir(js, genre, i) {
   }
   return { degats, vitesse: arme.vitesseTir || 34, cd: Math.max(0.3, arme.cadenceTir || 0) };
 }
-/* SPEC-ARCHI-027 : les gardiens et gardes de donjon s'éveillent CÔTÉ SERVEUR
-   quand un joueur entre dans leur salle (comme le faisait le solo). */
-function eveillerDonjons(joueurs) {
-  if (!regles.monstres || !monde.salleDonjon || !monde.donjonsVaincus) return;
-  joueurs.forEach(({ c, js }) => {
-    const p = js.joueur.state;
-    if (p.dead) return;
-    const pc = monde.pieceDonjon && monde.pieceDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
-    if (pc && !monde.donjonsVaincus.has(pc.donjon.id) && entites.invoquerGardes(pc.donjon, pc.index).length) {
-      envoyerSysteme(c, 'Des gardes vous barrent la route !');
-    }
-    const d = monde.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
-    if (!d || monde.donjonsVaincus.has(d.id)) return;
-    const b = entites.invoquerGardien(d);
-    if (b) {
-      const msg = chat.systeme(entites.SPECS[b.type].nom + " s'éveille !");
-      if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
-    }
-  });
-}
-
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
   // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
@@ -1965,11 +2047,19 @@ function traiter(c, m) {
       if (!c.local) { journal(`x ARRET ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
       arreter('ARRET');
       break;
+    /* SPEC-ARCHI-025 : le SERVEUR tient l'ensemble des dormeurs sur TOUS les
+       joueurs présents (locaux et distants) ; la nuit passe quand une
+       majorité stricte dort. Un solo est le cas « tous les joueurs = 1 ». */
     case NP.MSG.DORMIR: {
-      // SPEC-ARCHI-026 : se coucher fixe la réapparition sur le lit à portée
-      // (le passage de la nuit relève du lot B-ENV, SPEC-ARCHI-025)
-      const jsD = c.joueurs && c.joueurs[m.j];
-      if (jsD && m.actif && !jsD.joueur.state.dead) fixerReapparitionLit(jsD);
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || !c.rejoint) break;
+      if (!m.actif) { dormeurs.delete(js); break; }
+      if (!MC.DayCycle.isNight(heure)) { messageSystemeA(c, 'On ne dort que la nuit.'); break; }
+      coucher(js);
+      if (!verifierSommeil()) {
+        const { dorment, total } = compterDormeurs();
+        messageSystemeA(c, `Réapparition fixée ici — en attente que la majorité dorme (${dorment}/${total}).`);
+      }
       break;
     }
 
@@ -2451,7 +2541,34 @@ function executerBlocCommandeServeur(x, y, z) {
     temps: heure, dureeJour: MC.DayCycle ? MC.DayCycle.DAY_LENGTH : 1200,
     graine: CONF.graine, position: { x, y, z }, meteo: null, succes: null, enLigne: true, joueurs: [],
   });
-  (res.actions || []).forEach(a => { if (a.type === 'heure') heure = a.valeur; });
+  (res.actions || []).forEach(a => { if (a.type === 'heure') fixerHeureDuJour(a.valeur); });
+}
+/* Fixe l'heure DANS LE JOUR courant (la date, la saison et les cumulateurs
+   par jour ne reculent jamais) : `v` est une heure du jour, en secondes. */
+function fixerHeureDuJour(v) {
+  const dl = MC.DayCycle.DAY_LENGTH;
+  heure = Math.floor(heure / dl) * dl + (v % dl);
+  dormeurs.clear();                     // un saut d'heure annule le vote de sommeil en cours
+}
+/* SPEC-ARCHI-025 : demande d'heure d'un client (ADMIN 'heure'). Réservée à un
+   administrateur authentifié OU à l'hôte local d'un monde en mode créatif —
+   jamais à « n'importe quel joueur en créatif » d'un serveur ouvert. Débit
+   limité (1 par seconde et par connexion) ; ne journalise que si l'heure
+   change ; annule le vote de sommeil (fixerHeureDuJour). */
+function changerHeureDemandee(c, args) {
+  if (!c.rejoint) return { ok: false, data: null, motif: 'non_rejoint' };
+  if (enPause) return { ok: false, data: null, motif: 'pause' };
+  const admin_ = c.role === MC.Admin.ROLES.ADMIN;
+  if (!admin_ && !(c.local && regles.blocsIllimites)) return { ok: false, data: null, motif: 'reserve_creatif_ou_admin' };
+  const v = args.valeur;
+  if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 1e6) return { ok: false, data: null, motif: 'valeur_invalide' };
+  const maintenant = Date.now();
+  if (c.derniereHeureMs && maintenant - c.derniereHeureMs < 1000) return { ok: false, data: null, motif: 'trop_rapide' };
+  c.derniereHeureMs = maintenant;
+  const avant = heure;
+  fixerHeureDuJour(v);
+  if (Math.abs(heure - avant) >= 0.5) MC.Admin.journaliser(admin, { auteur: c.nom, action: 'heure', cible: null, details: +heure.toFixed(1), heure });
+  return { ok: true, data: { heure: +heure.toFixed(1) }, motif: null };
 }
 function traiterAdmin(c, m) {
   const Adm = MC.Admin;
@@ -2463,6 +2580,13 @@ function traiterAdmin(c, m) {
     if (r.role === Adm.ROLES.ADMIN && c.rejoint) Adm.noterAdminConnu(admin, c.nom);
     reponseAdmin(c, 'auth', true, { role: r.role });
     journal(`+ ${c.nom} (#${c.id}) authentifie en ${r.role}`);
+    return;
+  }
+  /* SPEC-ARCHI-025 : /jour, /nuit — même règle en solo et en réseau : refusé
+     hors mode créatif, sauf pour un administrateur authentifié. */
+  if (m.action === 'heure') {
+    const r = changerHeureDemandee(c, m.args || {});
+    reponseAdmin(c, 'heure', r.ok, r.data, r.motif);
     return;
   }
   /* SPEC-ARCHI-033 : modifier la commande d'un bloc de commande n'exige pas un
@@ -3003,6 +3127,57 @@ function tousLesJoueurs() {
   clients.forEach(c => { if (c.rejoint && c.joueurs) c.joueurs.forEach((js, j) => l.push({ c, j, js })); });
   return l;
 }
+/* Message système adressé à UN client (le chat serveur, lui, est diffusé). */
+function messageSystemeA(c, texte) {
+  envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte, type: 'systeme', ts: Date.now() });
+}
+/* SPEC-ARCHI-025 : les joueurs couchés (objets `js`, propres à une connexion et
+   un joueur local) avec l'endroit et la vie de leur coucher. Le vote de sommeil
+   est tenu PAR LE SERVEUR, sans dépendre du client : un dormeur qui bouge, est
+   touché, meurt ou se déconnecte sort du compte tout seul. La nuit passe dès
+   qu'une MAJORITÉ STRICTE des joueurs présents et vivants dort (au moins un) —
+   un seul éveillé ne bloque donc pas cent joueurs. */
+const dormeurs = new Map();          // js -> { x, y, z, pv }
+const SOMMEIL_DEPLACEMENT_MAX = 1.5; // blocs : au-delà, il s'est levé
+function compterDormeurs() {
+  let total = 0, dorment = 0;
+  const presents = new Set();
+  tousLesJoueurs().forEach(({ js }) => {
+    presents.add(js);
+    const st = js.joueur.state;
+    if (st.dead) { dormeurs.delete(js); return; }
+    total++;
+    const d = dormeurs.get(js);
+    if (!d) return;
+    if (Math.hypot(st.pos.x - d.x, st.pos.z - d.z) > SOMMEIL_DEPLACEMENT_MAX || Math.abs(st.pos.y - d.y) > SOMMEIL_DEPLACEMENT_MAX || st.hp < d.pv) {
+      dormeurs.delete(js);                    // il s'est levé, ou il a été touché
+      return;
+    }
+    dorment++;
+  });
+  dormeurs.forEach((d, js) => { if (!presents.has(js)) dormeurs.delete(js); });
+  return { dorment, total };
+}
+function coucher(js) {
+  const st = js.joueur.state;
+  fixerReapparitionLit(js);          // SPEC-ARCHI-026 : se coucher fixe aussi la réapparition, sur le lit à portée
+  dormeurs.set(js, { x: st.pos.x, y: st.pos.y, z: st.pos.z, pv: st.hp });
+}
+/* Fait passer la nuit quand une majorité stricte des joueurs présents dort.
+   Renvoie vrai si la nuit vient de passer. Appelée à chaque DORMIR et une fois
+   par seconde (un éveillé peut être parti, un dormeur s'être levé). */
+function verifierSommeil() {
+  if (!dormeurs.size) return false;
+  if (!MC.DayCycle.isNight(heure)) { dormeurs.clear(); return false; }
+  const { dorment, total } = compterDormeurs();
+  if (total === 0 || dorment * 2 <= total) return false;
+  dormeurs.clear();
+  heure = MC.DayCycle.avancerJourApresDormir(heure);
+  const m = chat.systeme('Le jour se lève.');
+  if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+  journal(`nuit passée : la majorité des joueurs dormait (heure ${heure.toFixed(1)})`);
+  return true;
+}
 // SPEC-SERVEUR-010 : nombre de JOUEURS déjà admis (écran partagé compris),
 // pas de connexions — testé en conditions réelles (tests/integration-
 // capacite.js) : `server.js` a des effets de bord au chargement (écoute
@@ -3289,8 +3464,8 @@ function statsMesures() {
 const { performance } = require('perf_hooks');
 let dernier = performance.now();
 let accEtat = 0;
-let accSpawn = 0;
-let accDonjon = 0;
+let accSpawn = 0, rotationSpawn = 0, accDonjons = 0;
+const SPAWN_JOUEURS_PAR_TIC = 8;
 let accChunks = 1;         // premier passage immédiat
 
 // SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
@@ -3343,8 +3518,13 @@ setInterval(() => {
 
   heure += dt;
   if (clients.size > 0) dureeJeu += dt;
-  // circuits : diffusé explicitement plus bas (comme l'eau), donc désactivé ici
-  monde.tick(dt, 14, null, { temps: heure, circuits: false });
+  /* Eau et circuits : diffusés explicitement plus bas (leurs changements
+     seraient sinon perdus), donc désactivés ici. Cultures et feu, eux,
+     avancent dans le tic et chaque bloc changé est diffusé (SPEC-SYNC-018/019,
+     SPEC-ARCHI-034) : les clients n'en simulent plus rien. */
+  monde.tick(dt, 14, null, { temps: heure, circuits: false, eau: false,
+    surBloc: noterBlocMonde });
+  diffuserBlocsMonde();
 
   // SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
   accPurge += dt;
@@ -3371,6 +3551,7 @@ setInterval(() => {
     avancerEconomie();
     avancerCaravanes();
     avancerCatastrophes();
+    verifierSommeil();
     // B4 : propositions de duel caduques (silencieuses) et duels terminés
     // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
     // encore connectés.
@@ -3515,12 +3696,12 @@ setInterval(() => {
     });
   }
 
+  appliquerTornades(dt, joueurs);
+
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
     hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
-  accDonjon += dt;
-  if (accDonjon >= 0.25) { accDonjon = 0; eveillerDonjons(joueurs); }
   // SPEC-DONJON-018 : la victoire RÉELLE sur un gardien (événement 'boss_vaincu'
   // du journal d'entites.js, jamais un appel direct isolé) marque le donjon
   // vaincu (pré-existant : jamais fait par le serveur avant ce lot, seulement
@@ -3587,16 +3768,28 @@ setInterval(() => {
   });
   entites.mergeItems();
 
+  /* SPEC-ARCHI-034 : apparitions autour des joueurs, à tour de rôle (un seul
+     joueur par tic d'apparition : la cadence totale ne dépend pas du nombre
+     de joueurs ; avec un joueur c'est exactement l'ancien rythme). */
   accSpawn += dt;
   if (accSpawn >= 3.5) {
     accSpawn = 0;
     if (clients.size > 0) {
-      entites.trySpawn(ref, MC.DayCycle.isNight(heure), null,
-                       MC.Modes.plafondsEntites(regles));
-      entites.trySpawnSouterrain(ref, null, MC.Modes.plafondsEntites(regles));
+      /* Au plus SPAWN_JOUEURS_PAR_TIC joueurs par tic, à tour de rôle : jusqu'à
+         8 joueurs chacun garde le rythme d'un solo (une tentative par 3,5 s) ;
+         au-delà, le coût par tic reste borné et la cadence par joueur baisse
+         (100 joueurs : une tentative chacun toutes les ~44 s, 8 par tic). */
+      const cibles = joueurs.length ? [] : [ref];
+      for (let k = 0; k < Math.min(SPAWN_JOUEURS_PAR_TIC, joueurs.length); k++) cibles.push(joueurs[(rotationSpawn++) % joueurs.length].js.joueur.state);
+      cibles.forEach(cible => {
+        entites.trySpawn(cible, MC.DayCycle.isNight(heure), null, MC.Modes.plafondsEntites(regles));
+        entites.trySpawnSouterrain(cible, null, MC.Modes.plafondsEntites(regles));
+      });
       if (!MC.DayCycle.isNight(heure)) entites.burnUndead(false);
     }
   }
+  accDonjons += dt;
+  if (accDonjons >= 0.25) { accDonjons = 0; surveillerDonjonsServeur(); }
 
   /* Diffusion d'état à cadence réduite : simuler à 20 Hz et n'envoyer qu'à
      10 Hz divise le trafic par deux sans que l'on voie la différence, les
