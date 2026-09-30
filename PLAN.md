@@ -131,7 +131,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L46** | Factions, quêtes, PvP et environnement interconnectés : territoire agissant sur les zones de jeu, embargo commercial en guerre, quêtes nées d'un besoin réel, enjeux et sanctions PvP, catastrophes qui endommagent bâtiments/routes/population, donjons rattachés au territoire | `FACTION` `QUETE` `PVP` `ENV` `DONJON` | à faire |
 | **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | fait |
 | **L48** | Rendu fiable et adaptatif : contexte WebGL perdu/restauré, réfraction et antialias/DPR pilotés par le FPS, mobs instanciés, détection d'un rendu logiciel, culling de chunks | `RENDU` | à faire |
-| **L50** | Architecture serveur unique (Node requis, même en solo) : un processus serveur de jeu démarre toujours ; il n'écoute le réseau que si explicitement ouvert (boucle locale, contrôle d'origine, ouverture à chaud) ; pause exacte et sauvegarde immédiate en local fermé au réseau ; parties sur disque, import des parties existantes ; élimination des 49 branches `net.enLigne()` de `game.js` ; portage serveur de l'histoire, des succès et des véhicules | `ARCHI` | à faire |
+| **L50** | Architecture serveur unique (Node requis, même en solo) : un processus serveur de jeu démarre toujours ; il n'écoute le réseau que si explicitement ouvert (boucle locale, contrôle d'origine, ouverture à chaud) ; pause exacte et sauvegarde immédiate en local fermé au réseau ; parties sur disque, import des parties existantes ; élimination des 49 branches `net.enLigne()` de `game.js` ; portage serveur de l'histoire, des succès et des véhicules | `ARCHI` | en cours : lot A0 livré (SPEC-ARCHI-002 à 019 ✅, restent 001 et 020), lots B-* et P-* à faire |
 
 Les lots L14 à L22 sont désormais **fait** : toutes leurs fiches SPEC sont à
 l'état ✅ dans `SPECS.md`, chacune citée par au moins un test (`tests/spec-eau.js`,
@@ -229,6 +229,16 @@ jouer, même seul.** Détail exécutable dans
 (49 occurrences de `net.enLigne()` ligne par ligne, zones de `game.js` par lot,
 évaluation chiffrée de la sauvegarde, contrat gelé, fusion, critères de fin).
 Fiches : SPEC-ARCHI-001 à 042. Lots, dans l'ordre :
+
+Avancement du lot A0 (commits `feat(archi)` sur master, portes vertes) : contrat
+gelé, serveur local fermé (loopback, Origin, port, réseau à chaud, arrêt sans
+orphelin), pause exacte, sauvegardes, parties sur disque et import, poste
+navigateur, écrans d'attente et d'explication, budgets et aiguillage de
+`src/game.js` sont livrés. **Restent ⏳** : SPEC-ARCHI-001 (l'audit statique
+« plus aucune simulation du monde dans `game.js` » n'est vrai qu'après les lots B) et
+SPEC-ARCHI-020 (mort pendant la pause et compteur de dormeurs dépendent de
+B-VIE et B-ENV). Le bouton « Exporter mes parties » du lot A0-pré est dans le
+menu (`src/ui.js`) mais n'a pas été publié à part.
 
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
