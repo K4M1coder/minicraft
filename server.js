@@ -956,6 +956,12 @@ function cheminSur(urlPath) {
   const racine = path.resolve(RACINE);
   // le séparateur final évite que /racine-bis passe pour /racine
   if (resolu !== racine && !resolu.startsWith(racine + path.sep)) return null;
+  // les parties (index et fichiers de monde) et le fichier --monde ne se servent JAMAIS en statique
+  const prives = [DOSSIER_PARTIES, path.resolve(RACINE, 'parties')];
+  if (CONF.mondeFichier) prives.push(CONF.mondeFichier);
+  for (const d of prives) {
+    if (resolu === d || resolu.startsWith(d + path.sep) || resolu.startsWith(d + '.')) return null;
+  }
   return resolu;
 }
 
@@ -1265,7 +1271,7 @@ function apiPartiesAutorisee(req, res) {
   if (!CA.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return false; }
   const origine = req.headers['origin'];
   if (origine && CA.originesLocales(portActuel).indexOf(origine) < 0) { repondreJSON(res, 403, { ok: false, motif: 'origine refusée' }); return false; }
-  if (!reseauOuvert && !hoteLocal(req)) { repondreJSON(res, 403, { ok: false, motif: 'hôte refusé' }); return false; }
+  if (!hoteLocal(req)) { repondreJSON(res, 403, { ok: false, motif: 'hôte refusé' }); return false; }
   if (req.headers['sec-fetch-site'] === 'cross-site') { repondreJSON(res, 403, { ok: false, motif: 'requête intersites refusée' }); return false; }
   return true;
 }
@@ -1385,6 +1391,8 @@ function relancerSurPartie(id) {
 }
 
 function servir(req, res) {
+  // rebond DNS : en mode fermé, toute requête HTTP doit viser un nom local
+  if (!reseauOuvert && !hoteLocal(req)) { res.writeHead(403); res.end('403 hôte refusé'); return; }
   if (req.url.split('?')[0].indexOf('/api/parties') === 0) { traiterApiParties(req, res); return; }
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
@@ -1441,6 +1449,20 @@ function hoteLocal(req) {
   const h = String(req.headers['host'] || '').replace(/:\d+$/, '').toLowerCase();
   return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
 }
+/* Une connexion est « locale » — donc habilitée à RESEAU, ARRET et PAUSE — si
+   TROIS choses concourent : l'adresse distante est de la boucle locale, l'en-tête
+   Host est un nom local, et l'Origin est absente (client non navigateur) ou l'une
+   des origines locales du serveur. L'adresse seule ne suffit PAS : en mode
+   ouvert, une page tierce ouverte dans le navigateur de l'hôte se connecte
+   depuis 127.0.0.1 avec `Origin: http://evil.example` ; derrière un
+   mandataire inverse local, l'adresse est aussi celle de la boucle locale. */
+function connexionLocale(req, socket) {
+  if (!CA.estAdresseLocale(socket.remoteAddress)) return false;
+  if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) return false;   // mandataire
+  if (!hoteLocal(req)) return false;
+  const origine = req.headers['origin'];
+  return !origine || CA.originesLocales(portActuel).indexOf(origine) >= 0;
+}
 function requeteAutorisee(req) {
   if (reseauOuvert) return NP.origineAutorisee(req.headers['origin'], ORIGINES_AUTORISEES);
   if (!hoteLocal(req)) return false;
@@ -1471,7 +1493,7 @@ function surUpgrade(req, socket) {
     id: prochainId++, nom: 'Joueur', socket, vivant: true, locaux: 1,
     pos: { x: SPAWN.x, y: SPAWN.y, z: SPAWN.z }, yaw: 0, pitch: 0,
     rejoint: false, ip: socket.remoteAddress || '?',
-    local: CA.estAdresseLocale(socket.remoteAddress),   // boucle locale : seule habilitée à RESEAU, ARRET, PAUSE
+    local: connexionLocale(req, socket),         // seule habilitée à RESEAU, ARRET, PAUSE (SPEC-ARCHI-005/008/009)
     role: null, sessionId: null,             // rôle d'administration (SPEC-ADMIN-006/008)
   };
   clients.set(c.id, c);
@@ -1779,6 +1801,8 @@ function traiter(c, m) {
       break;
     case NP.MSG.RESEAU:
       if (!c.local) { journal(`x RESEAU ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
+      // un serveur dédié (--serveur) reste OUVERT : le fermer expulserait ses joueurs puis l'arrêterait tout seul
+      if (!m.ouvert && PARAMS.serveurSeul) { journal(`x RESEAU {ouvert:false} ignoré : serveur dédié (--serveur)`); envoyer(c, messageReseau()); break; }
       definirReseau(m.ouvert);
       break;
     case NP.MSG.ARRET:

@@ -729,6 +729,11 @@ respecter (voir PLAN.md, « Commits et versions »).
   affaiblir ce qu'il vérifie.
 
 ### Sécurité
+- Chantier ARCHI, durcissement du lot A0 après revue adversariale :
+  - Une connexion n'est « locale » (donc habilitée à `RESEAU`, `ARRET`, `PAUSE`) que si son adresse, son `Host` ET son `Origin` (absente ou locale) le sont et qu'aucun en-tête de mandataire (`X-Forwarded-For`, `Forwarded`, `X-Real-IP`) n'est présent. Avant, l'adresse seule suffisait : en `--ouvert`, une page tierce ouverte dans le navigateur de l'hôte pouvait arrêter le serveur.
+  - `cheminSur` ne sert plus jamais le dossier des parties (`parties/`, `--dossier-parties`) ni le fichier `--monde` ; en mode fermé toute requête HTTP exige un `Host` local (rebond DNS), et l'API `/api/parties` l'exige dans les deux modes.
+  - Un serveur dédié (`--serveur`) ignore `RESEAU {ouvert:false}` : il reste toujours ouvert.
+  - Test : `tests/integration-archi-securite.js`.
 
 - Jetons d'administration et d'invitation à entropie cryptographique
   (SPEC-SECU-009) : `src/admin.js` (module pur, sans dépendance Node)

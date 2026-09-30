@@ -81,6 +81,7 @@ function connecter(port, opts) {
         `Host: ${opts.hoteHttp || (hote.indexOf(':') >= 0 ? '[' + hote + ']' : hote) + ':' + port}\r\n` +
         'Upgrade: websocket\r\nConnection: Upgrade\r\n' +
         (opts.origine ? `Origin: ${opts.origine}\r\n` : '') +
+        Object.keys(opts.entetes || {}).map(k => `${k}: ${opts.entetes[k]}\r\n`).join('') +
         `Sec-WebSocket-Key: ${cle}\r\nSec-WebSocket-Version: 13\r\n\r\n`);
     });
     let tampon = Buffer.alloc(0);
