@@ -283,10 +283,14 @@
        d'autant plus vite qu'il gèle fort — sauf en paisible, où il ne tue pas ;
        une chaleur écrasante (≥ 38 °C) assoiffe : la faim se creuse plus vite. */
     var FROID_MORDANT = -10, CHALEUR_ECRASANTE = 38;
+    // « froid », « chaleur » ou null : sert au serveur (effet) et au client (affichage seul)
+    function climatDe(tempC) {
+      return tempC <= FROID_MORDANT ? 'froid' : (tempC >= CHALEUR_ECRASANTE ? 'chaleur' : null);
+    }
     function subirClimat(dt, tempC) {
       if (pl.dead || typeof tempC !== 'number') return null;
       pl.temperature = tempC;
-      var effet = tempC <= FROID_MORDANT ? 'froid' : (tempC >= CHALEUR_ECRASANTE ? 'chaleur' : null);
+      var effet = climatDe(tempC);
       pl.climat = effet;
       if (effet === 'froid') {
         pl.froidT = (pl.froidT || 0) + dt * (1 + (FROID_MORDANT - tempC) / 10);
@@ -775,7 +779,7 @@
 
     return {
       state: pl, held: held, heldId: heldId, lookDir: lookDir, eyePos: eyePos,
-      updateMovement: updateMovement, updateSurvival: updateSurvival, subirClimat: subirClimat,
+      updateMovement: updateMovement, updateSurvival: updateSurvival, subirClimat: subirClimat, climatDe: climatDe,
       hurt: hurt, heal: heal, respawn: respawn, aim: aim,
       mineTick: mineTick, cancelMining: cancelMining, useOn: useOn,
       attack: attack, tirer: tirer, pickUp: pickUp, dropSelected: dropSelected,

@@ -858,6 +858,17 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
     z: spawnCol[1] + 0.5,
   };
 }
+/* MC_TEST_MOBS='[["sheep",1.5,0]]' : réservé aux suites d'intégration (même
+   principe que MC_TEST_SPAWN, désactivé par défaut) — fait apparaître des
+   créatures à des décalages [type, dx, dz] du point d'apparition, pour tester
+   le combat et le butin sans attendre une apparition aléatoire. */
+if (process.env.MC_TEST_MOBS) {
+  try {
+    JSON.parse(process.env.MC_TEST_MOBS).forEach(([type, dx, dz]) => {
+      if (entites.SPECS[type]) entites.spawn(type, SPAWN.x + (+dx || 0), SPAWN.y, SPAWN.z + (+dz || 0));
+    });
+  } catch (e) { /* réglage de test invalide : ignoré */ }
+}
 
 // ── clients ──────────────────────────────────────────────────────────────────
 let prochainId = 1;
@@ -1713,13 +1724,72 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 
 /* SPEC-ARCHI-010 : en pause, tout message qui modifie l'état de jeu est ignoré —
    mouvement, blocs, combat, tir, inventaire (manger, fabriquer, équiper, consommer,
-   lâcher, palette créative), conteneurs, commerce, distributeurs. RENAITRE aussi :
-   le monde est figé, un joueur mort renaît à la reprise. Restent acceptés : ping,
-   CHAT, PAUSE, RESEAU, ARRET, ADMIN, CONTENEUR_FERMER (simple libération). */
+   lâcher, palette créative), conteneurs, commerce, distributeurs. RENAITRE est
+   l'EXCEPTION (SPEC-ARCHI-026) : un joueur mort doit pouvoir renaître même dans
+   un monde figé (menu ouvert sur l'écran de mort) — la renaissance ne fait
+   avancer aucune horloge. Restent acceptés : ping, CHAT, PAUSE, RESEAU, ARRET,
+   ADMIN, CONTENEUR_FERMER (simple libération). */
 const MESSAGES_GELES = new Set([
-  'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'RENAITRE', 'DISTRIB', 'CRAFT', 'EQUIP',
+  'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'DISTRIB', 'CRAFT', 'EQUIP',
   'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
 ].map(k => NP.MSG[k]).filter(Boolean));
+
+/* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
+   a fait son point de réapparition (`js.spawn`, persistant) tant qu'il existe
+   encore, sinon le point d'apparition du monde. */
+function lieuRenaissance(js, j) {
+  const sp = js.spawn;
+  if (sp && [sp.x, sp.y, sp.z].every(Number.isFinite) && Math.abs(sp.x) < 1e7 && Math.abs(sp.z) < 1e7 && sp.y > -64 && sp.y < 400) {
+    monde.getChunk(Math.floor(sp.x / 16), Math.floor(sp.z / 16), true);
+    // le lit est sous les pieds (y = lit + 1,05) ou occupé (y = lit + 0,05, anciennes parties solo)
+    const bx = Math.floor(sp.x), bz = Math.floor(sp.z);
+    const dessous = C.BLOCKS[monde.getBlock(bx, Math.floor(sp.y - 1.0), bz)], dedans = C.BLOCKS[monde.getBlock(bx, Math.floor(sp.y - 0.05), bz)];
+    if ((dessous && dessous.dodo) || (dedans && dedans.dodo)) return { x: sp.x, y: sp.y, z: sp.z };
+    js.spawn = null;                                   // le lit a disparu
+  }
+  return { x: SPAWN.x + j * 1.2, y: SPAWN.y, z: SPAWN.z };
+}
+/* Un joueur qui se couche fixe sa réapparition sur le lit à portée (jamais une
+   position dictée par le client). Renvoie true si un lit a été trouvé. */
+function fixerReapparitionLit(js) {
+  const st = js.joueur.state, px = Math.floor(st.pos.x), py = Math.floor(st.pos.y), pz = Math.floor(st.pos.z);
+  let meilleur = null, md = 5 * 5;
+  for (let dx = -4; dx <= 4; dx++) for (let dy = -2; dy <= 3; dy++) for (let dz = -4; dz <= 4; dz++) {
+    const bd = C.BLOCKS[monde.getBlock(px + dx, py + dy, pz + dz)];
+    if (!bd || !bd.dodo) continue;
+    const d2 = (px + dx + 0.5 - st.pos.x) ** 2 + (py + dy + 0.5 - st.pos.y) ** 2 + (pz + dz + 0.5 - st.pos.z) ** 2;
+    if (d2 < md) { md = d2; meilleur = { x: px + dx + 0.5, y: py + dy + 1.05, z: pz + dz + 0.5 }; }
+  }
+  if (!meilleur) return false;
+  js.spawn = meilleur;
+  return true;
+}
+/* Dégâts maximaux d'un coup de mêlée d'après l'inventaire serveur du joueur. */
+function degatsMaxMelee(js) {
+  let d = 1;
+  js.joueur.state.inv.slots.forEach(s => { const df = s && C.def(s.id); if (df && df.damage > d) d = df.damage; });
+  return d;
+}
+/* SPEC-ARCHI-027 : les gardiens et gardes de donjon s'éveillent CÔTÉ SERVEUR
+   quand un joueur entre dans leur salle (comme le faisait le solo). */
+function eveillerDonjons(joueurs) {
+  if (!regles.monstres || !monde.salleDonjon || !monde.donjonsVaincus) return;
+  joueurs.forEach(({ c, js }) => {
+    const p = js.joueur.state;
+    if (p.dead) return;
+    const pc = monde.pieceDonjon && monde.pieceDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+    if (pc && !monde.donjonsVaincus.has(pc.donjon.id) && entites.invoquerGardes(pc.donjon, pc.index).length) {
+      envoyerSysteme(c, 'Des gardes vous barrent la route !');
+    }
+    const d = monde.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
+    if (!d || monde.donjonsVaincus.has(d.id)) return;
+    const b = entites.invoquerGardien(d);
+    if (b) {
+      const msg = chat.systeme(entites.SPECS[b.type].nom + " s'éveille !");
+      if (msg) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msg.texte, type: 'systeme', ts: msg.t });
+    }
+  });
+}
 
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
@@ -1861,8 +1931,13 @@ function traiter(c, m) {
       if (!c.local) { journal(`x ARRET ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
       arreter('ARRET');
       break;
-    case NP.MSG.DORMIR:
-      break;                                        // sommeil serveur : lot B-ENV (SPEC-ARCHI-025)
+    case NP.MSG.DORMIR: {
+      // SPEC-ARCHI-026 : se coucher fixe la réapparition sur le lit à portée
+      // (le passage de la nuit relève du lot B-ENV, SPEC-ARCHI-025)
+      const jsD = c.joueurs && c.joueurs[m.j];
+      if (jsD && m.actif && !jsD.joueur.state.dead) fixerReapparitionLit(jsD);
+      break;
+    }
 
     case NP.MSG.BOUGE:
       /* Ancien message : le client imposait sa position. Le serveur fait
@@ -1890,6 +1965,9 @@ function traiter(c, m) {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || js.joueur.state.dead) break;
       const st = js.joueur.state;
+      // SPEC-ARCHI-027 : les dégâts annoncés par le client ne dépassent jamais
+      // ce que sa meilleure arme (dans SON inventaire serveur) peut infliger.
+      m.degats = Math.min(m.degats, degatsMaxMelee(js));
 
       // SPEC-COMBAT-002 : cible un autre JOUEUR plutôt qu'une créature —
       // mêmes portée, cadence et dégâts qu'en PvE, mais soumis au réglage
@@ -1972,8 +2050,9 @@ function traiter(c, m) {
     case NP.MSG.RENAITRE: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || !js.joueur.state.dead) break;
-      js.joueur.respawn({ x: SPAWN.x + m.j * 1.2, y: SPAWN.y, z: SPAWN.z });
+      js.joueur.respawn(lieuRenaissance(js, m.j));
       js.entrees.length = 0;
+      js.attaqueCd = 0; js.tirCd = 0;
       break;
     }
 
@@ -3126,6 +3205,8 @@ function traiterDuel(c, texte) {
   }
   const cibleNom = args[0];
   if (!cibleNom) { envoyerSysteme(c, 'Usage : /duel <nom> | /duel accepter | /duel refuser'); return; }
+  // SPEC-ARCHI-028 : seul sur le serveur (solo fermé), il n'y a personne à défier
+  if (!tousLesJoueurs().some(x => x.c.id !== c.id)) { envoyerSysteme(c, 'Duel : aucun autre joueur à défier sur ce serveur.'); return; }
   const adversaire = joueurParNom(cibleNom);
   if (!adversaire || adversaire.c.id === c.id) { envoyerSysteme(c, 'Joueur introuvable : ' + cibleNom); return; }
   const r = MC.PvpEnjeux.proposerDuel(pvp, c.nom, cibleNom, heure);
@@ -3170,6 +3251,7 @@ const { performance } = require('perf_hooks');
 let dernier = performance.now();
 let accEtat = 0;
 let accSpawn = 0;
+let accDonjon = 0;
 let accChunks = 1;         // premier passage immédiat
 
 // SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
@@ -3395,6 +3477,8 @@ setInterval(() => {
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
     hiver: MC.DayCycle.saison(heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
+  accDonjon += dt;
+  if (accDonjon >= 0.25) { accDonjon = 0; eveillerDonjons(joueurs); }
   // SPEC-DONJON-018 : la victoire RÉELLE sur un gardien (événement 'boss_vaincu'
   // du journal d'entites.js, jamais un appel direct isolé) marque le donjon
   // vaincu (pré-existant : jamais fait par le serveur avant ce lot, seulement
