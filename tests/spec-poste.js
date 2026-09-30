@@ -262,6 +262,19 @@
       A.equal(e.motif, 'partie_inconnue'); A.equal(e.code, 404);
     });
 
+    it('SPEC-ARCHI-036 : « Sauvegarder » est une DEMANDE au serveur (POST /api/parties/sauver), jamais une écriture locale', function () {
+      var f = fauxFetch({ '/api/parties/sauver': { code: 200, json: { ok: true, ecrite: true } } });
+      var c = creerPoste({ fetch: f });
+      var r = resultat(c.poste.sauvegarder());
+      A.deep(r, { ok: true, ecrite: true, motif: null });
+      A.equal(f.appels.length, 1); A.equal(f.appels[0].chemin, '/api/parties/sauver'); A.equal(f.appels[0].opts.method, 'POST');
+      var f2 = fauxFetch({ '/api/parties/sauver': { code: 409, json: { ok: false, motif: 'pas_de_partie' } } });
+      var r2 = resultat(creerPoste({ fetch: f2 }).poste.sauvegarder());
+      A.deep(r2, { ok: false, ecrite: false, motif: 'pas_de_partie' });
+      var e = echec(creerPoste({ fetch: fauxFetch({ '/api/parties/sauver': new Error('reseau') }) }).poste.sauvegarder());
+      A.equal(e.message, 'reseau');
+    });
+
     it('SPEC-ARCHI-013 : charger une partie attend que le serveur relancé réponde avec cette partie active', function () {
       var essais = 0;
       var f = fauxFetch({

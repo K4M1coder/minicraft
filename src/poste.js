@@ -266,6 +266,8 @@
     }
     function renommerPartie(id, nom) { return api('/api/parties/renommer', { id: id, nom: nom }).then(function (r) { return reponse(r).partie; }); }
     function supprimerPartie(id) { return api('/api/parties/supprimer', { id: id }).then(function (r) { reponse(r); return true; }); }
+    /* SPEC-ARCHI-036 : demande au serveur de sauvegarder la partie active MAINTENANT (« Sauvegarder »). */
+    function sauvegarder() { return api('/api/parties/sauver', {}).then(function (r) { var j = r.json || {}; return { ok: !!j.ok, ecrite: !!j.ecrite, motif: j.motif || null }; }); }
     function importerExport(doc) { return api('/api/parties/importer', doc, 60000).then(reponse); }
 
     // ── parties du navigateur (SPEC-ARCHI-015) ─────────────────────────────
@@ -317,7 +319,7 @@
       surEtatSession: surEtatSession, definirReseau: definirReseau, arreter: arreter, etatReseau: etatReseau,
       actif: function () { return etat.actif; },
       lister: lister, creerPartie: creerPartie, chargerPartie: chargerPartie,
-      renommerPartie: renommerPartie, supprimerPartie: supprimerPartie, importerExport: importerExport,
+      renommerPartie: renommerPartie, supprimerPartie: supprimerPartie, sauvegarder: sauvegarder, importerExport: importerExport,
       partiesLocalesAImporter: partiesLocalesAImporter, importerLocales: importerLocales,
       exporterLocales: exporterLocales, texteExport: texteExport, telechargerExport: telechargerExport,
     };

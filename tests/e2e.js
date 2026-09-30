@@ -1534,6 +1534,12 @@
      ouverts depuis un simple serveur statique, ils passent en s annoncant
      ignores plutot que d echouer a tort. */
   var SERVEUR_DISPO = null;
+  /* Sondage borné (jamais un délai fixe) : rend la main dès que `fn()` est vrai, ou au bout de `ms`. */
+  async function sonderE2E(fn, ms) {
+    var fin = Date.now() + (ms || 8000);
+    while (!fn() && Date.now() < fin) await wait(50);
+    return !!fn();
+  }
   async function serveurPresent() {
     if (SERVEUR_DISPO !== null) return SERVEUR_DISPO;
     try {
@@ -1564,20 +1570,27 @@
   e2e('SPEC-NET-021 : un joueur distant est affiche avec son nom', async function (g) {
     if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
     await reset(g);
+    /* Le serveur de ce banc est OUVERT (--serveur) : un second joueur y est admis.
+       Sur un serveur fermé (le solo), un second poste serait refusé
+       (poste_deja_connecte, SPEC-ARCHI-007) — le test ne dépend donc d'aucun
+       délai fixe mais attend chaque étape par sondage borné. */
     var autre = MC.createNetClient({});
     g.net.connecter('', 'Hote', 1);
-    await wait(700);
+    await sonderE2E(function () { return g.net.etat === 'en ligne'; }, 15000);
     A.equal(g.net.etat, 'en ligne', 'connecte');
     autre.connecter('', 'Visiteur', 1);
-    await wait(700);
+    await sonderE2E(function () { return autre.etat === 'en ligne' || autre.etat === 'erreur'; }, 15000);
+    A.equal(autre.etat, 'en ligne', 'le visiteur est admis (' + (autre.erreur || 'sans erreur') + ')');
     autre.envoyer({ t: 'bouge', x: g.player.state.pos.x + 3, y: g.player.state.pos.y,
                     z: g.player.state.pos.z, yaw: 0 });
-    await wait(500);
+    await sonderE2E(function () { return g.net.distants.size >= 1; }, 15000);
     await frames(5);
     A.equal(g.net.distants.size, 1, 'un joueur distant connu');
     var d = [...g.net.distants.values()][0];
     A.equal(d.nom, 'Visiteur', 'son nom est connu');
-    A.gt(g.render.maillagesDistants.size, 0, 'un maillage lui est associe');
+    await sonderE2E(function () { return g.render.maillagesDistants.size > 0; }, 15000);
+
+    A.gt(g.render.maillagesDistants.size, 0, 'un maillage lui est associe (etat ' + g.input.state + ', distants ' + g.net.distants.size + ')');
     var m = g.render.maillagesDistants.get(d.id);
     A.ok(m && m.children.some(function (o) { return o.isSprite; }), 'une etiquette de nom existe');
     autre.deconnecter(); g.net.deconnecter();
@@ -1657,9 +1670,9 @@
   });
 
   e2e('B1 (docs/vague-2/B1.md § 6) : predInv/journal actifs en ligne, doSave neutralisee et inventaire solo restaure a la deconnexion', {
-        "teste": "que rejoindreServeur active la prediction d'inventaire (predInv) et le journal de player.js, que doSave refuse d'ecrire en ligne, et que l'inventaire/equipement solo d'avant connexion revient tel quel a la deconnexion",
+        "teste": "que rejoindreServeur active la prediction d'inventaire (predInv) et le journal de player.js, que le client n'a plus de doSave (le serveur sauvegarde, SPEC-ARCHI-036), et que l'inventaire/equipement solo d'avant connexion revient tel quel a la deconnexion",
         "pourquoi": "le serveur devient seul maitre de l'inventaire en ligne (SPEC-SYNC-007/008) ; une sauvegarde locale ou un inventaire solo perdu casserait la partie hors ligne",
-        "attendu": "predInv et journalInv presents en ligne, doSave() renvoie false en ligne, inventaire solo (7 cailloux) retrouve intact apres deconnexion"
+        "attendu": "predInv et journalInv presents en ligne, g.doSave n'existe plus, inventaire solo (7 cailloux) retrouve intact apres deconnexion"
   }, async function (g) {
     if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
     await reset(g);
@@ -1673,7 +1686,7 @@
     var j = g.equipe[0];
     A.ok(j.predInv, 'predInv cree pour le joueur local');
     A.ok(Array.isArray(g.player.state.journalInv), 'journal actif en ligne');
-    A.equal(g.doSave(false), false, 'doSave refuse en ligne');
+    A.equal(typeof g.doSave, 'undefined', 'SPEC-ARCHI-036 : le client n a plus de doSave (le serveur sauvegarde)');
     g.net.deconnecter();
     for (var u = 0; u < 30 && g.net.etat === 'en ligne'; u++) await wait(100);
     await wait(300);
@@ -2135,7 +2148,7 @@
     g.world.setBlock(bx, by, bz, B.BRICK);
     s.inv.add(B.GLASS, 33);
     s.hp = 11;
-    A.ok(g.doSave(false), 'sauvegarde écrite');
+    A.ok(MC.Saves.sauvegarder(localStorage, g.partieId, g), 'sauvegarde écrite');   // le module de sauvegarde (le serveur l'utilise) : le client n'a plus de doSave
 
     // on casse tout et on vide l'inventaire
     g.world.setBlock(bx, by, bz, 0);
