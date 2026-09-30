@@ -34,24 +34,23 @@
       // le reste de la campagne (--sans-fonctions le ferait, lui, globalement).
       { etiquettes: ['budget-perf'] },
       function () {
-      var w = MC.createWorld(20260924);
-      // 80 chunks (pas 40) : un seul chunk de ville coûte largement plus que
-      // les autres (habitats/routes) et fausse la moyenne sur un petit
-      // échantillon — 80 l'amortit assez pour un seuil stable (voir aussi
-      // tests/bench-generation.js, qui mesure la même chose plus précisément).
-      var coords = spirale(80), total = 0;
-      coords.forEach(function (c) {
-        var t0 = performance.now();
-        w.getChunk(c[0], c[1], true);
-        total += performance.now() - t0;
-      });
-      var avg = total / coords.length;
-      /* Seuil généreux et non le chiffre mesuré (SPEC-PERF-017/tests/budget-perf.json
-         y veillent avec plus de précision) : mesuré ~44-45 ms/chunk le
-         2026-09-24 (80 chunks en spirale) contre ~98-112 ms/chunk avant le
-         cache — 75 ms laisse une bonne marge à une machine plus lente, tout
-         en restant nettement sous la moyenne d'avant : un retour au bruit
-         non mis en cache doit échouer ici. */
+      /* Mesuré dans un processus NEUF (tests/bench-generation.js) et non dans
+         celui de la campagne : après un millier de tests, le tas et le JIT de
+         ce processus-ci doublaient la durée de génération (~55 ms mesurés
+         hors campagne contre 106-117 ms en fin de préréglage) sans que le
+         code de génération y soit pour rien. Même mesure, mêmes 80 chunks
+         en spirale, graine de tests/budget-perf.json. */
+      // le banc sort en erreur dès que son p95 dépasse SON budget (porte G12,
+      // pas ce test) : seule la moyenne compte ici, quel que soit le code de sortie
+      var sortie;
+      try {
+        sortie = require('child_process').execFileSync(process.execPath,
+          [require('path').join(__dirname, 'bench-generation.js'), '80'],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 240000 }).toString();
+      } catch (e) { sortie = String(e.stdout || ''); }
+      var m = /moyenne = ([0-9.]+) ms\/chunk/.exec(sortie);
+      A.ok(!!m, 'tests/bench-generation.js rend une moyenne (sortie : ' + sortie.slice(0, 200) + ')');
+      var avg = parseFloat(m[1]);
       A.lt(avg, 75, 'génération moyenne sous le budget de 75 ms/chunk (mesuré ' + avg.toFixed(1) + ' ms)');
     });
 

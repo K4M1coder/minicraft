@@ -58,11 +58,20 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
   const reste = args.filter((a, i) => a !== '--delai' && args[i - 1] !== '--delai');
   const enfant = spawn(process.execPath, [__filename, ...reste],
     { stdio: 'inherit', env: Object.assign({}, process.env, { MC_RUN_ENFANT: '1', MC_RUN_ETAT: etat, MC_RUN_PARTIEL: partiel }) });
-  const limite = setTimeout(() => {
+  /* Filet d'INACTIVITÉ, pas de durée totale : la campagne grossit avec le
+     dépôt (le préréglage pr dépasse désormais 15 min en tout) mais un test
+     qui boucle réellement reste seul à ne plus faire avancer le fichier
+     d'état, écrit au début de chaque test. */
+  const debutParent = Date.now();
+  const limite = setInterval(() => {
+    let dernierSigne = debutParent;
+    try { dernierSigne = Math.max(dernierSigne, fs.statSync(etat).mtimeMs); } catch (e) { /* pas encore écrit */ }
+    if (Date.now() - dernierSigne < parseFloat(option('--delai')) * 1000) return;
+    clearInterval(limite);
     let enCours = '(inconnu)';
     try { enCours = fs.readFileSync(etat, 'utf8'); } catch (e) { /* rien */ }
     enfant.kill();
-    fs.writeSync(2, '\n✗ délai de ' + option('--delai') + ' s dépassé pendant : ' + enCours + '\n');
+    fs.writeSync(2, '\n✗ aucun progrès depuis ' + option('--delai') + ' s pendant : ' + enCours + '\n');
     // même interrompue, la campagne garde son cahier de test (SPEC-BANC-014) —
     // à partir du dernier instantané que l'enfant a écrit entre deux groupes
     try {
@@ -77,9 +86,9 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
     try { fs.unlinkSync(etat); } catch (e) { /* rien */ }
     try { fs.unlinkSync(partiel); } catch (e) { /* rien */ }
     process.exit(3);
-  }, parseFloat(option('--delai')) * 1000);
+  }, 5000);
   enfant.on('exit', (code) => {
-    clearTimeout(limite);
+    clearInterval(limite);
     try { fs.unlinkSync(etat); } catch (e) { /* rien */ }
     try { fs.unlinkSync(partiel); } catch (e) { /* rien */ }
     process.exit(code === null ? 3 : code);
