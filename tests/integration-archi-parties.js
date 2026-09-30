@@ -189,8 +189,15 @@ async function scenarioImport() {
     // 014 : sauvegarde du serveur → tout ce qui n'est pas encore joué est conservé tel quel
     j.client.envoyer({ t: 'pause', actif: true });
     const fichier = path.join(dossier, a.id + '.json');
-    await dodo(900);
-    const f = JSON.parse(fs.readFileSync(fichier, 'utf8'));
+    // la sauvegarde sur pause est asynchrone : on attend qu'elle ait adopté le
+    // joueur solo (bornée) plutôt qu'un délai fixe, fragile sous charge
+    let f = null;
+    for (let essai = 0; essai < 40; essai++) {
+      await dodo(250);
+      try { f = JSON.parse(fs.readFileSync(fichier, 'utf8')); } catch (e) { f = null; }
+      if (f && (f.soloJoueur === null || f.soloJoueur === undefined) && f.extras && f.extras.succes) break;
+    }
+    if (!f) f = JSON.parse(fs.readFileSync(fichier, 'utf8'));
     ok(f.extras && f.extras.succes && f.extras.succes.debloques[0] === 'premier_pas', 'SPEC-ARCHI-014 : les succès du solo survivent à la sauvegarde du serveur');
     ok(f.conteneurs.some(c2 => c2.cle === '3,40,2' && c2.type === 'chest' && c2.slots[0] && c2.slots[0][1] === 7), 'SPEC-ARCHI-014 : le coffre et son contenu survivent');
     ok(f.soloJoueur === null || f.soloJoueur === undefined, 'SPEC-ARCHI-014 : le joueur solo a été adopté (il n\'est plus en attente)');

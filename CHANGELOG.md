@@ -489,6 +489,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- `tests/integration-archi-parties.js` (SPEC-ARCHI-014) : attend la sauvegarde asynchrone sur pause par sondage borné au lieu d'un délai fixe de 900 ms, qui échouait par intermittence sous charge.
 - SPEC-PERF-001 (`tests/spec-perf.js`) mesure désormais la génération dans un processus NEUF (`tests/bench-generation.js`, moyenne seule) au lieu du processus de la campagne : en fin de préréglage (~1060 tests plus tôt) le même code y prenait 106-117 ms contre ~55 ms mesurés hors campagne — pollution du tas/JIT du processus, pas une régression de génération. Le budget de 75 ms est inchangé.
 - Banc de test (`tests/run.js --delai`, SPEC-BANC-010) : le filet de 15 min était une durée TOTALE de campagne, dépassée à raison par le préréglage `pr` depuis que la suite grossit (intégrations ARCHI) — le pre-push refusait une suite saine. C'est désormais un filet d'INACTIVITÉ : il se réarme à chaque test commencé (fichier d'état) et ne tranche que si plus rien n'avance pendant 900 s, ce qu'il visait depuis le début (un test qui boucle).
 - Chantier ARCHI, client : après une actualisation de page (F5) le serveur peut ne pas avoir encore constaté la fermeture de l'ancienne connexion et refuser `poste_deja_connecte` ; l'écran d'attente de la partie réessaie jusqu'à 4 fois à 300 ms avant d'afficher « Connexion refusée » (`tests/integration-archi-client.js`, scénario `reessai`, dans un vrai navigateur).
