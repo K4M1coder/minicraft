@@ -28,7 +28,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
-                 'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes',
+                 'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
@@ -53,7 +53,6 @@ if (!analyse.ok) {
   process.exit(analyse.code === 'aide' ? 0 : 1);
 }
 const PARAMS = analyse.config;
-const PORT = PARAMS.port;
 
 /* Commit courant (SPEC-BANC-012) : calculé UNE FOIS au démarrage, jamais par
    requête — `git rev-parse` par appel serait un coût inutile pour une valeur
@@ -80,6 +79,59 @@ const CONF = {
   pvp: PARAMS.pvp,
   mondeFichier: PARAMS.monde ? path.resolve(RACINE, PARAMS.monde) : null,
 };
+
+// ── mode réseau et parties sur disque (chantier ARCHI, L50) ─────────────────
+/* Techniquement c'est TOUJOURS le même serveur, que le poste joue seul (réseau
+   FERMÉ : boucle locale uniquement), à plusieurs en écran partagé, ou avec
+   jusqu'à 100 joueurs (réseau OUVERT). Seuls changent l'écoute, la liste
+   d'origines, la pause (fermé seulement), la cadence de sauvegarde et la
+   règle « un seul poste ». `--serveur` (serveur dédié) est toujours ouvert. */
+const CA = MC.ContratsArchi;
+let reseauOuvert = !!(PARAMS.ouvert || PARAMS.serveurSeul);
+const RELANCE = process.env.MC_RELANCE === '1';       // lancé par une bascule de partie (relance interne)
+const DOSSIER_PARTIES = path.resolve(RACINE, PARAMS.dossierParties);
+/* SPEC-ARCHI-013 : MC.Saves (module pur) gère l'index et les fiches de partie ;
+   son stockage injecté est ici un adaptateur de FICHIERS — l'index dans
+   `index.json`, chaque partie dans `<id>.json` (le format de --monde). */
+function fichierStockage(cle) {
+  if (cle === MC.Saves.INDEX_KEY) return path.join(DOSSIER_PARTIES, 'index.json');
+  if (typeof cle === 'string' && cle.indexOf(MC.Saves.SLOT_PREFIX) === 0) {
+    const id = cle.slice(MC.Saves.SLOT_PREFIX.length);
+    return MC.PartiesFichier.idValide(id) ? path.join(DOSSIER_PARTIES, id + '.json') : null;
+  }
+  return null;
+}
+const stockageParties = {
+  getItem(cle) {
+    const f = fichierStockage(cle);
+    if (!f) return null;
+    try { return fs.readFileSync(f, 'utf8'); } catch (e) { return null; }
+  },
+  setItem(cle, valeur) {
+    const f = fichierStockage(cle);
+    if (!f) throw new Error('clé de stockage refusée');
+    fs.mkdirSync(DOSSIER_PARTIES, { recursive: true });
+    fs.writeFileSync(f + '.tmp', valeur);
+    fs.renameSync(f + '.tmp', f);
+  },
+  removeItem(cle) {
+    const f = fichierStockage(cle);
+    if (!f) return;
+    try { fs.unlinkSync(f); } catch (e) { /* déjà absent */ }
+  },
+};
+function fichierMonde(id) { return path.join(DOSSIER_PARTIES, id + '.json'); }
+let partieActive = null;                              // fiche d'index de la partie chargée, ou null
+if (PARAMS.partie) {
+  const meta = MC.PartiesFichier.idValide(PARAMS.partie) ? MC.Saves.trouver(stockageParties, PARAMS.partie) : null;
+  if (!meta) {
+    console.log(`partie inconnue : ${PARAMS.partie} (dossier ${DOSSIER_PARTIES})`);
+    process.exit(1);
+  }
+  partieActive = meta;
+  CONF.graine = meta.graine; CONF.mode = meta.mode; CONF.difficulte = meta.difficulte;
+  CONF.mondeFichier = fichierMonde(meta.id);
+}
 
 // ── administration (SPEC-ADMIN-001 à 008) ───────────────────────────────────
 /* Sans --admin, le serveur tire un jeton et l'affiche UNE fois au démarrage :
@@ -278,7 +330,56 @@ function etatMonde() {
     // SPEC-QUETE-004 : le tableau de quêtes actives par joueur, persistant à
     // la sauvegarde/reconnexion (nom -> [{ id, statut, … }]).
     quetes: MC.Politique.serialiserQuetes(quetesJoueurs),
+    // SPEC-ARCHI-014 : blocs de commande (texte de chaque bloc), et ce que le
+    // fichier d'une partie solo importée porte sans que le serveur l'exploite
+    // encore (cartes explorées, histoire, succès, véhicules…) : restitué tel
+    // quel à chaque sauvegarde, jamais perdu en route.
+    commandes: Array.from(monde.commandesBloc.entries()).map(([k, texte]) => {
+      const p = k.split(',');
+      return [+p[0], +p[1], +p[2], texte];
+    }),
+    soloJoueur, extras: extrasSolo,
   };
+}
+let soloJoueur = null;      // enregistrement du joueur d'une partie solo importée, adopté à la première connexion
+let extrasSolo = null;      // champs d'une partie solo importée que le serveur conserve sans encore les jouer (ARCHI-014)
+/* Enregistrement d'un joueur nommé + son état de personnage (SPEC-SYNC-020,
+   nécessaire à la parité de sauvegarde SPEC-ARCHI-014) : position, regard,
+   vie, faim, air, case sélectionnée, vol. */
+function enregistrementJoueur(js) {
+  const rec = MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg));
+  const st = js.joueur.state;
+  rec.etat = {
+    x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2), z: +st.pos.z.toFixed(2),
+    yaw: +st.yaw.toFixed(3), pitch: +st.pitch.toFixed(3),
+    hp: st.hp, hunger: st.hunger, air: +st.air.toFixed(1),
+    selected: st.selected, flying: !!st.flying,
+    spawn: js.spawn || null,
+  };
+  return rec;
+}
+/* Réapplique l'état de personnage d'un enregistrement. Un joueur mort à la
+   sauvegarde revient en vie au point d'apparition, jamais au cadavre. */
+function appliquerEtatPersonnage(js, etat) {
+  if (!etat || typeof etat !== 'object') return;
+  const st = js.joueur.state;
+  const fini = (v) => typeof v === 'number' && isFinite(v);
+  if (fini(etat.hp) && etat.hp > 0) {
+    if (fini(etat.x) && fini(etat.y) && fini(etat.z) && Math.abs(etat.x) < 1e7 && Math.abs(etat.z) < 1e7 && etat.y >= -64 && etat.y < 400) {
+      st.pos.x = etat.x; st.pos.y = etat.y; st.pos.z = etat.z;
+      for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) {
+        monde.getChunk(Math.floor(etat.x / 16) + cx, Math.floor(etat.z / 16) + cz, true);
+      }
+    }
+    if (fini(etat.yaw)) st.yaw = etat.yaw;
+    if (fini(etat.pitch)) st.pitch = Math.max(-1.6, Math.min(1.6, etat.pitch));
+    st.hp = Math.min(20, etat.hp);
+    if (fini(etat.hunger)) st.hunger = Math.max(0, Math.min(20, etat.hunger));
+    if (fini(etat.air)) st.air = Math.max(0, Math.min(10, etat.air));
+    if (Number.isInteger(etat.selected) && etat.selected >= 0 && etat.selected < 9) st.selected = etat.selected;
+    st.flying = !!etat.flying && !!regles.vole;
+  }
+  js.spawn = etat.spawn || null;
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
    l'état courant de chaque joueur local ENCORE connecté et nommé — sans
@@ -290,7 +391,7 @@ function snapshotRegistreJoueurs() {
     if (!c.joueurs) return;
     c.joueurs.forEach(js => {
       if (!js.cleReg) return;
-      out.set(js.cleReg, MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg)));
+      out.set(js.cleReg, enregistrementJoueur(js));
     });
   });
   return out;
@@ -356,6 +457,13 @@ function appliquerEtatMonde(data) {
     joueursRegistre.set(entree[0], v);
     banqueDe(entree[0]).slots = v.banque.map(MC.ContratsV2.caseVersPile);
   });
+  // SPEC-ARCHI-014 : blocs de commande, joueur solo importé, extras conservés
+  monde.commandesBloc.clear();
+  (data.commandes || []).forEach(c => {
+    if (Array.isArray(c) && c[3]) monde.setCommande(c[0], c[1], c[2], String(c[3]).slice(0, 200));
+  });
+  soloJoueur = data.soloJoueur && MC.ContratsV2 ? MC.ContratsV2.validerEnregistrementJoueur(data.soloJoueur) : null;
+  extrasSolo = data.extras && typeof data.extras === 'object' ? data.extras : null;
   // B1 (étape 7, SPEC-SYNC-021 partiel) : conteneurs POSÉS — absents d'un
   // fichier plus ancien, donc simplement vides, comme aujourd'hui.
   conteneursPoses.clear();
@@ -400,21 +508,52 @@ let sauvegardeArretee = false;         // plus aucune sauvegarde async après le
    clients continuent d'être traités pendant l'écriture disque. Une seule
    sauvegarde à la fois : si la précédente n'est pas terminée, celle-ci est
    ignorée plutôt que d'écrire deux fichiers `.tmp` en parallèle. */
-function sauvegarderMondeAsync() {
+/* SPEC-ARCHI-012 : une sauvegarde est OMISE si rien n'a changé depuis la
+   précédente. L'empreinte est l'état sérialisé SANS l'heure du monde (qui
+   avance à chaque tic hors pause : sans cette exclusion une cadence
+   n'omettrait jamais rien) ; une sauvegarde provoquée par un ÉVÈNEMENT (pause,
+   retour au menu, fermeture réseau, dernier client, arrêt) n'est omise que si
+   l'heure elle-même n'a pas bougé non plus, c'est-à-dire seulement quand le
+   monde est réellement resté figé depuis l'écriture précédente. */
+let derniereEmpreinte = null;
+let derniereHeureSauvee = null;
+let sauvegardeRedemandee = null;       // raison d'une sauvegarde événementielle demandée pendant une écriture en vol
+function empreinteEtat(json) { return json.replace(/"heure":[-0-9.eE+]+/, '"heure":0'); }
+function apresSauvegarde(raison) {
+  journal('sauvegarde du monde (' + raison + ')');
+  if (partieActive) MC.Saves.majMeta(stockageParties, partieActive.id, { duree: Math.round(dureeJeu) });
+}
+let dureeJeu = 0;                      // secondes de jeu réellement écoulées (hors pause, avec un joueur), pour l'index des parties
+function sauvegarderMondeAsync(raison, evenement) {
   if (!CONF.mondeFichier || sauvegardeArretee) return;
-  if (sauvegardeEnCours) return;                      // pas de sauvegarde concurrente
+  raison = typeof raison === 'string' ? raison : 'cadence';
+  if (sauvegardeEnCours) {                            // pas de sauvegarde concurrente
+    if (evenement) sauvegardeRedemandee = raison;
+    return;
+  }
+  let data;
+  try { data = JSON.stringify(etatMonde()); }
+  catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
+  const emp = empreinteEtat(data);
+  if (derniereEmpreinte !== null && emp === derniereEmpreinte && (!evenement || heure === derniereHeureSauvee)) {
+    journal('sauvegarde omise (' + raison + ') : rien n a change depuis la précédente');
+    return;
+  }
   sauvegardeEnCours = true;
   let finAttente;
   sauvegardeEnCoursAttente = new Promise((resolve) => { finAttente = resolve; });
-  const fin = () => { sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente(); };
-  let data;
-  try { data = JSON.stringify(etatMonde()); }
-  catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); fin(); return; }
+  const heureEcrite = heure;
+  const fin = (ok) => {
+    sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
+    if (ok) { derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison); }
+    if (sauvegardeRedemandee) { const r = sauvegardeRedemandee; sauvegardeRedemandee = null; sauvegarderMondeAsync(r, true); }
+  };
+  try { fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
   fs.writeFile(FICHIER_TMP_ASYNC(), data, (err) => {
-    if (err) { journal('échec de la sauvegarde du monde (écriture) : ' + err.message); fin(); return; }
+    if (err) { journal('échec de la sauvegarde du monde (écriture) : ' + err.message); fin(false); return; }
     fs.rename(FICHIER_TMP_ASYNC(), CONF.mondeFichier, (err2) => {
-      if (err2) journal('échec de la sauvegarde du monde (renommage) : ' + err2.message);
-      fin();
+      if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); fin(false); return; }
+      fin(true);
     });
   });
 }
@@ -426,8 +565,10 @@ function sauvegarderMondeAsync() {
 function sauvegarderMondeSync() {
   if (!CONF.mondeFichier) return false;
   try {
+    fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true });
     fs.writeFileSync(FICHIER_TMP_SYNC(), JSON.stringify(etatMonde()));
     fs.renameSync(FICHIER_TMP_SYNC(), CONF.mondeFichier);
+    if (partieActive) MC.Saves.majMeta(stockageParties, partieActive.id, { duree: Math.round(dureeJeu) });
     return true;
   } catch (e) { journal('échec de la sauvegarde du monde : ' + e.message); return false; }
 }
@@ -459,7 +600,17 @@ if (CONF.mondeFichier) {
   // disque négligeable. Réglable (MC_SAUVEGARDE_MS) : les tests d'intégration
   // en ont besoin d'un intervalle court pour vérifier la sauvegarde périodique
   // sans attendre deux minutes.
-  setInterval(sauvegarderMondeAsync, parseInt(process.env.MC_SAUVEGARDE_MS, 10) || 120000);
+  planifierSauvegarde();
+}
+/* Cadence (SPEC-ARCHI-012) : 45 s en mode fermé (perte maximale d'un crash
+   brutal), 120 s en mode ouvert (inchangé) ; MC_SAUVEGARDE_MS la règle pour
+   les tests. Recalculée à chaque tour : l'ouverture/fermeture à chaud du
+   réseau change la cadence sans redémarrage. */
+function cadenceSauvegardeMs() {
+  return parseInt(process.env.MC_SAUVEGARDE_MS, 10) || (reseauOuvert ? CA.BORNES.SAUVEGARDE_OUVERT_MS : CA.BORNES.SAUVEGARDE_FERME_MS);
+}
+function planifierSauvegarde() {
+  setTimeout(() => { sauvegarderMondeAsync('cadence', false); planifierSauvegarde(); }, cadenceSauvegardeMs());
 }
 /* Les habitants des villes et villages proches des joueurs : le serveur les
    fait vivre, comme toutes les créatures. Un habitant tué ne renaît pas. */
@@ -686,6 +837,44 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
 let prochainId = 1;
 const clients = new Map();          // id -> {id, nom, socket, pos, yaw, pitch, locaux, vivant}
 
+// ── pause, terminaison et un seul poste (SPEC-ARCHI-007 à 011) ───────────────
+/* La pause concerne le POSTE (une connexion applicative, n joueurs locaux) et
+   n'existe qu'en réseau FERMÉ : en mode ouvert d'autres joueurs partagent le
+   monde, aucune pause ne peut l'arrêter. Elle gèle TOUT ce qui avance avec le
+   temps (la boucle ne fait plus de pas et rebase `dernier` : la reprise ne
+   rattrape rien, SPEC-ARCHI-010/011). */
+let enPause = false;
+let pauseRev = 0;
+let pauseParAbsence = false;       // pause posée par le serveur quand le dernier client est parti
+let minuteurAbsence = null;
+let arretEnCours = false;
+const GRACE_ARRET_MS = parseInt(process.env.MC_GRACE_ARRET_MS, 10) || CA.BORNES.GRACE_ARRET_S * 1000;
+function messagePause() { return { t: NP.MSG.PAUSE_ETAT, actif: enPause, rev: pauseRev }; }
+function definirPause(actif, parAbsence) {
+  actif = !!actif;
+  if (actif === enPause) return;
+  enPause = actif; pauseRev++; pauseParAbsence = actif && !!parAbsence;
+  dernier = performance.now();                     // rebasage : le premier dt de la reprise ne contient pas la pause
+  if (actif) sauvegarderMondeAsync('pause', true);
+  diffuser(messagePause());
+  journal(actif ? 'monde en pause' : 'reprise du monde');
+}
+function armerAbsence() {
+  if (minuteurAbsence) return;
+  journal(`plus aucun client — arrêt dans ${GRACE_ARRET_MS / 1000} s sans reconnexion`);
+  minuteurAbsence = setTimeout(() => {
+    minuteurAbsence = null;
+    if (clients.size === 0 && !reseauOuvert) arreter('absence de client');
+  }, GRACE_ARRET_MS);
+}
+/* Un client se (re)connecte : le délai de grâce est annulé, et une pause posée
+   par l'absence (pas par le joueur) est levée — l'actualisation de la page
+   reprend la partie. Une pause demandée par le joueur, elle, persiste. */
+function clientPresent() {
+  if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
+  if (pauseParAbsence) definirPause(false);
+}
+
 function diffuser(msg, saufId) {
   const trame = NP.encoder(JSON.stringify(msg), NP.OP.TEXTE, Buffer.alloc);
   clients.forEach(c => {
@@ -709,7 +898,7 @@ function fermer(c, raison) {
   if (c.joueurs) {
     c.joueurs.forEach(js => {
       if (!js.cleReg) return;
-      joueursRegistre.set(js.cleReg, MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg)));
+      joueursRegistre.set(js.cleReg, enregistrementJoueur(js));
     });
   }
   if (c.sessionId) MC.Admin.fermerSession(admin, c.sessionId, heure);
@@ -718,6 +907,15 @@ function fermer(c, raison) {
   diffuser({ t: NP.MSG.QUITTE, id: c.id, nom: c.nom });
   if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   journal(`- ${c.nom} (#${c.id}) parti — ${raison || 'deconnexion'} · ${clients.size} en ligne`);
+  /* SPEC-ARCHI-008 (b) : en mode FERMÉ, le départ du dernier client (onglet
+     fermé brutalement compris) sauvegarde tout de suite, met le monde en
+     pause et arme l'arrêt après le délai de grâce. En mode OUVERT, jamais de
+     terminaison sur départ du dernier joueur (c). */
+  if (!reseauOuvert && clients.size === 0 && !arretEnCours) {
+    sauvegarderMondeAsync('dernier client', true);
+    definirPause(true, true);
+    armerAbsence();
+  }
 }
 
 function journal(txt) {
@@ -829,7 +1027,7 @@ function traiterApiAdmin(req, res) {
    l'adresse distante et la taille reçue. */
 function traiterResultatsTest(req, res) {
   if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
-  const fiable = requeteFiable(req, PORT);
+  const fiable = requeteFiable(req, portActuel);
   if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
   const typeContenu = String(req.headers['content-type'] || '');
   if (typeContenu.split(';')[0].trim() !== 'application/json') {
@@ -907,13 +1105,13 @@ function traiterCahiers(req, res) {
   }
   if (action === 'comparer' && req.method === 'GET') { repondreJSON(res, 200, cahier.compareCahiers(racine, dossier, q.avec)); return true; }
   if (action === 'conserver' && req.method === 'POST') {
-    const fiable = requeteFiable(req, PORT);
+    const fiable = requeteFiable(req, portActuel);
     if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
     lireCorpsJSON(req, (args) => { repondreJSON(res, 200, cahier.marquerConserve(racine, dossier, args.valeur !== false)); });
     return true;
   }
   if (!action && req.method === 'DELETE') {
-    const fiable = requeteFiable(req, PORT);
+    const fiable = requeteFiable(req, portActuel);
     if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
     repondreJSON(res, 200, cahier.supprimerCahier(racine, dossier)); return true;
   }
@@ -1030,7 +1228,151 @@ function traiterImageRegistre(req, res) {
   return true;
 }
 
+// ── API des parties (SPEC-ARCHI-013, 015) ────────────────────────────────────
+/* Le menu du jeu (créer, charger, renommer, supprimer, lister, importer) agit
+   par cette API HTTP, RÉSERVÉE à la boucle locale et aux origines locales
+   (mêmes règles que SPEC-ARCHI-003), quel que soit le mode réseau : un joueur
+   distant n'a aucun droit sur les parties de la machine hôte. */
+const CORPS_API_MAX = 64 * 1024 * 1024;       // un export de plusieurs parties peut être volumineux
+function lireCorpsGros(req, max, cb) {
+  const morceaux = [];
+  let taille = 0, depasse = false;
+  req.on('data', (d) => {
+    taille += d.length;
+    if (taille > max) { depasse = true; req.destroy(); return; }
+    morceaux.push(d);
+  });
+  req.on('end', () => {
+    if (depasse) return;
+    try { cb(null, morceaux.length ? JSON.parse(Buffer.concat(morceaux).toString('utf8')) : {}); }
+    catch (e) { cb(e); }
+  });
+}
+function apiPartiesAutorisee(req, res) {
+  if (!CA.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return false; }
+  const origine = req.headers['origin'];
+  if (origine && CA.originesLocales(portActuel).indexOf(origine) < 0) { repondreJSON(res, 403, { ok: false, motif: 'origine refusée' }); return false; }
+  if (!reseauOuvert && !hoteLocal(req)) { repondreJSON(res, 403, { ok: false, motif: 'hôte refusé' }); return false; }
+  if (req.headers['sec-fetch-site'] === 'cross-site') { repondreJSON(res, 403, { ok: false, motif: 'requête intersites refusée' }); return false; }
+  return true;
+}
+function entierOuNul(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v ? v : null; }
+function traiterApiParties(req, res) {
+  if (!apiPartiesAutorisee(req, res)) return;
+  const sous = req.url.split('?')[0].replace(/\/+$/, '').slice('/api/parties'.length);
+  if (req.method === 'GET' && sous === '') {
+    repondreJSON(res, 200, {
+      ok: true, actif: partieActive ? partieActive.id : null, parties: MC.Saves.lister(stockageParties),
+      reseau: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME, port: portActuel, adresses: adressesActives,
+      dedie: !!(CONF.mondeFichier && !partieActive),
+      // instantané du monde pour les lanceurs et les tests : l'heure, la pause, les créatures
+      monde: {
+        heure: +heure.toFixed(3), pause: enPause, rev: pauseRev, clients: clients.size,
+        creatures: entites.list.length,
+        sigCreatures: +entites.list.reduce((a, e) => a + e.pos.x + e.pos.z, 0).toFixed(3),
+      },
+    });
+    return;
+  }
+  if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return; }
+  lireCorpsGros(req, sous === '/importer' ? CORPS_API_MAX : 65536, (err, corps) => {
+    if (err) { repondreJSON(res, 400, { ok: false, motif: 'json_invalide' }); return; }
+    const id = corps && typeof corps.id === 'string' ? corps.id : null;
+    const connue = id && MC.PartiesFichier.idValide(id) ? MC.Saves.trouver(stockageParties, id) : null;
+    switch (sous) {
+      case '': {                                                           // créer
+        const graine = entierOuNul(corps.graine);
+        const meta = MC.Saves.creer(stockageParties, {
+          nom: typeof corps.nom === 'string' ? corps.nom.trim() : '',
+          mode: MC.Modes.MODES[corps.mode] ? corps.mode : 'survie',
+          difficulte: MC.Modes.DIFFICULTES[corps.difficulte] ? corps.difficulte : 'facile',
+          graine: graine === null ? undefined : graine,
+          histoire: corps.histoire && typeof corps.histoire === 'object' ? corps.histoire : null,
+        });
+        if (graine !== null) MC.Saves.majMeta(stockageParties, meta.id, { graine });
+        const enreg = MC.Saves.trouver(stockageParties, meta.id);
+        if (!enreg) { repondreJSON(res, 500, { ok: false, motif: 'ecriture_impossible' }); return; }
+        repondreJSON(res, 201, { ok: true, partie: enreg });
+        return;
+      }
+      case '/charger': {
+        if (!connue) { repondreJSON(res, 404, { ok: false, motif: 'partie_inconnue' }); return; }
+        if (partieActive && partieActive.id === connue.id) { repondreJSON(res, 200, { ok: true, relance: false, partie: connue }); return; }
+        repondreJSON(res, 200, { ok: true, relance: true, partie: connue, port: portActuel });
+        res.on('finish', () => relancerSurPartie(connue.id));
+        return;
+      }
+      case '/renommer': {
+        if (!connue) { repondreJSON(res, 404, { ok: false, motif: 'partie_inconnue' }); return; }
+        const m = MC.Saves.renommer(stockageParties, connue.id, corps.nom);
+        if (partieActive && partieActive.id === connue.id && m) partieActive = m;
+        repondreJSON(res, 200, { ok: true, partie: m });
+        return;
+      }
+      case '/supprimer': {
+        if (!connue) { repondreJSON(res, 404, { ok: false, motif: 'partie_inconnue' }); return; }
+        if (partieActive && partieActive.id === connue.id) { CONF.mondeFichier = null; partieActive = null; }   // plus rien à sauvegarder
+        MC.Saves.supprimer(stockageParties, connue.id);
+        repondreJSON(res, 200, { ok: true });
+        return;
+      }
+      case '/importer': {
+        const r = MC.PartiesFichier.analyserExport(corps);
+        if (r.erreur) { repondreJSON(res, 400, { ok: false, motif: r.erreur }); return; }
+        const importees = [], ignorees = r.ignorees.slice();
+        r.parties.forEach((p) => {
+          try {
+            const nouvelle = MC.Saves.trouver(stockageParties, p.meta.id) ? MC.Saves.nouvelId() : p.meta.id;
+            const fichier = MC.PartiesFichier.migrerSauvegarde(p.meta, p.data);
+            const m = MC.PartiesFichier.metaImportee(p.meta, p.data);
+            stockageParties.setItem(MC.Saves.slotKey(nouvelle), JSON.stringify(fichier));
+            MC.Saves.creer(stockageParties, { id: nouvelle, nom: m.nom, mode: m.mode, difficulte: m.difficulte, graine: m.graine, histoire: m.histoire });
+            MC.Saves.majMeta(stockageParties, nouvelle, { graine: m.graine, versionCarte: m.versionCarte, creeLe: m.creeLe, majLe: m.majLe, duree: m.duree, morte: m.morte });
+            importees.push(nouvelle);
+          } catch (e) { ignorees.push({ id: p.meta.id, motif: e.message }); }
+        });
+        repondreJSON(res, 200, { ok: true, importees, ignorees });
+        return;
+      }
+      default: repondreJSON(res, 404, { ok: false, motif: 'route_inconnue' });
+    }
+  });
+}
+/* Bascule de partie : le monde (graine, fichier, règles) est construit UNE FOIS
+   au lancement du processus ; charger une autre partie sauvegarde la courante
+   puis relance le même serveur sur la partie choisie, sur le MÊME port et dans
+   le même mode réseau (SPEC-ARCHI-013 : « décharge la précédente en la
+   sauvegardant »). Le client, dont la connexion se coupe, attend que l'API
+   réponde de nouveau puis se reconnecte. */
+function relancerSurPartie(id) {
+  if (arretEnCours) return;
+  arretEnCours = true;
+  journal(`bascule vers la partie ${id}`);
+  sauvegardeArretee = true;
+  if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
+  sauvegarderMondeSync();
+  const conserves = [];
+  for (let k = 0; k < argvBrut.length; k++) {
+    const t = argvBrut[k];
+    if (/^--(partie|monde|graine|port)(=|$)/.test(t)) { if (t.indexOf('=') < 0) k++; continue; }
+    if (t === '--ouvert') continue;
+    conserves.push(t);
+  }
+  const args = [__filename, ...conserves, '--partie', id, '--port', String(portActuel)];
+  if (reseauOuvert) args.push('--ouvert');
+  clients.forEach(c => { try { c.socket.destroy(); } catch (e) {} });
+  fermerEcouteurs().then(() => {
+    const enfant = require('child_process').spawn(process.execPath, args, {
+      detached: true, stdio: 'inherit', windowsHide: true, cwd: process.cwd(),
+      env: Object.assign({}, process.env, { MC_RELANCE: '1' }),
+    });
+    enfant.unref();
+    setTimeout(() => process.exit(0), 100);
+  });
+}
+
 function servir(req, res) {
+  if (req.url.split('?')[0].indexOf('/api/parties') === 0) { traiterApiParties(req, res); return; }
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
   if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
@@ -1055,7 +1397,18 @@ function servir(req, res) {
 }
 
 // ── serveur HTTP + bascule WebSocket ─────────────────────────────────────────
-const serveur = http.createServer(servir);
+/* Plusieurs écouteurs possibles (SPEC-ARCHI-002) : en mode FERMÉ, deux
+   liaisons explicites 127.0.0.1 ET ::1 (jamais 0.0.0.0 ni ::) ; en mode OUVERT,
+   un seul écouteur sur toutes les interfaces. Tous partagent les mêmes
+   gestionnaires : c'est le MÊME serveur. */
+let ecouteurs = [];
+let portActuel = PARAMS.port;
+let adressesActives = [];
+function creerEcouteur() {
+  const srv = http.createServer(servir);
+  srv.on('upgrade', surUpgrade);
+  return srv;
+}
 
 // SPEC-SECU-011 : liste blanche d'Origin, configurable via --origines (voir
 // src/parametres.js). Calculée UNE fois au démarrage — jamais par requête.
@@ -1066,7 +1419,23 @@ const ORIGINES_AUTORISEES = PARAMS.origines
   ? PARAMS.origines.split(',').map(s => s.trim()).filter(Boolean)
   : null;
 
-serveur.on('upgrade', (req, socket) => {
+/* SPEC-ARCHI-003 : en mode fermé, l'Origin (s'il est présent) doit être l'une
+   des trois origines locales du serveur, et l'en-tête Host un nom local
+   (défense contre le rebond DNS) ; sans Origin (client non navigateur en
+   boucle locale) la requête passe. En mode ouvert, la liste --origines
+   (SPEC-SECU-011) s'applique comme avant. */
+function hoteLocal(req) {
+  const h = String(req.headers['host'] || '').replace(/:\d+$/, '').toLowerCase();
+  return h === 'localhost' || h === '127.0.0.1' || h === '[::1]';
+}
+function requeteAutorisee(req) {
+  if (reseauOuvert) return NP.origineAutorisee(req.headers['origin'], ORIGINES_AUTORISEES);
+  if (!hoteLocal(req)) return false;
+  const origine = req.headers['origin'];
+  return !origine || CA.originesLocales(portActuel).indexOf(origine) >= 0;
+}
+
+function surUpgrade(req, socket) {
   if (!NP.estRequeteWebSocket(req.headers)) {
     socket.write('HTTP/1.1 400 Bad Request\r\n\r\n');
     socket.destroy();
@@ -1075,7 +1444,7 @@ serveur.on('upgrade', (req, socket) => {
   // SPEC-SECU-011 : décision PURE (src/net-protocol.js, testée sous Node) —
   // ici on ne fait que lire l'en-tête et refuser la poignée de main AVANT
   // toute allocation de client, avec un code d'erreur HTTP explicite.
-  if (!NP.origineAutorisee(req.headers['origin'], ORIGINES_AUTORISEES)) {
+  if (!requeteAutorisee(req)) {
     socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
     socket.destroy();
     return;
@@ -1089,9 +1458,11 @@ serveur.on('upgrade', (req, socket) => {
     id: prochainId++, nom: 'Joueur', socket, vivant: true, locaux: 1,
     pos: { x: SPAWN.x, y: SPAWN.y, z: SPAWN.z }, yaw: 0, pitch: 0,
     rejoint: false, ip: socket.remoteAddress || '?',
+    local: CA.estAdresseLocale(socket.remoteAddress),   // boucle locale : seule habilitée à RESEAU, ARRET, PAUSE
     role: null, sessionId: null,             // rôle d'administration (SPEC-ADMIN-006/008)
   };
   clients.set(c.id, c);
+  clientPresent();                            // annule le délai de grâce d'arrêt, lève une pause d'absence
 
   /* TCP ne respecte aucune frontière de message : une lecture peut contenir
      une demi-trame, ou trois. On accumule et on décode tant qu'une trame
@@ -1137,8 +1508,14 @@ serveur.on('upgrade', (req, socket) => {
   });
 
   socket.on('error', () => fermer(c, 'erreur socket'));
+  /* http.Server ouvre ses sockets en `allowHalfOpen` : la fermeture propre du
+     client (FIN) ne déclenche PAS 'close' tant que le serveur n'a pas fermé
+     son côté. Jadis masqué par les écritures d'ETAT à 60 Hz (qui échouaient
+     aussitôt), ce silence devient un défaut en pause : sans ETAT diffusé, un
+     onglet fermé ne serait jamais constaté (SPEC-ARCHI-008). */
+  socket.on('end', () => fermer(c, 'fin de connexion'));
   socket.on('close', () => fermer(c, 'socket fermee'));
-});
+}
 
 // ── anti-flood par client (SPEC-SECU-005/006) ────────────────────────────────
 /* Revue adversariale du commit 2365213 : un budget UNIQUE par connexion
@@ -1184,6 +1561,7 @@ const FLOOD_TYPES_PAR_JOUEUR = new Set([
    tous un joueur local (`m.j`) — budgets propres à chaque type, donnés par
    MC.ContratsV2.BUDGETS_FLOOD (« troc » y figure déjà, pour B2). */
 if (MC.ContratsV2) Object.keys(MC.ContratsV2.BUDGETS_FLOOD).forEach(t => FLOOD_TYPES_PAR_JOUEUR.add(t));
+FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.DORMIR);
 
 /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
    TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un
@@ -1228,7 +1606,7 @@ function antiFloodOk(c, m) {
   if (m.t === NP.MSG.CHAT) return floodVerifie(c, m, '_fl_chat', FLOOD_CHAT_FENETRE_MS, FLOOD_CHAT_MAX);
   const parJoueur = FLOOD_TYPES_PAR_JOUEUR.has(m.t);
   const cle = '_fl_' + m.t + (parJoueur ? '_' + (m.j || 0) : '');
-  const budgetV2 = MC.ContratsV2 && MC.ContratsV2.BUDGETS_FLOOD[m.t];
+  const budgetV2 = (MC.ContratsV2 && MC.ContratsV2.BUDGETS_FLOOD[m.t]) || CA.BUDGETS_FLOOD[m.t];
   const budget = m.t === NP.MSG.BLOC ? FLOOD_MAX_BLOC : (budgetV2 || FLOOD_MAX_GENERAL);
   return floodVerifie(c, m, cle, FLOOD_FENETRE_MS, budget);
 }
@@ -1262,6 +1640,8 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
+  // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
+  if (enPause && (m.t === NP.MSG.ENTREE || m.t === NP.MSG.BLOC || m.t === NP.MSG.ATTAQUE || m.t === NP.MSG.TIR)) return;
   if (MC_TEST_PANNE && m.t === NP.MSG.CHAT && m.texte === '__panne_test_secu_001__') {
     throw new Error('panne de test SPEC-SECU-001');
   }
@@ -1283,6 +1663,13 @@ function traiter(c, m) {
         envoyer(c, { t: NP.MSG.REFUS, motif: decision.motif });
         journal(`x ${m.nom} (${c.ip}) refusé — ${decision.motif}`);
         setTimeout(() => fermer(c, 'entree refusee : ' + decision.motif), 50);
+        break;
+      }
+      // SPEC-ARCHI-007 : en mode FERMÉ, un seul poste à la fois
+      if (!reseauOuvert && [...clients.values()].some(x => x.rejoint && x.id !== c.id)) {
+        envoyer(c, { t: NP.MSG.REFUS, motif: CA.MOTIFS_REFUS.POSTE_DEJA_CONNECTE });
+        journal(`x ${m.nom} (${c.ip}) refusé — un poste est déjà connecté (réseau fermé)`);
+        setTimeout(() => fermer(c, 'poste deja connecte'), 50);
         break;
       }
       // SPEC-SERVEUR-010 : `maxJoueurs` borne le nombre de JOUEURS présents
@@ -1311,8 +1698,14 @@ function traiter(c, m) {
         const cleReg = MC.ContratsV2 ? MC.ContratsV2.cleRegistre(c.nom, j) : null;
         js.cleReg = (cleReg && !cleRegDejaConnectee(cleReg)) ? cleReg : null;
         if (js.cleReg) {
-          const rec = joueursRegistre.get(js.cleReg);
-          if (rec) MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
+          let rec = joueursRegistre.get(js.cleReg);
+          // ARCHI-015 : le joueur d'une partie solo importée est adopté par le
+          // premier joueur local qui rejoint (son nom n'était pas connu à l'import)
+          if (!rec && j === 0 && soloJoueur) { rec = soloJoueur; soloJoueur = null; }
+          if (rec) {
+            MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
+            appliquerEtatPersonnage(js, rec.etat);              // SPEC-SYNC-020 : position, vie, faim, air…
+          }
           else if (MC_TEST_INV) MC_TEST_INV.forEach(p => js.joueur.state.inv.add(p[0], p[1]));
         }
         c.joueurs.push(js);
@@ -1333,6 +1726,9 @@ function traiter(c, m) {
         // la position qui fait foi, pour chaque joueur local du poste
         toi: c.joueurs.map(js => SY.etatJoueur(js.joueur, 0)),
         tickHz: CONF.tickHz, etatHz: CONF.etatHz,
+        // ARCHI : état du poste — pause (SPEC-ARCHI-011), réseau (SPEC-ARCHI-005), partie chargée
+        pause: enPause, pauseRev, reseau: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME,
+        partie: partieActive ? { id: partieActive.id, nom: partieActive.nom } : null,
         joueurs: [...clients.values()].filter(x => x.id !== c.id && x.rejoint)
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),
@@ -1362,6 +1758,23 @@ function traiter(c, m) {
       journal(`+ ${c.nom} (#${c.id}) rejoint · ${clients.size} en ligne`);
       break;
     }
+    // ── ARCHI : pause du poste, réseau à chaud, arrêt (SPEC-ARCHI-005/008/009) ──
+    case NP.MSG.PAUSE:
+      if (reseauOuvert) { envoyer(c, { t: NP.MSG.PAUSE_ETAT, actif: false, rev: pauseRev }); break; }   // aucune pause en mode ouvert
+      if (!c.local) break;
+      definirPause(m.actif, false);
+      break;
+    case NP.MSG.RESEAU:
+      if (!c.local) { journal(`x RESEAU ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
+      definirReseau(m.ouvert);
+      break;
+    case NP.MSG.ARRET:
+      if (!c.local) { journal(`x ARRET ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
+      arreter('ARRET');
+      break;
+    case NP.MSG.DORMIR:
+      break;                                        // sommeil serveur : lot B-ENV (SPEC-ARCHI-025)
+
     case NP.MSG.BOUGE:
       /* Ancien message : le client imposait sa position. Le serveur fait
          désormais autorité — on n'en retient que le regard. */
@@ -2513,12 +2926,18 @@ function joueurReference() {
 const PERIODE_TICK = 1000 / CONF.tickHz;
 setInterval(() => {
   const now = performance.now();
+  /* SPEC-ARCHI-010/011 : en pause RIEN n'avance (heure, monde, créatures,
+     cumulateurs, politique, économie, fourneaux, expirations…) et `dernier`
+     est rebasé à chaque passage : à la reprise, le premier dt ne contient pas
+     la pause, aucun rattrapage. */
+  if (enPause) { dernier = now; return; }
   if (now - dernier < PERIODE_TICK * 0.9) return;
   const dt = Math.min((now - dernier) / 1000, 0.25);
   dernier = now;
   const __t0 = MESURES_ACTIVES ? performance.now() : 0;
 
   heure += dt;
+  if (clients.size > 0) dureeJeu += dt;
   // circuits : diffusé explicitement plus bas (comme l'eau), donc désactivé ici
   monde.tick(dt, 14, null, { temps: heure, circuits: false });
 
@@ -2845,15 +3264,125 @@ function ouvrirNavigateur(url) {
   } catch (e) { journal('navigateur non ouvert automatiquement : ' + e.message); }
 }
 
+// ── écoute : fermée par défaut, ouvrable à chaud (SPEC-ARCHI-002/004/005) ─────
+function ecouterUn(srv, port, hote) {
+  return new Promise((resolve, reject) => {
+    const surErreur = (e) => reject(e);
+    srv.once('error', surErreur);
+    const fin = () => {
+      srv.removeListener('error', surErreur);
+      srv.on('error', (e) => journal(`erreur d'écoute : ${e.message}`));
+      resolve(srv.address().port);
+    };
+    if (hote) srv.listen(port, hote, fin); else srv.listen(port, fin);
+  });
+}
+function adressesReseau() {
+  const out = [];
+  try {
+    const ifs = require('os').networkInterfaces();
+    Object.keys(ifs).forEach(nom => (ifs[nom] || []).forEach(a => {
+      if (!a.internal && a.family === 'IPv4' && out.length < CA.BORNES.ADRESSES_MAX) out.push(a.address);
+    }));
+  } catch (e) { /* aucune interface lisible */ }
+  return out.length ? out : ['0.0.0.0'];
+}
+/* Ouvre les écouteurs du mode courant sur `port` (0 = éphémère) et renvoie le
+   port réel. Lève l'erreur d'écoute (EADDRINUSE…) sans rien laisser ouvert. */
+async function ouvrirEcoute(port) {
+  if (reseauOuvert) {
+    const srv = creerEcouteur();
+    const p = await ecouterUn(srv, port, null);
+    ecouteurs = [srv]; adressesActives = adressesReseau();
+    return p;
+  }
+  const s4 = creerEcouteur();
+  const p = await ecouterUn(s4, port, '127.0.0.1');
+  const liste = [s4], adr = ['127.0.0.1'];
+  const s6 = creerEcouteur();
+  try { await ecouterUn(s6, p, '::1'); liste.push(s6); adr.push('::1'); }
+  catch (e) {
+    if (e.code === 'EADDRINUSE') { s4.close(); throw e; }         // port pris sur ::1 : on tente le suivant
+    journal(`IPv6 de boucle locale indisponible (${e.code || e.message}) — IPv4 seule`);
+  }
+  ecouteurs = liste; adressesActives = adr;
+  return p;
+}
+function fermerEcouteurs() {
+  const l = ecouteurs; ecouteurs = [];
+  return Promise.race([Promise.all(l.map(srv => new Promise(r => { try { srv.close(() => r()); } catch (e) { r(); } }))), dodo(500)]);
+}
+async function demarrerEcoute() {
+  const candidats = CA.portsCandidats(PARAMS.port, PARAMS.portFixe);
+  const essais = RELANCE ? 50 : 1;               // relance interne : le processus parent libère son port
+  let derniere = null;
+  for (let k = 0; k < essais; k++) {
+    for (const port of candidats) {
+      try { portActuel = await ouvrirEcoute(port); return; }
+      catch (e) { derniere = e; if (e.code !== 'EADDRINUSE') throw e; }
+    }
+    if (k + 1 < essais) await dodo(200);
+  }
+  throw derniere;
+}
+function messageReseau() {
+  return { t: NP.MSG.RESEAU_ETAT, etat: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME, port: portActuel, adresses: adressesActives };
+}
+/* SPEC-ARCHI-005 : ouvrir/fermer au réseau SANS redémarrer et sans couper les
+   connexions locales (une socket déjà établie survit à la fermeture de
+   l'écouteur). Fermer sauvegarde, puis expulse les connexions non locales. */
+let basculeReseau = Promise.resolve();
+function definirReseau(ouvrir) {
+  basculeReseau = basculeReseau.then(() => basculerReseau(!!ouvrir)).catch(e => journal('échec de la bascule réseau : ' + ((e && e.message) || e)));
+  return basculeReseau;
+}
+async function basculerReseau(ouvrir) {
+  if (arretEnCours) return;
+  if (ouvrir === reseauOuvert) { diffuser(messageReseau()); return; }
+  reseauOuvert = ouvrir;
+  if (ouvrir) {
+    if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
+    if (enPause) definirPause(false);                // aucune pause dans un monde ouvert
+  } else {
+    sauvegarderMondeAsync('fermeture réseau', true);
+    clients.forEach(c => {
+      if (c.local) return;
+      envoyer(c, { t: NP.MSG.REFUS, motif: CA.MOTIFS_REFUS.RESEAU_FERME });
+      setTimeout(() => fermer(c, 'reseau ferme'), 50);
+    });
+  }
+  const port = portActuel;
+  await fermerEcouteurs();
+  try {
+    await ouvrirEcoute(port);
+  } catch (e) {
+    journal(`échec de la liaison ${ouvrir ? 'ouverte' : 'fermée'} sur le port ${port} : ${e.message} — retour à l'état précédent`);
+    reseauOuvert = !ouvrir;
+    await ouvrirEcoute(port);
+  }
+  journal(reseauOuvert ? `réseau OUVERT sur le port ${portActuel} (${adressesActives.join(', ')})` : `réseau FERMÉ — boucle locale seulement (${adressesActives.join(', ')}:${portActuel})`);
+  diffuser(messageReseau());
+}
+
 // ── démarrage ────────────────────────────────────────────────────────────────
-serveur.listen(PORT, () => {
-  journal(`MiniCraft — serveur sur http://localhost:${PORT}`);
-  journal(`graine ${CONF.graine} · mode ${CONF.mode} · difficulté ${CONF.difficulte}`);
+demarrerEcoute().then(() => {
+  journal(`MiniCraft — serveur sur http://localhost:${portActuel}${reseauOuvert ? ' (ouvert au réseau)' : ' (fermé au réseau : boucle locale seulement)'}`);
+  journal(`écoute : ${reseauOuvert ? 'toutes les interfaces' : adressesActives.join(' et ')} · port ${portActuel}`);
+  journal(`graine ${CONF.graine} · mode ${CONF.mode} · difficulté ${CONF.difficulte}` + (partieActive ? ` · partie « ${partieActive.nom} » (${partieActive.id})` : ''));
   journal(`simulation ${CONF.tickHz} Hz · diffusion d'état ${CONF.etatHz} Hz`);
+  console.log(`MC_PORT=${portActuel}`);                       // lisible par un lanceur (SPEC-ARCHI-004)
   if (SANS_PARAMETRE && !CONF.serveurSeul) {
     journal('ouverture du navigateur…');
-    ouvrirNavigateur(`http://localhost:${PORT}`);
+    ouvrirNavigateur(`http://localhost:${portActuel}`);
   }
+  // lancé par une bascule de partie : le navigateur doit se reconnecter, sinon on ne reste pas orphelin
+  if (RELANCE && !reseauOuvert) armerAbsence();
+}).catch((e) => {
+  const motif = e && e.code === 'EADDRINUSE'
+    ? (PARAMS.portFixe ? `le port ${PARAMS.port} est déjà utilisé` : `aucun port libre entre ${PARAMS.port} et ${CA.BORNES.PORT_REPLI_MAX}`)
+    : ((e && e.message) || String(e));
+  console.log(`impossible de démarrer le serveur : ${motif}. Libérez le port ou lancez avec un autre --port.`);
+  process.exit(1);
 });
 
 /* SIGINT (Ctrl+C) ET SIGTERM (arrêt par un gestionnaire de services) doivent
@@ -2871,8 +3400,11 @@ serveur.listen(PORT, () => {
    donc ne peut plus corrompre CELUI de la sauvegarde finale, mais resterait
    quand même orpheline sans cette attente). */
 async function arreter(signal) {
+  if (arretEnCours) return;
+  arretEnCours = true;
   journal(`arrêt demandé (${signal})`);
   sauvegardeArretee = true;
+  if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
   if (CONF.mondeFichier) {
     if (sauvegardeEnCours && sauvegardeEnCoursAttente) {
       await Promise.race([sauvegardeEnCoursAttente, dodo(1000)]);
@@ -2881,8 +3413,9 @@ async function arreter(signal) {
     journal(ok ? `monde sauvegardé dans ${CONF.mondeFichier}` : 'sauvegarde finale échouée');
   }
   clients.forEach(c => { try { c.socket.destroy(); } catch (e) {} });
-  serveur.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 500);
+  await fermerEcouteurs();
+  process.exit(0);
 }
 process.on('SIGINT', () => arreter('SIGINT'));
 process.on('SIGTERM', () => arreter('SIGTERM'));
@@ -2923,4 +3456,4 @@ if (process.env.MC_TEST_ARRET_MS) {
   setTimeout(() => { arreter('test'); }, parseInt(process.env.MC_TEST_ARRET_MS, 10) || 0);
 }
 
-module.exports = { serveur, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };
+module.exports = { ecouteurs, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };

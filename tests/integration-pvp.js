@@ -146,7 +146,7 @@ async function attendreDemarrage(port) {
   // ── 1. serveur SANS --pvp : désactivé par défaut (SPEC-COMBAT-002) ────────
   // MC_TEST_INV='[[3,10]]' : 10 pierres (id 3, B.STONE) à quiconque rejoint
   // sans enregistrement existant — de quoi vérifier qu'un duel ne butine pas.
-  const s1 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secret1'],
+  const s1 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secret1', '--ouvert'],
                    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,10]]' }) });
   s1.stdout.on('data', d => logs.push(String(d)));
   s1.stderr.on('data', d => logs.push('ERR ' + String(d)));
@@ -213,7 +213,7 @@ async function attendreDemarrage(port) {
   // MC_TEST_INV='[[3,20]]' : 20 pierres chacun, de quoi mesurer un butin
   // borné (10 à 25 % de 20 = 2 à 5) à la défaite finale (SPEC-PVP-001).
   const s2 = spawn(process.execPath,
-    [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--pvp', 'on', '--admin', 'secret2', '--zone', 'generee'],
+    [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--pvp', 'on', '--admin', 'secret2', '--zone', 'generee', '--ouvert'],
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,20]]' }) });
   s2.stdout.on('data', d => logs.push(String(d)));
   s2.stderr.on('data', d => logs.push('ERR ' + String(d)));

@@ -147,7 +147,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
 // ── scénario ─────────────────────────────────────────────────────────────────
 (async function () {
   const seed = JSON.stringify([[B.LOG, 2], [I.GOLDEN_APPLE, 1], [I.CUIR_CASQUE, 1]]);
-  const serveur = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(PORT)], {
+  const serveur = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(PORT), '--ouvert'], {
     cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'],
     env: Object.assign({}, process.env, { MC_TEST_INV: seed }),
   });
@@ -457,7 +457,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     // comptages ci-dessus (bois, caillou déjà vérifiés absents/présents).
     const portCont = PORT + 2;
     const seedCont = JSON.stringify([[B.LOG, 30], [B.SAND, 4]]);
-    const serveurCont = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(portCont)], {
+    const serveurCont = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(portCont), '--ouvert'], {
       cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'],
       env: Object.assign({}, process.env, { MC_TEST_INV: seedCont }),
     });

@@ -73,7 +73,7 @@
 
     it('SPEC-PACK-002 : une valeur invalide est signalée (port hors bornes, non numérique)', function () {
       A.equal(P.analyser(['--port', 'abc']).ok, false, 'port non numérique refusé');
-      A.equal(P.analyser(['--port', '0']).ok, false, 'port hors bornes refusé');
+      A.equal(P.analyser(['--port', '-1']).ok, false, 'port négatif refusé');
       A.equal(P.analyser(['--port', '999999']).ok, false, 'port hors bornes refusé');
       A.equal(P.analyser(['--pvp', 'peut-etre']).ok, false, 'booléen invalide refusé');
     });
@@ -96,7 +96,7 @@
       });
       var detail = P.analyser(['--aide', 'port']);
       A.equal(detail.code, 'aide');
-      A.ok(/de 1 à 65535/.test(detail.message) && /exemple/.test(detail.message), 'le détail d un paramètre');
+      A.ok(/de 0 à 65535/.test(detail.message) && /exemple/.test(detail.message), 'le détail d un paramètre');
       A.ok(P.analyser(['--aide', 'inexistant']).message.indexOf('--graine') >= 0, 'sujet inconnu : la liste');
       var inconnu = P.analyser(['--prot', '80']);
       A.equal(inconnu.code, 'erreur');
@@ -110,6 +110,24 @@
       A.ok(/on|off/.test(faux.message), 'une valeur incorrecte : l aide du paramètre fautif');
       A.equal(P.aideDe('rien'), null);
       A.ok(P.DEMANDES_AIDE.indexOf('--help') >= 0);
+    });
+    it('SPEC-ARCHI-004 : --port 0 (éphémère) est accepté et un port explicite est imposé (portFixe), sans --port il ne l est pas', function () {
+      A.equal(P.analyser(['--port', '0']).config.port, 0);
+      A.equal(P.analyser(['--port', '0']).config.portFixe, true);
+      A.equal(P.analyser(['--port=9000']).config.portFixe, true);
+      A.equal(P.analyser([]).config.portFixe, false, 'défaut 8080 avec repli');
+      A.equal(P.analyser(['--ouvert']).config.portFixe, false);
+    });
+
+    it('SPEC-ARCHI-001 : le mode par défaut est fermé au réseau ; --ouvert l ouvre ; --partie et --dossier-parties se lisent', function () {
+      var d = P.analyser([]).config;
+      A.equal(d.ouvert, false, 'fermé par défaut');
+      A.equal(d.partie, null);
+      A.equal(d.dossierParties, 'parties');
+      var o = P.analyser(['--ouvert', '--partie', 'p1', '--dossier-parties', 'x/y']).config;
+      A.equal(o.ouvert, true);
+      A.equal(o.partie, 'p1');
+      A.equal(o.dossierParties, 'x/y');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

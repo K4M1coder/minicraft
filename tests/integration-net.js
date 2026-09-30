@@ -134,7 +134,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
 // ── scénario ─────────────────────────────────────────────────────────────────
 (async function () {
-  const serveur = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(PORT)],
+  const serveur = spawn(process.execPath, [path.join(RACINE, 'server.js'), String(PORT), '--ouvert'],
                         { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
   const logs = [];
   serveur.stdout.on('data', d => logs.push(String(d)));

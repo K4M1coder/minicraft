@@ -225,7 +225,7 @@ async function marcherVers(client, depart, cible, proche, msMax) {
   // habitats.lieuxProches, pour que peuplerLieux() y fasse vivre un PNJ dès
   // la connexion, sans attente arbitraire ni dépendre d'un déplacement.
   let s = spawn(process.execPath,
-    [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc', '--monde', MONDE],
+    [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc', '--monde', MONDE, '--ouvert'],
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env });
   s.stdout.on('data', d => logs.push(String(d)));
   s.stderr.on('data', d => logs.push('ERR ' + String(d)));
@@ -315,7 +315,7 @@ async function marcherVers(client, depart, cible, proche, msMax) {
   try {
     ok(fs.existsSync(MONDE), 'un fichier --monde a été écrit');
     const s2 = spawn(process.execPath,
-      [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc2', '--monde', MONDE],
+      [path.join(RACINE, 'server.js'), '--port', String(PORT), '--graine', '100', '--admin', 'secretTroc2', '--monde', MONDE, '--ouvert'],
       { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
     s2.stdout.on('data', d => logs.push(String(d)));
     s2.stderr.on('data', d => logs.push('ERR ' + String(d)));

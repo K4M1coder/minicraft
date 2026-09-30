@@ -14,7 +14,14 @@
      génère toute seule, sans risquer de désynchronisation entre les deux. */
   var DEFS = [
     { nom: 'serveur', cle: 'serveurSeul', valeur: false, aide: 'serveur seul, sans partie locale' },
-    { nom: 'port', cle: 'port', attend: 'entier', defaut: 8080, min: 1, max: 65535, aide: 'port d\'écoute (défaut 8080)' },
+    // SPEC-ARCHI-004 : défaut stable 8080 avec repli sur le premier port libre jusqu'à 8099 ;
+    // --port <n> le fixe (pas de repli), --port 0 demande un port éphémère (MC_PORT=<n> imprimé)
+    { nom: 'port', cle: 'port', attend: 'entier', defaut: 8080, min: 0, max: 65535, aide: 'port d\'écoute (défaut 8080, repli jusqu\'à 8099 ; 0 = port éphémère)' },
+    // SPEC-ARCHI-001/002/005 : sans --ouvert le serveur est FERMÉ au réseau (boucle locale seulement)
+    { nom: 'ouvert', cle: 'ouvert', valeur: false, aide: 'ouvre le serveur au réseau dès le lancement (défaut : fermé, boucle locale seulement)' },
+    // SPEC-ARCHI-013 : les parties vivent sur disque, côté serveur
+    { nom: 'dossier-parties', cle: 'dossierParties', attend: 'texte', defaut: 'parties', aide: 'dossier des parties (index + un fichier de monde par partie)' },
+    { nom: 'partie', cle: 'partie', attend: 'texte', defaut: null, aide: 'identifiant de la partie à charger (voir le dossier des parties)' },
     { nom: 'graine', cle: 'graine', attend: 'entier', defaut: null, aide: 'graine de génération du monde' },
     { nom: 'monde', cle: 'monde', attend: 'texte', defaut: null, aide: 'fichier de sauvegarde du monde (persistance)' },
     // borne à 100 (SPEC-SERVEUR-002) : le banc de charge simule jusqu'à 100 clients par palier
@@ -162,6 +169,8 @@
       }
     }
     if (config.aide) return { ok: false, code: 'aide', message: texteAide() };
+    // SPEC-ARCHI-004 : un port donné explicitement est imposé (pas de repli)
+    config.portFixe = liste.some(function (t) { return typeof t === 'string' && /^--port(=|$)/.test(t); });
     return { ok: true, config: config };
   }
 

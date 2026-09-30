@@ -133,7 +133,7 @@ function requeteJSON(port, methode, chemin, jeton, corps) {
 const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
 function demarrer(args, env) {
-  return spawn(process.execPath, [path.join(RACINE, 'server.js'), ...args],
+  return spawn(process.execPath, [path.join(RACINE, 'server.js'), ...args, '--ouvert'],
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, env || {}) });
 }
 async function attendrePret(port) {

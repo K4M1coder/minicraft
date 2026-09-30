@@ -165,7 +165,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
   // (objectif 'commercer', ressources sous le seuil bas) pour que ce script
   // exerce le VRAI chemin serveur (traiterQuete → MC.Politique →
   // inventaire réel), sans dépendre d'une ville explorée procéduralement.
-  const s = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secretQuetes'],
+  const s = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secretQuetes', '--ouvert'],
                    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_QUETE: '1' }) });
   s.stdout.on('data', d => logs.push(String(d)));
   s.stderr.on('data', d => logs.push('ERR ' + String(d)));
@@ -237,7 +237,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
   const PORT2 = PORT + 1;
   const logs2 = [];
   const ITEM_GOLD_INGOT = CoreI.GOLD_INGOT;   // la ressource RÉELLEMENT livrée pour 'or' (jamais l'émeraude elle-même)
-  const s2 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--admin', 'secretQuetes2'],
+  const s2 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--admin', 'secretQuetes2', '--ouvert'],
                     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'],
                       env: Object.assign({}, process.env, { MC_TEST_QUETE: '1', MC_TEST_INV: JSON.stringify([[ITEM_GOLD_INGOT, 25]]) }) });
   s2.stdout.on('data', d => logs2.push(String(d)));
@@ -307,7 +307,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
   // boucle de jeu réelle ». ─────────────────────────────────────────────────
   const PORT3 = PORT + 2;
   const logs3 = [];
-  const s3 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT3), '--admin', 'secretQuetes3'],
+  const s3 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT3), '--admin', 'secretQuetes3', '--ouvert'],
                     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'],
                       env: Object.assign({}, process.env, { MC_TEST_CATASTROPHE: '1' }) });
   s3.stdout.on('data', d => logs3.push(String(d)));
