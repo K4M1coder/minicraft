@@ -131,6 +131,7 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L46** | Factions, quêtes, PvP et environnement interconnectés : territoire agissant sur les zones de jeu, embargo commercial en guerre, quêtes nées d'un besoin réel, enjeux et sanctions PvP, catastrophes qui endommagent bâtiments/routes/population, donjons rattachés au territoire | `FACTION` `QUETE` `PVP` `ENV` `DONJON` | à faire |
 | **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | fait |
 | **L48** | Rendu fiable et adaptatif : contexte WebGL perdu/restauré, réfraction et antialias/DPR pilotés par le FPS, mobs instanciés, détection d'un rendu logiciel, culling de chunks | `RENDU` | à faire |
+| **L50** | Architecture serveur unique (Node requis, même en solo) : un processus serveur de jeu démarre toujours ; il n'écoute le réseau que si explicitement ouvert (boucle locale, contrôle d'origine, ouverture à chaud) ; pause exacte et sauvegarde immédiate en local fermé au réseau ; parties sur disque, import des parties existantes ; élimination des 49 branches `net.enLigne()` de `game.js` ; portage serveur de l'histoire, des succès et des véhicules | `ARCHI` | à faire |
 
 Les lots L14 à L22 sont désormais **fait** : toutes leurs fiches SPEC sont à
 l'état ✅ dans `SPECS.md`, chacune citée par au moins un test (`tests/spec-eau.js`,
@@ -218,6 +219,46 @@ le modifier. En bref :
   ECO-001, 003 à 006 ; PVP-001 à 006 ; PERF-004 à 010, 014) et deux trous
   ajoutés pour la vague 3 : SPEC-SYNC-027 (présentoirs visibles de tous) et
   SPEC-SYNC-028 (pose et tir validés contre l'inventaire serveur).
+
+#### Vague ARCHI — plan d'exécution (L50)
+
+Décidé par l'utilisateur : le solo n'est plus un chemin de code séparé, c'est
+« toujours un serveur, ouvert ou non au réseau ». **Node devient requis pour
+jouer, même seul.** Détail exécutable dans
+[docs/archi-solo-serveur/README.md](docs/archi-solo-serveur/README.md)
+(49 occurrences de `net.enLigne()` ligne par ligne, zones de `game.js` par lot,
+évaluation chiffrée de la sauvegarde, contrat gelé, fusion, critères de fin).
+Fiches : SPEC-ARCHI-001 à 042. Lots, dans l'ordre :
+
+| Lot | Contenu | Fiches | Dépend de |
+|---|---|---|---|
+| **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |
+| **A0** | fondation, un seul agent, phases commitées : `src/contrats-archi.js` + `tests/spec-contrats-archi.js` (messages `PAUSE`, `PAUSE_ETAT`, `RESEAU`, `RESEAU_ETAT`, `ARRET`, `DORMIR`, `HISTOIRE_ETAT`, `SUCCES_DEBLOQUE`, `ETAT_RESEAU`) → serveur local (loopback, Origin, port stable, réseau à chaud, arrêt sans orphelin, un poste en fermé) → pause exacte et sauvegardes → parties sur disque, parité de persistance, import → lancement, page d'erreur, `tools/paquet.js`, README → écran d'attente, budgets de démarrage et de latence → aiguillage de `game.js` (`frame()` et `appliquerActionCommande` découpées par thème, sans changement de comportement) | 001 à 020, 039 (l. 653) | A0-pré |
+| **B-ENV** | tornades et foudre par le serveur, suppression des bombes volcaniques, peuplement, heure et sommeil serveur (`DORMIR`), simulation du monde et cultures (SYNC-018), fabrication et cultures | 022, 023, 024, 025, 034, 035 | A0 |
+| **B-VIE** | survie, combat et butin, duel | 026, 027, 028 | A0 |
+| **B-INV** | conteneurs et fourneaux, inventaire (dont SYNC-026 objets au sol et SYNC-028 pose/tir validés), économie, bloc de commande | 030, 031, 032, 033 | A0 |
+| **B-RESEAU** | factions (SYNC-024/025), retrait de `doSave`, prédiction, overrides de chunks, affichage `ETAT_RESEAU`, interpolation | 029, 036, 037, 038, 039 (2629, 2642), 040 | A0 |
+| **P-VEH** | portage serveur des véhicules (SYNC-022, SERVEUR-006) | 021 | A0 |
+| **P-HIST** | portage serveur du mode histoire | 041 | A0, B-VIE |
+| **P-SUCC** | portage serveur des succès | 042 | A0 |
+
+- **Parallélisme** : A0-pré puis A0 seuls ; ensuite au plus 4 agents à la fois
+  (règle des 4 Sonnet) : les quatre B ensemble, puis les trois P dès qu'un
+  agent se libère (P-SUCC et P-VEH peuvent démarrer dès qu'A0 est fusionné).
+- **Fusion** : A0 d'abord (contrat gelé et aiguillage ; sans lui les B se
+  marchent dessus sur `frame()`), puis chaque B / P au fil de l'eau, portes
+  vertes et revue adversariale avant chaque fusion, conflits résolus en
+  gardant les deux côtés. `SPEC-SERVEUR-008` (découpage de `server.js`) passe
+  après toute la vague.
+- **Publication** : la vague ne se publie PAS tant que P-HIST et P-SUCC ne
+  sont pas fusionnés (le mode histoire et les succès, fonctionnels en solo
+  aujourd'hui, seraient perdus). Une publication sans P-VEH est permise à
+  condition d'être **marquée régressive** (`feat!`, CHANGELOG « Supprimé » :
+  véhicules, README « Limites connues » à jour). Les bombes et coulées
+  volcaniques sont supprimées dans tous les cas (ARCHI-023, « Supprimé »).
+- **Sauvegarde** : évaluation chiffrée et décision (pause et sortie immédiates,
+  cadence 45 s en fermé, sauvegarde du dernier client et sur signal ; sauvegarde
+  continue rejetée) au § 6 du document de conception.
 
 ### Découpage du lot BANC — historique global, périmètre, diagnostics, journal
 

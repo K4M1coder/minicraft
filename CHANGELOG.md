@@ -730,6 +730,27 @@ respecter (voir PLAN.md, « Commits et versions »).
   `server.js` : aucune purge n'a lieu sur un serveur qui tourne réellement
   tant qu'elle n'est pas branchée sur la boucle périodique existante
   (tâche de suivi explicitement à part, hors du périmètre autorisé ici).
+- L50, nouveau domaine **ARCHI** (SPEC-ARCHI-001 à 042, spécifié seulement —
+  aucun code) : décision de l'utilisateur, « aucune différence entre solo et
+  serveur, toujours un serveur, ouvert ou non au réseau ». **Node devient requis
+  pour jouer**, même seul. ARCHI-001 à 020 (lot A0) : serveur local toujours
+  démarré, en mode fermé lié à `127.0.0.1`/`::1` avec contrôle de l'en-tête
+  `Origin`, port stable, ouverture et fermeture au réseau à chaud, arrêt sans
+  processus orphelin, un seul poste en fermé, pause côté serveur (message
+  `PAUSE`, gel complet, reprise sans rattrapage), sauvegarde immédiate à la
+  pause et à la sortie puis cadence de 45 s en fermé (évaluation chiffrée,
+  sauvegarde continue rejetée), parties sur disque, parité de persistance,
+  migration des parties `localStorage` (export puis import), lancement et
+  paquet, écran d'attente, budgets de latence locale et de démarrage, contrat
+  gelé `src/contrats-archi.js`, écran partagé conservé. ARCHI-021 à 042 :
+  élimination des 49 occurrences de `net.enLigne()` de `src/game.js`, une fiche
+  par groupe thématique avec ses lignes ; portage serveur planifié de
+  l'histoire, des succès et des véhicules ; bombes et coulées volcaniques
+  **supprimées** (sans équivalent serveur). `PLAN.md` : lot L50 et « Vague
+  ARCHI » (A0-pré, A0, B-ENV, B-VIE, B-INV, B-RESEAU, P-VEH, P-HIST, P-SUCC) ;
+  règle de publication : pas de publication sans histoire ni succès, véhicules
+  au pire publiés en version marquée régressive. Conception :
+  `docs/archi-solo-serveur/README.md`.
 
 ## [0.4.0] - 2026-09-24
 ### Sécurité
