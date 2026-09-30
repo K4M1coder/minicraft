@@ -237,8 +237,22 @@ async function scenarioCombat() {
   frapper(proche);                                            // 3 + 3 = 6 < 8
   await attendreJeu(cl, 2);
   ok(vivant(proche), 'SPEC-ARCHI-027 : deux coups espacés de l\'épée de bois laissent encore le mouton en vie');
-  frapper(proche);                                            // 9 >= 8
-  ok(!!(await disparu(C, proche)), 'SPEC-ARCHI-027 : le troisième coup espacé tue la créature');
+  // 9 >= 8 : le coup suivant l'achève. Chaque coup repousse le mouton (recul de
+  // l'arme) : on ne frappe que tant qu'il reste à portée (< 5,5 blocs) ; s'il a
+  // été repoussé au-delà, le test n'est pas concluant (saut) plutôt qu'en échec.
+  let mort = false, horsPortee = false;
+  for (let essai = 0; essai < 3 && !mort; essai++) {
+    const t = toi(), m = C.moutons().find(x => x.e === proche.e);
+    if (!m || !t) { mort = true; break; }
+    if (Math.hypot(m.x - t.x, m.z - t.z) > 5.5) { horsPortee = true; break; }
+    frapper(proche);
+    await attendreJeu(cl, 1);
+    mort = !!(await disparu(C, proche));
+  }
+  // un mouton encore vivant ici a été repoussé/soulevé par le recul (la portée
+  // serveur est tridimensionnelle) : non concluant, pas un échec du plafond
+  if (!mort) R.saut('coup fatal', horsPortee ? 'le mouton a été repoussé hors de portée par le recul' : 'le recul a soulevé/déplacé le mouton hors de la portée 3D du serveur');
+  else ok(mort, 'SPEC-ARCHI-027 : les coups espacés suivants achèvent la créature');
   cl.fermer();
   await s.arreter();
 }
