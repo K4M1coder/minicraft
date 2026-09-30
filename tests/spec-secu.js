@@ -131,6 +131,23 @@
       var res = N.selectionnerMobsProches(entites, [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_MOBS_DIFFUSES);
       A.equal(res.length, N.MAX_MOBS_DIFFUSES, 'exactement ' + N.MAX_MOBS_DIFFUSES + ' malgré 200 entités à portée');
     });
+    it('SPEC-SYNC-026 : les objets au sol ont leur propre plafond, jamais évincés par 80 créatures plus proches', function () {
+      A.equal(N.MAX_ITEMS_DIFFUSES, 64);
+      var creatures = [], objets = [];
+      for (var i = 0; i < 120; i++) creatures.push({ pos: { x: i * 0.1, z: 0 }, type: 'zombie' });
+      objets.push({ pos: { x: 30, z: 0 }, type: 'item' });
+      var seuls = N.selectionnerMobsProches(creatures.concat(objets), [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_MOBS_DIFFUSES);
+      A.notOk(seuls.some(function (e) { return e.type === 'item'; }), 'témoin : sans plafond séparé l objet est évincé');
+      var separes = N.selectionnerMobsProches(creatures, [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_MOBS_DIFFUSES)
+        .concat(N.selectionnerMobsProches(objets, [{ x: 0, z: 0 }], N.PORTEE_MOBS_DIFFUSES, N.MAX_ITEMS_DIFFUSES));
+      A.ok(separes.some(function (e) { return e.type === 'item'; }), 'avec un plafond séparé l objet est diffusé');
+    });
+    it('SPEC-SYNC-028 : BLOC porte la case d inventaire, TIR accepte le genre galet (fronde)', function () {
+      var b = N.valider({ t: N.MSG.BLOC, x: 1, y: 40, z: 2, id: 5, j: 0, i: 3 });
+      A.equal(b.i, 3, 'la case d inventaire est conservée');
+      A.equal(N.valider({ t: N.MSG.BLOC, x: 1, y: 40, z: 2, id: 5, j: 0 }).i, undefined, 'facultative');
+      A.equal(N.valider({ t: N.MSG.TIR, dx: 0, dy: 1, dz: 0, genre: 'galet' }).genre, 'galet');
+    });
     it('SPEC-SERVEUR-007 : calculerEtatHz reste à la cadence configurée pour peu de clients', function () {
       A.equal(N.calculerEtatHz(60, { nbClients: 1 }), 60);
       A.equal(N.calculerEtatHz(60, { nbClients: 2 }), 60);

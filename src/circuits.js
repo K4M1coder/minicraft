@@ -263,7 +263,11 @@
   // mode créatif hors ligne (personne d'autre à protéger).
   function commandeAutorisee(ctx) {
     ctx = ctx || {};
-    if (ctx.enLigne) return ctx.role === 'admin';
+    if (ctx.role === 'admin') return true;
+    /* Une seule règle, que le serveur soit fermé (solo) ou ouvert : un
+       administrateur, ou l'hôte (la machine qui fait tourner le serveur) en
+       mode créatif. Un joueur distant n'y touche jamais sans être admin. */
+    if (ctx.enLigne) return ctx.mode === 'creatif' && !!ctx.hote;
     return ctx.mode === 'creatif';
   }
   // Déclenche sur front montant du signal ; `actif` retombe avec lui.

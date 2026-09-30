@@ -193,6 +193,7 @@ if (process.env.MC_TEST_QUETE) {
    vraie tornade procédurale croise une vraie ville explorée — le même
    principe que MC_TEST_INV/MC_TEST_QUETE, jamais en exploitation. */
 let MC_TEST_LIEU_CATASTROPHE = null;
+if (process.env.MC_TEST_CATASTROPHE) setImmediate(() => journal('ATTENTION : MC_TEST_CATASTROPHE actif — un lieu et une tornade FICTIFS sont ajoutés (réglage de test, jamais en exploitation)'));
 if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
   MC_TEST_LIEU_CATASTROPHE = {
     id: 'test:lieu-catastrophe', kind: 'village', nom: 'Bourg de test', x: 0, z: 0, demi: 40,
@@ -212,6 +213,7 @@ if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
    SEULEMENT pour que tests/integration-archi-env.js exerce le vrai chemin de
    la foudre sans attendre un orage de la météo procédurale. Jamais en
    exploitation (même principe que MC_TEST_CATASTROPHE). */
+if (process.env.MC_TEST_ECLAIR) setImmediate(() => journal('ATTENTION : MC_TEST_ECLAIR actif — un éclair FICTIF tombe sur chaque joueur toutes les 2 s (réglage de test, jamais en exploitation)'));
 if (process.env.MC_TEST_ECLAIR && monde.meteo) {
   monde.meteo.eclairs = (t0, t1) => (Math.floor(t1 / 2) > Math.floor(t0 / 2) ? [{ id: Math.floor(t1 / 2), force: 1, t: t1 }] : []);
   monde.meteo.lieuEclair = (e, px, pz) => ({ x: Math.floor(px), z: Math.floor(pz) });
@@ -994,6 +996,33 @@ function diffuser(msg, saufId) {
   clients.forEach(c => {
     if (c.id === saufId || !c.vivant) return;
     try { c.socket.write(trame); } catch (e) { fermer(c, 'ecriture impossible'); }
+  });
+}
+/* SPEC-SYNC-018/019 : les changements de blocs que le MONDE décide (croissance
+   des cultures, étapes du feu) ne vont qu'aux clients dont un joueur est à
+   moins de PORTEE_BLOCS_MONDE blocs, en UNE écriture par client et par tic
+   (les trames sont concaténées), plafonnée à BLOCS_MONDE_MAX_PAR_TIC blocs par
+   client : au-delà, le surplus est abandonné pour ce client (il retrouve l'état
+   exact par les overrides quand il recharge le chunk). */
+const PORTEE_BLOCS_MONDE = parseInt(process.env.MC_TEST_PORTEE_BLOCS, 10) || 96, BLOCS_MONDE_MAX_PAR_TIC = 128;
+if (process.env.MC_TEST_PORTEE_BLOCS) setImmediate(() => journal('ATTENTION : MC_TEST_PORTEE_BLOCS actif — portée de diffusion des blocs du monde réduite à ' + PORTEE_BLOCS_MONDE + ' blocs (réglage de test, jamais en exploitation)'));
+let blocsMondeEnAttente = [];
+function noterBlocMonde(x, y, z, id, etat) { blocsMondeEnAttente.push({ x, y, z, id, etat: etat || 0 }); }
+function diffuserBlocsMonde() {
+  const liste = blocsMondeEnAttente;
+  if (!liste.length) return;
+  blocsMondeEnAttente = [];
+  const trames = liste.map(b => NP.encoder(JSON.stringify({ t: NP.MSG.BLOC, x: b.x, y: b.y, z: b.z, id: b.id, etat: b.etat }), NP.OP.TEXTE, Buffer.alloc));
+  clients.forEach(c => {
+    if (!c.vivant || !c.rejoint || !c.joueurs) return;
+    const pos = c.joueurs.map(x => x.joueur.state.pos);
+    const choisies = [];
+    for (let i = 0; i < liste.length && choisies.length < BLOCS_MONDE_MAX_PAR_TIC; i++) {
+      const b = liste[i];
+      if (pos.some(p => Math.hypot(p.x - b.x, p.z - b.z) < PORTEE_BLOCS_MONDE)) choisies.push(trames[i]);
+    }
+    if (!choisies.length) return;
+    try { c.socket.write(Buffer.concat(choisies)); } catch (e) { fermer(c, 'ecriture impossible'); }
   });
 }
 function envoyer(c, msg) {
@@ -1936,17 +1965,17 @@ function traiter(c, m) {
       arreter('ARRET');
       break;
     /* SPEC-ARCHI-025 : le SERVEUR tient l'ensemble des dormeurs sur TOUS les
-       joueurs présents (locaux et distants) ; la nuit ne passe que lorsque
-       tous dorment. Un solo est le cas « tous les joueurs = 1 ». */
+       joueurs présents (locaux et distants) ; la nuit passe quand une
+       majorité stricte dort. Un solo est le cas « tous les joueurs = 1 ». */
     case NP.MSG.DORMIR: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || !c.rejoint) break;
       if (!m.actif) { dormeurs.delete(js); break; }
       if (!MC.DayCycle.isNight(heure)) { messageSystemeA(c, 'On ne dort que la nuit.'); break; }
-      dormeurs.add(js);
+      coucher(js);
       if (!verifierSommeil()) {
         const { dorment, total } = compterDormeurs();
-        messageSystemeA(c, `Réapparition fixée ici — en attente que tout le monde dorme (${dorment}/${total}).`);
+        messageSystemeA(c, `Réapparition fixée ici — en attente que la majorité dorme (${dorment}/${total}).`);
       }
       break;
     }
@@ -2028,6 +2057,8 @@ function traiter(c, m) {
     case NP.MSG.TIR: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || js.joueur.state.dead || js.tirCd > 0) break;
+      // SPEC-SYNC-028 : en survie, pas de munition (ou d'arme) dans l'inventaire serveur, pas de projectile
+      if (!regles.blocsIllimites && !POSE_LIBRE && !debiterTir(js, m.genre)) break;
       js.tirCd = 0.3;
       const st = js.joueur.state;
       const o = { x: st.pos.x + m.dx * 0.4, y: st.pos.y + 1.62 + m.dy * 0.4, z: st.pos.z + m.dz * 0.4 };
@@ -2076,9 +2107,46 @@ function traiter(c, m) {
          déjà présent, déclenche `getChunk(cx, cz, true)` plus bas. */
       const js = c.joueurs && c.joueurs[m.j];
       const avant = monde.getBlock(m.x, m.y, m.z);
+      /* Bascule d'une porte ou d'une trappe (ouvrir/fermer) : un changement d'état
+         d'un bloc DÉJÀ posé, sans objet ; on n'accepte que la vraie bascule
+         (C.bascule) d'un bloc à portée, jamais un autre remplacement. */
+      if (m.id !== 0 && avant !== m.id && C.bascule(avant) === m.id) {
+        const st0 = js && js.joueur.state;
+        const proche = st0 && !st0.dead &&
+          Math.hypot(m.x + 0.5 - st0.pos.x, m.y + 0.5 - st0.pos.y - 1.62, m.z + 0.5 - st0.pos.z) <= PORTEE_BLOC;
+        if (!proche) { envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) }); break; }
+        const etatBascule = monde.getEtat(m.x, m.y, m.z);
+        monde.setBlock(m.x, m.y, m.z, m.id);
+        diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: etatBascule });
+        MC.Admin.journaliser(admin, { auteur: c.nom, action: 'bloc_bascule', cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
+        break;
+      }
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
+        break;
+      }
+      /* SPEC-SYNC-028 : en survie, poser exige l'objet dans l'inventaire SERVEUR
+         (retiré ici). Refus : le bloc autoritaire est rappelé et l'inventaire
+         renvoyé, la prédiction du client ayant supposé un objet qu'il n'a pas. */
+      if (m.id !== 0 && cellulesCompagnes(m).some(cc => !C.isReplaceable(monde.getBlock(cc.x, cc.y, cc.z)))) {
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });   // la case voisine est prise : rien ne se pose
+        break;
+      }
+      // un conteneur généré jamais ouvert (coffre de donjon, bibliothèque) : son contenu se tire AVANT que la case ne change
+      let contNeuf = null;
+      if (m.id === 0 && avant) {
+        const dA = C.BLOCKS[avant];
+        const tA = dA && dA.interactive && MC.ContratsV2.TYPES_CONTENEUR[dA.interactive];
+        const kA = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+        if (tA && !tA.parJoueur && !conteneursPoses.has(kA)) {
+          contNeuf = MC.Conteneurs.creerConteneur(dA.interactive);
+          if (contNeuf) remplirConteneurNeuf(contNeuf, dA.interactive, m.x, m.y, m.z, kA);
+        }
+      }
+      if (m.id !== 0 && !regles.blocsIllimites && !POSE_LIBRE && !debiterPose(js, m.id, m.i)) {
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
+        envoyerInvMaj(c, m.j, {});
         break;
       }
       const cx = Math.floor(m.x / 16), cz = Math.floor(m.z / 16);
@@ -2098,6 +2166,17 @@ function traiter(c, m) {
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
+      // la case compagne d'une porte ou d'un lit se pose avec elle ; à la casse, l'autre moitié part aussi
+      cellulesCompagnes(m).forEach(cc => {
+        monde.getChunk(Math.floor(cc.x / 16), Math.floor(cc.z / 16), true);
+        monde.setBlock(cc.x, cc.y, cc.z, cc.id);
+        if (monde.setEtat) monde.setEtat(cc.x, cc.y, cc.z, cc.etat);
+        diffuser({ t: NP.MSG.BLOC, x: cc.x, y: cc.y, z: cc.z, id: cc.id, etat: cc.etat });
+      });
+      if (m.id === 0 && avant) compagnesDeCasse(avant, m).forEach(cc => {
+        monde.setBlock(cc.x, cc.y, cc.z, 0);
+        diffuser({ t: NP.MSG.BLOC, x: cc.x, y: cc.y, z: cc.z, id: 0, etat: 0 });
+      });
       /* Escalier (SPEC-CONSTR-001) : le serveur fait autorité sur l'angle,
          recalculé ici (même algorithme que le client) plutôt que confié au
          message reçu — pose ou casse peut aussi changer l'angle des 4
@@ -2132,7 +2211,7 @@ function traiter(c, m) {
         const tAvant = defAvant && defAvant.interactive && MC.ContratsV2.TYPES_CONTENEUR[defAvant.interactive];
         if (tAvant && !tAvant.parJoueur) {
           const kc = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
-          const contCasse = conteneursPoses.get(kc);
+          const contCasse = conteneursPoses.get(kc) || contNeuf;
           if (contCasse) {
             fermerConteneurPourAbonnes(kc);
             contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
@@ -2272,7 +2351,13 @@ function traiter(c, m) {
     case NP.MSG.INV_CONSOMMER: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
-      traiterOp(c, m, js, { k: 'consommer', ops: m.ops });
+      // les diminutions que le serveur a déjà faites lui-même (pose, tir) ne se comptent pas deux fois
+      const opsRestantes = absorberDebitsPrevus(js, m.ops);
+      if (!opsRestantes.length) {
+        if (seqNouveau(js, m.seq)) envoyerInvMaj(c, m.j, {});
+        break;
+      }
+      traiterOp(c, m, js, { k: 'consommer', ops: opsRestantes });
       break;
     }
     case NP.MSG.INV_LACHER: {
@@ -2372,15 +2457,26 @@ function executerBlocCommandeServeur(x, y, z) {
 function fixerHeureDuJour(v) {
   const dl = MC.DayCycle.DAY_LENGTH;
   heure = Math.floor(heure / dl) * dl + (v % dl);
+  dormeurs.clear();                     // un saut d'heure annule le vote de sommeil en cours
 }
-/* SPEC-ARCHI-025 : demande d'heure d'un client (ADMIN 'heure'). */
+/* SPEC-ARCHI-025 : demande d'heure d'un client (ADMIN 'heure'). Réservée à un
+   administrateur authentifié OU à l'hôte local d'un monde en mode créatif —
+   jamais à « n'importe quel joueur en créatif » d'un serveur ouvert. Débit
+   limité (1 par seconde et par connexion) ; ne journalise que si l'heure
+   change ; annule le vote de sommeil (fixerHeureDuJour). */
 function changerHeureDemandee(c, args) {
+  if (!c.rejoint) return { ok: false, data: null, motif: 'non_rejoint' };
+  if (enPause) return { ok: false, data: null, motif: 'pause' };
   const admin_ = c.role === MC.Admin.ROLES.ADMIN;
-  if (!admin_ && !regles.blocsIllimites) return { ok: false, data: null, motif: 'reserve_creatif_ou_admin' };
+  if (!admin_ && !(c.local && regles.blocsIllimites)) return { ok: false, data: null, motif: 'reserve_creatif_ou_admin' };
   const v = args.valeur;
   if (typeof v !== 'number' || !isFinite(v) || v < 0 || v > 1e6) return { ok: false, data: null, motif: 'valeur_invalide' };
+  const maintenant = Date.now();
+  if (c.derniereHeureMs && maintenant - c.derniereHeureMs < 1000) return { ok: false, data: null, motif: 'trop_rapide' };
+  c.derniereHeureMs = maintenant;
+  const avant = heure;
   fixerHeureDuJour(v);
-  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'heure', cible: null, details: +heure.toFixed(1), heure });
+  if (Math.abs(heure - avant) >= 0.5) MC.Admin.journaliser(admin, { auteur: c.nom, action: 'heure', cible: null, details: +heure.toFixed(1), heure });
   return { ok: true, data: { heure: +heure.toFixed(1) }, motif: null };
 }
 function traiterAdmin(c, m) {
@@ -2400,6 +2496,23 @@ function traiterAdmin(c, m) {
   if (m.action === 'heure') {
     const r = changerHeureDemandee(c, m.args || {});
     reponseAdmin(c, 'heure', r.ok, r.data, r.motif);
+    return;
+  }
+  /* SPEC-ARCHI-033 : modifier la commande d'un bloc de commande n'exige pas un
+     jeton admin quand la règle commune (blocCommandeAutorise) l'accorde — hôte
+     local en créatif. Le serveur revérifie tout : pas en pause, un vrai bloc de
+     commande, à portée d'un des joueurs de ce client. */
+  if (m.action === 'bloc_commande' && c.role !== MC.Admin.ROLES.ADMIN) {
+    const a = m.args || {};
+    const x = a.x | 0, y = a.y | 0, z = a.z | 0;
+    const def = C.BLOCKS[monde.getBlock(x, y, z)];
+    const proche = (c.joueurs || []).some(js => distanceConteneur(js.joueur.state, x, y, z) <= PORTEE_BLOC);
+    if (enPause || !c.rejoint || !blocCommandeAutorise(c) || !def || !def.circuit || def.circuit.type !== 'commande' || !proche) {
+      reponseAdmin(c, m.action, false, null, 'refuse');
+      return;
+    }
+    const rc = executerActionAdmin(MC.Admin.ROLES.ADMIN, c.nom, m.action, a);
+    reponseAdmin(c, m.action, rc.ok, rc.ok ? rc.data : null, rc.ok ? null : rc.motif);
     return;
   }
   if (!c.role) { reponseAdmin(c, m.action, false, null, 'non_authentifie'); return; }
@@ -2768,6 +2881,123 @@ function creerJoueurServeur(j) {
            entrees: [], dernier: 0, budget: SY.creerBudget(), attaqueCd: 0, tirCd: 0 };
 }
 const PORTEE_BLOC = 7;
+
+/* ── SPEC-SYNC-028 : poser un bloc et tirer se paient sur l'inventaire SERVEUR ──
+   En survie, une pose n'est acceptée que si l'inventaire du serveur porte un
+   objet qui pose ce bloc, un tir que s'il porte une munition compatible (ou
+   une arme sans munition) ; l'objet est retiré ICI, à l'instant de l'action.
+   Le client prédit la même diminution et l'envoie ensuite dans son journal
+   INV_CONSOMMER : pour ne jamais la compter deux fois, chaque débit fait par le
+   serveur laisse un CRÉDIT (id → 1, valable DELAI_CREDIT_MS) que la
+   consommation journalisée correspondante absorbe au lieu de la rejouer. */
+const DELAI_CREDIT_MS = 120000;     // long : un journal en retard (onglet en arrière-plan, latence) ne doit jamais faire payer deux fois
+const CREDITS_MAX = 128;            // borne : un client qui ne journalise jamais ne cumule pas indéfiniment
+/* MC_TEST_POSE_LIBRE=1 : suspend ce contrôle (poser/tirer sans posséder) pour les
+   suites d'intégration dont l'objet n'est PAS l'inventaire (réseau, flood,
+   sauvegarde…) et qui posent des blocs sans s'en donner ; même principe que
+   MC_TEST_PANNE, jamais en exploitation. Les suites d'inventaire ne l'utilisent pas. */
+const POSE_LIBRE = process.env.MC_TEST_POSE_LIBRE === '1';
+if (POSE_LIBRE) journal('ATTENTION : MC_TEST_POSE_LIBRE actif — poser et tirer ne sont PAS contrôlés contre l inventaire (réglage de test, jamais en exploitation)');
+
+/* Blocs posés d'un seul geste : une porte occupe deux cases (dessus), un lit
+   deux cases (la tête, dans la direction de son orientation). Le client annonce
+   la case visée ; le serveur pose lui-même la compagne, sans second objet. */
+function cellulesCompagnes(m) {
+  const d = C.BLOCKS[m.id];
+  if (!d) return [];
+  if (d.porte && !d.porte.ouverte) return [{ x: m.x, y: m.y + 1, z: m.z, id: m.id, etat: m.etat || 0 }];
+  if (d.meuble === 'lit' && MC.Formes) {
+    const e = MC.Formes.unpackMeuble(m.etat || 0);
+    if (e.variante) return [];
+    const dir = MC.Formes.DIRS[e.orientation];
+    return [{ x: m.x + dir[0], y: m.y, z: m.z + dir[1], id: m.id, etat: MC.Formes.packMeuble(e.orientation, true) }];
+  }
+  return [];
+}
+// la moitié d'une porte cassée, la moitié d'un lit cassé : l'autre case disparaît avec elle
+function compagnesDeCasse(avant, m) {
+  const d = C.BLOCKS[avant];
+  if (!d) return [];
+  const out = [];
+  if (d.porte) {
+    [1, -1].some(dy => { if (monde.getBlock(m.x, m.y + dy, m.z) === avant) { out.push({ x: m.x, y: m.y + dy, z: m.z }); return true; } return false; });
+  } else if (d.meuble === 'lit' && MC.Formes) {
+    const e = MC.Formes.unpackMeuble(monde.getEtat(m.x, m.y, m.z));
+    const dir = MC.Formes.DIRS[e.orientation];
+    const sens = e.variante ? -1 : 1;
+    const x = m.x + sens * dir[0], z = m.z + sens * dir[1];
+    if (monde.getBlock(x, m.y, z) === avant) out.push({ x, y: m.y, z });
+  }
+  return out;
+}
+function crediterDebit(js, id) {
+  const maintenant = Date.now();
+  js.debitsPrevus = (js.debitsPrevus || []).filter(d => maintenant - d.t < DELAI_CREDIT_MS);
+  js.debitsPrevus.push({ id, t: maintenant });
+  if (js.debitsPrevus.length > CREDITS_MAX) js.debitsPrevus.shift();
+}
+/* Retire des opérations `{ i, id, n }` d'un INV_CONSOMMER ce que le serveur a
+   déjà débité (un crédit par exemplaire) ; les autres opérations passent. */
+function absorberDebitsPrevus(js, ops) {
+  const maintenant = Date.now();
+  js.debitsPrevus = (js.debitsPrevus || []).filter(d => maintenant - d.t < DELAI_CREDIT_MS);
+  if (!js.debitsPrevus.length) return ops;
+  const out = [];
+  ops.forEach(o => {
+    if (o.n === undefined || o.usure !== undefined || o.vers !== undefined) { out.push(o); return; }
+    let reste = o.n;
+    for (let k = 0; k < js.debitsPrevus.length && reste > 0;) {
+      if (js.debitsPrevus[k].id === o.id) { js.debitsPrevus.splice(k, 1); reste--; } else k++;
+    }
+    if (reste > 0) out.push(reste === o.n ? o : Object.assign({}, o, { n: reste }));
+  });
+  return out;
+}
+// l'objet `idObjet` pose-t-il le bloc `idBloc` ? (bloc lui-même, graine, porte, trappe, dalle fusionnée)
+function objetPoseBloc(idObjet, idBloc) {
+  if (idObjet === idBloc) return true;
+  const d = C.def(idObjet);
+  if (!d) return false;
+  if (d.plantable === idBloc) return true;
+  if (d.forme === 'dalle' && d.mat === idBloc) return true;
+  if (d.porte && C.PORTE_FERMEE_LIST && C.PORTE_FERMEE_LIST.indexOf(idBloc) >= 0) return true;
+  if (d.trappe && idBloc === C.B.TRAPPE_FERMEE) return true;
+  return false;
+}
+/* Débite une pose : case `preferee` (celle que le client tient) si elle convient,
+   sinon la première qui convient. Renvoie false si l'inventaire n'a rien à poser. */
+function debiterPose(js, idBloc, preferee) {
+  const inv = js.joueur.state.inv;
+  let i = -1;
+  if (Number.isInteger(preferee) && inv.slots[preferee] && objetPoseBloc(inv.slots[preferee].id, idBloc)) i = preferee;
+  else for (let k = 0; k < inv.slots.length; k++) if (inv.slots[k] && objetPoseBloc(inv.slots[k].id, idBloc)) { i = k; break; }
+  if (i < 0) return false;
+  const id = inv.slots[i].id;
+  inv.consumeAt(i, 1);
+  crediterDebit(js, id);
+  return true;
+}
+/* Tir : true si le joueur peut tirer ce `genre` ; débite alors la munition.
+   Limite documentée (SPEC-SYNC-028) : le serveur ne connaît pas la case
+   sélectionnée du client, il exige donc l'arme du genre quelque part dans
+   l'inventaire, pas forcément en main. */
+function debiterTir(js, genre) {
+  const inv = js.joueur.state.inv;
+  const aArme = inv.slots.some(s => { const d = s && C.def(s.id); return !!(d && d.ranged === genre); });
+  if (!aArme) return false;
+  const sans = inv.slots.some(s => { const d = s && C.def(s.id); return !!(d && d.ranged === genre && d.sansMunition); });
+  if (sans) return true;
+  for (let i = 0; i < inv.slots.length; i++) {
+    const s = inv.slots[i], d = s && C.def(s.id);
+    // une munition sans type ne sert que l'arc et l'arbalète (genre « fleche »), jamais la fronde
+    if (d && d.ammo && (d.ammoType ? d.ammoType === genre : genre === 'fleche')) {
+      inv.consumeAt(i, 1);
+      crediterDebit(js, s.id);
+      return true;
+    }
+  }
+  return false;
+}
 function blocAutorise(js, m, avant, c) {
   if (!js || js.joueur.state.dead) return false;
   const st = js.joueur.state;
@@ -2793,7 +3023,12 @@ function blocAutorise(js, m, avant, c) {
    un administrateur (le serveur fait toujours autorité, jamais le mode local
    du client, qui ne veut rien dire une fois connecté). */
 function blocCommandeAutorise(c) {
-  return !!(MC.Circuits && MC.Circuits.commandeAutorisee({ enLigne: true, role: c && c.role }));
+  /* Même règle pour le solo (serveur fermé) et le réseau (SPEC-ARCHI-033) :
+     administrateur, ou hôte local (boucle locale) quand la partie est en
+     mode créatif. Le mode est celui du SERVEUR, jamais annoncé par le client. */
+  return !!(MC.Circuits && MC.Circuits.commandeAutorisee({
+    enLigne: true, role: c && c.role, mode: regles.blocsIllimites ? 'creatif' : 'survie', hote: !!(c && c.local),
+  }));
 }
 function tousLesJoueurs() {
   const l = [];
@@ -2805,34 +3040,49 @@ function messageSystemeA(c, texte) {
   envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte, type: 'systeme', ts: Date.now() });
 }
 /* SPEC-ARCHI-025 : les joueurs couchés (objets `js`, propres à une connexion et
-   un joueur local). Un joueur qui part sort du compte tout seul : on ne compte
-   que les joueurs PRÉSENTS et vivants. */
-const dormeurs = new Set();
+   un joueur local) avec l'endroit et la vie de leur coucher. Le vote de sommeil
+   est tenu PAR LE SERVEUR, sans dépendre du client : un dormeur qui bouge, est
+   touché, meurt ou se déconnecte sort du compte tout seul. La nuit passe dès
+   qu'une MAJORITÉ STRICTE des joueurs présents et vivants dort (au moins un) —
+   un seul éveillé ne bloque donc pas cent joueurs. */
+const dormeurs = new Map();          // js -> { x, y, z, pv }
+const SOMMEIL_DEPLACEMENT_MAX = 1.5; // blocs : au-delà, il s'est levé
 function compterDormeurs() {
   let total = 0, dorment = 0;
   const presents = new Set();
   tousLesJoueurs().forEach(({ js }) => {
     presents.add(js);
-    if (js.joueur.state.dead) return;
+    const st = js.joueur.state;
+    if (st.dead) { dormeurs.delete(js); return; }
     total++;
-    if (dormeurs.has(js)) dorment++;
+    const d = dormeurs.get(js);
+    if (!d) return;
+    if (Math.hypot(st.pos.x - d.x, st.pos.z - d.z) > SOMMEIL_DEPLACEMENT_MAX || Math.abs(st.pos.y - d.y) > SOMMEIL_DEPLACEMENT_MAX || st.hp < d.pv) {
+      dormeurs.delete(js);                    // il s'est levé, ou il a été touché
+      return;
+    }
+    dorment++;
   });
-  dormeurs.forEach(js => { if (!presents.has(js)) dormeurs.delete(js); });
+  dormeurs.forEach((d, js) => { if (!presents.has(js)) dormeurs.delete(js); });
   return { dorment, total };
 }
-/* Fait passer la nuit quand tous les joueurs présents dorment. Renvoie vrai si
-   la nuit vient de passer. Appelée à chaque DORMIR et une fois par seconde
-   (le dernier non-dormeur peut être parti). */
+function coucher(js) {
+  const st = js.joueur.state;
+  dormeurs.set(js, { x: st.pos.x, y: st.pos.y, z: st.pos.z, pv: st.hp });
+}
+/* Fait passer la nuit quand une majorité stricte des joueurs présents dort.
+   Renvoie vrai si la nuit vient de passer. Appelée à chaque DORMIR et une fois
+   par seconde (un éveillé peut être parti, un dormeur s'être levé). */
 function verifierSommeil() {
   if (!dormeurs.size) return false;
   if (!MC.DayCycle.isNight(heure)) { dormeurs.clear(); return false; }
   const { dorment, total } = compterDormeurs();
-  if (total === 0 || dorment < total) return false;
+  if (total === 0 || dorment * 2 <= total) return false;
   dormeurs.clear();
   heure = MC.DayCycle.avancerJourApresDormir(heure);
   const m = chat.systeme('Le jour se lève.');
   if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
-  journal(`nuit passée : tous les joueurs dormaient (heure ${heure.toFixed(1)})`);
+  journal(`nuit passée : la majorité des joueurs dormait (heure ${heure.toFixed(1)})`);
   return true;
 }
 // SPEC-SERVEUR-010 : nombre de JOUEURS déjà admis (écran partagé compris),
@@ -3120,6 +3370,7 @@ const { performance } = require('perf_hooks');
 let dernier = performance.now();
 let accEtat = 0;
 let accSpawn = 0, rotationSpawn = 0, accDonjons = 0;
+const SPAWN_JOUEURS_PAR_TIC = 8;
 let accChunks = 1;         // premier passage immédiat
 
 // SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
@@ -3177,7 +3428,8 @@ setInterval(() => {
      avancent dans le tic et chaque bloc changé est diffusé (SPEC-SYNC-018/019,
      SPEC-ARCHI-034) : les clients n'en simulent plus rien. */
   monde.tick(dt, 14, null, { temps: heure, circuits: false, eau: false,
-    surBloc: (x, y, z, id, etat) => diffuser({ t: NP.MSG.BLOC, x, y, z, id, etat: etat || 0 }) });
+    surBloc: noterBlocMonde });
+  diffuserBlocsMonde();
 
   // SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
   accPurge += dt;
@@ -3425,10 +3677,16 @@ setInterval(() => {
   if (accSpawn >= 3.5) {
     accSpawn = 0;
     if (clients.size > 0) {
-      const cible = joueurs.length ? joueurs[(rotationSpawn++) % joueurs.length].js.joueur.state : ref;
-      entites.trySpawn(cible, MC.DayCycle.isNight(heure), null,
-                       MC.Modes.plafondsEntites(regles));
-      entites.trySpawnSouterrain(cible, null, MC.Modes.plafondsEntites(regles));
+      /* Au plus SPAWN_JOUEURS_PAR_TIC joueurs par tic, à tour de rôle : jusqu'à
+         8 joueurs chacun garde le rythme d'un solo (une tentative par 3,5 s) ;
+         au-delà, le coût par tic reste borné et la cadence par joueur baisse
+         (100 joueurs : une tentative chacun toutes les ~44 s, 8 par tic). */
+      const cibles = joueurs.length ? [] : [ref];
+      for (let k = 0; k < Math.min(SPAWN_JOUEURS_PAR_TIC, joueurs.length); k++) cibles.push(joueurs[(rotationSpawn++) % joueurs.length].js.joueur.state);
+      cibles.forEach(cible => {
+        entites.trySpawn(cible, MC.DayCycle.isNight(heure), null, MC.Modes.plafondsEntites(regles));
+        entites.trySpawnSouterrain(cible, null, MC.Modes.plafondsEntites(regles));
+      });
       if (!MC.DayCycle.isNight(heure)) entites.burnUndead(false);
     }
   }
@@ -3471,6 +3729,8 @@ setInterval(() => {
         return o;
       };
       const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
+      const vivants = [], objetsAuSol = [];
+      entites.list.forEach(e => { (e.type === 'item' ? objetsAuSol : vivants).push(e); });
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
         /* À chacun les créatures les plus proches de SES joueurs, plafonnées à
@@ -3479,7 +3739,9 @@ setInterval(() => {
            être à l'autre bout du monde. */
         const pos = c.joueurs.map(x => x.joueur.state.pos);
         const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
-        commun.mobs = NP.selectionnerMobsProches(entites.list, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrire);
+        /* SPEC-SYNC-026 : les objets au sol ont leur propre plafond — jamais évincés par les créatures */
+        commun.mobs = NP.selectionnerMobsProches(vivants, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrire)
+          .concat(NP.selectionnerMobsProches(objetsAuSol, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_ITEMS_DIFFUSES).map(decrire));
         /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
            ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
            liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques

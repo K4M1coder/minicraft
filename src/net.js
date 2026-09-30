@@ -287,14 +287,22 @@
       return envoyer({ t: NP.MSG.TIR, dx: dir.x, dy: dir.y, dz: dir.z, vitesse: vitesse, degats: degats,
                        genre: genre || 'fleche', j: j || 0 });
     }
-    function manger(id, j) { return envoyer({ t: NP.MSG.MANGER, id: id, j: j || 0 }); }
+    function manger(id, j, caseInv) {
+      var m = { t: NP.MSG.MANGER, id: id, j: j || 0 };
+      if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
+      return envoyer(m);
+    }
     function renaitre(j) { return envoyer({ t: NP.MSG.RENAITRE, j: j || 0 }); }
     /* SPEC-ARCHI-025 : un joueur local se couche (actif) ou se lève — le serveur
        tient le compte des dormeurs et fait passer la nuit. */
     function dormir(j, actif) { return envoyer({ t: NP.MSG.DORMIR, j: j || 0, actif: actif !== false }); }
 
-    function poserBloc(x, y, z, id, outil, j, etat) {
-      return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0, etat: etat || 0 });
+    /* `caseInv` (facultatif) : la case d'inventaire d'où vient le bloc posé —
+       le serveur y retire l'objet (SPEC-SYNC-028). */
+    function poserBloc(x, y, z, id, outil, j, etat, caseInv) {
+      var m = { t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0, etat: etat || 0 };
+      if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
+      return envoyer(m);
     }
     /* SPEC-SERVEUR-009 : demande les overrides d'UN chunk (coordonnées de
        chunk, pas de bloc) — appelé par game.js streamChunks au fur et à

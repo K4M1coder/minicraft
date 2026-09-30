@@ -132,6 +132,41 @@ async function scenarioSommeil() {
     ok(!!(await attendreQue(() => heureDe(d1.client) >= DL, 8000)), 'SPEC-ARCHI-025 : quand le seul joueur éveillé part, la nuit passe pour le dormeur');
     d1.client.fermer();
     await s.arreter();
+
+    // (f) majorité : à trois joueurs, deux couchés suffisent — un seul éveillé ne bloque pas la nuit
+    f = fichierMonde(d);
+    s = await demarrer(args(f, d, ['--ouvert']));
+    const t1 = await rejoindre(s.port, 'Un', 1);
+    const t2 = await rejoindre(s.port, 'Deux', 1);
+    const t3 = await rejoindre(s.port, 'Trois', 1);
+    t1.client.envoyer({ t: 'dormir', j: 0, actif: true });
+    await dodo(500);
+    ok(heureDe(t1.client) < NUIT + 60, 'SPEC-ARCHI-025 : un dormeur sur trois ne suffit pas');
+    t2.client.envoyer({ t: 'dormir', j: 0, actif: true });
+    ok(!!(await attendreQue(() => heureDe(t3.client) >= DL, 6000)), 'SPEC-ARCHI-025 : deux dormeurs sur trois (majorité) font passer la nuit, le troisième restant éveillé');
+    [t1, t2, t3].forEach(x => x.client.fermer());
+    await s.arreter();
+
+    // (g) un dormeur qui se lève (il s'éloigne) sort du vote, sans rien envoyer de plus
+    f = fichierMonde(d);
+    s = await demarrer(args(f, d, ['--ouvert']));
+    const m1 = await rejoindre(s.port, 'Marcheur', 1);
+    const m2 = await rejoindre(s.port, 'Veilleur', 1);
+    await attendreQue(() => toi(m1.client), 4000);
+    const p0 = toi(m1.client);
+    m1.client.envoyer({ t: 'dormir', j: 0, actif: true });
+    await dodo(300);
+    let sq = 1;
+    for (let i = 0; i < 30; i++) { m1.client.envoyer({ t: A.NP.MSG.ENTREE, s: sq++, j: 0, dt: 0.05, k: 1, yaw: 0, pitch: 0, v: 0 }); await dodo(50); }
+    const p1 = toi(m1.client);
+    ok(Math.hypot(p1.x - p0.x, p1.z - p0.z) > 2, 'témoin — le dormeur s\'est bien éloigné de son lit', JSON.stringify([p0.x, p0.z, p1.x, p1.z]));
+    m2.client.envoyer({ t: 'dormir', j: 0, actif: true });
+    await dodo(700);
+    ok(heureDe(m2.client) < NUIT + 90, 'SPEC-ARCHI-025 : Marcheur, levé, ne compte plus comme dormeur — un sur deux, la nuit ne passe pas', String(heureDe(m2.client)));
+    m1.client.envoyer({ t: 'dormir', j: 0, actif: true });
+    ok(!!(await attendreQue(() => heureDe(m2.client) >= DL, 6000)), 'SPEC-ARCHI-025 : recouché à sa nouvelle place, il fait à nouveau passer la nuit');
+    m1.client.fermer(); m2.client.fermer();
+    await s.arreter();
   } finally { await arreterTout(); supprimerDossier(d); }
 }
 
@@ -179,7 +214,29 @@ async function scenarioHeure() {
     a.client.envoyer({ t: 'admin', action: 'heure', args: { valeur: 'minuit' } });
     const repMauvais = await a.client.attendre('admin_rep', 4000, m => m.action === 'heure' && m.ok === false).catch(() => null);
     ok(repMauvais && repMauvais.erreur === 'valeur_invalide', 'SPEC-ARCHI-025 : une valeur qui n\'est pas un nombre est refusée', JSON.stringify(repMauvais));
+    a.client.envoyer({ t: 'admin', action: 'heure', args: { valeur: 10 } });
+    a.client.envoyer({ t: 'admin', action: 'heure', args: { valeur: 20 } });
+    const rapide = await attendreQue(() => a.client.messages.some(m => m.t === 'admin_rep' && m.action === 'heure' && m.erreur === 'trop_rapide'), 4000);
+    ok(!!rapide, 'SPEC-ARCHI-025 : le débit des demandes d\'heure est limité (une par seconde)');
     a.client.fermer();
+    await s.arreter();
+    // créatif mais serveur OUVERT : l'hôte local règle l'heure, un joueur distant non
+    const externes = A.adressesNonLocales().filter(x => x.indexOf(':') < 0);
+    f = fichierMonde(d, { heure: depart });
+    s = await demarrer(args(f, d, ['--ouvert']), { MC_MODE: 'creatif' });
+    const hote = await rejoindre(s.port, 'Hote', 1);
+    hote.client.envoyer({ t: 'admin', action: 'heure', args: { valeur: DL * 0.2 } });
+    const repH = await hote.client.attendre('admin_rep', 4000, m => m.action === 'heure').catch(() => null);
+    ok(repH && repH.ok === true, 'SPEC-ARCHI-025 : l\'hôte local règle l\'heure d\'un serveur ouvert en créatif', JSON.stringify(repH));
+    if (!externes.length) R.saut('SPEC-ARCHI-025 : joueur distant refusé', 'aucune adresse réseau non locale sur cette machine');
+    else {
+      const distant = await rejoindre(s.port, 'Distant', 1, { hote: externes[0] });
+      distant.client.envoyer({ t: 'admin', action: 'heure', args: { valeur: DL * 0.7 } });
+      const repD = await distant.client.attendre('admin_rep', 4000, m => m.action === 'heure').catch(() => null);
+      ok(repD && repD.ok === false && repD.erreur === 'reserve_creatif_ou_admin', 'SPEC-ARCHI-025 : un joueur distant d\'un serveur ouvert en créatif est refusé', JSON.stringify(repD));
+      distant.client.fermer();
+    }
+    hote.client.fermer();
     await s.arreter();
   } finally { await arreterTout(); supprimerDossier(d); }
 }
@@ -312,7 +369,8 @@ async function scenarioCulturesDeux() {
       pos.push([x, y + 1, z]);
     }
     const f = fichierMonde(d, { heure: JOUR_ETE, overrides, crops });
-    const s = await demarrer(args(f, d, ['--ouvert']));
+    // portée de diffusion réduite à 7 blocs (test) : les cultures à x+3..x+6 sont à portée, celles à x+7..x+10 non
+    const s = await demarrer(args(f, d, ['--ouvert']), { MC_TEST_PORTEE_BLOCS: '7' });
     const a = await rejoindre(s.port, 'Alice', 1);
     const b = await rejoindre(s.port, 'Bob', 1);
     const cle = (m) => m.x + ',' + m.y + ',' + m.z;
@@ -321,8 +379,19 @@ async function scenarioCulturesDeux() {
        'SPEC-SYNC-018 : les deux clients reçoivent un BLOC au même changement de stade, sans action tierce');
     const communes = pousse(a.client).map(cle).filter(k => pousse(b.client).map(cle).indexOf(k) >= 0);
     ok(communes.length > 0, 'SPEC-SYNC-018 : au moins une culture est vue croître par les deux', JSON.stringify(communes));
+    await dodo(4000);
+    const distance = (p) => Math.hypot(p[0] - col[0] - 0.5, p[2] - col[1] - 0.5);   // comme le serveur (bloc entier, joueur à +0,5)
+    const loin = pos.filter(p => distance(p) > 7.5), pres = pos.filter(p => distance(p) < 6.5);
+    const cleLoin = new Set(loin.map(p => p.join(',')));
+    const tous = a.client.messages.concat(b.client.messages);
+    ok(tous.some(m => m.t === 'bloc' && pres.some(p => p.join(',') === cle(m))), 'SPEC-SYNC-018 : les cultures à portée sont diffusées');
+    ok(!tous.some(m => m.t === 'bloc' && cleLoin.has(cle(m))),
+       'SPEC-SYNC-018 : une culture hors de portée de diffusion n\'est envoyée à aucun client');
     a.client.fermer(); b.client.fermer();
     await s.arreter();
+    const sauve = JSON.parse(fs.readFileSync(f, 'utf8'));
+    const cultivees = (sauve.overrides || []).filter(o => cleLoin.has(o[0] + ',' + o[1] + ',' + o[2]) && o[3] >= B.WHEAT1 && o[3] <= B.WHEAT3);
+    ok(cultivees.length > 0, 'témoin — ces cultures lointaines ont bien poussé côté serveur (elles sont sauvegardées au stade suivant)', String(cultivees.length));
   } finally { await arreterTout(); supprimerDossier(d); }
 }
 

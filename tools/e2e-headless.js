@@ -92,7 +92,8 @@ async function attendreServeurPret(port, delaiMs) {
    conflit avec une partie déjà lancée sur ce poste. */
 async function demarrerServeurTest(port, delaiMs) {
   const processus = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(port), '--serveur', '--tests'],
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'] });
+    // MC_TEST_POSE_LIBRE : les e2e en ligne posent des blocs sans les posséder (SPEC-SYNC-028 est éprouvée par tests/integration-archi-inv.js)
+    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1' }) });
   let journal = '';
   processus.stdout.on('data', (d) => { journal += d; });
   processus.stderr.on('data', (d) => { journal += d; });

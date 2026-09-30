@@ -1001,9 +1001,9 @@
   });
 
   e2e('le fourneau cuit et l\'interface se met à jour', {
-        "teste": "le cycle complet de cuisson d'un fourneau : ouverture de l'interface, dépôt de minerai et combustible, cuisson dans le temps, apparition du résultat",
-        "pourquoi": "vérifie que la logique de cuisson tourne bien à travers l'état 'ui' de la boucle réelle, pas seulement en isolation",
-        "attendu": "useOn renvoie 'open:furnace', et après attente, output contient un lingot de fer"
+        "teste": "l'interface d'un fourneau (ouverture, affichage du minerai et du combustible) et la logique de cuisson sur le contenu qu'elle affiche ; la cuisson d'un fourneau posé est celle du serveur (SPEC-ARCHI-030, tests/integration-archi-inv.js)",
+        "pourquoi": "vérifie que l'interface s'ouvre dans la boucle réelle et que le contenu affiché cuit avec MC.Inventory.tickFurnace ; le client ne simule plus de fourneau lui-même",
+        "attendu": "useOn renvoie 'open:furnace', l'interface est ouverte, et après cuisson du contenu affiché, output contient un lingot de fer"
   }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 2, bz = Math.floor(s.pos.z) + 2;
@@ -1012,17 +1012,20 @@
     var r = g.player.useOn({ x: bx, y: by, z: bz, block: B.FURNACE, nx: 0, ny: 1, nz: 0 });
     A.equal(r, 'open:furnace');
     var k = bx + ',' + by + ',' + bz;
-    g.furnaces[k] = MC.Inventory.newFurnace();
-    g.furnaces[k].input = { id: B.IRON_ORE, n: 1 };
-    g.furnaces[k].fuel = { id: I.COAL, n: 1 };
-    g.ui.openContainer('furnace', s.inv, g.furnaces[k], k);
+    var four = MC.Inventory.newFurnace();
+    four.input = { id: B.IRON_ORE, n: 1 };
+    four.fuel = { id: I.COAL, n: 1 };
+    g.ui.openContainer('furnace', s.inv, four, k);
     g.input.setState('ui');
     await frames(2);
     A.equal(getComputedStyle(document.querySelector('.inv-screen')).display, 'flex', 'interface ouverte');
-    // laisser cuire : l'état 'ui' fait tourner les fourneaux
-    for (var i = 0; i < 600 && !g.furnaces[k].output; i++) await frames(1);
-    A.ok(g.furnaces[k].output, 'quelque chose est sorti');
-    A.equal(g.furnaces[k].output.id, I.IRON_INGOT, 'lingot de fer');
+    // la cuisson d'un fourneau posé est celle du serveur : ici on fait cuire le contenu affiché
+    for (var i = 0; i < 600 && !four.output; i++) {
+      if (MC.Inventory.tickFurnace(four, 1 / 20)) g.ui.refreshFurnace();
+      if (i % 20 === 0) await frames(1);
+    }
+    A.ok(four.output, 'quelque chose est sorti');
+    A.equal(four.output.id, I.IRON_INGOT, 'lingot de fer');
     key('Escape'); fakeLock(g, true); await frames(2);
   });
 
@@ -3086,6 +3089,12 @@
     A.notOk(MC.Modes.peutCasser(g.regles, B.STONE), 'la pierre est hors de l histoire');
     // le guide du village : l'histoire avance
     var guide = null;
+    // SPEC-ARCHI-024 : les habitants viennent du serveur ; sans serveur (page de test) on les fait naître comme server.js
+    var sp = g.player.state.pos;
+    var lieuxAutour = g.world.habitats.lieuxProches(sp.x, sp.z, 200);
+    MC.Habitats.pnjsManquants(lieuxAutour, g.entities.list, g.world.pnjsMorts, g.time).forEach(function (p) {
+      g.entities.spawn('villager', p.x, p.y + 0.05, p.z, { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
+    });
     for (var t = 0; t < 240 && !guide; t++) {
       await frames(1);
       guide = g.entities.list.filter(function (e) { return e.role === 'guide' && g.histoire.histoire.liens.depart && e.lieu === g.histoire.histoire.liens.depart.id; })[0];

@@ -196,7 +196,7 @@ function sonde(port, hote) {
    lu ET l'index servi ; rejette si le processus se termine avant. */
 function lancer(args, env) {
   const proc = spawn(process.execPath, [path.join(RACINE, 'server.js')].concat(args || []),
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, env || {}) });
+    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1' }, env || {}) });   // SPEC-SYNC-028 : les suites d'inventaire passent MC_TEST_POSE_LIBRE: ''
   const logs = [];
   const srv = { proc, logs, port: null, code: undefined, vivant: true, t0: Date.now(), heureLog: [] };
   proc.stdout.on('data', d => { String(d).split('\n').forEach(l => { if (l) { logs.push(l); srv.heureLog.push([Date.now(), l]); } }); });

@@ -630,12 +630,10 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
   porté sur le serveur : il ne se joue que sur la page de test (chantier « solo =
   serveur », lot P-HIST).
 - La météo ne change pas le vol des avions.
-- Inventaire, fabrication, fourneaux et cultures sont arbitrés par le serveur, en
-  solo fermé comme en réseau ; le client ne fait que les afficher.
+- Inventaire, fabrication, conteneurs (coffres, fourneaux, banque…), commerce, objets au sol et cultures sont tenus par le
+  serveur, en solo comme en réseau ; le client ne fait que les afficher.
 - Les éruptions de volcans sont visuelles et sonores seulement : les bombes et les
   coulées de lave ont été supprimées (le serveur n'a pas d'équivalent).
-- Les objets au sol ne sont pas répliqués en réseau ; seuls blocs, mobs et joueurs
-  le sont.
 - L'écran partagé exige une manette par joueur supplémentaire : on ne peut pas
   partager un clavier et une souris.
 - Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne

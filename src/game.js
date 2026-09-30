@@ -189,7 +189,6 @@
     var manettes = [];
 
     function joueurPrincipal() { return equipe[0].player; }
-    var furnaces = Object.create(null);
     var chests = Object.create(null);
     // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles, par
     // position (« x,y,z » -> pile { id, n, data } ou undefined si vide).
@@ -454,7 +453,7 @@
 
     var g = {
       world: world, entities: entities, player: player, render: render,
-      time: 60, fps: 0, furnaces: furnaces, chests: chests, expositions: expositions, distributeurs: distributeurs,
+      time: 60, fps: 0, chests: chests, expositions: expositions, distributeurs: distributeurs,
       audio: audio, chat: chat,
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
@@ -463,7 +462,6 @@
       guildes: MC.Guildes ? MC.Guildes.creerEtat() : undefined,
       // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) —
       // même module et même état joués à l'identique en solo et en ligne
-      economie: MC.Economie ? MC.Economie.creerEtat(SEED) : undefined,
       // SPEC-PERF-015 : métriques de rendu, calculées en continu indépendamment
       // du panneau F3 qui les affiche (SPEC-PERF-016)
       perf: { msGeneration: 0, msMaillage: 0, appelsDessin: 0, triangles: 0, fps: 0, fpsP50: 0, fpsP95: 0, renderDist: render.RENDER_DIST },
@@ -784,7 +782,6 @@
         etapes[0].etat = 'ok'; etapes[1].etat = 'cours'; montrer();
         appliquerPartie(meta);
         remplacerMonde(meta.graine);
-        for (var k in furnaces) delete furnaces[k];
         for (var k2 in chests) delete chests[k2];
         for (var ke in expositions) delete expositions[ke];
         for (var kd in distributeurs) delete distributeurs[kd];
@@ -927,7 +924,6 @@
       appliquerPartie(meta);
       // le monde doit repartir de la bonne graine
       remplacerMonde(meta.graine);
-      for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
       for (var ke in expositions) delete expositions[ke];
       for (var kd in distributeurs) delete distributeurs[kd];
@@ -1282,12 +1278,6 @@
 
     // ─── habitants, métiers et lieux ─────────────────────────────────────────
     var lieuActuel = null, zoneActuelle = null;
-    function ouvrirBanque() {
-      if (!world.banque) return;
-      ui.openContainer('chest', player.state.inv, world.banque, 'banque');
-      input.setState('ui');
-      signalerSucces({ type: 'banque' });
-    }
     function rendreService(service, ent) {
       var st = player.state;
       var r = MC.Habitats.servir(service, {
@@ -1303,16 +1293,13 @@
          la nuit quand tous les joueurs présents dorment). */
       if (r.temps !== undefined) net.dormir(equipe[0].index, true);
       if (r.ouvrir === 'banque') {
-        // B1 (étape 8, SPEC-SYNC-013) : un banquier ouvre la MÊME banque
-        // serveur qu'un coffre-fort — jamais `world.banque` (copie locale
-        // solo) une fois en ligne, sinon deux joueurs qui parlent au même
-        // banquier dupliqueraient chacun leur inventaire dans leur propre
-        // copie, sans jamais se synchroniser.
-        if (net.enLigne() && ent) {
+        // SPEC-ARCHI-030 : un banquier ouvre la MÊME banque serveur qu'un
+        // coffre-fort (CONTENEUR_OUVRIR par eid) — plus aucune copie locale.
+        if (ent) {
           net.ouvrirConteneur({ eid: ent.eid }, 0);
           input.setState('ui');
           signalerSucces({ type: 'banque' });
-        } else ouvrirBanque();
+        }
       }
       // un panneau d'information rappelle aussi la zone de jeu ici (SPEC-ZONE-003) :
       // utile en particulier aux bornes posées aux frontières le long des routes
@@ -1339,21 +1326,19 @@
       var LIBELLES = { info: 'Indiquez-moi les environs', banque: 'Ouvrir mon compte', repos: 'Se reposer (1 émeraude)',
                        reparer: 'Réparer l\'outil en main', detente: 'Profiter du spectacle' };
       var h = ((ent.eid || 0) * 7 + Math.floor(g.time / 20)) % role.repliques.length;
-      /* L45 : un PNJ de métier (lieu connu) commerce via MC.Economie — prix
-         dynamiques, stock, trésor ; un villageois sans métier garde
-         Inv.TRADES/Inv.doTrade tel quel (illimité, prix figé). En ligne, le
-         SERVEUR fait foi (SPEC-SYNC-023) : on envoie 'consulter' et on
-         redessine à sa réponse (onTroc, hook réseau), avec un compteur de
-         seq local très simple (g.seqTroc) — le même patron que les autres
-         opérations d'inventaire prédites, sans prédiction ici (un échange
-         reste rare et bref, § 6 du plan B2). */
-      var enLigne = net.enLigne();
-      var economique = !!(ent.role && ent.lieu && (enLigne || (g.economie && MC.Economie)));
+      /* L45 : un PNJ de métier (lieu connu) commerce par TROC — prix
+         dynamiques, stock, trésor, tout est tenu par le SERVEUR (SPEC-SYNC-023,
+         SPEC-ARCHI-032) : on envoie 'consulter' et on redessine à sa réponse
+         (onTroc, hook réseau), avec un compteur de seq local très simple
+         (g.seqTroc) — sans prédiction (un échange reste rare et bref). Un
+         villageois sans métier garde Inv.TRADES/Inv.doTrade (illimité, prix
+         figé, sans économie). */
+      var economique = !!(ent.role && ent.lieu);
       var opts = {
         titre: role.nom + (ent.nom ? ' — ' + ent.nom : ''),
         villageois: !ent.role,
         replique: role.repliques[h],
-        offres: economique ? (enLigne ? [] : MC.Economie.offresDe(g.economie, ent.lieu, ent.role, ent.pnj, g.nomJoueur)) : role.offres,
+        offres: economique ? [] : role.offres,
         services: role.service ? [{ id: role.service, libelle: LIBELLES[role.service] }] : [],
         onService: function (id) {
           var r = rendreService(id, ent);
@@ -1362,20 +1347,12 @@
           return r;
         },
         onTrade: economique ? function (indice) {
-          if (enLigne) {
-            g.seqTroc = (g.seqTroc || 0) + 1;
-            net.troc('echanger', ent.eid, { j: 0, seq: g.seqTroc, offre: indice, fois: 1 });
-            return { ok: true, attente: true };   // la confirmation arrive par onTroc/onToi
-          }
-          var r = MC.Economie.executerTroc(g.economie, player.state.inv, {
-            lieuId: ent.lieu, role: ent.role, pnjId: ent.pnj, indice: indice, fois: 1,
-            nom: g.nomJoueur, embargo: false,
-          });
-          if (r.ok) opts.offres = MC.Economie.offresDe(g.economie, ent.lieu, ent.role, ent.pnj, g.nomJoueur);
-          return r;
+          g.seqTroc = (g.seqTroc || 0) + 1;
+          net.troc('echanger', ent.eid, { j: 0, seq: g.seqTroc, offre: indice, fois: 1 });
+          return { ok: true, attente: true };   // la confirmation arrive par onTroc/onToi
         } : null,
       };
-      if (economique && enLigne) net.troc('consulter', ent.eid, { j: 0 });
+      if (economique) net.troc('consulter', ent.eid, { j: 0 });
       g.dernierDialogue = { role: ent.role || 'habitant', nom: ent.nom, service: role.service };
       ui.openContainer('trade', player.state.inv, opts, ent.eid);
       input.setState('ui');
@@ -1694,7 +1671,6 @@
       reinitialiserPools();
       entities.list.length = 0;
       render.libererToutesEntites();           // libere geometries ET materiaux
-      for (var k in furnaces) delete furnaces[k];
       for (var k2 in chests) delete chests[k2];
       for (var ke in expositions) delete expositions[ke];
       for (var kd in distributeurs) delete distributeurs[kd];
@@ -2091,27 +2067,10 @@
        exposé plutôt que de le refuser : on vise en général pour remplacer,
        et l'ancien objet retombe au sol pour ne rien perdre. */
     function interagirExposition(action, target) {
-      var k = target.x + ',' + target.y + ',' + target.z;
-      var st = player.state;
-      if (action === 'retirer') {
-        var expose = expositions[k];
-        if (!expose) { ui.toast('Rien à reprendre ici', 'warn'); return; }
-        delete expositions[k];
-        var reste = st.inv.add(expose.id, expose.n);
-        if (reste && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, expose.id, reste);
-        audio.play('poser');
-        return;
-      }
-      var main = st.inv.stackAt(st.selected);
-      if (!main) return;
-      var ancien = expositions[k];
-      expositions[k] = { id: main.id, n: 1, data: main.data };
-      st.inv.consumeAt(st.selected, 1);
-      if (ancien) {
-        var resteA = st.inv.add(ancien.id, ancien.n);
-        if (resteA && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, ancien.id, resteA);
-      }
-      audio.play('poser');
+      // SPEC-ARCHI-043 (reporté) : le contenu exposé n'est pas encore tenu par le
+      // serveur (SPEC-SYNC-027) ; toucher à l'inventaire ici sans lui dupliquerait
+      // ou perdrait l'objet. On refuse proprement, sans rien modifier.
+      ui.toast('Les présentoirs ne sont pas encore disponibles avec le serveur de jeu', 'warn');
     }
     g.interagirExposition = interagirExposition;
 
@@ -2206,13 +2165,6 @@
     function spillContainer(x, y, z) {
       var k = x + ',' + y + ',' + z;
       var lache = 0;
-      var f = furnaces[k];
-      if (f) {
-        [f.input, f.fuel, f.output].forEach(function (st) {
-          if (st) { entities.dropItem(x + 0.5, y + 0.5, z + 0.5, st.id, st.n); lache += st.n; }
-        });
-        delete furnaces[k];
-      }
       var ch = coffreDe(x, y, z);
       if (ch) {
         ch.slots.forEach(function (st) {
@@ -2383,63 +2335,30 @@
       var target = player.aim();
       if (!target) return;
       var mange = player.heldId();
+      var avantBascule = instantaneBascule(target);
       var res = player.useOn(target);
       if (!res) return;
       if (res === 'interdit') { ui.toast('Cette histoire ne vous permet pas de l\'utiliser', 'warn'); return; }
-      if (res === 'eat' && net.enLigne()) net.manger(mange, 0);
+      if (res === 'eat') net.manger(mange, 0, player.state.selected);
       if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target); return; }
       if (res === 'carte') { ouvrirCarte(); return; }
       if (res.indexOf('open:') === 0) {
         var kind = res.slice(5);
         var k = target.x + ',' + target.y + ',' + target.z;
-        // B1 (étape 8, docs/vague-2/B1.md § 6/8) : EN LIGNE, un conteneur posé
-        // (coffre, armoire, étagère, bibliothèque, fourneau, distributeur) ou
-        // la banque (bloc coffre-fort) ne s'affiche plus qu'après accord du
-        // serveur — jamais une copie locale qui pourrait diverger d'un autre
-        // joueur sur le même bloc (voir onConteneurEtat, game.js).
+        /* SPEC-ARCHI-030 : un conteneur posé (coffre, armoire, étagère,
+           bibliothèque, fourneau, distributeur) ou la banque (bloc coffre-fort)
+           ne s'affiche qu'après accord du serveur — jamais une copie locale
+           (voir onConteneurEtat) : c'est le seul chemin, solo fermé comme réseau. */
         var CONTENEURS_POSES = { furnace: 1, chest: 1, armoire: 1, etagere: 1, bibliotheque: 1, distributeur: 1, banque: 1 };
-        if (net.enLigne() && CONTENEURS_POSES[kind]) {
+        if (CONTENEURS_POSES[kind]) {
           net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
           audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
+          if (kind === 'banque') signalerSucces({ type: 'banque' });
           // L'écran s'affiche vraiment à la réponse du serveur (onConteneurEtat,
           // CONTENEUR_ETAT) — un refus (portée, etc.) laisse l'écran vide,
           // Échap referme normalement (closeUI/forceCloseContainer tolèrent
           // l'absence de conteneur ouvert).
           input.setState('ui');
-          return;
-        }
-        if (kind === 'furnace') {
-          if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
-          ui.openContainer('furnace', player.state.inv, furnaces[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('fourneau'), interactionOpts(target));
-        } else if (kind === 'chest') {
-          if (!coffreDe(target.x, target.y, target.z)) chests[k] = Inv.create(27);
-          ui.openContainer('chest', player.state.inv, chests[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-        } else if (kind === 'armoire' || kind === 'etagere' || kind === 'bibliotheque') {
-          // SPEC-INTERIEUR-002 : armoire, étagère, bibliothèque — de simples
-          // conteneurs comme un coffre, juste posés/rendus différemment ;
-          // le contenu (livres compris, SPEC-INTERIEUR-003) traverse la
-          // sauvegarde par le même chemin que n'importe quel coffre.
-          var TAILLES = { armoire: 27, etagere: 9, bibliotheque: 18 };
-          if (!chests[k]) {
-            chests[k] = Inv.create(TAILLES[kind]);
-            // la bibliothèque d'un lieu (générée, jamais posée par un joueur) tient
-            // quelques livres du monde (SPEC-INTERIEUR-001, 003)
-            var cleB = target.x + ',' + target.y + ',' + target.z;
-            if (kind === 'bibliotheque' && !world.overrides.has(cleB) && MC.Livres && world.habitats) {
-              var lieuB = world.habitats.lieuxProches(target.x, target.z, 160)[0];
-              if (lieuB) for (var nb = 0; nb < 3; nb++) {
-                chests[k].addStack(I.LIVRE, 1, MC.Livres.livreDuMonde(world.seed + nb * 7919, lieuB));
-              }
-            }
-          }
-          ui.openContainer('chest', player.state.inv, chests[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-        } else if (kind === 'banque') {
-          // un coffre-fort ouvre le compte, le même dans toutes les banques
-          ouvrirBanque();
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
           return;
         } else if (kind === 'info') {
           var ri = rendreService('info', null);
@@ -2450,10 +2369,6 @@
         } else if (kind === 'coffre_piege' || kind === 'coffre_surprise') {
           ouvrirCoffreSuspect(kind, target, k);
           return;
-        } else if (kind === 'distributeur') {
-          if (!distributeurs[k]) distributeurs[k] = Inv.create(9);
-          ui.openContainer('distributeur', player.state.inv, distributeurs[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
         } else if (kind === 'bloc_commande') {
           ouvrirBlocCommande(target);
           return;
@@ -2467,26 +2382,45 @@
       if (res === 'dormir') { dormir(target); return; }
       if (res === 'exposer' || res === 'retirer') { interagirExposition(res, target); return; }
       if (res === 'livre') { ouvrirLivreEnMain(); return; }
-      if (res === 'place' || res === 'place-ici') {
-        // 'place-ici' (fusion de dalle en bloc plein, SPEC-CONSTR-002) écrit
-        // sur la case visée elle-même, pas sur la case adjacente habituelle :
-        // il faut annoncer la bonne position au serveur, sinon les autres
-        // joueurs ne voient jamais la fusion (ou une case vide se modifie).
-        var bx, by, bz;
-        if (res === 'place-ici') { bx = target.x; by = target.y; bz = target.z; }
-        else { bx = target.x + target.nx; by = target.y + target.ny; bz = target.z + target.nz; }
-        // le serveur fait autorite : on lui annonce la pose, état compris
-        // (orientation d'un escalier, moitié d'une dalle — SPEC-CONSTR-001/002)
-        if (net.enLigne()) net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, 0, world.getEtat(bx, by, bz));
-        else signalerHistoire({ type: 'poser', bloc: mange, x: bx, y: by, z: bz });
-      }
+      if (res === 'place' || res === 'place-ici') annoncerPose(equipe[0], res, target, mange);
       if (res === 'place' || res === 'place-ici') audio.play('poser');
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: mange }); }
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
       else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      else if (res === 'bascule') { annoncerBascule(equipe[0], avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
+    }
+
+    /* Une porte se compose de deux blocs et se bascule des deux à la fois : on
+       relève les trois cases concernées (visée, dessus, dessous) AVANT que
+       useOn ne les change, puis on annonce au serveur celles qui ont basculé
+       (il vérifie que c'est bien une bascule et la portée ; aucun objet requis). */
+    function instantaneBascule(t) {
+      return [0, 1, -1].map(function (dy) { return { x: t.x, y: t.y + dy, z: t.z, id: world.getBlock(t.x, t.y + dy, t.z) }; });
+    }
+    function annoncerBascule(j, avant) {
+      avant.forEach(function (c) {
+        var maintenant = world.getBlock(c.x, c.y, c.z);
+        if (maintenant !== c.id && C.bascule(c.id) === maintenant)
+          net.poserBloc(c.x, c.y, c.z, maintenant, 0, j.index, world.getEtat(c.x, c.y, c.z));
+      });
+    }
+
+    /* SPEC-ARCHI-031 : une pose prédite localement est TOUJOURS annoncée au
+       serveur, qui la valide contre son inventaire (SPEC-SYNC-028) et la
+       diffuse. 'place-ici' (fusion de dalle en bloc plein, SPEC-CONSTR-002)
+       écrit sur la case visée elle-même, pas sur la case adjacente : il faut
+       annoncer la bonne position, sinon les autres joueurs ne voient jamais la
+       fusion. L'état (orientation d'un escalier, moitié d'une dalle —
+       SPEC-CONSTR-001/002) et la case d'inventaire d'où vient l'objet partent
+       avec. Sert à tout joueur local (clavier, manette, écran partagé). */
+    function annoncerPose(j, res, target, idObjet) {
+      var bx, by, bz;
+      if (res === 'place-ici') { bx = target.x; by = target.y; bz = target.z; }
+      else { bx = target.x + target.nx; by = target.y + target.ny; bz = target.z + target.nz; }
+      net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, j.index, world.getEtat(bx, by, bz), j.player.state.selected);
+      signalerHistoire({ type: 'poser', bloc: idObjet, x: bx, y: by, z: bz });
     }
 
     /* Position d'une interaction (coffre, fourneau, établi, porte…) pour la
@@ -2501,86 +2435,27 @@
        lui (ou en cas d'échec), il se déclenche immédiatement. Un coffre
        surprise cache soit un butin rare, soit un mimic hostile. */
     function ouvrirCoffreSuspect(kind, target, k) {
-      var aLeKit = player.heldId() === I.KIT_DESAMORCAGE;
-      if (aLeKit) {
-        var ok = MC.Core.tenterDesamorcage(true, Math.random);
-        if (!player.regles.blocsIllimites) player.state.inv.consumeAt(player.state.selected, 1);
-        if (ok) {
-          world.setBlock(target.x, target.y, target.z, B.CHEST);
-          ui.toast('Piège désamorcé.');
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-          return;
-        }
-        ui.toast('Le désamorçage échoue !', 'warn');
-      }
-      declencherPiege(kind, target, k);
+      // SPEC-ARCHI-044 (reporté) : pièges, surprises et kit de désamorçage
+      // modifient inventaire et monde hors du serveur ; refusés proprement
+      // plutôt que de dupliquer ou perdre des objets.
+      ui.toast('Ce coffre suspect ne peut pas encore être ouvert avec le serveur de jeu', 'warn');
     }
 
-    function declencherPiege(kind, target, k) {
-      if (kind === 'coffre_surprise') {
-        world.setBlock(target.x, target.y, target.z, 0);
-        var s = MC.Core.tirerSurprise(Math.random);
-        if (s === 'mimic') {
-          entities.spawn('mimic', target.x + 0.5, target.y, target.z + 0.5);
-          ui.toast("Ce n'était pas un vrai coffre !", 'warn');
-        } else {
-          var inv = Inv.create(27);
-          var rare = [[I.DIAMOND, 1, 3], [I.EMERALD, 2, 5], [I.GOLD_INGOT, 2, 4], [I.BIJOU, 0, 1]];
-          rare.forEach(function (r) {
-            var n = r[1] + Math.floor(Math.random() * (r[2] - r[1] + 1));
-            if (n > 0) inv.add(r[0], n);
-          });
-          chests[k] = inv;
-          ui.openContainer('chest', player.state.inv, chests[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-          input.setState('ui');
-        }
-        return;
-      }
-      var t = MC.Core.tirerPiege(Math.random);
-      if (t === 'fleches') {
-        player.hurt(6);
-        ui.toast('Un mécanisme vous tire dessus !', 'warn');
-      } else if (t === 'explosion') {
-        player.hurt(10);
-        world.setBlock(target.x, target.y, target.z, 0);
-        ui.toast('Ça explose !', 'warn');
-        audio.play('brise');
-        return;
-      } else if (t === 'alarme') {
-        entities.spawn('garde', target.x + 0.5, target.y + 1, target.z + 0.5);
-        entities.spawn('garde', target.x - 0.5, target.y + 1, target.z - 0.5);
-        ui.toast('Une alarme retentit, des gardes accourent !', 'warn');
-      } else if (t === 'gaz') {
-        player.state.malade += 15;
-        ui.toast('Un gaz toxique vous saisit...', 'warn');
-      }
-      // le piège se déclenche une fois : le coffre redevient un coffre normal
-      world.setBlock(target.x, target.y, target.z, B.CHEST);
-      chests[k] = Inv.create(27);
-      ui.openContainer('chest', player.state.inv, chests[k], k);
-      audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-      input.setState('ui');
-    }
-
-    /* B1 (docs/vague-2/B1.md § 6) : traduit une opération de MC.Conteneurs en
-       message réseau — hors ligne, applique directement sur l'état réel ;
-       en ligne, applique de la même façon (état affiché) ET prévient le
-       serveur avec un `seq` de prédiction (rejoué/purgé par `onInvMaj`). Ne
+    /* Traduit une opération de MC.Conteneurs en message réseau : applique
+       sur l'état affiché ET prévient le serveur avec un `seq` de prédiction
+       (rejoué/purgé par `onInvMaj`). Ne
        consomme un `seq` que si l'opération a réellement pris effet, pour que
        les compteurs client/serveur restent alignés un-message-un-seq. */
     function operer(j, op, msgBase) {
-      // B1 (étape 8) : un conteneur posé/banque ouvert EN LIGNE est résolu par
-      // sa clé — c'est le MÊME objet que celui affiché par l'UI (`ui.container.cont`),
-      // donc la prédiction s'y voit tout de suite ; il est corrigé plus tard
-      // par un delta serveur (INV_MAJ.conteneurs ou CONTENEUR_MAJ, jamais
-      // remplacé). Hors ligne, aucun conteneur posé ne passe par ici (coffre,
-      // fourneau, distributeur restent en modèle legacy, B1.md § 8).
+      // Un conteneur posé/banque ouvert est résolu par sa clé — c'est le MÊME
+      // objet que celui affiché par l'UI (`ui.container.cont`), donc la
+      // prédiction s'y voit tout de suite ; il est corrigé plus tard par un
+      // delta serveur (INV_MAJ.conteneurs ou CONTENEUR_MAJ, jamais remplacé).
       var ctx = { joueur: j.player.state, conteneur: function (cle) {
         return (conteneurOuvert && conteneurOuvert.cle === cle) ? conteneurOuvert.mirror : null;
       }, regles: regles };
       var r = MC.Conteneurs.appliquer(ctx, op);
-      if (r.ok && net.enLigne() && j.predInv) {
+      if (r.ok && j.predInv) {
         var seq = j.predInv.suivant(op);
         var msg = Object.assign({}, msgBase, { j: j.index, seq: seq });
         net.envoyer(msg);
@@ -2646,18 +2521,13 @@
         descendreDe(equipe[0]);
       } else if (act === 'jeter') {
         // G et non Q : sur AZERTY, Q est déjà la touche « aller à gauche »
-        if (net.enLigne()) {
-          // B1 : en ligne, jamais entities.dropItem local — l'objet au sol
-          // vient du serveur (lacherAuxPieds), sinon il apparaîtrait deux
-          // fois (B1.md § 6, piège documenté)
-          var j0 = equipe[0], i0 = j0.player.state.selected, stack0 = j0.player.state.inv.slots[i0];
-          if (stack0) {
-            var r0 = operer(j0, { k: 'lacher', i: i0, n: 1 }, { t: MC.ContratsV2.MSG.INV_LACHER, i: i0, n: 1 });
-            if (r0.ok) { ui.toast('Jeté : ' + C.nameOf(r0.effets.lache.id)); audio.play('poser'); }
-          }
-        } else {
-          var d = player.dropSelected(1);
-          if (d) { ui.toast('Jeté : ' + C.nameOf(d.id)); audio.play('poser'); }
+        // SPEC-ARCHI-031 : jamais entities.dropItem local — l'objet au sol vient
+        // du serveur (lacherAuxPieds), répliqué par ETAT (SPEC-SYNC-026), sinon
+        // il apparaîtrait deux fois
+        var j0 = equipe[0], i0 = j0.player.state.selected, stack0 = j0.player.state.inv.slots[i0];
+        if (stack0) {
+          var r0 = operer(j0, { k: 'lacher', i: i0, n: 1 }, { t: MC.ContratsV2.MSG.INV_LACHER, i: i0, n: 1 });
+          if (r0.ok) { ui.toast('Jeté : ' + C.nameOf(r0.effets.lache.id)); audio.play('poser'); }
         }
       }
     }
@@ -2693,17 +2563,12 @@
 
     function forceCloseContainer() {
       var cont = ui.container;
-      if (cont && cont.cont && net.enLigne()) {
-        // B1 (étape 8) : un conteneur posé/banque EN LIGNE (modèle référence) —
-        // tout y est déjà réellement rangé (chaque clic était déjà une
-        // opération) : fermer ne fait que se désabonner, rien à déclarer.
+      if (cont && cont.cont) {
+        // SPEC-ARCHI-030 : un conteneur posé/banque (modèle référence) — tout y
+        // est déjà réellement rangé (chaque clic était déjà une opération) :
+        // fermer ne fait que se désabonner, rien à déclarer.
         net.fermerConteneur(cont.cont.cle, 0);
         conteneurOuvert = null;
-      } else if (cont && cont.kind === 'distributeur' && cont.pos && net.enLigne() && net.distribuerMaj) {
-        // SPEC-MECA-001, solo/legacy : le serveur fait foi sur ce qu'un
-        // distributeur éjecte — on lui envoie le contenu à la fermeture.
-        var p = cont.pos.split(',');
-        net.distribuerMaj(+p[0], +p[1], +p[2], cont.distributeur.slots);
       }
       var rendus = ui.closeContainer();
       dropLeftovers(rendus);
@@ -2955,7 +2820,6 @@
             entities.list.splice(nAvant);
             net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
           } else signalerSucces({ type: 'casser', bloc: res.id });
-          if (C.BLOCKS[res.id] && C.BLOCKS[res.id].interactive) spillContainer(pos.x, pos.y, pos.z);
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
             ui.toast('Il faut un outil adapte pour recuperer ce bloc', 'warn');
@@ -3002,8 +2866,11 @@
       if (vis && vis.vehicule && interagirVehicule(j, vis, false)) return;
       var target = pl.aim();
       if (!target) return;
+      var idMain = pl.heldId();
+      var avantBascule = instantaneBascule(target);
       var res = pl.useOn(target);
       if (!res) return;
+      if (res === 'eat') net.manger(idMain, j.index, pl.state.selected);
       if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target); return; }
       if (res === 'dormir') { dormir(target, j); return; }
       if (res.indexOf('open:') === 0) {
@@ -3013,70 +2880,43 @@
         return;
       }
       if (res === 'place' || res === 'place-ici') {
-        var bxp, byp, bzp;
-        if (res === 'place-ici') { bxp = target.x; byp = target.y; bzp = target.z; }
-        else { bxp = target.x + target.nx; byp = target.y + target.ny; bzp = target.z + target.nz; }
-        signalerHistoire({ type: 'poser', bloc: enMain && enMain.id, x: bxp, y: byp, z: bzp });
+        annoncerPose(j, res, target, idMain);
         audio.play('poser');
       }
-      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: enMain && enMain.id }); }
+      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: idMain }); }
       else if (res === 'till' || res === 'plant') audio.play('poser');
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      else if (res === 'bascule') { annoncerBascule(j, avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
     }
 
     /* SPEC-MECA-007 : petite interface (une invite texte suffit — pas besoin
        d'un écran dédié pour une seule ligne) pour lire/écrire la commande
-       d'un bloc de commande. Hors ligne, réservé au mode créatif ; en ligne,
-       le serveur revérifie TOUJOURS le rôle avant d'appliquer (voir
-       server.js/blocCommandeAutorise) — ce garde-fou local n'est qu'un
-       confort, jamais la décision. */
+       d'un bloc de commande. Aucune décision ici : le serveur seul tranche
+       (administrateur, ou hôte en mode créatif — server.js/blocCommandeAutorise),
+       identique en solo fermé et en réseau. */
     function ouvrirBlocCommande(target) {
-      var creatif = regles.blocsIllimites;
-      if (!net.enLigne() && !creatif) {
-        ui.toast('Un bloc de commande ne se modifie qu\'en créatif', 'warn');
-        return;
-      }
       var actuel = (world.getCommande && world.getCommande(target.x, target.y, target.z)) || '';
       if (typeof window === 'undefined' || !window.prompt) return;
       var texte = window.prompt('Commande du bloc (ex: /jour) :', actuel);
       if (texte === null) return;
       texte = texte.trim().slice(0, 200);
-      if (net.enLigne()) {
-        // panneau admin existant (SPEC-ADMIN-006) : le serveur revérifie le
-        // rôle avant d'appliquer, jamais confiance au mode local.
-        net.admin('bloc_commande', { x: target.x, y: target.y, z: target.z, texte: texte });
-      } else if (world.setCommande) {
-        world.setCommande(target.x, target.y, target.z, texte);
-        ui.toast(texte ? 'Commande enregistrée' : 'Commande effacée');
-      }
+      // panneau admin existant (SPEC-ADMIN-006) : le serveur revérifie le rôle
+      // ou le mode créatif de l'hôte avant d'appliquer (SPEC-ARCHI-033), et sa
+      // réponse s'affiche dans le chat (onAdminRep)
+      net.admin('bloc_commande', { x: target.x, y: target.y, z: target.z, texte: texte });
     }
 
+    /* Second chemin d'ouverture (joueur au clavier ou à la manette, via
+       utiliserPour) : le même que dans onUse — tout conteneur posé passe par
+       le serveur (CONTENEUR_OUVRIR, réponse CONTENEUR_ETAT). Ne sert qu'au
+       joueur 1 (un seul clavier). */
     function ouvrirConteneur(kind, target) {
-      var k = target.x + ',' + target.y + ',' + target.z;
-      // B1 (étape 8) : même bascule en ligne que dans onUse (§ le premier
-      // manieur de « open: » plus haut) — ce chemin ne sert qu'au joueur 1.
-      if (net.enLigne() && (kind === 'furnace' || kind === 'chest' || kind === 'distributeur')) {
+      if (kind === 'bloc_commande') { ouvrirBlocCommande(target); return; }
+      var CONTENEURS_POSES = { furnace: 1, chest: 1, armoire: 1, etagere: 1, bibliotheque: 1, distributeur: 1, banque: 1 };
+      if (CONTENEURS_POSES[kind]) {
         net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
         audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
-        input.setState('ui');
-        return;
-      }
-      if (kind === 'furnace') {
-        if (!furnaces[k]) furnaces[k] = Inv.newFurnace();
-        ui.openContainer('furnace', player.state.inv, furnaces[k], k);
-        audio.jouer(MC.Ambiance.sonInteraction('fourneau'), interactionOpts(target));
-      } else if (kind === 'chest') {
-        if (!chests[k]) chests[k] = Inv.create(27);
-        ui.openContainer('chest', player.state.inv, chests[k], k);
-        audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-      } else if (kind === 'distributeur') {
-        if (!distributeurs[k]) distributeurs[k] = Inv.create(9);
-        ui.openContainer('distributeur', player.state.inv, distributeurs[k], k);
-        audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-      } else if (kind === 'bloc_commande') {
-        ouvrirBlocCommande(target);
-        return;
+        if (kind === 'banque') signalerSucces({ type: 'banque' });
       } else {
         ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
         audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
@@ -3107,9 +2947,9 @@
       // chaque joueur local est simule, quelle que soit sa source d'entrees
       for (var qi = 0; qi < equipe.length; qi++) simulerJoueur(equipe[qi], dt);
       // B1 : envoi groupé, en fin d'image, des diminutions journalisées
-      // pendant la simulation (B1.md § 6) — jamais avant, un INV_MAJ arrivé
-      // entre-temps effacerait un journal vidé trop tôt
-      if (net.enLigne()) for (var qj = 0; qj < equipe.length; qj++) purgerJournalInv(equipe[qj]);
+      // pendant la simulation — jamais avant, un INV_MAJ arrivé entre-temps
+      // effacerait un journal vidé trop tôt
+      for (var qj = 0; qj < equipe.length; qj++) purgerJournalInv(equipe[qj]);
     }
 
     function frameEntites(dt) {
@@ -3136,20 +2976,7 @@
       // temps, apparitions, cultures
       g.time += dt;
       g.duree = (g.duree || 0) + dt;
-      // L45 : frais de garde de la banque et pousse/trésor de l'économie, au
-      // changement de jour seulement (jamais en ligne : c'est le serveur qui y fait foi)
-      if (g.economie && !net.enLigne()) {
-        var jourEco = Math.floor(g.time / DC.DAY_LENGTH);
-        if (g.dernierJourEco === undefined) g.dernierJourEco = jourEco;
-        else if (jourEco > g.dernierJourEco) {
-          if (world.banque) MC.Economie.appliquerFraisBanque(world.banque.slots, jourEco - g.dernierJourEco);
-          var saisonJour = DC.saison ? DC.saison(g.time).nom : 'ete';
-          for (var jourAvance = g.dernierJourEco + 1; jourAvance <= jourEco; jourAvance++) {
-            MC.Economie.tickJour(g.economie, jourAvance, saisonJour);
-          }
-          g.dernierJourEco = jourEco;
-        }
-      }
+      // L45 : frais de garde et économie n'avancent que dans le serveur (avancerEconomie)
     }
 
     /* SPEC-ARCHI-034 : eau, circuits, cultures, feu ET apparitions sont simulés
@@ -3164,14 +2991,8 @@
     }
 
     function frameConteneurs(dt) {
-      // B1 (étape 8, B1.md § 12) : en ligne, c'est le SERVEUR qui fait
-      // cuire les fourneaux posés (registre `conteneursPoses`) — les
-      // simuler aussi ici les ferait cuire deux fois plus vite.
-      if (!net.enLigne()) {
-        for (var fk in furnaces) {
-          if (Inv.tickFurnace(furnaces[fk], dt)) ui.refreshFurnace();
-        }
-      }
+      // SPEC-ARCHI-030 : les fourneaux posés cuisent dans le SERVEUR (registre
+      // `conteneursPoses`, même fenêtre fermée) — rien à simuler ici.
     }
 
     function frameFinDePartie(dt) {
@@ -3189,9 +3010,6 @@
 
     function frameMondeInterface(dt) {
       world.tick(dt, 14, null, optionsTickClient());
-      if (!net.enLigne()) {
-        for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
-      }
     }
 
     function frameReseau(dt) {
