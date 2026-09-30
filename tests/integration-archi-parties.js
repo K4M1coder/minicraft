@@ -219,7 +219,16 @@ async function scenarioJoueur() {
     const s = await demarrer(args, { MC_TEST_INV: '[[4,12]]' });
     const a = await rejoindre(s.port, 'Zed', 1);
     for (let i = 1; i <= 90; i++) { a.client.envoyer({ t: 'e', s: i, j: 0, dt: 0.016, k: 1, yaw: 0.5, pitch: 0.2, v: 0 }); await dodo(16); }
-    await dodo(400);
+    /* Le serveur consomme les entrées à son rythme (sous charge, l'état reçu peut
+       retarder de dizaines d'entrées) : on sonde, de façon bornée, jusqu'à ce que
+       l'état reflète la dernière entrée envoyée (s = 90) avant de relever la position. */
+    const finAttente = Date.now() + 10000;
+    while (Date.now() < finAttente) {
+      const e = a.client.dernier('etat');
+      if (e && e.toi && e.toi[0] && e.toi[0].s >= 90) break;
+      await dodo(50);
+    }
+    await dodo(200);
     const avant = a.client.dernier('etat').toi[0];
     a.client.fermer();
     await attendreClients(s.port, 0);

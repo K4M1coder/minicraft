@@ -138,7 +138,8 @@ function demarrer(args, env) {
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, env || {}) });
 }
 async function attendrePret(port) {
-  for (let essai = 0; essai < 60; essai++) {
+  // démarrage + génération du monde : sous charge, plus de 6 s (sondage borné à 30 s)
+  for (let essai = 0; essai < 300; essai++) {
     await dodo(100);
     const r = await requeteJSON(port, 'GET', '/index.html', null, null);
     if (r.code === 200) return true;
@@ -427,7 +428,9 @@ async function attendrePret(port) {
 
     // laisse la boucle périodique (accChunks, ~1 Hz) et le délai raccourci
     // (4 à 7 jours simulés × MC_DONJON_JOUR_S=1 s) s'écouler
-    const fermeture = await explorateur.attendre('cont_fermer', 12000, m => m.cle === cleCoffre);
+    /* le délai (4 à 7 jours × 1 s) s'écoule en temps de MONDE : sous charge le tic
+       plafonne son pas (0,25 s) et le monde avance moins vite que l'horloge — marge large */
+    const fermeture = await explorateur.attendre('cont_fermer', 45000, m => m.cle === cleCoffre);
     ok(!!fermeture, 'SPEC-DONJON-017 : l abonné encore ouvert reçoit CONTENEUR_FERMER à la régénération du coffre',
        JSON.stringify(fermeture));
 

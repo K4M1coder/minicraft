@@ -158,6 +158,8 @@ async function scenarioSommeil() {
     await dodo(300);
     let sq = 1;
     for (let i = 0; i < 30; i++) { m1.client.envoyer({ t: A.NP.MSG.ENTREE, s: sq++, j: 0, dt: 0.05, k: 1, yaw: 0, pitch: 0, v: 0 }); await dodo(50); }
+    // le serveur consomme les entrées à son rythme (sous charge, l'état retarde) : sondage borné
+    await attendreQue(() => { const q = toi(m1.client); return q && Math.hypot(q.x - p0.x, q.z - p0.z) > 2; }, 8000);
     const p1 = toi(m1.client);
     ok(Math.hypot(p1.x - p0.x, p1.z - p0.z) > 2, 'témoin — le dormeur s\'est bien éloigné de son lit', JSON.stringify([p0.x, p0.z, p1.x, p1.z]));
     m2.client.envoyer({ t: 'dormir', j: 0, actif: true });
