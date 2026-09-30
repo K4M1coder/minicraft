@@ -1025,6 +1025,13 @@ function diffuserBlocsMonde() {
     try { c.socket.write(Buffer.concat(choisies)); } catch (e) { fermer(c, 'ecriture impossible'); }
   });
 }
+/* Résumé de la faction principale d'un joueur (SPEC-ARCHI-029) : { id, nom, rang }
+   ou null. Court (jamais l'état complet des guildes), donc sans coût de diffusion. */
+function guildeResume(nom) {
+  const p = MC.Guildes.factionsDe(guildes, nom).principale;
+  const f = p && guildes.factions.get(p);
+  return f ? { id: f.id, nom: f.nom, rang: MC.Guildes.rangDe(guildes, f.id, nom) } : null;
+}
 function envoyer(c, msg) {
   if (!c || !c.vivant) return;
   try {
@@ -1405,6 +1412,7 @@ function apiPartiesAutorisee(req, res) {
   if (req.headers['sec-fetch-site'] === 'cross-site') { repondreJSON(res, 403, { ok: false, motif: 'requête intersites refusée' }); return false; }
   return true;
 }
+let derniereDemandeSauvegarde = 0;
 function entierOuNul(v) { return typeof v === 'number' && isFinite(v) && Math.floor(v) === v ? v : null; }
 function traiterApiParties(req, res) {
   if (!apiPartiesAutorisee(req, res)) return;
@@ -1451,6 +1459,21 @@ function traiterApiParties(req, res) {
         if (partieActive && partieActive.id === connue.id) { repondreJSON(res, 200, { ok: true, relance: false, partie: connue }); return; }
         repondreJSON(res, 200, { ok: true, relance: true, partie: connue, port: portActuel });
         res.on('finish', () => relancerSurPartie(connue.id));
+        return;
+      }
+      /* SPEC-ARCHI-036 : « Sauvegarder » du menu pause (ou la touche) est une
+         DEMANDE au serveur, qui reste seul à écrire la partie. Réservée à la
+         boucle locale par apiPartiesAutorisee (jamais un joueur distant),
+         espacée d'une seconde au moins (la sérialisation bloque la boucle) ;
+         omise, comme toute sauvegarde événementielle, si le monde n'a pas bougé. */
+      case '/sauver': {
+        if (!CONF.mondeFichier) { repondreJSON(res, 409, { ok: false, motif: 'pas_de_partie' }); return; }
+        const t = Date.now();
+        if (t - derniereDemandeSauvegarde < 1000) { repondreJSON(res, 429, { ok: false, motif: 'trop_frequent' }); return; }
+        derniereDemandeSauvegarde = t;
+        sauvegarderMondeAsync('demande du joueur', true);
+        const enVol = sauvegardeEnCoursAttente;
+        Promise.race([enVol || Promise.resolve(), dodo(5000)]).then(() => repondreJSON(res, 200, { ok: true, ecrite: !!enVol }));
         return;
       }
       case '/renommer': {
@@ -1916,6 +1939,8 @@ function traiter(c, m) {
         // ARCHI : état du poste — pause (SPEC-ARCHI-011), réseau (SPEC-ARCHI-005), partie chargée
         pause: enPause, pauseRev, reseau: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME,
         partie: partieActive ? { id: partieActive.id, nom: partieActive.nom } : null,
+        // SPEC-ARCHI-029 / SYNC-025 : l'appartenance de faction qui fait foi est celle du serveur
+        guilde: guildeResume(c.nom),
         joueurs: [...clients.values()].filter(x => x.id !== c.id && x.rejoint)
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),

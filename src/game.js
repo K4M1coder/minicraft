@@ -185,7 +185,7 @@
     var equipe = [];
     var player = MC.createPlayer(world, entities, regles);
     equipe.push({ index: 0, nom: 'Joueur 1', player: player,
-                  source: 'clavier', manette: null, vue: null });
+                  source: 'clavier', manette: null, vue: null, prediction: MC.Synchro.creerPrediction() });
     var manettes = [];
 
     function joueurPrincipal() { return equipe[0].player; }
@@ -243,6 +243,9 @@
         });
         (m.chat || []).forEach(function (c) { chat.recevoir(c); });
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
+        // SPEC-ARCHI-029 : l'appartenance de faction est celle du serveur (jamais un état local)
+        g.guilde = m.guilde || null;
+        if (g.guilde) chat.systeme('Faction : ' + g.guilde.nom + (g.guilde.rang ? ' (' + g.guilde.rang + ')' : ''));
       },
       onBloc: function (x, y, z, id, etat) {
         // autorite serveur : on applique sans discuter, meme si l on avait
@@ -458,10 +461,8 @@
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
-      // factions de joueurs hors ligne (joueurs locaux), sauvegardées avec la partie
-      guildes: MC.Guildes ? MC.Guildes.creerEtat() : undefined,
-      // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) —
-      // même module et même état joués à l'identique en solo et en ligne
+      // factions de joueurs : arbitrées par le serveur (SPEC-ARCHI-029), `g.guilde` = son annonce à la connexion
+      guilde: null,
       // SPEC-PERF-015 : métriques de rendu, calculées en continu indépendamment
       // du panneau F3 qui les affiche (SPEC-PERF-016)
       perf: { msGeneration: 0, msMaillage: 0, appelsDessin: 0, triangles: 0, fps: 0, fpsP50: 0, fpsP95: 0, renderDist: render.RENDER_DIST },
@@ -494,11 +495,7 @@
       onSelectSlot: selectSlot,
       onPlay: startGame,
       onResume: resume,
-      onSave: function () {
-        // le serveur sauvegarde à chaque pause (SPEC-ARCHI-012) : l'entrée dans ce menu l'a déjà fait
-        if (poste) ui.toast('Partie sauvegardée par le serveur (à chaque pause, puis toutes les 45 s)');
-        else doSave(true);
-      },
+      onSave: function () { demanderSauvegarde(true); },     // SPEC-ARCHI-036 : demande immédiate au serveur
       onQuit: toMenu,
       onRespawn: respawn,
       onSound: function (n) { audio.play(n); },
@@ -1545,7 +1542,7 @@
       input.setState('menu');
       var arche = h && MC.Recits.ARCHETYPES[h.archetype];
       ui.ecranFin(n, stats, arche ? arche.nom : '');
-      if (g.partieId) doSave(false);
+      demanderSauvegarde(false);
     }
     function continuerApresFin() {
       if (g.partieId) input.setState('playing');
@@ -1703,6 +1700,7 @@
       manettes.length = 0;
       nouvelle.forEach(function (j) {
         equipe.push(j);
+        j.prediction = MC.Synchro.creerPrediction();     // SPEC-ARCHI-037 : tout joueur local prédit son mouvement
         if (j.source === 'manette') {
           manettes.push(MC.creerManette(j.manette, function () {
             return (typeof navigator !== 'undefined' && navigator.getGamepads)
@@ -1814,8 +1812,7 @@
       var aMailler = world.chunksVoulus(centres, R);
 
       // SPEC-SERVEUR-009 : demande les overrides de chaque chunk voulu qui
-      // n'a pas encore été demandé — en ligne seulement (le solo n'a pas de
-      // serveur à interroger, ses overrides sont déjà dans `world`). Le seul
+      // n'a pas encore été demandé (toujours, solo fermé compris). Le seul
       // garde-fou est `overridesDemandes` (PAS `world.chunks.has(rk)`) :
       // un chunk déjà chargé reste éligible tant qu'il n'a pas encore été
       // demandé — c'est ce qui permet à onBienvenue (reconnexion à la même
@@ -1830,17 +1827,18 @@
       // téléportation, reconnexion) ne fait pas taire silencieusement le
       // serveur pour le reste de la seconde — les chunks reportés seront
       // redemandés dès la prochaine image tant qu'ils restent voulus.
-      if (net.enLigne()) {
-        var tOverridesNow = performance.now();
-        if (tOverridesNow - overridesFenetreDebut > 1000) { overridesFenetreDebut = tOverridesNow; overridesFenetreN = 0; }
-        for (var ridx = 0; ridx < aGenerer.length && overridesFenetreN < OVERRIDES_DEMANDE_BUDGET; ridx++) {
-          var rcx = aGenerer[ridx][1], rcz = aGenerer[ridx][2];
-          var rk = world.key(rcx, rcz);
-          if (overridesDemandes[rk]) continue;
-          overridesDemandes[rk] = true;
-          net.demanderOverrides(rcx, rcz);
-          overridesFenetreN++;
-        }
+      // SPEC-ARCHI-038 : la demande part toujours (solo fermé compris). Tant que
+      // la connexion n'est pas établie elle n'est pas envoyée, donc pas marquée :
+      // elle repart dès que le serveur répond.
+      var tOverridesNow = performance.now();
+      if (tOverridesNow - overridesFenetreDebut > 1000) { overridesFenetreDebut = tOverridesNow; overridesFenetreN = 0; }
+      for (var ridx = 0; ridx < aGenerer.length && overridesFenetreN < OVERRIDES_DEMANDE_BUDGET; ridx++) {
+        var rcx = aGenerer[ridx][1], rcz = aGenerer[ridx][2];
+        var rk = world.key(rcx, rcz);
+        if (overridesDemandes[rk]) continue;
+        if (!net.demanderOverrides(rcx, rcz)) break;       // pas de connexion : inutile d'insister à cette image
+        overridesDemandes[rk] = true;
+        overridesFenetreN++;
       }
 
       integrerResultatsWorkers();
@@ -2489,7 +2487,7 @@
         ui.toggleLivre();
         input.setState('ui');
       } else if (act === 'sauvegarder') {
-        doSave(true);
+        demanderSauvegarde(true);
       } else if (act === 'hud') {
         // bascule générale du HUD (SPEC-HUD-001)
         hud.basculerTout();
@@ -2612,7 +2610,7 @@
     function contexteCommande() {
       var s = player.state;
       var noms = [];
-      if (net.enLigne()) net.distants.forEach(function (d) { noms.push(d.nom); });
+      net.distants.forEach(function (d) { noms.push(d.nom); });     // SPEC-ARCHI-039 : la liste des joueurs est toujours affichée
       var j0 = equipe[0];
       return {
         temps: g.time,
@@ -2625,7 +2623,7 @@
         } : null,
         succes: g.succes,
         renduRealiste: render.loin ? render.loin.options.realiste : true,
-        enLigne: net.enLigne(),
+        enLigne: true,     // SPEC-ARCHI-039 : toujours vrai (tout joueur passe par un serveur) ; l'état du réseau, c'est ETAT_RESEAU
         joueurs: noms,
       };
     }
@@ -2641,13 +2639,11 @@
     function actionCommandeRejoindre(a) { net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); }
     function actionCommandeQuitter() { net.deconnecter(); }
     function actionCommandeRendu(a) { render.reglerRealiste(a.realiste); }
-    // factions de joueurs : en ligne le serveur fait foi, hors ligne l'état local
-    function actionCommandeFaction(a) {
-      if (net.enLigne()) { net.envoyerChat('/faction ' + (a.brut || '')); return; }
-      g.guildes = g.guildes || MC.Guildes.creerEtat();
-      var rf = MC.Guildes.appliquerAction(g.guildes, g.nomJoueur || 'Joueur', a);
-      chat.systeme(rf.message);
-    }
+    /* SPEC-ARCHI-029 : les factions de joueurs sont arbitrées par le SERVEUR
+       (solo fermé comme réseau) ; la réponse revient par le chat, et
+       l'appartenance connue du client (g.guilde) est celle que le serveur
+       annonce à la connexion (BIENVENUE) — jamais un état local. */
+    function actionCommandeFaction(a) { net.envoyerChat('/faction ' + (a.brut || '')); }
     function actionCommandeAdmin(a) { net.admin(a.action, a.args); }
     // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)
     function actionCommandeDuel(a) {
@@ -2700,8 +2696,13 @@
     /* Mode cauchemar : la carte ET la sauvegarde disparaissent. */
     function perdrePartie() {
       audio.play('mort');
-      var st = storage();
-      if (st && g.partieId) MC.Saves.supprimer(st, g.partieId);
+      if (poste) {
+        // la partie vit sur le serveur (SPEC-ARCHI-036) : c'est lui qui l'efface
+        if (g.partieId) poste.supprimerPartie(g.partieId).then(null, function () { /* déjà effacée ou serveur parti */ });
+      } else {
+        var st = storage();
+        if (st && g.partieId) MC.Saves.supprimer(st, g.partieId);
+      }
       g.partieId = null;
       world.reset(render.disposeChunk);
       simplifieEnVol = Object.create(null);
@@ -2713,21 +2714,28 @@
     }
     g.perdrePartie = perdrePartie;
 
-    function doSave(notify) {
-      // B1 (docs/vague-2/B1.md § 6) : le serveur fait foi en ligne — une
-      // sauvegarde locale écraserait l'inventaire solo par l'inventaire
-      // (souvent vide) de l'équipe en ligne à la prochaine reconnexion.
-      if (net.enLigne()) { if (notify) ui.toast('Sauvegarde désactivée en ligne (le serveur fait autorité)', 'warn'); return false; }
-      var st = storage();
-      if (!st) { if (notify) ui.toast('Sauvegarde indisponible', 'warn'); return false; }
-      // pas d emplacement (partie non nommee) : rien a ecrire
-      if (!g.partieId) { if (notify) ui.toast('Aucune partie à sauvegarder', 'warn'); return false; }
-      var ok = MC.Saves.sauvegarder(st, g.partieId, g);
-      if (notify) { ui.toast(ok ? 'Partie sauvegardée' : 'Échec de la sauvegarde', ok ? '' : 'warn');
-                    if (ok) audio.play('sauver'); }
-      return ok;
+    /* SPEC-ARCHI-036 : le client n'écrit JAMAIS la partie (ni localStorage, ni
+       crochet de fermeture) : le serveur la sauvegarde (pause, départ du
+       dernier client, cadence, arrêt). « Sauvegarder » n'est qu'une DEMANDE de
+       sauvegarde immédiate à SON serveur local. Un serveur d'une autre machine
+       sauvegarde de lui-même : rien à demander. */
+    function demanderSauvegarde(notify) {
+      if (!poste || g.hoteDistant) {
+        if (notify) ui.toast('Le serveur sauvegarde la partie tout seul');
+        return Promise.resolve({ ok: true, ecrite: false });
+      }
+      return poste.sauvegarder().then(function (r) {
+        if (notify) {
+          ui.toast(r.ok ? 'Partie sauvegardée par le serveur' : 'Sauvegarde refusée' + (r.motif ? ' (' + r.motif + ')' : ''), r.ok ? '' : 'warn');
+          if (r.ok) audio.play('sauver');
+        }
+        return r;
+      }, function () {
+        if (notify) ui.toast('Serveur injoignable : sauvegarde impossible', 'warn');
+        return { ok: false, ecrite: false, motif: 'injoignable' };
+      });
     }
-    g.doSave = doSave;
+    g.demanderSauvegarde = demanderSauvegarde;
 
     /* Simule UN joueur local. Le joueur 1 lit le clavier, les autres leur
        manette : au-dela de la source, le traitement est identique — c'est ce
@@ -2755,15 +2763,9 @@
         if (st.monture) V.descendre(st, world, pl.PW, pl.PH);
         return;
       }
-      if (net.enLigne() && j.prediction) {
-        /* Prédiction : l'entrée part au serveur ET s'applique tout de suite,
-           par le même code que lui. Les statistiques (vie, faim, air) ne sont
-           pas calculées ici : elles arrivent du serveur. */
-        var entree = j.prediction.enregistrer(dt, touches, st.yaw, st.pitch, st.flying);
-        net.envoyerEntree(entree, j.index);
-        MC.Synchro.rejouer(pl, [entree]);
-      } else if (st.monture) {
+      if (st.monture) {
         // à bord : les touches de déplacement deviennent les commandes de l'engin
+        // (P-VEH : simulé par le client tant que les véhicules ne sont pas portés au serveur)
         var mt = st.monture;
         V.conduire(mt, dt, world, {
           avant: touches.forward, arriere: touches.back, gauche: touches.left,
@@ -2772,10 +2774,15 @@
         if (!V.caler(st)) { /* engin détruit : on est à pied */ }
         else if (V.DEFS[mt.vehicule].respire) st.air = pl.MAX_AIR;     // cabine étanche
       } else {
-        pl.updateMovement(dt, touches);
-        // on ne traverse pas les creatures : la separation vient APRES le
-        // deplacement, sinon le joueur entre puis ressort en tremblant
-        entities.separer(st, dt);
+        /* SPEC-ARCHI-037 : prédiction + réconciliation pour TOUT joueur local
+           (solo fermé, écran partagé, réseau) : l'entrée part au serveur ET
+           s'applique tout de suite, par le même code que lui (MC.Synchro).
+           Aucun déplacement n'est appliqué hors de `prediction`. Les
+           statistiques (vie, faim, air) ne sont pas calculées ici : elles
+           arrivent du serveur. */
+        var entree = j.prediction.enregistrer(dt, touches, st.yaw, st.pitch, st.flying);
+        net.envoyerEntree(entree, j.index);
+        MC.Synchro.rejouer(pl, [entree]);
       }
       if (!net.enLigne()) pl.updateSurvival(dt);
 
@@ -2929,7 +2936,7 @@
     g.ouvrirConteneur = ouvrirConteneur;
 
     // ─── boucle ──────────────────────────────────────────────────────────────
-    var last = performance.now(), acc = 0, frames = 0, autoSaveT = 0;
+    var last = performance.now(), acc = 0, frames = 0;
 
     /* ─── frame() découpée par thème (lot A0, « aiguillage » — SPEC-ARCHI-034…) ───
        Sans changement de comportement : chaque sous-fonction reprend, dans le
@@ -2996,9 +3003,6 @@
     }
 
     function frameFinDePartie(dt) {
-      autoSaveT += dt;
-      if (autoSaveT >= 60) { autoSaveT = 0; doSave(false); }
-
       // mort : en cauchemar, un seul joueur suffit a perdre la partie
       if (MC.Split.partiePerdue(equipe, regles)) {
         var finT = g.histoire && !finRecit(g.histoire) ? MC.Recits.signaler(g.histoire, { type: 'mort' }) : [];
@@ -3013,7 +3017,8 @@
     }
 
     function frameReseau(dt) {
-      if (net.enLigne()) net.interpoler(dt);
+      // SPEC-ARCHI-040 : sans autre joueur, `distants`/`mobsDistants` sont vides et l'appel est sans effet
+      net.interpoler(dt);
     }
 
     function frame(now) {
@@ -3121,7 +3126,9 @@
     }
 
     window.addEventListener('resize', render.resize);
-    window.addEventListener('beforeunload', function () { if (g.spawnPoint) doSave(false); });
+    /* SPEC-ARCHI-036 : plus de crochet `beforeunload` — la fermeture brutale d'un
+       onglet est couverte par le serveur (départ du dernier client : sauvegarde
+       immédiate, SPEC-ARCHI-008/012). */
 
     // démarrage : menu, monde prêt derrière
     placeAtSpawn();

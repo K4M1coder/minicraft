@@ -271,7 +271,7 @@ difficulté, une graine et le nombre de joueurs locaux.
 | `T` | chat (`/` ouvre sur une commande) |
 | `M` | couper le son |
 | `1` – `9`, molette | choisir un objet |
-| `F5` | sauvegarder |
+| `F5` | demander au serveur de sauvegarder maintenant |
 | `F1` | afficher ou masquer tout le HUD |
 | `Échap` | pause |
 
