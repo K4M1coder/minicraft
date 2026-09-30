@@ -419,9 +419,11 @@
     /* La brume dérive avec le vent de surface. */
     function deriveBrume(temps) { return derive(temps); }
 
-    function pousseeTornade(x, y, z, temps) {
+    /* `liste` (facultatif) : les tornades déjà calculées pour `temps` — le serveur
+       en passe la liste pour ne la recalculer ni la contourner. */
+    function pousseeTornade(x, y, z, temps, liste) {
       var px = 0, py = 0, pz = 0;
-      tornades(temps).forEach(function (t) {
+      (liste || tornades(temps)).forEach(function (t) {
         var dx = x - t.x, dz = z - t.z, dist = Math.hypot(dx, dz);
         var portee = t.rayon * TORN_PORTEE_ACTION;
         if (dist >= portee) return;

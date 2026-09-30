@@ -2323,12 +2323,19 @@
     s.pos.x = v.x + 0.5; s.pos.z = v.z + 0.5; s.pos.y = v.h0 + 3;
     g.render.setDistance(5);                 // la génération forcée reste raisonnable
     g.streamChunks(true);
-    // le repeuplement passe une fois par seconde : on l'attend
+    // SPEC-ARCHI-024 : les habitants viennent du SERVEUR (ETAT.mobs). Sans serveur (page de test), le client
+    // n'en fait plus apparaître de lui-même ; on les fait naître comme le fait server.js (peuplerLieux)
     var pnjs = [];
-    for (var i = 0; i < 240 && pnjs.length < v.pnjs.length; i++) {
+    for (var i = 0; i < 90; i++) {
       await frames(1);
-      pnjs = g.entities.list.filter(function (e) { return e.pnj && e.lieu === v.id; });
+      pnjs = pnjs.concat(g.entities.list.filter(function (e) { return e.pnj && e.lieu === v.id; }));
     }
+    A.equal(pnjs.length, 0, 'le client ne fait plus apparaître d habitants de lui-même');
+    MC.Habitats.pnjsManquants([v], g.entities.list, g.world.pnjsMorts, g.time).forEach(function (p) {
+      g.entities.spawn('villager', p.x, p.y + 0.05, p.z, { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
+    });
+    await frames(2);
+    pnjs = g.entities.list.filter(function (e) { return e.pnj && e.lieu === v.id; });
     A.equal(pnjs.length, v.pnjs.length, 'ses ' + v.pnjs.length + ' habitants sont là');
     var guide = pnjs.filter(function (e) { return e.role === 'guide'; })[0];
     A.ok(guide && guide.foyer, 'le guide, attaché à son point info');
@@ -2569,8 +2576,14 @@
     s.fallFrom = null; s.onGround = true;
     g.streamChunks(true);
     await frames(4);
-    var boss = g.entities.list.filter(function (e) { return e.donjon === d.id && MC.EntitySpecs[e.type].boss; });
-    A.equal(boss.length, 1, 'le gardien s est éveillé (état : ' + g.input.state + ')');
+    var bossDe = function () { return g.entities.list.filter(function (e) { return e.donjon === d.id && MC.EntitySpecs[e.type].boss; }); };
+    // SPEC-ARCHI-034 : l'éveil du gardien est l'affaire du serveur (tests/integration-archi-env.js) ;
+    // le client, lui, n'invoque plus rien — on éveille donc le gardien comme le fait server.js
+    A.equal(bossDe().length, 0, 'le client n éveille plus de gardien de lui-même');
+    A.ok(g.entities.invoquerGardien(d), 'le serveur éveille le gardien');
+    await frames(3);
+    var boss = bossDe();
+    A.equal(boss.length, 1, 'le gardien est éveillé (état : ' + g.input.state + ')');
     var barre = document.querySelector('.barre-boss');
     A.ok(barre && barre.style.display !== 'none', 'sa barre de vie s affiche');
     A.ok(barre.textContent.indexOf(MC.EntitySpecs[boss[0].type].nom) >= 0, 'avec son nom');
@@ -2771,9 +2784,10 @@
       await frames(2);
       A.close(g.render.formations.cyclones.value[0].z, 900, 0.01, 'le rayon');
       A.close(g.render.formations.forcesCyclones.value.x, 0.9, 0.01, 'la force');
-      // une tornade : l'entonnoir se dresse, pousse le joueur et arrache les plantes (SPEC-NUAGE-004)
+      // une tornade : l'entonnoir se dresse ; la poussée et l'arrachage sont l'affaire du serveur (SPEC-ARCHI-022) :
+      // le client ne déplace plus le joueur, même si une poussée lui était calculable
       me.tornades = function () { return [{ id: 't', x: p.x + 6, z: p.z, rayon: 12, force: 1, vie: 20, sens: 1 }]; };
-      // la poussée vient de la vraie liste, interne à Meteo : on l'aligne sur la tornade simulée
+      // (une poussée forte, que l'ancien client aurait appliquée)
       me.pousseeTornade = function (x, y, z) { return { x: (p.x + 6 - x) * 2, y: 10, z: 0 }; };
       await frames(3);
       var tm = g.render.formations.tornades[0];
@@ -2782,7 +2796,7 @@
       A.gt(tm.scale.y, 15, 'du sol aux nuages');
       var x0 = p.x;
       for (var i = 0; i < 20; i++) await frames(1);
-      A.ok(Math.abs(p.x - x0) > 0.3 || p.y > g.world.heightAt(Math.floor(p.x), Math.floor(p.z)) + 1.5, 'le joueur est emporté');
+      A.ok(Math.abs(p.x - x0) < 0.3 && p.y < g.world.heightAt(Math.floor(p.x), Math.floor(p.z)) + 1.5, 'le client n emporte plus le joueur (le serveur seul le pousse)');
       me.tornades = function () { return []; };
       await frames(2);
       A.ok(!tm.visible, 'et l entonnoir se dissipe');
@@ -2834,7 +2848,7 @@
     }
   });
 
-  e2e('SPEC-RELIEF-011 : un panache monte du cratère, dérive au vent, rougeoie en éruption ; les bombes tombent', async function (g) {
+  e2e('SPEC-RELIEF-011 / SPEC-ARCHI-023 : un panache monte du cratère, dérive au vent, rougeoie en éruption ; aucune bombe n est créée par le client', async function (g) {
     await reset(g);
     var p = g.player.state.pos, bio = g.world.bio, dz0 = bio.volcansDansZone;
     var faux = { x: Math.floor(p.x) + 40, z: Math.floor(p.z), sommet: Math.floor(p.y) + 20, R: 30, cratere: 6, actif: true };
@@ -2846,19 +2860,42 @@
       var pos = m.geometry.attributes.position.array, haut = -1e9;
       for (var i = 1; i < pos.length; i += 3) haut = Math.max(haut, pos[i]);
       A.gt(haut, faux.sommet + 30, 'il monte haut');
-      // en éruption : panache épais et rougeoyant, bombes lancées
+      // en éruption : panache épais et rougeoyant ; les bombes et les coulées sont SUPPRIMÉES (SPEC-ARCHI-023) :
+      // même si le module en calcule, le client n en crée plus aucune et ne pose aucune lave
       var a0 = MC.Volcanisme.activite;
       MC.Volcanisme.activite = function () { return { fumee: 1, grondement: false, eruption: { debut: 0, fin: 1e9 }, prochaine: null }; };
       var p0 = MC.Volcanisme.projectiles;
       MC.Volcanisme.projectiles = function () { return [{ t: 0, x: faux.x, y: faux.sommet + 2, z: faux.z, vx: 2, vy: 20, vz: 0 }]; };
       await frames(3);
       A.equal(m.material.color.getHex(), 0x8a4a30, 'rougeoyant');
-      A.ok(g.entities.list.some(function (e) { return e.type === 'arrow' && e.genre === 'bombe'; }), 'des bombes volcaniques');
+      A.notOk(g.entities.list.some(function (e) { return e.type === 'arrow' && e.genre === 'bombe'; }), 'aucune bombe volcanique côté client');
       MC.Volcanisme.activite = a0; MC.Volcanisme.projectiles = p0;
     } finally {
       bio.volcansDansZone = dz0;
       for (var j = g.entities.list.length - 1; j >= 0; j--) if (g.entities.list[j].genre === 'bombe') g.entities.list.splice(j, 1);
       await frames(2);
+    }
+  });
+
+  e2e('SPEC-ARCHI-034 : le client n appelle plus world.tick avec eau, circuits, cultures ni feu, et ne fait apparaître aucune créature (600 images)', async function (g) {
+    await reset(g);
+    var w = g.world, tick0 = w.tick, appels = 0, actifs = 0, spawns = 0;
+    var noms = ['spawn', 'trySpawn', 'trySpawnSouterrain', 'invoquerGardien', 'invoquerGardes'], origs = {};
+    w.tick = function (dt, st, r, opts) {
+      appels++;
+      if (!opts || opts.eau !== false || opts.circuits !== false || opts.cultures !== false || opts.feu !== false) actifs++;
+      return tick0.apply(w, arguments);
+    };
+    noms.forEach(function (n) { origs[n] = g.entities[n]; g.entities[n] = function () { spawns++; return origs[n].apply(g.entities, arguments); }; });
+    try {
+      for (var i = 0; i < 600; i++) await frames(1);
+      A.gt(appels, 100, 'le tic du monde tourne bien (' + appels + ' appels)');
+      A.equal(actifs, 0, 'aucun appel de world.tick avec eau, circuits, cultures ou feu actifs');
+      A.equal(spawns, 0, 'aucune apparition de créature côté client');
+    } finally {
+      w.tick = tick0;
+      noms.forEach(function (n) { g.entities[n] = origs[n]; });
+      await reset(g);
     }
   });
 

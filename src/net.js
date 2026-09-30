@@ -289,6 +289,9 @@
     }
     function manger(id, j) { return envoyer({ t: NP.MSG.MANGER, id: id, j: j || 0 }); }
     function renaitre(j) { return envoyer({ t: NP.MSG.RENAITRE, j: j || 0 }); }
+    /* SPEC-ARCHI-025 : un joueur local se couche (actif) ou se lève — le serveur
+       tient le compte des dormeurs et fait passer la nuit. */
+    function dormir(j, actif) { return envoyer({ t: NP.MSG.DORMIR, j: j || 0, actif: actif !== false }); }
 
     function poserBloc(x, y, z, id, outil, j, etat) {
       return envoyer({ t: NP.MSG.BLOC, x: x, y: y, z: z, id: id, outil: outil || 0, j: j || 0, etat: etat || 0 });
@@ -346,7 +349,7 @@
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      envoyer: envoyer, dormir: dormir, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       pousserPosition: pousserPosition, interpoler: interpoler,

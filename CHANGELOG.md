@@ -15,6 +15,13 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 ### Ajouté
+- SPEC-ARCHI-022, 024, 025, 034 et 035 (lot B-ENV, chantier « solo = serveur toujours présent », L50) — le monde n'est plus simulé par le client : c'est le MÊME serveur, en solo fermé, en écran partagé ou à cent joueurs, qui fait tout (plus aucune branche `net.enLigne()` ne fait diverger solo et réseau pour ces aléas) :
+  - **Tornades** (022) : le serveur POUSSE joueurs et créatures (aspiration, rotation, soulèvement de `Meteo.pousseeTornade`, qui accepte désormais la liste de tornades à utiliser) et arrache plantes et feuillages (BLOC diffusé) ; le client ne rend plus que l'entonnoir. **Foudre** : le serveur retirait déjà les PV et allumait les feux ; le client ne fait plus que l'éclair, le tonnerre et le toast, sans jamais toucher à la vie ni aux blocs.
+  - **Sommeil** (025) : `DORMIR {j, actif}` (`net.dormir`) ; le serveur tient l'ensemble des dormeurs sur TOUS les joueurs présents et vivants (locaux et distants) et fait passer la nuit quand tous dorment — un solo est le cas « tous = 1 », un écran partagé compte ses joueurs locaux (jusqu'ici seul le joueur 1 pouvait se coucher), le départ du seul éveillé fait passer la nuit ; refus de dormir de jour ; `DORMIR` est gelé en pause. La chambre d'auberge se couche par le même message.
+  - **`/jour`, `/nuit`** (025) : une demande `ADMIN { action: 'heure', args: { valeur } }`, refusée (`reserve_creatif_ou_admin`) hors mode créatif sauf administrateur authentifié — identique en solo fermé et en réseau (en ligne, ces commandes ne faisaient jusqu'ici RIEN) ; l'heure est réglée DANS le jour courant (la date et la saison ne reculent plus), y compris pour les blocs de commande.
+  - **Apparitions et gardiens** (034) : le serveur fait apparaître les créatures à tour de rôle autour des joueurs (un joueur par tic d'apparition), et éveille gardes et gardiens de donjon (`surveillerDonjonsServeur`, annonce dans le chat) — en ligne, aucun gardien n'apparaissait jusqu'ici. **Cultures et feu** : `world.tick` accepte `surBloc` (chaque stade de croissance et chaque étape du feu est diffusé par BLOC) et `cultures: false` ; le serveur ne joue plus l'eau dans le tic (elle est diffusée par sa boucle dédiée, ses changements étaient jusque-là perdus), le client coupe eau, circuits, cultures et feu (`optionsTickClient`).
+  - **Habitants** (024) : `peuplerLieux` du client est retiré ; les habitants viennent de `ETAT.mobs` (le serveur les faisait déjà vivre). **Fabrication** (035) : elle passe par `CRAFT` en solo fermé, prouvée de bout en bout ; le README ne prétend plus que l'inventaire, le craft, les fourneaux et les cultures restent côté client.
+  - Tests : `tests/integration-archi-env.js` (vrais processus `server.js`, arrêtés en fin de test), `tests/spec-archi-env.js` (Node pur : ce que `game.js` ne fait plus, `world.tick`, `net.dormir`, protocole) et, dans `tests/e2e.js`, un espion sur `world.tick` du client réel (0 appel avec eau ou circuits, 0 apparition de créature en 600 images).
 - SPEC-ARCHI-002 à 015 (lot A0, chantier « solo = serveur toujours présent », L50) — le serveur de jeu est désormais FERMÉ au réseau par défaut et se pilote à chaud :
   - **Liaison et sécurité** (002, 003) : sans `--ouvert` ni `--serveur`, `server.js` n'écoute que `127.0.0.1` ET `::1` (jamais `0.0.0.0`) ; l'en-tête `Origin` de la mise à niveau WebSocket et des requêtes `/api/parties` doit être l'une des trois origines locales (`http://localhost:P`, `http://127.0.0.1:P`, `http://[::1]:P`) — sinon 403 — et l'en-tête `Host` un nom local (rebond DNS) ; sans `Origin` (client non navigateur) la requête passe.
   - **Port** (004) : défaut stable 8080 avec repli sur le premier port libre jusqu'à 8099 (annoncé dans le journal) ; `--port <n>` l'impose (occupé → arrêt code 1 avec un message clair) ; `--port 0` prend un port éphémère ; une ligne `MC_PORT=<n>` est imprimée pour les lanceurs.
@@ -454,6 +461,7 @@ respecter (voir PLAN.md, « Commits et versions »).
     suivantes), intégration du clic depuis l'arbre de sélection.
 
 ### Modifié
+- SPEC-ARCHI-025 (lot B-ENV) : `/jour` et `/nuit` ne s'appliquent plus localement : ils passent par le serveur et exigent le mode créatif ou un administrateur ; l'heure se règle dans le jour courant au lieu de repartir du jour 0.
 - **Le mode par défaut de `server.js` est désormais FERMÉ au réseau** (boucle locale seulement, SPEC-ARCHI-001/002) ; `--ouvert` ouvre le réseau dès le lancement, `--serveur` (serveur dédié) reste ouvert. Les suites d'intégration qui lancent un serveur à plusieurs clients passent `--ouvert`. `--port 0` est désormais accepté (port éphémère).
 - **Régressions transitoires du chantier « solo = serveur »** (résolues par les lots B-* et P-* avant toute publication, voir PLAN.md « Vague ARCHI ») : depuis `index.html`, une partie passe désormais par le serveur, qui ne simule pas encore tout ce que le solo simulait dans le navigateur — le mode histoire est refusé à la création (lot P-HIST), les succès, les véhicules et les bombes volcaniques ne fonctionnent pas dans ce parcours (lots P-SUCC, P-VEH, B-ENV). La page de test (`tests/index.html`) garde la simulation locale historique tant que les branches `net.enLigne()` de `src/game.js` ne sont pas toutes éliminées.
 
@@ -487,6 +495,9 @@ respecter (voir PLAN.md, « Commits et versions »).
   le scan des littéraux dans le texte des crochets réussissait trivialement
   dès lors que ceux-ci passaient une référence symbolique plutôt qu'un
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
+
+### Supprimé
+- SPEC-ARCHI-023 (lot B-ENV) : les **bombes volcaniques** (projectiles de lave lancés pendant une éruption) et les **coulées de lave/basalte** posées sur les flancs des volcans sont SUPPRIMÉES — le serveur n'en a pas d'équivalent et le client ne modifie plus le monde de son côté. Les éruptions restent visibles (panache) et audibles (grondement, éruption) ; un éventuel portage serveur est un chantier ultérieur non planifié.
 
 ### Corrigé
 - `tests/integration-archi-parties.js` (SPEC-ARCHI-014) : attend la sauvegarde asynchrone sur pause par sondage borné au lieu d'un délai fixe de 900 ms, qui échouait par intermittence sous charge.

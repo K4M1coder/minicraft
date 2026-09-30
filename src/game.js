@@ -9,7 +9,6 @@
   var GEN_BUDGET = 2, MESH_BUDGET = 2;     // par frame, pour ne pas saccader
   var LOINTAIN_BUDGET = 1200;              // colonnes lointaines échantillonnées par frame
   var PROCHE_SIMPLE = 6;                   // en chunks : en deçà, toujours le maillage complet
-  var SPAWN_INTERVAL = 3.5;
 
   /* SPEC-PERF-006/007 : dossier de src/*.js, calculé à partir de l'URL de CE
      script — index.html le sert depuis 'src/', tests/index.html depuis
@@ -346,6 +345,12 @@
       // panneau admin en jeu (SPEC-ADMIN-006) : la réponse du serveur s'affiche
       // dans le chat, seule surface déjà présente pour du texte libre
       onAdminRep: function (m) {
+        if (m.ok && m.action === 'heure') return;      // l'heure suit par ETAT ; la commande a déjà répondu
+        if (!m.ok && m.action === 'heure') {
+          chat.systeme(m.erreur === 'reserve_creatif_ou_admin'
+            ? 'Refusé : l\'heure ne se règle qu\'en mode créatif ou en administrateur.' : '/heure — refusé (' + m.erreur + ')');
+          return;
+        }
         if (!m.ok) { chat.systeme('/admin ' + m.action + ' — refusé' + (m.erreur ? ' (' + m.erreur + ')' : '')); return; }
         chat.systeme('/admin ' + m.action + ' → ' + JSON.stringify(m.data).slice(0, 400));
       },
@@ -1032,8 +1037,6 @@
       world = MC.createWorld(graine, mondeOpts);
       reconstruireDependances();
       grille = creerGrilleLointaine();
-      // les habitants suivis appartenaient à l'ancien monde
-      pnjsSuivis.clear();
       /* SPEC-PERF-009 : nouvelle époque — tout résultat en vol d'un worker
          pour l'ANCIEN monde (autre graine) sera rejeté à réception. Les
          workers de génération reçoivent la graine/zone du nouveau monde ;
@@ -1138,46 +1141,25 @@
       render.syncFigurants(liste);
     }
 
-    /* Volcans actifs (SPEC-RELIEF-011) : panaches, grondements, bombes et
-       coulées qui se figent. Tout se déduit de l'heure (MC.Volcanisme) : hors
-       ligne le jeu pose la lave et le basalte, en ligne le serveur fait foi. */
-    var volcansT = 0, tVolcans = null, coulees = new Map(), etatsVolcans = new Map();
+    /* Volcans actifs (SPEC-RELIEF-011) : panaches et grondements, purement
+       visuels et sonores (SPEC-ARCHI-023). Les bombes et les coulées de lave
+       posées par le client ont été SUPPRIMÉES : le serveur n'a pas d'équivalent
+       et le client ne modifie plus le monde de son côté. */
+    var etatsVolcans = new Map();
     function volcans(me, p1, dt) {
       var V = MC.Volcanisme, bio = world.bio;
       if (!V || !bio.volcansDansZone) return;
       var proches = bio.volcansDansZone(p1.x - 300, p1.z - 300, p1.x + 300, p1.z + 300).filter(function (v) { return v.actif; });
-      var t = g.time, t0 = tVolcans === null ? t : tVolcans;
-      tVolcans = t;
+      var t = g.time;
       var vues = proches.map(function (v) {
         var a = V.activite(v, t, world.seed);
         var cle = v.x + ',' + v.z, avant = etatsVolcans.get(cle) || {};
         if (a.grondement && !avant.grondement) { ui.toast('Le volcan gronde…', 'warn'); audio.jouer(MC.Ambiance.sonEvenement('eruption'), { categorie: 'evenement', x: v.x, y: v.sommet, z: v.z, portee: 400 }); }
         if (a.eruption && !avant.eruption) { chat.systeme('Éruption !'); audio.jouer(MC.Ambiance.sonEvenement('eruption'), { categorie: 'evenement', x: v.x, y: v.sommet, z: v.z, portee: 600 }); }
         etatsVolcans.set(cle, { grondement: a.grondement, eruption: !!a.eruption });
-        if (!net.enLigne()) {
-          V.projectiles(v, t0, t, world.seed).forEach(function (b) {
-            var n = Math.hypot(b.vx, b.vy, b.vz) || 1;
-            var e = entities.tirer({ x: b.x, y: b.y, z: b.z }, { x: b.vx / n, y: b.vy / n, z: b.vz / n }, n, 4, null, 'bombe');
-            if (e) e.vie = 9;
-          });
-        }
         return { v: v, a: a, x: v.x + 0.5, y: v.sommet, z: v.z + 0.5, fumee: a.fumee, eruption: !!a.eruption };
       });
       if (render.majVolcans) render.majVolcans(vues, dt, me.ventEn ? function (y) { return me.ventEn(t, y); } : null);
-      volcansT += dt;
-      if (volcansT < 0.5 || net.enLigne()) return;
-      volcansT = 0;
-      vues.forEach(function (w) {
-        var e = w.a.prochaine;
-        if (!e || t < e.debut) return;
-        var c = coulees.get(e.id);
-        if (!c) { c = V.coulee(w.v, e, world.heightAt); coulees.set(e.id, c); }
-        c.forEach(function (cel) {
-          var s = V.etatCellule(cel, e, t), b = world.getBlock(cel.x, cel.y, cel.z), d = C.BLOCKS[b];
-          if (s === 'lave' && (b === 0 || (d && d.plant))) world.setBlock(cel.x, cel.y, cel.z, C.B.LAVA);
-          else if (s === 'basalte' && b === C.B.LAVA) world.setBlock(cel.x, cel.y, cel.z, C.B.BASALT);
-        });
-      });
     }
 
     /* Fumée (SPEC-CONSTR-007) : feu, foyers, cheminées et torches proches —
@@ -1216,42 +1198,8 @@
       g.brume = me.brume(g.time, et, brumeLieu);
       render.majBrume({ force: g.brume, fond: brumeLieu.ySol, derive: me.deriveBrume(g.time) });
     }
-    /* Tornades (SPEC-NUAGE-004), hors ligne : elles aspirent et soulèvent
-       joueurs et créatures, et arrachent plantes et feuillages sur leur passage. */
-    var arrachageT = 0;
-    function tornadesAuSol(me, dt) {
-      if (!me.tornades) return;
-      var ts = me.tornades(g.time);
-      if (!ts.length) return;
-      function pousser(pos, vel, k) {
-        var sol = world.heightAt(Math.floor(pos.x), Math.floor(pos.z));
-        var f = me.pousseeTornade(pos.x, Math.max(0, pos.y - sol), pos.z, g.time);
-        if (Math.abs(f.x) + Math.abs(f.y) + Math.abs(f.z) < 0.01) return false;
-        vel.x += f.x * dt * 3 * k; vel.z += f.z * dt * 3 * k;
-        vel.y = Math.min(12, vel.y + f.y * dt * 5 * k);
-        return true;
-      }
-      for (var i = 0; i < equipe.length; i++) {
-        var st = equipe[i].player.state;
-        if (!st.dead && !st.flying) pousser(st.pos, st.vel, 1);
-      }
-      entities.list.forEach(function (e) { if (!e.dead) pousser(e.pos, e.vel, 1.3); });
-      arrachageT += dt;
-      if (arrachageT < 0.2) return;
-      arrachageT = 0;
-      var p = player.state.pos;
-      ts.forEach(function (t) {
-        if (Math.hypot(t.x - p.x, t.z - p.z) > 160) return;      // loin de tout chunk chargé
-        for (var k = 0; k < 4; k++) {
-          var a = Math.random() * 6.2832, r = Math.random() * t.rayon;
-          var x = Math.floor(t.x + Math.cos(a) * r), z = Math.floor(t.z + Math.sin(a) * r);
-          var y = Math.min(C.WORLD_H - 1, world.heightAt(x, z) + 12);
-          while (y > 1 && !world.getBlock(x, y, z)) y--;
-          var d = C.BLOCKS[world.getBlock(x, y, z)];
-          if (d && (d.plant || d.leaves) && !d.aquatique) world.setBlock(x, y, z, 0);
-        }
-      });
-    }
+    /* Tornades (SPEC-NUAGE-004) : la poussée et l'arrachage sont l'affaire du
+       serveur (SPEC-ARCHI-022) ; le client n'en rend que l'entonnoir. */
 
     /* Météo : même graine, même ciel que le serveur et les autres postes. */
     var meteoT = null;
@@ -1275,7 +1223,6 @@
       volcans(me, p1, dt);
       fumees(me, p1, dt);
       convois(p1, dt);
-      if (!net.enLigne()) tornadesAuSol(me, dt);
       // ce qui tombe au-dessus du joueur 1, et ce qu'on en entend
       var tj = equipe[0] && equipe[0].temperature;
       var tC = tj ? tj.temperature : me.temperature(world.bio.climat(p1.x, p1.z).t, p1.y, g.time, et, bio.id);
@@ -1316,31 +1263,25 @@
         render.eclair(lieu.x, ySol + 1, lieu.z, e.force);
         g.eclairs = (g.eclairs || 0) + 1;
         audio.tonnerre(Math.hypot(lieu.x - pc.x, lieu.z - pc.z), e.force);
-        /* La foudre blesse qui se tient à découvert tout près — en ligne,
-           c'est au serveur d'en décider, comme de tous les dégâts. */
-        if (!net.enLigne()) {
-          equipe.forEach(function (j) {
-            var st = j.player.state;
-            if (!st.dead && me.foudroie(lieu, st.pos, abri)) {
-              j.player.hurt(me.DEGATS_FOUDRE);
-              if (j.index === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); }
-              if (!st.dead) signalerSucces({ type: 'foudre' });
-            }
-          });
-          entities.list.forEach(function (en) {
-            if (en.kind === 'item' || !en.pos) return;
-            if (me.foudroie(lieu, en.pos, abri)) entities.damage(en, 8, null, null);
-          });
-          // SPEC-CONSTR-007 : la foudre allume ce qu'elle touche, si c'est inflammable.
-          if (MC.Feu) MC.Feu.allumerParFoudre(world.getBlock, lieu.x, ySol, lieu.z)
-            .forEach(function (a) { world.setBlock(a[0], a[1], a[2], a[3]); });
-        }
+        /* SPEC-ARCHI-022 : la foudre blesse qui se tient à découvert tout près,
+           allume ce qu'elle touche et blesse les créatures — le SERVEUR seul en
+           décide (PV, blocs). Ici, seulement la présentation (toast, cri) et
+           le suivi de succès, sans jamais toucher à la vie ni au monde : le
+           calcul de portée est le même, pur, que celui du serveur. */
+        equipe.forEach(function (j) {
+          var st = j.player.state;
+          var lieuJ = me.lieuEclair(e, st.pos.x, st.pos.z);
+          if (!st.dead && me.foudroie(lieuJ, st.pos, abri)) {
+            if (j.index === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); }
+            signalerSucces({ type: 'foudre' });
+          }
+        });
         if (g.surEclair) g.surEclair(e, lieu, ySol);
       });
     }
 
     // ─── habitants, métiers et lieux ─────────────────────────────────────────
-    var pnjsSuivis = new Map(), pnjT = 0, lieuActuel = null, zoneActuelle = null;
+    var lieuActuel = null, zoneActuelle = null;
     function ouvrirBanque() {
       if (!world.banque) return;
       ui.openContainer('chest', player.state.inv, world.banque, 'banque');
@@ -1357,7 +1298,10 @@
         // SPEC-TRANSPORT-002 : réparer le véhicule qu'on conduit, s'il y en a un
         vehicule: st.monture || null,
       });
-      if (r.temps !== undefined && !net.enLigne()) g.time = r.temps;
+      /* SPEC-ARCHI-025 : une chambre d'auberge fait dormir jusqu'au matin — le
+         client ne touche pas à l'heure, il se couche (le serveur fait passer
+         la nuit quand tous les joueurs présents dorment). */
+      if (r.temps !== undefined) net.dormir(equipe[0].index, true);
       if (r.ouvrir === 'banque') {
         // B1 (étape 8, SPEC-SYNC-013) : un banquier ouvre la MÊME banque
         // serveur qu'un coffre-fort — jamais `world.banque` (copie locale
@@ -1438,34 +1382,9 @@
     }
     g.parlerA = parlerA;
 
-    /* Les habitants des lieux proches apparaissent quand leur coin est chargé.
-       Un habitant tué ne renaît pas de la partie. Hors ligne seulement : en
-       ligne, c'est le serveur qui les fait vivre. */
-    function peuplerLieux(dt) {
-      if (!world.habitats || net.enLigne()) return;
-      pnjT -= dt;
-      if (pnjT > 0) return;
-      pnjT = 1;
-      /* Qui a disparu depuis la dernière fois ? S'il est tombé sous les coups,
-         il est mort ; sinon (liste vidée par une nouvelle partie), on l'oublie. */
-      pnjsSuivis.forEach(function (e, id) {
-        if (entities.list.indexOf(e) >= 0) return;
-        if (e.hp <= 0) world.pnjsMorts.set(id, g.time);
-        pnjsSuivis.delete(id);
-      });
-      var lieux = [];
-      equipe.forEach(function (j) {
-        var p = j.player.state.pos;
-        world.habitats.lieuxProches(p.x, p.z, 90).forEach(function (l) { if (lieux.indexOf(l) < 0) lieux.push(l); });
-      });
-      MC.Habitats.pnjsManquants(lieux, entities.list, world.pnjsMorts, g.time).forEach(function (p) {
-        if (!world.estCharge(p.x, p.z)) return;
-        var e = entities.spawn('villager', p.x, p.y + 0.05, p.z,
-                               { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
-        pnjsSuivis.set(p.id, e);
-      });
-    }
-    g.peuplerLieux = peuplerLieux;
+    /* Les habitants des lieux (SPEC-ARCHI-024) viennent du SERVEUR : il les
+       fait naître, vivre et mourir (`peuplerLieux` de server.js) et le client
+       les reçoit comme toute créature (`net.mobsDistants`). */
     // ─── mode histoire ───────────────────────────────────────────────────────
     var histoireT = 0, choixAffiche = null, fileRecit = [], repereObjectif = null;
     function peutCategorie(cat) { return MC.Modes.categoriePermise(regles, cat); }
@@ -2068,9 +1987,9 @@
     }
 
     // ─── donjons ─────────────────────────────────────────────────────────────
-    /* Un gardien s'éveille quand un joueur entre dans sa salle, à condition
-       qu'il n'ait pas déjà été vaincu. En ligne, les mobs appartiennent au
-       serveur : on ne crée pas de gardien local qu'il ignorerait. */
+    /* Les évènements de créatures (cris, morts, défaites de gardien). L'éveil
+       des gardes et des gardiens, lui, est l'affaire du SERVEUR
+       (SPEC-ARCHI-034) : le client n'y fait apparaître aucune créature. */
     function surveillerDonjons() {
       /* Les défaites D'ABORD : traiter l'éveil avant laissait, l'image qui suit
          la mort du gardien, un donjon pas encore marqué vaincu — un second
@@ -2100,25 +2019,6 @@
         if (evts[k].donjon) world.donjonsVaincus.add(evts[k].donjon);
         chat.systeme(evts[k].nom + ' est vaincu !');
         ui.toast(evts[k].nom + ' est vaincu !');
-      }
-      if (net.enLigne() || !regles.monstres) return;
-      for (var i = 0; i < equipe.length; i++) {
-        var p = equipe[i].player.state;
-        if (p.dead) continue;
-        // les gardes des salles d'un donjon moyen ou grand
-        var pc = world.pieceDonjon && world.pieceDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
-        if (pc && !world.donjonsVaincus.has(pc.donjon.id) && entities.invoquerGardes(pc.donjon, pc.index).length) {
-          ui.toast('Des gardes vous barrent la route !', 'warn');
-        }
-        var d = world.salleDonjon(p.pos.x, p.pos.y + 0.5, p.pos.z);
-        if (!d || world.donjonsVaincus.has(d.id)) continue;
-        var b = entities.invoquerGardien(d);
-        if (b) {
-          var nom = entities.SPECS[b.type].nom;
-          chat.systeme(nom + " s'éveille !");
-          ui.toast(nom + " s'éveille !", 'warn');
-          audio.jouer(MC.Ambiance.sonEvenement('gardien'), { categorie: 'evenement', x: b.pos.x, y: b.pos.y, z: b.pos.z });
-        }
       }
     }
 
@@ -2170,32 +2070,19 @@
     g.coffreDe = coffreDe;
 
     // ─── mobilier : lit, présentoir, socle (SPEC-INTERIEUR-002) ────────────
-    // Joueurs locaux actuellement endormis, par index d'équipe (écran
-    // partagé) — vidé dès que tout le monde a dormi une fois.
-    var dormeurs = new Set();
-    /* Dormir dans un lit fixe la réapparition dessus, puis fait passer la
-       nuit — en solo ou en écran partagé, dès que tous les joueurs locaux
-       dorment. En ligne, faute d'un canal pour connaître le sommeil des
-       AUTRES clients connectés au serveur, la règle retenue est plus
-       modeste et documentée ici plutôt que masquée : la réapparition se
-       fixe immédiatement, mais la nuit n'avance que si ce client est seul
-       sur le serveur (`net.distants` vide) ; sinon un message invite juste
-       à attendre — pas de triche silencieuse qui sauterait la nuit pour
-       tout le monde. */
-    function dormir(target) {
+    /* SPEC-ARCHI-025 : dormir dans un lit fixe la réapparition dessus (côté
+       client : le point de retour du joueur) et envoie DORMIR au SERVEUR. C'est
+       lui qui tient l'ensemble des dormeurs sur TOUS les joueurs présents
+       (locaux et distants) et fait passer la nuit quand tous dorment ; un solo
+       est le cas « tous les joueurs = 1 ». Le client ne touche jamais à
+       l'heure ; il n'a plus de liste de dormeurs. `j` : joueur local qui se
+       couche (le premier par défaut). */
+    function dormir(target, j) {
       if (DC && !DC.isNight(g.time)) { ui.toast('On ne dort que la nuit', 'warn'); return; }
+      var idx = j ? j.index : equipe[0].index;
       g.spawnPoint = { x: target.x + 0.5, y: target.y + 0.05, z: target.z + 0.5 };
       audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
-      if (net.enLigne() && net.distants && net.distants.size > 0) {
-        ui.toast('Réapparition fixée ici — en attente que tout le monde dorme.');
-        return;
-      }
-      dormeurs.add(equipe[0].index);
-      var tousDorment = equipe.every(function (j) { return dormeurs.has(j.index); });
-      if (!tousDorment) { ui.toast('Réapparition fixée ici — les autres joueurs doivent dormir aussi.'); return; }
-      dormeurs.clear();
-      if (DC) g.time = DC.avancerJourApresDormir(g.time);
-      ui.toast('Vous dormez... le jour se lève.');
+      if (!net.dormir(idx, true)) ui.toast('Réapparition fixée ici — le serveur n\'est pas joignable.', 'warn');
     }
     g.dormir = dormir;
 
@@ -2882,7 +2769,9 @@
        Chaque lot B-* n'édite que le gestionnaire de SES lignes :
          heure (B-ENV), faction (B-RESEAU), duel (B-VIE) ; les autres sont
          indépendants du réseau de jeu. */
-    function actionCommandeHeure(a) { if (!net.enLigne()) g.time = a.valeur; }
+    /* SPEC-ARCHI-025 : /jour et /nuit sont une DEMANDE au serveur (ADMIN 'heure'),
+       refusée hors créatif sauf administrateur, identique en solo et en réseau. */
+    function actionCommandeHeure(a) { net.admin('heure', { valeur: a.valeur }); }
     function actionCommandeVider() { chat.vider(); }
     function actionCommandeRejoindre(a) { net.connecter(a.hote, g.nomJoueur || 'Joueur', equipe.length); }
     function actionCommandeQuitter() { net.deconnecter(); }
@@ -3116,6 +3005,7 @@
       var res = pl.useOn(target);
       if (!res) return;
       if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target); return; }
+      if (res === 'dormir') { dormir(target, j); return; }
       if (res.indexOf('open:') === 0) {
         // seules les interfaces du joueur 1 s'ouvrent : un seul clavier
         if (j.index !== 0) return;
@@ -3199,7 +3089,7 @@
     g.ouvrirConteneur = ouvrirConteneur;
 
     // ─── boucle ──────────────────────────────────────────────────────────────
-    var last = performance.now(), acc = 0, frames = 0, spawnT = 0, autoSaveT = 0;
+    var last = performance.now(), acc = 0, frames = 0, autoSaveT = 0;
 
     /* ─── frame() découpée par thème (lot A0, « aiguillage » — SPEC-ARCHI-034…) ───
        Sans changement de comportement : chaque sous-fonction reprend, dans le
@@ -3262,19 +3152,15 @@
       }
     }
 
+    /* SPEC-ARCHI-034 : eau, circuits, cultures, feu ET apparitions sont simulés
+       par le SERVEUR (le client applique les BLOC reçus). Ce que le client
+       garde dans world.tick est déterministe par l'heure (neige saisonnière) ;
+       aucune créature n'apparaît côté client. */
+    function optionsTickClient() {
+      return { eau: false, circuits: false, feu: false, cultures: false, temps: g.time };
+    }
     function frameMonde(dt) {
-      world.tick(dt, 14, null, { eau: !net.enLigne(), circuits: !net.enLigne(), temps: g.time,
-                                  circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
-      spawnT += dt;
-      if (spawnT >= SPAWN_INTERVAL && !net.enLigne()) {
-        spawnT = 0;
-        if (regles.monstres || MC.Modes.plafondsEntites(regles).sheep > 0) {
-          entities.trySpawn(player.state, DC.isNight(g.time), null,
-                            MC.Modes.plafondsEntites(regles));
-          if (regles.monstres) entities.trySpawnSouterrain(player.state, null, MC.Modes.plafondsEntites(regles));
-        }
-        if (!DC.isNight(g.time)) entities.burnUndead(false);
-      }
+      world.tick(dt, 14, null, optionsTickClient());
     }
 
     function frameConteneurs(dt) {
@@ -3302,8 +3188,7 @@
     }
 
     function frameMondeInterface(dt) {
-      world.tick(dt, 14, null, { circuits: !net.enLigne(), temps: g.time,
-                                  circuitsCtx: { temps: g.time, onDistribuer: ejecterDistributeur, onCommande: declencherBlocCommande } });
+      world.tick(dt, 14, null, optionsTickClient());
       if (!net.enLigne()) {
         for (var fk2 in furnaces) if (Inv.tickFurnace(furnaces[fk2], dt)) ui.refreshFurnace();
       }
@@ -3374,7 +3259,7 @@
         render.majSilhouettes(world.habitats.lieuxProches(s2.pos.x, s2.pos.z, 1000));
       }
       majMeteo(dt);
-      if (st === 'playing' || st === 'ui') { ajusterVue(dt); peuplerLieux(dt); annoncerLieu(); annoncerZone(); majHistoire(dt); }
+      if (st === 'playing' || st === 'ui') { ajusterVue(dt); annoncerLieu(); annoncerZone(); majHistoire(dt); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);

@@ -382,7 +382,7 @@
         // liste est un message qui ne peut rien faire, jamais planter
         var ACTIONS = ['auth', 'joueurs', 'inventaire', 'sessions', 'listes', 'journal',
           'liste_ajouter', 'liste_retirer', 'invitation_creer', 'invitation_revoquer',
-          'role_nommer', 'sanction', 'zone_definir', 'zone_retirer', 'bloc_commande'];
+          'role_nommer', 'sanction', 'zone_definir', 'zone_retirer', 'bloc_commande', 'heure'];
         if (typeof msg.action !== 'string' || ACTIONS.indexOf(msg.action) < 0) return null;
         // charge bornee : un panneau admin n'a jamais besoin de gros volumes
         var args = msg.args && typeof msg.args === 'object' ? msg.args : {};

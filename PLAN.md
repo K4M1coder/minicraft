@@ -240,6 +240,15 @@ SPEC-ARCHI-020 (mort pendant la pause et compteur de dormeurs dépendent de
 B-VIE et B-ENV). Le bouton « Exporter mes parties » du lot A0-pré est dans le
 menu (`src/ui.js`) mais n'a pas été publié à part.
 
+Avancement du lot B-ENV : SPEC-ARCHI-022, 023, 024, 025, 034 et 035 (et
+SPEC-SYNC-018/019 au passage) sont ✅. Le serveur pousse et arrache (tornades),
+tient le sommeil collectif (`DORMIR`, écran partagé compris) et l'heure demandée
+(`ADMIN heure`), fait apparaître créatures et gardiens de donjon, diffuse
+croissance des cultures et feu ; le client ne simule plus rien de tout cela
+(bombes et coulées volcaniques supprimées, CHANGELOG « Supprimé »). Preuves :
+`tests/integration-archi-env.js`, `tests/spec-archi-env.js` et l'espion
+`world.tick` de `tests/e2e.js`.
+
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
 | **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |
