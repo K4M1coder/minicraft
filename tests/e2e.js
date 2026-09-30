@@ -797,10 +797,10 @@
     A.equal(g.world.getBlock(t.x, t.y, t.z), 0, 'le bloc a été cassé');
   });
 
-  e2e('le bloc miné tombe puis est ramassé automatiquement', {
-        "teste": "qu'un bloc cassé fait apparaître une entité au sol qui est ensuite ramassée automatiquement par le joueur",
-        "pourquoi": "le cycle minage -> drop -> ramassage doit fonctionner sans action supplémentaire du joueur",
-        "attendu": "le total d'objets dans l'inventaire augmente après le minage et l'attente du ramassage"
+  e2e('le bloc miné tombe et le client ne le ramasse pas', {
+        "teste": "qu'un bloc cassé fait apparaître une entité au sol et que le client ne la ramasse plus lui-même : le ramassage est fait par le serveur (DONNE, INV_MAJ — SPEC-ARCHI-027, tests/integration-archi-vie.js)",
+        "pourquoi": "le ramassage côté client, hors journal d'inventaire, dupliquerait des objets",
+        "attendu": "l'inventaire local n'augmente pas après le minage"
   }, async function (g) {
     var s = await reset(g);
     s.inv.add(I.IRON_SHOVEL, 1); s.selected = 0;
@@ -814,7 +814,7 @@
     var total0 = s.inv.slots.reduce(function (a, x) { return a + (x ? x.n : 0); }, 0);
     for (var j = 0; j < 200; j++) await frames(1);
     var total1 = s.inv.slots.reduce(function (a, x) { return a + (x ? x.n : 0); }, 0);
-    A.gt(total1, total0, 'l\'inventaire s\'est rempli (' + total0 + ' -> ' + total1 + ')');
+    A.equal(total1, total0, 'le client ne ramasse rien lui-même (' + total0 + ' -> ' + total1 + ')');
   });
 
   e2e('la barre de progression du minage apparaît puis disparaît', {
@@ -902,60 +902,70 @@
     A.notOk(g.render.entityMeshes.get(z.eid), 'objet 3D retiré avec l\'entité');
   });
 
-  e2e('frapper un mob visé le blesse', {
-        "teste": "qu'un clic gauche sur un mob visé (mouton) lui inflige des dégâts",
-        "pourquoi": "c'est le mécanisme de combat de base contre les entités",
-        "attendu": "les PV du mouton diminuent après le coup"
+  e2e('frapper un mob visé envoie ATTAQUE au serveur', {
+        "teste": "qu'un clic gauche sur le reflet d'un mob (net.mobsDistants) envoie un message ATTAQUE au serveur avec l'identifiant de la créature, sans la blesser localement (SPEC-ARCHI-027)",
+        "pourquoi": "le combat n'a plus qu'un chemin : le serveur valide portée, cadence et dégâts ; le client ne blesse plus rien (les dégâts réels sont testés dans tests/integration-archi-vie.js)",
+        "attendu": "net.attaquer est appelé avec l'eid du mouton visé"
   }, async function (g) {
     var s = await reset(g);
     s.yaw = 0; s.pitch = 0;
     var dist = 2.5;
-    var z = g.entities.spawn('sheep', s.pos.x, s.pos.y, s.pos.z - dist);
+    var reflet = { eid: 987654, type: 'sheep', pos: { x: s.pos.x, y: s.pos.y, z: s.pos.z - dist } };
+    var sp = MC.EntitySpecs.sheep;
     // Un mouton fait 1,2 m : à l'horizontale on lui passe AU-DESSUS. Il faut
     // viser sa boîte, donc incliner le regard vers son milieu.
-    var dy = (z.pos.y + z.h / 2) - (s.pos.y + g.player.EYE);
+    var dy = (reflet.pos.y + sp.h / 2) - (s.pos.y + g.player.EYE);
     s.pitch = Math.atan2(dy, dist);
-    await frames(2);
-    var hp0 = z.hp;
-    s.attackCd = 0;
-    mouseDown(g, 0);
-    mouseUp(0);
-    await frames(2);
-    A.lt(z.hp, hp0, 'le mouton est blessé (' + hp0 + ' -> ' + z.hp + ')');
+    g.net.mobsDistants.set(reflet.eid, reflet);
+    var appels = [], vrai = g.net.attaquer;
+    g.net.attaquer = function (eid, degats, j) { appels.push({ eid: eid, degats: degats, j: j }); return true; };
+    try {
+      await frames(2);
+      s.attackCd = 0;
+      mouseDown(g, 0);
+      mouseUp(0);
+      await frames(2);
+    } finally { g.net.attaquer = vrai; g.net.mobsDistants.delete(reflet.eid); }
+    A.equal(appels.length, 1, 'un seul message ATTAQUE');
+    A.equal(appels[0] && appels[0].eid, reflet.eid, 'visant le mouton');
   });
 
-  e2e('un zombie au contact fait perdre de la vie', {
-        "teste": "qu'un zombie au contact du joueur, en zone où le PvE est autorisé, lui inflige des dégâts au fil du temps",
-        "pourquoi": "les mobs hostiles doivent représenter une menace réelle en zone de jeu, pas seulement en zone protégée",
-        "attendu": "les PV du joueur diminuent dans les 180 frames suivant le contact"
+  e2e('un zombie local ne blesse plus le joueur : les créatures sont au serveur', {
+        "teste": "qu'une créature présente dans la liste locale du client, au contact du joueur en zone PvE, ne lui inflige plus aucun dégât (le client n'appelle plus entities.update, SPEC-ARCHI-027)",
+        "pourquoi": "les dégâts des créatures sont calculés par le serveur (vérifié par tests/integration-archi-vie.js) : un second calcul côté client les compterait deux fois",
+        "attendu": "les PV du joueur restent intacts pendant 90 images"
   }, async function (g) {
     var s = await reset(g);
-    // le point d'apparition est une zone sûre (SPEC-ZONE-001) : l'essai se fait en zone PvP et PvE
     var r0 = g.world.reglesZoneEn;
     g.world.reglesZoneEn = function () { return MC.Zones.regles('pvp_pve'); };
     try {
       g.entities.spawn('zombie', s.pos.x + 0.6, s.pos.y, s.pos.z);
       var hp0 = s.hp;
-      for (var i = 0; i < 180 && s.hp === hp0; i++) await frames(1);
-      A.lt(s.hp, hp0, 'le joueur a perdu de la vie (' + s.hp + ')');
+      await frames(90);
+      A.equal(s.hp, hp0, 'aucun dégât calculé par le client (' + s.hp + ')');
     } finally { g.world.reglesZoneEn = r0; g.entities.list.length = 0; }
   });
 
   e2e('la mort ouvre l\'écran de réapparition', {
-        "teste": "que descendre les PV à zéro fait passer en état dead avec un écran de réapparition, et que cliquer Réapparaître relance la partie avec la vie restaurée",
-        "pourquoi": "le cycle mort/réapparition doit être complet et ne pas laisser le joueur bloqué",
-        "attendu": "état dead puis playing après clic, PV à 20, dead=false"
+        "teste": "que descendre les PV à zéro fait passer en état dead avec un écran de réapparition, et que cliquer Réapparaître demande la renaissance AU SERVEUR (message RENAITRE) puis reprend la partie",
+        "pourquoi": "le cycle mort/réapparition doit être complet et ne pas laisser le joueur bloqué ; le lieu, la vie et la faim de la renaissance sont décidés par le serveur (SPEC-ARCHI-026, tests/integration-archi-vie.js)",
+        "attendu": "état dead, RENAITRE envoyé pour le joueur 0, puis état playing et dead=false"
   }, async function (g) {
     var s = await reset(g);
     g.player.hurt(20);
     await frames(4);
     A.equal(g.input.state, 'dead', 'état mort');
     A.ok(document.querySelector('#btn-respawn'), 'bouton Réapparaître');
-    document.querySelector('#btn-respawn').click();
-    fakeLock(g, true);
-    await frames(4);
+    var appels = [], vrai = g.net.renaitre;
+    g.net.renaitre = function (j) { appels.push(j); return true; };
+    try {
+      document.querySelector('#btn-respawn').click();
+      fakeLock(g, true);
+      await frames(4);
+    } finally { g.net.renaitre = vrai; }
     A.equal(g.input.state, 'playing', 'partie reprise');
-    A.equal(s.hp, 20, 'vie restaurée');
+    A.equal(appels.length, 1, 'une demande de renaissance');
+    A.equal(appels[0], 0, 'pour le joueur 0');
     A.notOk(s.dead, 'vivant');
   });
 

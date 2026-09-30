@@ -275,17 +275,25 @@
       return envoyer({ t: NP.MSG.ENTREE, s: e.s, j: j || 0, dt: +e.dt.toFixed(4), k: e.k,
                        yaw: +e.yaw.toFixed(4), pitch: +e.pitch.toFixed(4), v: e.v });
     }
-    function attaquer(eid, degats, j) { return envoyer({ t: NP.MSG.ATTAQUE, eid: eid, degats: degats, j: j || 0 }); }
+    function attaquer(eid, degats, j, caseInv) {
+      var m = { t: NP.MSG.ATTAQUE, eid: eid, degats: degats, j: j || 0 };
+      if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
+      return envoyer(m);
+    }
     /* SPEC-COMBAT-002 : attaque un autre JOUEUR — `cible` est la clé sous
        laquelle il figure dans `distants` (son id seul, ou "id/j" en écran
        partagé) ; le serveur seul décide si le coup porte (PvP autorisé et
        zones compatibles). */
-    function attaquerJoueur(cible, degats, j) {
-      return envoyer({ t: NP.MSG.ATTAQUE, joueurCible: cible, degats: degats, j: j || 0 });
+    function attaquerJoueur(cible, degats, j, caseInv) {
+      var m = { t: NP.MSG.ATTAQUE, joueurCible: cible, degats: degats, j: j || 0 };
+      if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
+      return envoyer(m);
     }
-    function tirer(dir, vitesse, degats, genre, j) {
-      return envoyer({ t: NP.MSG.TIR, dx: dir.x, dy: dir.y, dz: dir.z, vitesse: vitesse, degats: degats,
-                       genre: genre || 'fleche', j: j || 0 });
+    function tirer(dir, vitesse, degats, genre, j, caseInv) {
+      var m = { t: NP.MSG.TIR, dx: dir.x, dy: dir.y, dz: dir.z, vitesse: vitesse, degats: degats,
+                genre: genre || 'fleche', j: j || 0 };
+      if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
+      return envoyer(m);
     }
     function manger(id, j, caseInv) {
       var m = { t: NP.MSG.MANGER, id: id, j: j || 0 };

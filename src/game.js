@@ -1725,21 +1725,13 @@
       g.spawnPoint = { x: s.pos.x, y: s.pos.y, z: s.pos.z };
     }
 
+    /* SPEC-ARCHI-026 : le SERVEUR décide du lieu de renaissance (lit ou point
+       d'apparition) et remet vie, faim et air ; l'état suivant nous y place.
+       Un seul chemin — solo fermé, écran partagé et réseau. */
     function respawn() {
-      if (net.enLigne()) {
-        // le serveur décide du lieu de renaissance ; l'état suivant nous y placera
-        equipe.forEach(function (j) { net.renaitre(j.index); if (j.prediction) j.prediction.confirmer(Infinity); });
-        player.state.dead = false;
-        input.setState('playing');
-        return;
-      }
-      var sp = g.spawnPoint;
-      if (!sp) { placeAtSpawn(); sp = g.spawnPoint; }
-      // on réapparaît sur un sol valide même si le terrain a changé
-      var gy = world.groundAt(Math.floor(sp.x), Math.floor(sp.z), true);
-      player.respawn({ x: sp.x, y: gy + 1.2, z: sp.z });
+      equipe.forEach(function (j) { net.renaitre(j.index); if (j.prediction) j.prediction.confirmer(Infinity); });
+      player.state.dead = false;
       input.setState('playing');
-      ui.toast('Réapparition');
     }
 
     function prime() {
@@ -2267,40 +2259,34 @@
       var m = mobDistantVise(pl);
       if (m) {
         st.attackCd = cadence;
-        net.attaquer(m.eid, (d && d.damage) || 1, j.index);
+        net.attaquer(m.eid, (d && d.damage) || 1, j.index, st.selected);
         audio.play('frapper');
         return true;
       }
       var dj = joueurDistantVise(pl);
       if (!dj) return false;
       st.attackCd = cadence;
-      net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index);
+      net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index, st.selected);
       audio.play('frapper');
       return true;
     }
     function tirEnLigne(j) {
       var pl = j.player, h = pl.held(), d = h && C.def(h.id);
       var avant = entities.list.length;
-      var tir = pl.tirer();                    // consomme munitions et usure comme en solo…
+      var tir = pl.tirer();                    // débit prédit des munitions et de l'usure…
       if (!tir) return null;
       entities.list.splice(avant);             // …mais la flèche vole côté serveur
       net.tirer(pl.lookDir(), d.vitesseTir || 34,
-                d.sansMunition ? (d.degatsTir || 6) : 5 + (d.bonusTir || 0), d.ranged, j.index);
+                d.sansMunition ? (d.degatsTir || 6) : 5 + (d.bonusTir || 0), d.ranged, j.index, pl.state.selected);
       return tir;
     }
 
     function onAttack() {
       if (input.state !== 'playing') return;
-      if (net.enLigne()) { attaqueEnLigne(equipe[0]); return; }
-      // portée propre à l'arme en main (SPEC-OBJET-002 : lance, dague…)
-      var e = entities.aimedAt(player.eyePos(), player.lookDir(), player.reachArme());
-      if (e && e === player.state.monture) e = null;
-      if (e) {
-        var r = player.attack(e);
-        if (r) audio.play(r.toolBroke ? 'brise' : 'frapper');
-        if (r && r.killed) ui.toast('Éliminé');
-      }
-      // sinon le minage continu est géré dans la boucle
+      /* SPEC-ARCHI-027 : une attaque est TOUJOURS un message ATTAQUE au serveur,
+         qui vérifie portée, cadence et dégâts et distribue le butin (DONNE,
+         INV_MAJ). Le minage continu est géré dans la boucle. */
+      attaqueEnLigne(equipe[0]);
     }
 
     function onUse() {
@@ -2309,7 +2295,7 @@
       // une arme a distance tire au clic droit, avant toute autre interaction
       var enMain = player.held();
       if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
-        var tir = net.enLigne() ? tirEnLigne(equipe[0]) : player.tirer();
+        var tir = tirEnLigne(equipe[0]);
         if (tir) {
           audio.play('frapper');
           if (tir.toolBroke) ui.toast("Votre arc s'est brisé", 'warn');
@@ -2320,8 +2306,8 @@
       // interagir avec un PNJ a priorité sur le bloc derrière lui
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
       if (ent && ent.vehicule && interagirVehicule(equipe[0], ent, input.actions().sprint)) return;
-      // en ligne, les habitants appartiennent au serveur : on vise leur reflet
-      if (!ent && net.enLigne()) {
+      // les habitants appartiennent au serveur : on vise toujours leur reflet
+      if (!ent) {
         var md = mobDistantVise(player);
         if (md && MC.EntitySpecs[md.type] && MC.EntitySpecs[md.type].npc) ent = md;
       }
@@ -2642,11 +2628,10 @@
        à la connexion, BIENVENUE.guilde, et répond à chaque commande). */
     function actionCommandeFaction(a) { net.envoyerChat('/faction ' + (a.brut || '')); }
     function actionCommandeAdmin(a) { net.admin(a.action, a.args); }
-    // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)
-    function actionCommandeDuel(a) {
-      if (net.enLigne()) { net.envoyerChat('/duel ' + (a.brut || '')); return; }
-      chat.systeme('Le duel exige d\'être en ligne.');
-    }
+    /* B4 (SPEC-PVP-005, SPEC-ARCHI-028) : le duel est toujours envoyé au
+       serveur, qui répond lui-même (y compris par un refus motivé s'il n'y a
+       personne à défier). */
+    function actionCommandeDuel(a) { net.envoyerChat('/duel ' + (a.brut || '')); }
     var ACTIONS_COMMANDE = {
       heure: actionCommandeHeure, vider: actionCommandeVider, rejoindre: actionCommandeRejoindre,
       quitter: actionCommandeQuitter, rendu: actionCommandeRendu, faction: actionCommandeFaction,
@@ -2675,19 +2660,6 @@
       if (!cmd) return;
       var res = MC.Commandes.executer(cmd, contexteCommande());
       res.actions.forEach(appliquerActionCommande);
-    }
-
-    /* Le butin revient au joueur le plus proche : en ecran partage, tout
-       donner au joueur 1 serait injuste et deroutant. */
-    function joueurLePlusProche(pos) {
-      var best = equipe[0].player, bd = Infinity;
-      for (var i = 0; i < equipe.length; i++) {
-        var st2 = equipe[i].player.state;
-        if (st2.dead) continue;
-        var d = Math.hypot(st2.pos.x - pos.x, st2.pos.y - pos.y, st2.pos.z - pos.z);
-        if (d < bd) { bd = d; best = equipe[i].player; }
-      }
-      return best;
     }
 
     /* Mode cauchemar : la carte ET la sauvegarde disparaissent. */
@@ -2781,11 +2753,12 @@
         net.envoyerEntree(entree, j.index);
         MC.Synchro.rejouer(pl, [entree]);
       }
-      if (!net.enLigne()) pl.updateSurvival(dt);
+      /* SPEC-ARCHI-026 : vie, faim, air et climat sont calculés par le SERVEUR
+         (updateSurvival, subirClimat) et arrivent dans l'état reçu : le client
+         ne fait plus qu'afficher. Solo fermé, écran partagé et réseau : même chemin. */
 
       /* Climat : la température autour du joueur, réévaluée deux fois par
-         seconde (feux voisins compris). Hors ligne elle agit sur le corps ;
-         en ligne, c'est le serveur qui l'applique — on ne fait que l'afficher. */
+         seconde (feux voisins compris) — pour l'AFFICHAGE seulement. */
       if (world.meteo) {
         j.tempT = (j.tempT || 0) - dt;
         if (j.tempT <= 0 || !j.temperature) {
@@ -2793,8 +2766,7 @@
           j.temperature = world.meteo.temperatureEn(world, st.pos, g.time, g.meteo);
         }
         var avantClimat = st.climat;
-        if (!net.enLigne()) pl.subirClimat(dt, j.temperature.temperature);
-        else { st.temperature = j.temperature.temperature; st.climat = null; }
+        st.temperature = j.temperature.temperature; st.climat = pl.climatDe(st.temperature);
         if (j.index === 0 && st.climat !== avantClimat && st.climat) {
           ui.toast(st.climat === 'froid' ? 'Vous gelez : approchez-vous d\'un feu' : 'Chaleur écrasante : vous avez soif');
           if (st.climat === 'froid') audio.play('froid');
@@ -2830,13 +2802,9 @@
         }
       } else if (!casse) pl.cancelMining();
 
-      if (casse && net.enLigne() && j.source !== 'clavier') attaqueEnLigne(j);
-      if (casse && mob && j.source !== 'clavier') {
-        // au clavier, la frappe passe par l'evenement de clic ; a la manette
-        // on echantillonne, avec le temps de recharge du joueur pour cadence
-        var ra = pl.attack(mob);
-        if (ra) audio.play('frapper');
-      }
+      // au clavier, la frappe passe par l'evenement de clic ; a la manette
+      // on echantillonne, avec le temps de recharge du joueur pour cadence
+      if (casse && j.source !== 'clavier') attaqueEnLigne(j);
 
       if (utilise) {
         j.useCd = (j.useCd || 0) - dt;
@@ -2862,7 +2830,7 @@
       var pl = j.player;
       var enMain = pl.held();
       if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
-        var tir = pl.tirer();
+        var tir = tirEnLigne(j);
         if (tir) audio.play('frapper');
         return;
       }
@@ -2957,20 +2925,10 @@
     }
 
     function frameEntites(dt) {
-      // entites et butin : le butin va au joueur le plus proche
-      // (en ligne, créatures, butin et dégâts sont l'affaire du serveur)
-      var ev = net.enLigne() ? { damage: 0, picked: [] }
-                             : entities.update(dt, player.state, { reputation: world.reputation,
-                               hiver: !!(DC.saison && DC.saison(g.time).nom === 'hiver') });
-      if (ev.damage) { player.hurt(ev.damage); audio.play('blesse'); }
-      for (var i = 0; i < ev.picked.length; i++) {
-        var p2 = ev.picked[i];
-        var dest = joueurLePlusProche(p2.entity ? p2.entity.pos : player.state.pos);
-        var reste = dest.pickUp(p2.id, p2.n, p2.data);
-        if (reste > 0) entities.dropItem(dest.state.pos.x, dest.state.pos.y + 0.5,
-                                         dest.state.pos.z, p2.id, reste, null, p2.data);
-        else { ui.toast('+' + p2.n + ' ' + C.nameOf(p2.id)); audio.play('ramasser'); }
-      }
+      /* SPEC-ARCHI-027 : créatures, dégâts subis, ramassage et butin sont
+         l'affaire du SERVEUR (entites.update, DONNE, INV_MAJ) : le client
+         n'appelle plus entities.update ni damage. Solo fermé, écran partagé et
+         réseau : même chemin. */
       entities.mergeItems();
       surveillerDonjons();
       tickerSucces(dt);

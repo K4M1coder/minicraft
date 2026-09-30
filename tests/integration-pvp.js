@@ -148,7 +148,7 @@ async function attendreDemarrage(port) {
   // MC_TEST_INV='[[3,10]]' : 10 pierres (id 3, B.STONE) à quiconque rejoint
   // sans enregistrement existant — de quoi vérifier qu'un duel ne butine pas.
   const s1 = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(PORT), '--admin', 'secret1', '--ouvert'],
-                   { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,10]]' }) });
+                   { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,10],[4116,1]]' }) });
   s1.stdout.on('data', d => logs.push(String(d)));
   s1.stderr.on('data', d => logs.push('ERR ' + String(d)));
   try {
@@ -215,7 +215,7 @@ async function attendreDemarrage(port) {
   // borné (10 à 25 % de 20 = 2 à 5) à la défaite finale (SPEC-PVP-001).
   const s2 = spawn(process.execPath,
     [path.join(RACINE, 'server.js'), '--port', String(PORT2), '--pvp', 'on', '--admin', 'secret2', '--zone', 'generee', '--ouvert'],
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,20]]' }) });
+    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_INV: '[[3,20],[4116,1]]' }) });
   s2.stdout.on('data', d => logs.push(String(d)));
   s2.stderr.on('data', d => logs.push('ERR ' + String(d)));
   try {
@@ -313,7 +313,7 @@ async function attendreDemarrage(port) {
     await dodo(200);
     const invBobFinal = (b.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
     const totalBobFinal = (invBobFinal || []).reduce((s, c) => s + (c ? c[1] : 0), 0);
-    eq(totalBobFinal, 20 - pertesBob, 'SPEC-PVP-001 : Bob garde exactement ce qu\'il n\'a pas perdu');
+    eq(totalBobFinal, 21 - pertesBob, 'SPEC-PVP-001 : Bob garde exactement ce qu\'il n\'a pas perdu');
     const invAliceApres = (a.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
     const totalAliceAvant = (invAliceAvant || []).reduce((s, c) => s + (c ? c[1] : 0), 0);
     const totalAliceApres = (invAliceApres || []).reduce((s, c) => s + (c ? c[1] : 0), 0);

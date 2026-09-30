@@ -954,6 +954,18 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
     z: spawnCol[1] + 0.5,
   };
 }
+/* MC_TEST_MOBS='[["sheep",1.5,0]]' : réservé aux suites d'intégration (même
+   principe que MC_TEST_SPAWN, désactivé par défaut) — fait apparaître des
+   créatures à des décalages [type, dx, dz] du point d'apparition, pour tester
+   le combat et le butin sans attendre une apparition aléatoire. */
+if (process.env.MC_TEST_MOBS) {
+  journal('ATTENTION : MC_TEST_MOBS actif — des créatures sont posées au point d apparition (réglage de test, jamais en exploitation)');
+  try {
+    JSON.parse(process.env.MC_TEST_MOBS).forEach(([type, dx, dz]) => {
+      if (entites.SPECS[type]) entites.spawn(type, SPAWN.x + (+dx || 0), SPAWN.y, SPAWN.z + (+dz || 0));
+    });
+  } catch (e) { /* réglage de test invalide : ignoré */ }
+}
 
 /* MC_TEST_MOB='sheep' : réservé aux suites d'intégration (comme MC_TEST_SPAWN, désactivé
    par défaut) — une créature PASSIVE posée à 0,3 bloc du point d'apparition, pour
@@ -1893,15 +1905,86 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 
 /* SPEC-ARCHI-010 : en pause, tout message qui modifie l'état de jeu est ignoré —
    mouvement, blocs, combat, tir, inventaire (manger, fabriquer, équiper, consommer,
-   lâcher, palette créative), conteneurs, commerce, distributeurs. RENAITRE aussi :
-   le monde est figé, un joueur mort renaît à la reprise. Restent acceptés : ping,
-   CHAT, PAUSE, RESEAU, ARRET, ADMIN, CONTENEUR_FERMER (simple libération). */
+   lâcher, palette créative), conteneurs, commerce, distributeurs. RENAITRE est
+   l'EXCEPTION (SPEC-ARCHI-026) : un joueur mort doit pouvoir renaître même dans
+   un monde figé (menu ouvert sur l'écran de mort) — la renaissance ne fait
+   avancer aucune horloge. Restent acceptés : ping, CHAT, PAUSE, RESEAU, ARRET,
+   ADMIN, CONTENEUR_FERMER (simple libération). */
 const MESSAGES_GELES = new Set([
-  'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'RENAITRE', 'DISTRIB', 'CRAFT', 'EQUIP',
+  'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'DISTRIB', 'CRAFT', 'EQUIP',
   'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
   'DORMIR',
 ].map(k => NP.MSG[k]).filter(Boolean));
 
+/* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
+   a fait son point de réapparition (`js.spawn`, persistant) tant qu'il existe
+   encore, sinon le point d'apparition du monde. */
+function lieuRenaissance(js, j) {
+  const sp = js.spawn;
+  if (sp && [sp.x, sp.y, sp.z].every(Number.isFinite) && Math.abs(sp.x) < 1e7 && Math.abs(sp.z) < 1e7 && sp.y > -64 && sp.y < 400) {
+    monde.getChunk(Math.floor(sp.x / 16), Math.floor(sp.z / 16), true);
+    // le lit est sous les pieds (y = lit + 1,05) ou occupé (y = lit + 0,05, anciennes parties solo)
+    const bx = Math.floor(sp.x), bz = Math.floor(sp.z);
+    const dessous = C.BLOCKS[monde.getBlock(bx, Math.floor(sp.y - 1.0), bz)], dedans = C.BLOCKS[monde.getBlock(bx, Math.floor(sp.y - 0.05), bz)];
+    if ((dessous && dessous.dodo) || (dedans && dedans.dodo)) return { x: sp.x, y: sp.y, z: sp.z };
+    js.spawn = null;                                   // le lit a disparu
+  }
+  return { x: SPAWN.x + j * 1.2, y: SPAWN.y, z: SPAWN.z };
+}
+/* Un joueur qui se couche fixe sa réapparition sur le lit à portée (jamais une
+   position dictée par le client). Renvoie true si un lit a été trouvé. */
+function fixerReapparitionLit(js) {
+  const st = js.joueur.state, px = Math.floor(st.pos.x), py = Math.floor(st.pos.y), pz = Math.floor(st.pos.z);
+  let meilleur = null, md = 5 * 5;
+  for (let dx = -4; dx <= 4; dx++) for (let dy = -2; dy <= 3; dy++) for (let dz = -4; dz <= 4; dz++) {
+    const bd = C.BLOCKS[monde.getBlock(px + dx, py + dy, pz + dz)];
+    if (!bd || !bd.dodo) continue;
+    const d2 = (px + dx + 0.5 - st.pos.x) ** 2 + (py + dy + 0.5 - st.pos.y) ** 2 + (pz + dz + 0.5 - st.pos.z) ** 2;
+    if (d2 < md) { md = d2; meilleur = { x: px + dx + 0.5, y: py + dy + 1.05, z: pz + dz + 0.5 }; }
+  }
+  if (!meilleur) return false;
+  js.spawn = meilleur;
+  return true;
+}
+/* SPEC-ARCHI-027 : l'arme d'un coup de mêlée, d'après l'inventaire SERVEUR.
+   Le client désigne la case tenue (`i`) ; le serveur ne croit que ce que cette
+   case contient réellement (main nue si elle est vide). Sans `i` (ancien
+   client), la meilleure arme possédée. Le plafond est donc « ce que le joueur
+   possède et tient », jamais un chiffre annoncé. */
+function armeMelee(js, i) {
+  const slots = js.joueur.state.inv.slots;
+  if (Number.isInteger(i) && i >= 0 && i < slots.length) return (slots[i] && C.def(slots[i].id)) || {};
+  let best = {};
+  slots.forEach(s => { const df = s && C.def(s.id); if (df && (df.damage || 1) > (best.damage || 1)) best = df; });
+  return best;
+}
+/* Cadence, portée et recul du coup, lus dans la définition de l'arme comme le
+   fait player.attack (dague 0,22 s, masse 0,95 s…). Le serveur retient 85 %
+   de la cadence (gigue réseau) avec un plancher de 0,15 s. */
+function parametresMelee(arme) {
+  const cadence = arme.cadence !== undefined ? arme.cadence : 0.45;
+  return { degats: arme.damage || 1, cd: Math.max(0.15, cadence * 0.85), recul: arme.recul !== undefined ? arme.recul : 1,
+           portee: Math.max(6, (arme.portee || 0) + 0.5) };
+}
+/* L'arme de tir du genre demandé : la case `i` si elle porte une telle arme,
+   sinon la meilleure arme de ce genre possédée ; null si aucune (créatif,
+   réglages de test). Dégâts et vitesse ne dépassent jamais ceux de l'arme
+   (et de la meilleure munition possédée), comme player.tirer. */
+function parametresTir(js, genre, i) {
+  const slots = js.joueur.state.inv.slots;
+  const bonne = (s) => { const df = s && C.def(s.id); return df && df.ranged === genre ? df : null; };
+  let arme = Number.isInteger(i) && i >= 0 && i < slots.length ? bonne(slots[i]) : null;
+  if (!arme) slots.forEach(s => { const df = bonne(s); if (df && (!arme || (df.bonusTir || 0) > (arme.bonusTir || 0))) arme = df; });
+  if (!arme) return null;
+  let degats;
+  if (arme.sansMunition) degats = arme.degatsTir || 6;
+  else {
+    let mun = 5;
+    slots.forEach(s => { const df = s && C.def(s.id); if (df && df.ammo && (!df.ammoType || df.ammoType === genre) && (df.damage || 5) > mun) mun = df.damage; });
+    degats = mun + (arme.bonusTir || 0);
+  }
+  return { degats, vitesse: arme.vitesseTir || 34, cd: Math.max(0.3, arme.cadenceTir || 0) };
+}
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
   // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
@@ -2086,6 +2169,10 @@ function traiter(c, m) {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || js.joueur.state.dead) break;
       const st = js.joueur.state;
+      // SPEC-ARCHI-027 : dégâts, cadence, portée et recul viennent de l'arme
+      // réellement tenue dans l'inventaire serveur, pas de ce que le client annonce.
+      const pm = parametresMelee(armeMelee(js, m.i));
+      m.degats = Math.min(m.degats, pm.degats);
 
       // SPEC-COMBAT-002 : cible un autre JOUEUR plutôt qu'une créature —
       // mêmes portée, cadence et dégâts qu'en PvE, mais soumis au réglage
@@ -2097,19 +2184,19 @@ function traiter(c, m) {
         if (cible.c.id === c.id && cible.j === m.j) break;               // pas sur soi-même
         const vst = cible.js.joueur.state;
         const d2 = Math.hypot(vst.pos.x - st.pos.x, vst.pos.y + 0.9 - st.pos.y - 1.6, vst.pos.z - st.pos.z);
-        if (d2 > 6) break;
+        if (d2 > pm.portee) break;
         // B4 (SPEC-PVP-002/005) : un duel consenti autorise le coup MÊME hors
         // zone PvP et MÊME entre membres d'une même faction (le consentement
         // explicite prime) ; sinon, comme avant, zone ET faction.
         const duel = MC.PvpEnjeux.duelActif(pvp, c.nom, cible.c.nom, heure, st.pos, vst.pos);
         if (!duel && !(pvpAutorise(st.pos, vst.pos) && MC.Guildes.peutBlesser(guildes, c.nom, cible.c.nom))) break;
-        js.attaqueCd = 0.4;
+        js.attaqueCd = pm.cd;
         const avant = vst.dead;
         vst.hurtCd = 0;
         cible.js.joueur.hurt(m.degats);
         // recul, comme pour une créature (entities.damage s'en inspire)
         const dx = vst.pos.x - st.pos.x, dz = vst.pos.z - st.pos.z, dd = Math.hypot(dx, dz) || 1;
-        vst.vel.x += (dx / dd) * 5; vst.vel.z += (dz / dd) * 5; vst.vel.y = 4.5;
+        vst.vel.x += (dx / dd) * 5 * pm.recul; vst.vel.z += (dz / dd) * 5 * pm.recul; vst.vel.y = 4.5 * pm.recul;
         MC.Admin.journaliser(admin, { auteur: c.nom, action: 'combat_joueur', cible: cible.c.nom, details: m.degats, heure });
         if (!avant && vst.dead) {
           const msg = chat.systeme(c.nom + ' a vaincu ' + cible.c.nom);
@@ -2126,9 +2213,9 @@ function traiter(c, m) {
       if (!e || e.dead || e.type === 'item') break;
       const d = Math.hypot(e.pos.x - st.pos.x, e.pos.y + e.h / 2 - st.pos.y - 1.6, e.pos.z - st.pos.z);
       // portée et cadence vérifiées : on ne frappe ni de loin ni en rafale
-      if (d > 6 || js.attaqueCd > 0) break;
-      js.attaqueCd = 0.4;
-      entites.damage(e, m.degats, st.pos, st);
+      if (d > pm.portee || js.attaqueCd > 0) break;
+      js.attaqueCd = pm.cd;
+      entites.damage(e, m.degats, st.pos, st, pm.recul);
       // journal des actions (SPEC-ADMIN-002) : les combats aussi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: 'combat', cible: e.type, details: m.degats, heure });
       break;
@@ -2139,10 +2226,13 @@ function traiter(c, m) {
       if (!js || js.joueur.state.dead || js.tirCd > 0) break;
       // SPEC-SYNC-028 : en survie, pas de munition (ou d'arme) dans l'inventaire serveur, pas de projectile
       if (!regles.blocsIllimites && !POSE_LIBRE && !debiterTir(js, m.genre)) break;
-      js.tirCd = 0.3;
+      // SPEC-ARCHI-027 : dégâts, vitesse et cadence de l'arme possédée, jamais ceux annoncés
+      const pt = parametresTir(js, m.genre, m.i);
+      js.tirCd = pt ? pt.cd : 0.3;
       const st = js.joueur.state;
       const o = { x: st.pos.x + m.dx * 0.4, y: st.pos.y + 1.62 + m.dy * 0.4, z: st.pos.z + m.dz * 0.4 };
-      entites.tirer(o, { x: m.dx, y: m.dy, z: m.dz }, m.vitesse, m.degats, st, m.genre);
+      entites.tirer(o, { x: m.dx, y: m.dy, z: m.dz }, pt ? Math.min(m.vitesse, pt.vitesse) : m.vitesse,
+                    pt ? Math.min(m.degats, pt.degats) : m.degats, st, m.genre);
       break;
     }
 
@@ -2168,8 +2258,9 @@ function traiter(c, m) {
     case NP.MSG.RENAITRE: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || !js.joueur.state.dead) break;
-      js.joueur.respawn({ x: SPAWN.x + m.j * 1.2, y: SPAWN.y, z: SPAWN.z });
+      js.joueur.respawn(lieuRenaissance(js, m.j));
       js.entrees.length = 0;
+      js.attaqueCd = 0; js.tirCd = 0;
       break;
     }
 
@@ -2674,6 +2765,7 @@ function executerActionAdmin(role, nomActeur, action, args) {
 let MC_TEST_INV = null;
 try { MC_TEST_INV = process.env.MC_TEST_INV ? JSON.parse(process.env.MC_TEST_INV) : null; }
 catch (e) { MC_TEST_INV = null; }
+if (MC_TEST_INV) journal('ATTENTION : MC_TEST_INV actif — les nouveaux joueurs reçoivent un inventaire imposé (réglage de test, jamais en exploitation)');
 
 // une clé de registre déjà tenue par un joueur CONNECTÉ (écran partagé
 // compris) : la seconde connexion sous le même nom reste éphémère (jamais
@@ -3148,6 +3240,7 @@ function compterDormeurs() {
 }
 function coucher(js) {
   const st = js.joueur.state;
+  fixerReapparitionLit(js);          // SPEC-ARCHI-026 : se coucher fixe aussi la réapparition, sur le lit à portée
   dormeurs.set(js, { x: st.pos.x, y: st.pos.y, z: st.pos.z, pv: st.hp });
 }
 /* Fait passer la nuit quand une majorité stricte des joueurs présents dort.
@@ -3406,6 +3499,8 @@ function traiterDuel(c, texte) {
   }
   const cibleNom = args[0];
   if (!cibleNom) { envoyerSysteme(c, 'Usage : /duel <nom> | /duel accepter | /duel refuser'); return; }
+  // SPEC-ARCHI-028 : seul sur le serveur (solo fermé), il n'y a personne à défier
+  if (!tousLesJoueurs().some(x => x.c.id !== c.id)) { envoyerSysteme(c, 'Duel : aucun autre joueur à défier sur ce serveur.'); return; }
   const adversaire = joueurParNom(cibleNom);
   if (!adversaire || adversaire.c.id === c.id) { envoyerSysteme(c, 'Joueur introuvable : ' + cibleNom); return; }
   const r = MC.PvpEnjeux.proposerDuel(pvp, c.nom, cibleNom, heure);
@@ -3634,10 +3729,13 @@ setInterval(() => {
     while (js.entrees.length && !st.dead && js.budget.consommer(js.entrees[0].dt)) {
       const e = js.entrees.shift();
       SY.rejouer(js.joueur, [e]);
-      js.joueur.updateSurvival(e.dt);
       js.dernier = e.s;
       avance += e.dt;
     }
+    /* SPEC-ARCHI-026 : le corps vit au temps SERVEUR (dt réel, gelé en pause
+       avec toute la boucle), jamais au rythme des entrées reçues : un client
+       muet a faim et se soigne comme les autres. Un seul appel par tic. */
+    js.joueur.updateSurvival(dt);
     /* Les créatures repoussent le joueur (elles ne se traversent pas), UNE fois par tic
        et par joueur (coût borné à 100 joueurs) ; côté serveur seulement — la prédiction
        du client ne la connaît pas, la réconciliation absorbe l'écart. */
