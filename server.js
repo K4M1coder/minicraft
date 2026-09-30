@@ -112,7 +112,8 @@ const stockageParties = {
     if (!f) throw new Error('clé de stockage refusée');
     fs.mkdirSync(DOSSIER_PARTIES, { recursive: true });
     fs.writeFileSync(f + '.tmp', valeur);
-    fs.renameSync(f + '.tmp', f);
+    try { fs.renameSync(f + '.tmp', f); }
+    catch (e) { try { fs.unlinkSync(f + '.tmp'); } catch (e2) { /* rien */ } throw e; }
   },
   removeItem(cle) {
     const f = fichierStockage(cle);
@@ -137,14 +138,18 @@ if (PARAMS.partie) {
 /* Sans --admin, le serveur tire un jeton et l'affiche UNE fois au démarrage :
    jamais de console laissée sans protection, jamais de secret par défaut
    devinable. */
-const ADMIN_SECRET = PARAMS.admin || MC.Admin.nouveauJeton('demarrage-', crypto.randomBytes);
+/* Une relance interne (changement de partie) hérite du jeton du processus précédent
+   (variable d'environnement de l'enfant, jamais la ligne de commande) : le jeton
+   affiché au premier lancement reste valable. */
+const ADMIN_HERITE = !PARAMS.admin && RELANCE && process.env.MC_ADMIN_HERITE ? process.env.MC_ADMIN_HERITE : null;
+const ADMIN_SECRET = PARAMS.admin || ADMIN_HERITE || MC.Admin.nouveauJeton('demarrage-', crypto.randomBytes);
 const admin = MC.Admin.creerEtat({
   motDePasseAdmin: ADMIN_SECRET,
   listeBlancheActive: PARAMS.listeBlanche,
   emailObligatoire: false,
   generateurAleatoire: crypto.randomBytes,  // SPEC-SECU-009 : entropie cryptographique injectée, jamais Math.random
 });
-if (!PARAMS.admin) {
+if (!PARAMS.admin && !ADMIN_HERITE) {
   journal(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);
   journal('conservez-le : il ne sera plus jamais affiché (relancez avec --admin=... pour le fixer)');
 }
@@ -526,6 +531,10 @@ function apresSauvegarde(raison, ms, octets) {
 let dureeJeu = 0;                      // secondes de jeu réellement écoulées (hors pause, avec un joueur), pour l'index des parties
 function sauvegarderMondeAsync(raison, evenement) {
   if (!CONF.mondeFichier || sauvegardeArretee) return;
+  /* La cible est figée ICI : `/api/parties/supprimer` peut mettre CONF.mondeFichier
+     à null pendant l'écriture (rename(…, null) levait, et écrivait « null.tmp »). */
+  const cible = CONF.mondeFichier;
+  const tmp = cible + '.tmp';
   raison = typeof raison === 'string' ? raison : 'cadence';
   if (sauvegardeEnCours) {                            // pas de sauvegarde concurrente
     if (evenement) sauvegardeRedemandee = raison;
@@ -547,17 +556,22 @@ function sauvegarderMondeAsync(raison, evenement) {
   const heureEcrite = heure;
   const fin = (ok) => {
     sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
+    // la partie a été supprimée pendant l'écriture : ne rien laisser derrière
+    if (ok && CONF.mondeFichier !== cible) { try { fs.unlinkSync(cible); } catch (e) { /* déjà absent */ } ok = false; }
     if (ok) { derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison, msSerialisation, data.length); }
     if (sauvegardeRedemandee) { const r = sauvegardeRedemandee; sauvegardeRedemandee = null; sauvegarderMondeAsync(r, true); }
   };
-  try { fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
-  fs.writeFile(FICHIER_TMP_ASYNC(), data, (err) => {
+  try { fs.mkdirSync(path.dirname(cible), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
+  const ecrire = () => fs.writeFile(tmp, data, (err) => {
     if (err) { journal('échec de la sauvegarde du monde (écriture) : ' + err.message); fin(false); return; }
-    fs.rename(FICHIER_TMP_ASYNC(), CONF.mondeFichier, (err2) => {
-      if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); fin(false); return; }
+    fs.rename(tmp, cible, (err2) => {
+      if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); try { fs.unlinkSync(tmp); } catch (e) { /* rien */ } fin(false); return; }
       fin(true);
     });
   });
+  // MC_TEST_SAUVEGARDE_LENTE_MS : retarde l'écriture disque (tests de course avec /supprimer), jamais en exploitation
+  const lente = parseInt(process.env.MC_TEST_SAUVEGARDE_LENTE_MS, 10) || 0;
+  if (lente) setTimeout(ecrire, lente); else ecrire();
 }
 
 /* Version synchrone (toujours atomique elle aussi, mêmes tmp+rename, mais
@@ -877,12 +891,26 @@ function armerAbsence(delaiMs) {
   journal(`plus aucun client — arrêt dans ${delai / 1000} s sans reconnexion`);
   minuteurAbsence = setTimeout(() => {
     minuteurAbsence = null;
-    if (clients.size === 0 && !reseauOuvert) arreter('absence de client');
+    if (clientsActifs() === 0 && !reseauOuvert) arreter('absence de client');
   }, delai);
 }
 /* Un client se (re)connecte : le délai de grâce est annulé, et une pause posée
    par l'absence (pas par le joueur) est levée — l'actualisation de la page
    reprend la partie. Une pause demandée par le joueur, elle, persiste. */
+/* Un client est « actif » s'il a rejoint la partie OU s'il parle au poste (PAUSE,
+   RESEAU, ARRET depuis la boucle locale : c'est la liaison de statut du menu). Une
+   WebSocket qui s'ouvre sans jamais rien faire ne compte pas : elle ne retarde
+   ni n'annule l'arrêt du serveur orphelin. */
+function clientsActifs() {
+  let n = 0;
+  clients.forEach(x => { if (x.poste) n++; });
+  return n;
+}
+function marquerPoste(c) {
+  if (c.poste) return;
+  c.poste = true;
+  clientPresent();
+}
 function clientPresent() {
   if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
   if (pauseParAbsence) definirPause(false);
@@ -924,7 +952,7 @@ function fermer(c, raison) {
      fermé brutalement compris) sauvegarde tout de suite, met le monde en
      pause et arme l'arrêt après le délai de grâce. En mode OUVERT, jamais de
      terminaison sur départ du dernier joueur (c). */
-  if (!reseauOuvert && clients.size === 0 && !arretEnCours) {
+  if (c.poste && !reseauOuvert && clientsActifs() === 0 && !arretEnCours) {
     sauvegarderMondeAsync('dernier client', true);
     definirPause(true, true);
     armerAbsence();
@@ -1288,6 +1316,8 @@ function traiterApiParties(req, res) {
       monde: {
         heure: +heure.toFixed(3), pause: enPause, rev: pauseRev, clients: clients.size,
         creatures: entites.list.length,
+        fours: Array.from(conteneursPoses.entries()).filter(([, ct]) => ct.four)
+          .map(([cle, ct]) => ({ cle, burn: +ct.four.burn.toFixed(3), cook: +ct.four.cook.toFixed(3), sortie: ct.slots[2] ? ct.slots[2].n : 0 })),
         sigCreatures: +entites.list.reduce((a, e) => a + e.pos.x + e.pos.z, 0).toFixed(3),
       },
     });
@@ -1344,9 +1374,18 @@ function traiterApiParties(req, res) {
             const nouvelle = MC.Saves.trouver(stockageParties, p.meta.id) ? MC.Saves.nouvelId() : p.meta.id;
             const fichier = MC.PartiesFichier.migrerSauvegarde(p.meta, p.data);
             const m = MC.PartiesFichier.metaImportee(p.meta, p.data);
+            /* Le fichier de monde d'abord (une migration ou une écriture qui échoue ne laisse
+               alors aucune entrée d'index vide), puis l'index ; si l'index échoue, on retire le
+               fichier : jamais de fichier orphelin. */
             stockageParties.setItem(MC.Saves.slotKey(nouvelle), JSON.stringify(fichier));
-            MC.Saves.creer(stockageParties, { id: nouvelle, nom: m.nom, mode: m.mode, difficulte: m.difficulte, graine: m.graine, histoire: m.histoire });
-            MC.Saves.majMeta(stockageParties, nouvelle, { graine: m.graine, versionCarte: m.versionCarte, creeLe: m.creeLe, majLe: m.majLe, duree: m.duree, morte: m.morte });
+            try {
+              MC.Saves.creer(stockageParties, { id: nouvelle, nom: m.nom, mode: m.mode, difficulte: m.difficulte, graine: m.graine, histoire: m.histoire });
+              if (!MC.Saves.trouver(stockageParties, nouvelle)) throw new Error('index illisible ou non inscriptible');
+              MC.Saves.majMeta(stockageParties, nouvelle, { graine: m.graine, versionCarte: m.versionCarte, creeLe: m.creeLe, majLe: m.majLe, duree: m.duree, morte: m.morte });
+            } catch (e) {
+              MC.Saves.supprimer(stockageParties, nouvelle);       // retire l'entrée d'index éventuelle ET le fichier
+              throw e;
+            }
             importees.push(nouvelle);
           } catch (e) { ignorees.push({ id: p.meta.id, motif: e.message }); }
         });
@@ -1383,7 +1422,7 @@ function relancerSurPartie(id) {
   fermerEcouteurs().then(() => {
     const enfant = require('child_process').spawn(process.execPath, args, {
       detached: true, stdio: 'inherit', windowsHide: true, cwd: process.cwd(),
-      env: Object.assign({}, process.env, { MC_RELANCE: '1' }),
+      env: Object.assign({}, process.env, { MC_RELANCE: '1', MC_ADMIN_HERITE: ADMIN_SECRET }),
     });
     enfant.unref();
     setTimeout(() => process.exit(0), 100);
@@ -1497,7 +1536,6 @@ function surUpgrade(req, socket) {
     role: null, sessionId: null,             // rôle d'administration (SPEC-ADMIN-006/008)
   };
   clients.set(c.id, c);
-  clientPresent();                            // annule le délai de grâce d'arrêt, lève une pause d'absence
 
   /* TCP ne respecte aucune frontière de message : une lecture peut contenir
      une demi-trame, ou trois. On accumule et on décode tant qu'une trame
@@ -1673,10 +1711,20 @@ function overridesEnVue(cx0, cz0, rayon) {
    tests plutôt que d'exposer un chemin de code séparé et non testé. */
 const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 
+/* SPEC-ARCHI-010 : en pause, tout message qui modifie l'état de jeu est ignoré —
+   mouvement, blocs, combat, tir, inventaire (manger, fabriquer, équiper, consommer,
+   lâcher, palette créative), conteneurs, commerce, distributeurs. RENAITRE aussi :
+   le monde est figé, un joueur mort renaît à la reprise. Restent acceptés : ping,
+   CHAT, PAUSE, RESEAU, ARRET, ADMIN, CONTENEUR_FERMER (simple libération). */
+const MESSAGES_GELES = new Set([
+  'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'RENAITRE', 'DISTRIB', 'CRAFT', 'EQUIP',
+  'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
+].map(k => NP.MSG[k]).filter(Boolean));
+
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
   // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
-  if (enPause && (m.t === NP.MSG.ENTREE || m.t === NP.MSG.BLOC || m.t === NP.MSG.ATTAQUE || m.t === NP.MSG.TIR)) return;
+  if (enPause && MESSAGES_GELES.has(m.t)) return;
   if (MC_TEST_PANNE && m.t === NP.MSG.CHAT && m.texte === '__panne_test_secu_001__') {
     throw new Error('panne de test SPEC-SECU-001');
   }
@@ -1722,6 +1770,7 @@ function traiter(c, m) {
       c.email = m.email || null;
       c.locaux = m.locaux;
       c.rejoint = true;
+      marquerPoste(c);                                  // annule le délai de grâce d'arrêt, lève une pause d'absence
       c.role = MC.Admin.roleDe(admin, c.nom);           // un modérateur nommé retrouve son rôle en revenant
       c.sessionId = MC.Admin.ouvrirSession(admin, { nom: c.nom, ip: c.ip }, heure);
       c.joueurs = [];
@@ -1795,17 +1844,20 @@ function traiter(c, m) {
     }
     // ── ARCHI : pause du poste, réseau à chaud, arrêt (SPEC-ARCHI-005/008/009) ──
     case NP.MSG.PAUSE:
+      if (c.local) marquerPoste(c);
       if (reseauOuvert) { envoyer(c, { t: NP.MSG.PAUSE_ETAT, actif: false, rev: pauseRev }); break; }   // aucune pause en mode ouvert
       if (!c.local) break;
       definirPause(m.actif, false);
       break;
     case NP.MSG.RESEAU:
+      if (c.local) marquerPoste(c);
       if (!c.local) { journal(`x RESEAU ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
       // un serveur dédié (--serveur) reste OUVERT : le fermer expulserait ses joueurs puis l'arrêterait tout seul
       if (!m.ouvert && PARAMS.serveurSeul) { journal(`x RESEAU {ouvert:false} ignoré : serveur dédié (--serveur)`); envoyer(c, messageReseau()); break; }
       definirReseau(m.ouvert);
       break;
     case NP.MSG.ARRET:
+      if (c.local) marquerPoste(c);
       if (!c.local) { journal(`x ARRET ignoré : ${c.nom} (#${c.id}, ${c.ip}) n'est pas en boucle locale`); break; }
       arreter('ARRET');
       break;
@@ -3373,10 +3425,42 @@ function definirReseau(ouvrir) {
   basculeReseau = basculeReseau.then(() => basculerReseau(!!ouvrir)).catch(e => journal('échec de la bascule réseau : ' + ((e && e.message) || e)));
   return basculeReseau;
 }
+let echecsBasculeSimules = 0;
+/* MC_TEST_ECHEC_BASCULE=N : les N premières ouvertures d'écouteur d'une bascule échouent
+   (1 : la nouvelle liaison échoue puis l'ancienne est restaurée ; 2 : les deux échouent) —
+   tests de l'échec, jamais en exploitation. */
+async function ouvrirEcouteBascule(port) {
+  if (echecsBasculeSimules < (parseInt(process.env.MC_TEST_ECHEC_BASCULE, 10) || 0)) {
+    echecsBasculeSimules++;
+    throw Object.assign(new Error('échec simulé'), { code: 'ETEST' });
+  }
+  return ouvrirEcoute(port);
+}
 async function basculerReseau(ouvrir) {
   if (arretEnCours) return;
   if (ouvrir === reseauOuvert) { diffuser(messageReseau()); return; }
+  const ancien = reseauOuvert, port = portActuel;
+  /* Un écouteur « toutes interfaces » et les deux liaisons de boucle locale se
+     disputent le même port : on ferme l'ancien puis on ouvre le nouveau (les
+     connexions déjà établies survivent). Rien d'autre ne change tant que la
+     nouvelle liaison n'est pas ouverte : ni mode, ni pause, ni délai de grâce,
+     ni expulsions — un échec laisse donc le serveur exactement comme avant. */
   reseauOuvert = ouvrir;
+  await fermerEcouteurs();
+  try {
+    await ouvrirEcouteBascule(port);
+  } catch (e) {
+    journal(`échec de la liaison ${ouvrir ? 'ouverte' : 'fermée'} sur le port ${port} : ${e.message} — retour à l'état précédent`);
+    reseauOuvert = ancien;
+    try { await ouvrirEcouteBascule(port); }
+    catch (e2) {
+      journal(`liaison précédente irrécupérable (${e2.message}) — arrêt propre du serveur`);
+      await arreter('écoute impossible');
+      return;
+    }
+    diffuser(messageReseau());
+    return;
+  }
   if (ouvrir) {
     if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
     if (enPause) definirPause(false);                // aucune pause dans un monde ouvert
@@ -3387,15 +3471,6 @@ async function basculerReseau(ouvrir) {
       envoyer(c, { t: NP.MSG.REFUS, motif: CA.MOTIFS_REFUS.RESEAU_FERME });
       setTimeout(() => fermer(c, 'reseau ferme'), 50);
     });
-  }
-  const port = portActuel;
-  await fermerEcouteurs();
-  try {
-    await ouvrirEcoute(port);
-  } catch (e) {
-    journal(`échec de la liaison ${ouvrir ? 'ouverte' : 'fermée'} sur le port ${port} : ${e.message} — retour à l'état précédent`);
-    reseauOuvert = !ouvrir;
-    await ouvrirEcoute(port);
   }
   journal(reseauOuvert ? `réseau OUVERT sur le port ${portActuel} (${adressesActives.join(', ')})` : `réseau FERMÉ — boucle locale seulement (${adressesActives.join(', ')}:${portActuel})`);
   diffuser(messageReseau());
@@ -3413,7 +3488,11 @@ demarrerEcoute().then(() => {
     ouvrirNavigateur(`http://localhost:${portActuel}`);
   }
   // lancé par une bascule de partie : le navigateur doit se reconnecter, sinon on ne reste pas orphelin
-  if (RELANCE && !reseauOuvert) armerAbsence(Math.max(GRACE_ARRET_MS, 30000));   // relance interne : le navigateur a le temps de se reconnecter
+  if (RELANCE && !reseauOuvert) {
+    // tant que le navigateur ne s'est pas reconnecté le monde attend (pause d'absence, levée à la reconnexion)
+    enPause = true; pauseRev++; pauseParAbsence = true;
+    armerAbsence(Math.max(GRACE_ARRET_MS, 30000));
+  }   // relance interne : le navigateur a le temps de se reconnecter
 }).catch((e) => {
   const motif = e && e.code === 'EADDRINUSE'
     ? (PARAMS.portFixe ? `le port ${PARAMS.port} est déjà utilisé` : `aucun port libre entre ${PARAMS.port} et ${CA.BORNES.PORT_REPLI_MAX}`)
@@ -3493,4 +3572,4 @@ if (process.env.MC_TEST_ARRET_MS) {
   setTimeout(() => { arreter('test'); }, parseInt(process.env.MC_TEST_ARRET_MS, 10) || 0);
 }
 
-module.exports = { ecouteurs, cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };
+module.exports = { cheminSur, CONF, admin, ADMIN_SECRET, sauvegarderMondeSync, sauvegarderMondeAsync, appliquerEtatMonde, etatMonde };
