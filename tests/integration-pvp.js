@@ -182,7 +182,10 @@ async function attendreDemarrage(port) {
     eq(toiB1d && toiB1d[0] && toiB1d[0].pv, 15, 'SPEC-PVP-005 : en duel, le coup porte même sans --pvp');
 
     // achever Bob DANS le duel : ni butin ni meurtre non consenti comptés
-    for (let i = 0; i < 3; i++) {
+    // sous charge, la cadence serveur (0,4 s de temps de simulation) peut
+    // ne pas être écoulée après 500 ms réelles : on frappe jusqu'à la défaite
+    // (bornée) plutôt que de supposer que trois coups précis passent.
+    for (let i = 0; i < 12 && !b1.messages.some(m => m.t === 'pvp' && m.evt === 'defaite'); i++) {
       a1.envoyer({ t: 'attaque', j: 0, degats: 5, joueurCible: bB1.id + '/0' });
       await dodo(500);
     }

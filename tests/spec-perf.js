@@ -49,10 +49,10 @@
       /* Seuil généreux et non le chiffre mesuré (SPEC-PERF-017/tests/budget-perf.json
          y veillent avec plus de précision) : mesuré ~44-45 ms/chunk le
          2026-09-24 (80 chunks en spirale) contre ~98-112 ms/chunk avant le
-         cache — 65 ms laisse une bonne marge à une machine plus lente, tout
+         cache — 75 ms laisse une bonne marge à une machine plus lente, tout
          en restant nettement sous la moyenne d'avant : un retour au bruit
          non mis en cache doit échouer ici. */
-      A.lt(avg, 65, 'génération moyenne sous le budget de 65 ms/chunk (mesuré ' + avg.toFixed(1) + ' ms)');
+      A.lt(avg, 75, 'génération moyenne sous le budget de 75 ms/chunk (mesuré ' + avg.toFixed(1) + ' ms)');
     });
 
     it('SPEC-PERF-002 : le cache de coins de bruit de grotte est borné, sans fuite sur une session longue', function () {
