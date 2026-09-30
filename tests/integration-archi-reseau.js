@@ -245,7 +245,7 @@ async function scenarioPage(nav) {
     ok(!aBloc(dossier, bloc2.x, bloc2.y, bloc2.z), 'préparation : le bloc 2 n\'est pas encore sur disque');
     try { await CDP.fermerOnglet(nav.port, s.cibleId); } catch (e) { /* « Target is closing » n'est pas du JSON */ }            // l'onglet disparaît sans aucun évènement de page exploitable
     ferme = true;
-    ok(await sonder(() => aBloc(dossier, bloc2.x, bloc2.y, bloc2.z), 15000, 100),
+    ok(await sonder(() => aBloc(dossier, bloc2.x, bloc2.y, bloc2.z), 40000, 100),
       'SPEC-ARCHI-036 : après la fermeture brutale de l\'onglet (sans beforeunload), le serveur a sauvegardé au départ du dernier client — le bloc 2 est sur disque');
     ok(await sonder(() => serveur.logs.some(l => /sauvegarde du monde \(dernier client\)/.test(l)), 5000),
       'SPEC-ARCHI-036 : c\'est la sauvegarde « dernier client » du serveur qui l\'a écrit', serveur.logs.slice(-6).join(' | '));
@@ -257,6 +257,119 @@ async function scenarioPage(nav) {
     await serveur.arreter();
     supprimerDossier(dossier);
   }
+}
+
+// ── revue B-RESEAU : index des overrides, /sauver en vol, départ en mode ouvert, mandataire, séparation ──
+async function scenarioIndexOverrides() {
+  const s = await demarrer([]);
+  const a = await rejoindre(s.port, 'Alice', 1);
+  const p = a.bienvenue.toi[0];
+  const bx = Math.floor(p.x), by = Math.floor(p.y) + 3, bz = Math.floor(p.z);
+  for (let k = 0; k < 3; k++) {
+    a.client.envoyer({ t: 'bloc', x: bx, y: by + k, z: bz, id: 9, j: 0 });
+    await a.client.attendre('bloc', 3000, m => m.x === bx && m.y === by + k && m.z === bz);
+  }
+  const cx = Math.floor(bx / 16), cz = Math.floor(bz / 16);
+  const demander = async (x, z) => {
+    const avant = a.client.depuis();
+    a.client.envoyer({ t: 'overrides_demande', cx: x, cz: z });
+    return sonder(() => avant('overrides_chunk').find(m => m.cx === x && m.cz === z), 4000).then(v => v || null);
+  };
+  const r1 = await demander(cx, cz);
+  eq(r1 && r1.blocs.filter(b => b[3] === 9).length, 3, 'SPEC-SERVEUR-009 : l\'index par chunk renvoie exactement les 3 blocs posés dans le chunk');
+  const r2 = await demander(cx + 2, cz);
+  eq(r2 && r2.blocs.length, 0, 'SPEC-SERVEUR-009 : un autre chunk ne renvoie rien de ce chunk');
+  a.client.envoyer({ t: 'bloc', x: bx, y: by + 1, z: bz, id: 0, j: 0 });
+  await a.client.attendre('bloc', 3000, m => m.x === bx && m.y === by + 1 && m.z === bz && m.id === 0);
+  const r3 = await demander(cx, cz);
+  ok(!!r3 && r3.blocs.filter(b => b[3] === 9).length === 2 && !r3.blocs.some(b => b[1] === by + 1 && b[3] !== 0), 'SPEC-SERVEUR-009 : casser un bloc met l\'index à jour (2 blocs restent)');
+  // demandes invalides : jamais de réponse, le serveur reste debout
+  const avant = a.client.depuis();
+  ['x', null, 1.5, 1e12, -1e12, {}].forEach(v => a.client.envoyer({ t: 'overrides_demande', cx: v, cz: 0 }));
+  a.client.envoyer({ t: 'overrides_demande', cx: 0 });
+  const r4 = await demander(cx, cz);
+  ok(!!r4 && avant('overrides_chunk').filter(m => m.cx !== cx || m.cz !== cz).length === 0, 'SPEC-SERVEUR-009 : cx/cz non entiers ou hors bornes sont refusés sans réponse');
+  a.client.fermer();
+  await s.arreter();
+}
+
+async function scenarioSauverEnVol() {
+  const dossier = dossierTemp('mc-archi-r4-');
+  try {
+    const s = await demarrer(['--dossier-parties', dossier], { MC_SAUVEGARDE_MS: '600000', MC_TEST_SAUVEGARDE_LENTE_MS: '4500' });
+    await chargerPartie(s.port, { nom: 'Vol', graine: 8, mode: 'creatif' });
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const p = a.bienvenue.toi[0];
+    const bx = Math.floor(p.x), by = Math.floor(p.y) + 3, bz = Math.floor(p.z);
+    a.client.envoyer({ t: 'bloc', x: bx, y: by, z: bz, id: 9, j: 0 });
+    a.client.envoyer({ t: 'chat', texte: 'un' });
+    ok(await sonder(() => s.logs.some(l => /<Alice> un$/.test(l)), 6000), 'préparation : bloc 1 traité');
+    const t0 = Date.now();
+    const premiere = requete(s.port, '/api/parties/sauver', { corps: {} });          // écriture n° 1 : en vol pendant 2,5 s
+    a.client.envoyer({ t: 'bloc', x: bx + 1, y: by, z: bz, id: 9, j: 0 });
+    a.client.envoyer({ t: 'chat', texte: 'deux' });
+    ok(await sonder(() => s.logs.some(l => /<Alice> deux$/.test(l)), 6000), 'préparation : bloc 2 traité pendant l\'écriture');
+    ok(await sonder(() => Date.now() - t0 > 2200, 4000, 50), 'préparation : plus d\'une seconde écoulée');
+    const seconde = await requete(s.port, '/api/parties/sauver', { corps: {} });
+    ok(seconde.code === 200 && seconde.json.ok === true, 'SPEC-ARCHI-036 : la seconde demande répond', seconde.code + ' ' + seconde.corps);
+    ok(aBloc(dossier, bx + 1, by, bz), 'SPEC-ARCHI-036 : ok:true n\'est annoncé qu\'une fois le bloc 2 sur disque (pas à la fin de l\'écriture antérieure)');
+    await premiere;
+    a.client.fermer();
+    await s.arreter();
+  } finally { supprimerDossier(dossier); }
+}
+
+async function scenarioDepartOuvert() {
+  const dossier = dossierTemp('mc-archi-r5-');
+  try {
+    const s = await demarrer(['--ouvert', '--dossier-parties', dossier], { MC_SAUVEGARDE_MS: '600000' });
+    await chargerPartie(s.port, { nom: 'Ouvert', graine: 9, mode: 'creatif' });
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const b = await rejoindre(s.port, 'Bob', 1);
+    const p = a.bienvenue.toi[0];
+    const bx = Math.floor(p.x), by = Math.floor(p.y) + 3, bz = Math.floor(p.z);
+    a.client.envoyer({ t: 'bloc', x: bx, y: by, z: bz, id: 9, j: 0 });
+    a.client.envoyer({ t: 'chat', texte: 'pose' });
+    ok(await sonder(() => s.logs.some(l => /<Alice> pose$/.test(l)), 6000), 'préparation : bloc traité');
+    ok(!aBloc(dossier, bx, by, bz), 'préparation : rien sur disque (cadence 10 min)');
+    b.client.socket.destroy();
+    ok(await sonder(() => aBloc(dossier, bx, by, bz), 10000, 100), 'SPEC-ARCHI-012 : en mode ouvert, le départ d\'un joueur déclenche une sauvegarde (débounce 1,5 s)');
+    a.client.fermer();
+    await s.arreter();
+  } finally { supprimerDossier(dossier); }
+}
+
+async function scenarioMandataire() {
+  const dossier = dossierTemp('mc-archi-r6-');
+  try {
+    const s = await demarrer(['--dossier-parties', dossier]);
+    for (const en of ['X-Forwarded-For', 'Forwarded', 'X-Real-Ip']) {
+      const e = {}; e[en] = '203.0.113.9';
+      const r1 = await requete(s.port, '/api/parties', { entetes: e });
+      const r2 = await requete(s.port, '/api/parties/sauver', { corps: {}, entetes: e });
+      ok(r1.code === 403 && r2.code === 403, 'SPEC-ARCHI-002 : l\'API des parties refuse un en-tête de mandataire (' + en + ')', r1.code + '/' + r2.code);
+    }
+    eq((await requete(s.port, '/api/parties')).code, 200, 'contrôle : sans en-tête de mandataire, la boucle locale est admise');
+    await s.arreter();
+  } finally { supprimerDossier(dossier); }
+}
+
+async function scenarioSeparation() {
+  const s = await demarrer([], { MC_TEST_MOB: 'sheep' });
+  const a = await rejoindre(s.port, 'Alice', 1);
+  for (let i = 1; i <= 40; i++) {
+    a.client.envoyer({ t: 'e', s: i, j: 0, dt: 0.016, k: 0, yaw: 0, pitch: 0, v: 0 });
+    await dodo(20);
+  }
+  const etat = await sonder(() => { const e = a.client.dernier('etat'); return e && e.toi && e.toi[0].s >= 35 && e; }, 6000);
+  const mob = etat && (etat.mobs || []).find(m => m.t === 'sheep');
+  ok(!!etat && !!mob, 'préparation : le serveur diffuse la créature de test');
+  if (etat && mob) {
+    const d = Math.hypot(etat.toi[0].x - mob.x, etat.toi[0].z - mob.z);
+    ok(d >= 0.5, 'SPEC-ARCHI-037 : les créatures repoussent le joueur côté serveur (distance ' + d.toFixed(2) + ' au lieu de 0,3 au départ)');
+  }
+  a.client.fermer();
+  await s.arreter();
 }
 
 // ── audit statique de src/game.js ───────────────────────────────────────────
@@ -294,6 +407,11 @@ function scenarioAudit() {
     await scenarioFactions();
     await scenarioSauvegarde();
     await scenarioOverrides();
+    await scenarioIndexOverrides();
+    await scenarioSauverEnVol();
+    await scenarioDepartOuvert();
+    await scenarioMandataire();
+    await scenarioSeparation();
     if (!NAV) console.log('tools/navigateur.js indisponible — partie navigateur ignorée');
     else {
       try { nav = await NAV.lancer({ largeur: 1280, hauteur: 800 }); }

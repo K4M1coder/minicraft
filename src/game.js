@@ -244,8 +244,7 @@
         (m.chat || []).forEach(function (c) { chat.recevoir(c); });
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
         // SPEC-ARCHI-029 : l'appartenance de faction est celle du serveur (jamais un état local)
-        g.guilde = m.guilde || null;
-        if (g.guilde) chat.systeme('Faction : ' + g.guilde.nom + (g.guilde.rang ? ' (' + g.guilde.rang + ')' : ''));
+        if (m.guilde) chat.systeme('Faction : ' + m.guilde.nom + (m.guilde.rang ? ' (' + m.guilde.rang + ')' : ''));
       },
       onBloc: function (x, y, z, id, etat) {
         // autorite serveur : on applique sans discuter, meme si l on avait
@@ -461,8 +460,6 @@
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
-      // factions de joueurs : arbitrées par le serveur (SPEC-ARCHI-029), `g.guilde` = son annonce à la connexion
-      guilde: null,
       // SPEC-PERF-015 : métriques de rendu, calculées en continu indépendamment
       // du panneau F3 qui les affiche (SPEC-PERF-016)
       perf: { msGeneration: 0, msMaillage: 0, appelsDessin: 0, triangles: 0, fps: 0, fpsP50: 0, fpsP95: 0, renderDist: render.RENDER_DIST },
@@ -2641,8 +2638,8 @@
     function actionCommandeRendu(a) { render.reglerRealiste(a.realiste); }
     /* SPEC-ARCHI-029 : les factions de joueurs sont arbitrées par le SERVEUR
        (solo fermé comme réseau) ; la réponse revient par le chat, et
-       l'appartenance connue du client (g.guilde) est celle que le serveur
-       annonce à la connexion (BIENVENUE) — jamais un état local. */
+       le client ne tient AUCUN état de faction (le serveur annonce la sienne
+       à la connexion, BIENVENUE.guilde, et répond à chaque commande). */
     function actionCommandeFaction(a) { net.envoyerChat('/faction ' + (a.brut || '')); }
     function actionCommandeAdmin(a) { net.admin(a.action, a.args); }
     // B4 (SPEC-PVP-005) : le duel exige le serveur (aucun PvP réseau en solo)

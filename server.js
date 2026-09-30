@@ -157,6 +157,26 @@ if (!PARAMS.admin && !ADMIN_HERITE) {
 const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
 const monde = MC.createWorld(CONF.graine, { zonePolitique: PARAMS.zone });
 const entites = MC.createEntities(monde);
+/* Index des overrides PAR CHUNK (SPEC-SERVEUR-009) : « cx,cz » → ensemble des clés
+   « x,y,z » du chunk. Maintenu à chaque écriture (set/delete/clear de la Map du
+   monde, patchés sur l'instance : le monde ne connaît pas l'index), pour qu'une
+   OVERRIDES_DEMANDE coûte le nombre d'overrides DU CHUNK et non celui du monde
+   entier (à 100 joueurs, des dizaines de demandes par seconde chacun). */
+const indexOverrides = new Map();
+function cleChunkDe(k) { const p = k.split(','); return Math.floor(+p[0] / 16) + ',' + Math.floor(+p[2] / 16); }
+(function () {
+  const ov = monde.overrides, set0 = ov.set.bind(ov), del0 = ov.delete.bind(ov), clr0 = ov.clear.bind(ov);
+  ov.set = function (k, v) {
+    if (!ov.has(k)) { const c = cleChunkDe(k); let e = indexOverrides.get(c); if (!e) indexOverrides.set(c, e = new Set()); e.add(k); }
+    return set0(k, v) && ov;
+  };
+  ov.delete = function (k) {
+    if (ov.has(k)) { const c = cleChunkDe(k), e = indexOverrides.get(c); if (e) { e.delete(k); if (!e.size) indexOverrides.delete(c); } }
+    return del0(k);
+  };
+  ov.clear = function () { indexOverrides.clear(); return clr0(); };
+  ov.forEach((v, k) => { const c = cleChunkDe(k); let e = indexOverrides.get(c); if (!e) indexOverrides.set(c, e = new Set()); e.add(k); });
+})();
 const chat = MC.Chat.creer({ max: 120 });
 // SPEC-FACTION-006 à 013 : factions PNJ (royaumes, guildes marchandes, ordres,
 // bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
@@ -533,6 +553,7 @@ let sauvegardeArretee = false;         // plus aucune sauvegarde async après le
    monde est réellement resté figé depuis l'écriture précédente. */
 let derniereEmpreinte = null;
 let derniereHeureSauvee = null;
+let nbEcritures = 0;                   // écritures réussies depuis le démarrage (« /sauver » compare avant/après)
 let sauvegardeRedemandee = null;       // raison d'une sauvegarde événementielle demandée pendant une écriture en vol
 function empreinteEtat(json) { return json.replace(/"heure":[-0-9.eE+]+/, '"heure":0'); }
 function apresSauvegarde(raison, ms, octets) {
@@ -569,7 +590,7 @@ function sauvegarderMondeAsync(raison, evenement) {
     sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
     // la partie a été supprimée pendant l'écriture : ne rien laisser derrière
     if (ok && CONF.mondeFichier !== cible) { try { fs.unlinkSync(cible); } catch (e) { /* déjà absent */ } ok = false; }
-    if (ok) { derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison, msSerialisation, data.length); }
+    if (ok) { nbEcritures++; derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison, msSerialisation, data.length); }
     if (sauvegardeRedemandee) { const r = sauvegardeRedemandee; sauvegardeRedemandee = null; sauvegarderMondeAsync(r, true); }
   };
   try { fs.mkdirSync(path.dirname(cible), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
@@ -934,6 +955,15 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
   };
 }
 
+/* MC_TEST_MOB='sheep' : réservé aux suites d'intégration (comme MC_TEST_SPAWN, désactivé
+   par défaut) — une créature PASSIVE posée à 0,3 bloc du point d'apparition, pour
+   prouver que les créatures repoussent le joueur (SPEC-ARCHI-037). */
+if (process.env.MC_TEST_MOB) {
+  const t = process.env.MC_TEST_MOB;
+  const m = entites.spawn(t, SPAWN.x + 0.3, SPAWN.y, SPAWN.z);
+  if (m) m.wanderCd = 1e9;
+}
+
 // ── clients ──────────────────────────────────────────────────────────────────
 let prochainId = 1;
 const clients = new Map();          // id -> {id, nom, socket, pos, yaw, pitch, locaux, vivant}
@@ -1061,6 +1091,7 @@ function fermer(c, raison) {
      fermé brutalement compris) sauvegarde tout de suite, met le monde en
      pause et arme l'arrêt après le délai de grâce. En mode OUVERT, jamais de
      terminaison sur départ du dernier joueur (c). */
+  if (reseauOuvert && c.rejoint && !arretEnCours) sauvegarderAuDepart();
   if (c.poste && !reseauOuvert && clientsActifs() === 0 && !arretEnCours) {
     sauvegarderMondeAsync('dernier client', true);
     definirPause(true, true);
@@ -1068,6 +1099,18 @@ function fermer(c, raison) {
   }
 }
 
+/* Mode OUVERT : le départ d'un joueur sauvegarde aussi (un crash ne coûte pas jusqu'à
+   toute la cadence de 2 minutes), avec un débounce : au plus une sauvegarde de départ
+   toutes les 10 s, jamais un travail par départ à 100 joueurs. */
+let departSauveT = null, departSauveDernier = 0;
+function sauvegarderAuDepart() {
+  if (departSauveT) return;
+  const delai = Math.max(1500, departSauveDernier + 10000 - Date.now());
+  departSauveT = setTimeout(() => {
+    departSauveT = null; departSauveDernier = Date.now();
+    if (!arretEnCours) sauvegarderMondeAsync('départ d\'un joueur', true);
+  }, delai);
+}
 function journal(txt) {
   const h = new Date().toTimeString().slice(0, 8);
   console.log(`[${h}] ${txt}`);
@@ -1405,6 +1448,7 @@ function lireCorpsGros(req, max, cb) {
   });
 }
 function apiPartiesAutorisee(req, res) {
+  if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) { repondreJSON(res, 403, { ok: false, motif: 'mandataire refusé' }); return false; }     // comme connexionLocale
   if (!CA.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return false; }
   const origine = req.headers['origin'];
   if (origine && CA.originesLocales(portActuel).indexOf(origine) < 0) { repondreJSON(res, 403, { ok: false, motif: 'origine refusée' }); return false; }
@@ -1471,9 +1515,19 @@ function traiterApiParties(req, res) {
         const t = Date.now();
         if (t - derniereDemandeSauvegarde < 1000) { repondreJSON(res, 429, { ok: false, motif: 'trop_frequent' }); return; }
         derniereDemandeSauvegarde = t;
+        const avant = nbEcritures;
         sauvegarderMondeAsync('demande du joueur', true);
-        const enVol = sauvegardeEnCoursAttente;
-        Promise.race([enVol || Promise.resolve(), dodo(5000)]).then(() => repondreJSON(res, 200, { ok: true, ecrite: !!enVol }));
+        /* On répond quand PLUS AUCUNE écriture n'est en vol : une écriture périodique déjà
+           en cours n'a pas capturé l'état actuel, la sauvegarde redemandée qui la suit oui. */
+        const limite = Date.now() + 5000;
+        (async () => {
+          while (sauvegardeEnCoursAttente && Date.now() < limite) {
+            let minuterie;
+            await Promise.race([sauvegardeEnCoursAttente, new Promise((r) => { minuterie = setTimeout(r, Math.max(1, limite - Date.now())); })]);
+            clearTimeout(minuterie);
+          }
+          repondreJSON(res, 200, { ok: true, ecrite: nbEcritures > avant, enVol: !!sauvegardeEnCoursAttente });
+        })();
         return;
       }
       case '/renommer': {
@@ -1817,14 +1871,15 @@ function antiFloodOk(c, m) {
 const RAYON_BIENVENUE_CHUNKS = 2;
 function overridesEnVue(cx0, cz0, rayon) {
   const blocs = [];
-  monde.overrides.forEach((id, k) => {
-    const p = k.split(',');
-    const x = +p[0], z = +p[2];
-    const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
-    if (Math.abs(cx - cx0) > rayon || Math.abs(cz - cz0) > rayon) return;
-    const etat = monde.etatsOverrides ? (monde.etatsOverrides.get(k) || 0) : 0;
-    blocs.push([x, +p[1], z, id, etat]);
-  });
+  for (let cx = cx0 - rayon; cx <= cx0 + rayon; cx++) for (let cz = cz0 - rayon; cz <= cz0 + rayon; cz++) {
+    const e = indexOverrides.get(cx + ',' + cz);
+    if (!e) continue;
+    e.forEach((k) => {
+      const p = k.split(',');
+      const etat = monde.etatsOverrides ? (monde.etatsOverrides.get(k) || 0) : 0;
+      blocs.push([+p[0], +p[1], +p[2], monde.overrides.get(k), etat]);
+    });
+  }
   return blocs;
 }
 
@@ -3575,12 +3630,18 @@ setInterval(() => {
     js.attaqueCd = Math.max(0, js.attaqueCd - dt);
     js.tirCd = Math.max(0, js.tirCd - dt);
     const st = js.joueur.state;
+    let avance = 0;
     while (js.entrees.length && !st.dead && js.budget.consommer(js.entrees[0].dt)) {
       const e = js.entrees.shift();
       SY.rejouer(js.joueur, [e]);
       js.joueur.updateSurvival(e.dt);
       js.dernier = e.s;
+      avance += e.dt;
     }
+    /* Les créatures repoussent le joueur (elles ne se traversent pas), UNE fois par tic
+       et par joueur (coût borné à 100 joueurs) ; côté serveur seulement — la prédiction
+       du client ne la connaît pas, la réconciliation absorbe l'écart. */
+    if (avance > 0 && !st.dead) entites.separer(st, avance);
     // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
     while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
     /* Le climat agit sur le corps : c'est au serveur, qui fait foi sur la
