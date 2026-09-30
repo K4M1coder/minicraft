@@ -306,6 +306,8 @@
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
+  // chantier ARCHI (L50, SPEC-ARCHI-019) : pause, réseau à chaud, arrêt, sommeil, histoire, succès
+  if (MC.ContratsArchi) Object.keys(MC.ContratsArchi.MSG).forEach(function (k) { MSG[k] = MC.ContratsArchi.MSG[k]; });
 
   /* Valide un message entrant. Un message sans `t` connu est rejeté : il ne
      doit jamais pouvoir faire planter le serveur. */
@@ -413,7 +415,9 @@
             Math.abs(msg.cx) > COORD_MAX || Math.abs(msg.cz) > COORD_MAX) return null;
         return { t: msg.t, cx: msg.cx | 0, cz: msg.cz | 0 };
 
-      default: return MC.ContratsV2 ? MC.ContratsV2.valider(msg) : null;
+      default:
+        if (MC.ContratsArchi && MC.ContratsArchi.SENS[msg.t] === 'c>s') return MC.ContratsArchi.valider(msg);
+        return MC.ContratsV2 ? MC.ContratsV2.valider(msg) : null;
     }
   }
 
