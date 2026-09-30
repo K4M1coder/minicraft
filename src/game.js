@@ -328,7 +328,7 @@
       },
       onStatut: function (e, info) {
         if (e === 'en ligne') ui.toast('En ligne');
-        else if (e === 'erreur') ui.toast('Reseau : ' + (info || 'erreur'), 'warn');
+        else if (e === 'erreur') { if (!(poste && attenteTerrain && info === 'poste_deja_connecte')) ui.toast('Reseau : ' + (info || 'erreur'), 'warn'); }
         else if (e === 'hors ligne') {
           if (info && poste) {
             // il n'y a plus de « solo » local : sans serveur, on retourne au menu, qui dit ce qui se passe
@@ -786,21 +786,35 @@
         g.histoire = null;
         g.succes = MC.Succes.creer();
         chat.vider();
-        rejoindreServeur({ hote: '', pseudo: g.nomJoueur || pseudoLocal(), joueurs: joueurs });
+        var optsRejoindre = { hote: '', pseudo: g.nomJoueur || pseudoLocal(), joueurs: joueurs };
+        rejoindreServeur(optsRejoindre);
         montrer();                                       // rejoindreServeur passe en 'playing' (efface l'écran) : on le remet
-        surveillerTerrain();
+        surveillerTerrain(optsRejoindre);
       }, function (e) { attenteTerrain = null; erreurPoste('Chargement impossible', e); });
     }
     /* Attend BIENVENUE puis les premiers chunks maillés autour du joueur, sans
        jamais rester figé : au bout de 25 s on y va quand même et on le dit. */
-    function surveillerTerrain() {
+    function surveillerTerrain(optsRejoindre) {
       var at = attenteTerrain;
       if (!at) return;
       var debut = Date.now();
+      var essais = 0, reprise = 0;
       var iv = setInterval(function () {
         if (attenteTerrain !== at) { clearInterval(iv); return; }
         var enLigne = net.etat === 'en ligne';
         if (enLigne && at.etapes[1].etat !== 'ok') { at.etapes[1].etat = 'ok'; at.etapes[2].etat = 'cours'; at.montrer(); }
+        if (reprise) return;                             // une nouvelle tentative est programmée
+        /* Après une actualisation de page (F5), le serveur peut ne pas avoir encore constaté la
+           fermeture de l'ancienne connexion : il refuse alors « poste_deja_connecte ». On
+           réessaie quelques fois, à 300 ms, avant de parler de connexion refusée. */
+        if (net.etat === 'erreur' && net.erreur === MC.ContratsArchi.MOTIFS_REFUS.POSTE_DEJA_CONNECTE && essais < 4) {
+          essais++;
+          reprise = setTimeout(function () {
+            reprise = 0;
+            if (attenteTerrain === at) net.connecter(optsRejoindre.hote, optsRejoindre.pseudo, optsRejoindre.joueurs || 1, {});
+          }, 300);
+          return;
+        }
         if (net.etat === 'erreur' || (net.etat === 'hors ligne' && Date.now() - debut > 1500)) {
           clearInterval(iv); attenteTerrain = null;
           erreurPoste('Connexion refusée', { motif: net.erreur || 'connexion impossible' });

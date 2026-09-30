@@ -226,6 +226,33 @@ async function scenarioParcours(nav) {
   } finally { s.fermer(); supprimerDossier(dossier); }
 }
 
+
+// ── F5 : l'ancienne connexion traîne encore côté serveur → poste_deja_connecte, on réessaie ──
+async function scenarioReessai(nav) {
+  const dossier = dossierTemp('mc-archi-c2-');
+  const serveur = await demarrer(['--port', '0', '--dossier-parties', dossier]);
+  const P = serveur.port;
+  const id = (await requete(P, '/api/parties', { corps: { nom: 'Reessai', graine: 12 } })).json.partie.id;
+  await requete(P, '/api/parties/charger', { corps: { id } });
+  for (let k = 0; k < 200 && !((await requete(P, '/api/parties')).json || {}).actif; k++) await dodo(100);
+  const s = await session(nav, '');
+  try {
+    await s.aller('http://127.0.0.1:' + P + '/index.html');
+    ok(await s.attendre("typeof window.GAME !== 'undefined' && !!document.querySelector('.parties .charger')", 60000), 'préparation : menu affiché');
+    // un « ancien onglet » occupe encore le poste au moment où la page se connecte
+    const occupant = await A.rejoindre(P, 'Occupant', 1);
+    await s.ev("document.querySelector('.parties .charger').click()");
+    // il reste jusqu'à ce que le serveur ait REFUSÉ la page, puis part 0,4 s après, comme une socket qui finit de se fermer
+    for (let k = 0; k < 300 && !serveur.logs.some(l => /refusé — un poste est déjà connecté/.test(l)); k++) await dodo(50);
+    ok(serveur.logs.some(l => /refusé — un poste est déjà connecté/.test(l)), 'préparation : le serveur a bien refusé la première tentative de la page');
+    await dodo(400);
+    occupant.client.fermer();
+    const jouee = await s.attendre("window.GAME.net.etat === 'en ligne' && window.GAME.input.state === 'playing' && !document.querySelector('#ecran-attente')", 60000, 200);
+    ok(jouee, 'la connexion refusée « poste_deja_connecte » est retentée et aboutit (pas de « Connexion refusée »)');
+    ok(!/Connexion refusée/.test(await s.ev("document.body.innerText")), "aucun écran d'erreur n'a été affiché");
+  } finally { s.fermer(); await serveur.arreter(); supprimerDossier(dossier); }
+}
+
 (async function () {
   let nav = null;
   try {
@@ -233,7 +260,7 @@ async function scenarioParcours(nav) {
     try { nav = await NAV.lancer({ largeur: 1280, hauteur: 800 }); }
     catch (e) { console.log('AVERTISSEMENT : aucun navigateur Edge/Chrome utilisable (' + e.message + ') — suite ignorée'); process.exit(0); }
     await CDP.attendrePortPret(nav.port, 20000);
-    const tous = { sansserveur: scenarioSansServeur, bloque: scenarioBloque, parcours: scenarioParcours };
+    const tous = { sansserveur: scenarioSansServeur, bloque: scenarioBloque, parcours: scenarioParcours, reessai: scenarioReessai };
     const choix = process.argv[2] ? [process.argv[2]] : Object.keys(tous);
     for (const k of choix) await tous[k](nav);
   } catch (e) {

@@ -489,6 +489,7 @@ respecter (voir PLAN.md, « Commits et versions »).
   littéral, sans plus jamais lire `tools/hooks/delai-filet.js`).
 
 ### Corrigé
+- Chantier ARCHI, client : après une actualisation de page (F5) le serveur peut ne pas avoir encore constaté la fermeture de l'ancienne connexion et refuser `poste_deja_connecte` ; l'écran d'attente de la partie réessaie jusqu'à 4 fois à 300 ms avant d'afficher « Connexion refusée » (`tests/integration-archi-client.js`, scénario `reessai`, dans un vrai navigateur).
 - Chantier ARCHI, robustesse du serveur local après revue adversariale (`tests/integration-archi-robustesse.js`) :
   - **Pause complète** (SPEC-ARCHI-010) : en pause, sont aussi ignorés `MANGER`, `RENAITRE` (un joueur mort renaît à la reprise), `DISTRIB`, `CRAFT`, `EQUIP`, `INV_CONSOMMER`, `INV_LACHER`, `INV_CREATIF`, `TROC`, `CONTENEUR_OUVRIR` et `CONTENEUR_TRANSFERT` ; `ADMIN`, `CHAT`, `CONTENEUR_FERMER` restent acceptés. La progression d'un fourneau est vérifiée figée pendant 3 s de pause (l'instantané `/api/parties` expose désormais `monde.fours`).
   - **Bascule réseau à chaud** : le mode, la pause, le délai de grâce et les expulsions ne changent qu'APRÈS l'ouverture de la nouvelle liaison ; un échec restaure la liaison précédente sans effet de bord, et si elle est aussi perdue le serveur sauvegarde et s'arrête proprement.
