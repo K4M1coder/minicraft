@@ -2360,14 +2360,14 @@
       var m = mobDistantVise(pl);
       if (m) {
         st.attackCd = cadence;
-        net.attaquer(m.eid, (d && d.damage) || 1, j.index);
+        net.attaquer(m.eid, (d && d.damage) || 1, j.index, st.selected);
         audio.play('frapper');
         return true;
       }
       var dj = joueurDistantVise(pl);
       if (!dj) return false;
       st.attackCd = cadence;
-      net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index);
+      net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index, st.selected);
       audio.play('frapper');
       return true;
     }
@@ -2378,7 +2378,7 @@
       if (!tir) return null;
       entities.list.splice(avant);             // …mais la flèche vole côté serveur
       net.tirer(pl.lookDir(), d.vitesseTir || 34,
-                d.sansMunition ? (d.degatsTir || 6) : 5 + (d.bonusTir || 0), d.ranged, j.index);
+                d.sansMunition ? (d.degatsTir || 6) : 5 + (d.bonusTir || 0), d.ranged, j.index, pl.state.selected);
       return tir;
     }
 

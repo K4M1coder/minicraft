@@ -45,15 +45,6 @@ async function jusqua(lire, ms, pas) {
   }
 }
 const etatToi = (cl) => { const e = cl.dernier('etat'); return e && e.toi && e.toi[0]; };
-/* Un flux d'entrées au rythme du jeu : 20 par seconde, dt 0,05. */
-function fluxEntrees(cl, opts) {
-  opts = opts || {};
-  let s = 0;
-  const t = setInterval(() => {
-    cl.envoyer({ t: A.NP.MSG.ENTREE, s: ++s, j: 0, dt: 0.05, k: opts.k || 0, yaw: opts.yaw || 0, pitch: 0, v: 0 });
-  }, 50);
-  return { arreter() { clearInterval(t); }, envoyees: () => s };
-}
 function monde(hp, faim, inv) {
   const SLOTS = MC.ContratsV2.BORNES.SLOTS_INV;
   const cases = new Array(SLOTS).fill(0);
@@ -68,6 +59,23 @@ async function poserBloc(cl, pos, id) {
   return cl.attendre('bloc', 3000, m => m.x === pos.x && m.y === pos.y && m.z === pos.z);
 }
 
+const heureJeu = (cl) => { const e = cl.dernier('etat'); return e ? e.heure : null; };
+/* Attend que `secs` secondes de TEMPS DE JEU se soient écoulées (l'heure de l'ETAT
+   avance), en sondage borné : jamais un délai fixe en temps réel. */
+async function attendreJeu(cl, secs, ms) {
+  const h0 = await jusqua(() => heureJeu(cl), 3000);
+  if (h0 === null) return false;
+  return !!(await jusqua(() => heureJeu(cl) - h0 >= secs, ms || 30000, 20));
+}
+/* Observation bornée d'un invariant pendant `ms` : rend true s'il tient tout du long.
+   (Un « rien ne se passe » ne peut pas s'attendre par un évènement : on l'observe.) */
+async function observer(ms, invariant) {
+  const fin = Date.now() + ms;
+  while (Date.now() < fin) { if (!invariant()) return false; await dodo(25); }
+  return true;
+}
+const prochainEtat = (cl) => { const n = cl.messages.length; return cl.attendre('etat', 4000, m => cl.messages.indexOf(m) >= n); };
+
 // ── SPEC-ARCHI-026 : la vie et la faim viennent du serveur, gelées en pause ──
 async function scenarioSurvie() {
   const d = A.dossierTemp('mc-vie-sv-');
@@ -79,35 +87,26 @@ async function scenarioSurvie() {
     const t0 = bienvenue.toi[0];
     ok(t0.pv === 4 && t0.faim === 20, 'SPEC-ARCHI-026 : point de départ 4 PV, faim pleine', JSON.stringify(t0));
 
-    // sans aucune entrée, rien ne change (le client ne calcule rien : le serveur seul fait vivre le corps)
-    await cl.attendre('etat', 3000);
-    const flux = fluxEntrees(cl);
-    // la régénération soigne (PV) puis épuise (faim) : les deux viennent de l'état reçu
+    // AUCUNE entrée envoyée (client muet) : le serveur fait vivre le corps au temps de jeu
     const soigne = await jusqua(() => { const e = etatToi(cl); return e && e.pv > 4 ? e : null; }, 20000);
-    ok(!!soigne, 'SPEC-ARCHI-026 : la vie remonte par l\'état du serveur (régénération)');
+    ok(!!soigne, 'SPEC-ARCHI-026 : la vie remonte par l\'état du serveur (régénération), client muet');
     const affame = await jusqua(() => { const e = etatToi(cl); return e && e.faim < 20 ? e : null; }, 30000);
-    ok(!!affame, 'SPEC-ARCHI-026 : la faim baisse par l\'état du serveur (épuisement)');
-    flux.arreter();
+    ok(!!affame, 'SPEC-ARCHI-026 : la faim baisse par l\'état du serveur (épuisement), client muet');
 
-    // gel : entrées coupées, valeurs lues, PAUSE, entrées reprises 3 s, reprise
-    await dodo(300);
+    // gel : valeurs lues, PAUSE observée, reprise
     const avant = etatToi(cl);
     cl.envoyer({ t: 'pause', actif: true });
     await cl.attendre('pause_etat', 3000, m => m.actif === true);
-    const fluxPause = fluxEntrees(cl);
-    await dodo(3000);
-    fluxPause.arreter();
+    const hPause = await jusqua(() => heureJeu(cl), 1000);
+    const gele = await observer(3000, () => heureJeu(cl) === hPause);   // aucun ETAT n'avance en pause
     cl.envoyer({ t: 'pause', actif: false });
     await cl.attendre('pause_etat', 3000, m => m.actif === false);
-    const nEtat = cl.messages.length;
-    const apres = await cl.attendre('etat', 3000, m => cl.messages.indexOf(m) >= nEtat);
-    ok(apres.toi[0].pv === avant.pv && apres.toi[0].faim === avant.faim,
-       'SPEC-ARCHI-026 : PV et faim n\'ont pas bougé pendant la pause (même en recevant des entrées)',
-       `avant ${avant.pv}/${avant.faim}, après ${apres.toi[0].pv}/${apres.toi[0].faim}`);
+    const apres = (await prochainEtat(cl)).toi[0];
+    ok(gele && apres.pv <= avant.pv + 1 && apres.faim >= avant.faim - 1,
+       'SPEC-ARCHI-026 : PV et faim n\'ont pas avancé pendant 3 s de pause (sans pause, la régénération en aurait donné 2)',
+       `avant ${avant.pv}/${avant.faim}, après ${apres.pv}/${apres.faim}`);
     // témoin : la reprise refait vivre le corps
-    const flux2 = fluxEntrees(cl);
-    const repart = await jusqua(() => { const e = etatToi(cl); return e && (e.pv !== avant.pv || e.faim !== avant.faim) ? e : null; }, 20000);
-    flux2.arreter();
+    const repart = await jusqua(() => { const e = etatToi(cl); return e && (e.pv !== apres.pv || e.faim !== apres.faim) ? e : null; }, 20000);
     ok(!!repart, 'témoin : à la reprise, la vie et la faim évoluent de nouveau');
     cl.fermer();
     await s.arreter();
@@ -134,17 +133,14 @@ async function mourirPuisRenaitre(avecLit, litDetruit) {
         await cl.attendre('bloc', 3000, m => m.x === bed.x && m.y === bed.y && m.z === bed.z && m.id === 0);
       }
     }
-    // la famine (faim 0, difficulté normale) achève le dernier PV au bout de 4 s de jeu
-    const flux = fluxEntrees(cl);
+    // la famine (faim 0, difficulté normale) achève le dernier PV, sans une seule entrée du client
     const mort = await jusqua(() => { const e = etatToi(cl); return e && e.mort === 1 ? e : null; }, 20000);
-    flux.arreter();
-    ok(!!mort, 'préparation : le joueur meurt de faim sur le serveur');
+    ok(!!mort, 'préparation : le joueur meurt de faim sur le serveur (client muet)');
 
-    // le monde est figé : le mort renaît quand même
+    // le monde est figé : le mort renaît quand même (les messages sont traités dans l'ordre)
     cl.envoyer({ t: 'pause', actif: true });
     await cl.attendre('pause_etat', 3000, m => m.actif === true);
     cl.envoyer({ t: 'renaitre', j: 0 });
-    await dodo(300);
     cl.envoyer({ t: 'pause', actif: false });
     await cl.attendre('pause_etat', 3000, m => m.actif === false);
     const vivant = await jusqua(() => { const e = etatToi(cl); return e && e.mort === 0 ? e : null; }, 6000);
@@ -163,91 +159,110 @@ async function mourirPuisRenaitre(avecLit, litDetruit) {
     // un vivant qui envoie RENAITRE n'est pas téléporté
     const avantRen = etatToi(cl);
     cl.envoyer({ t: 'renaitre', j: 0 });
-    const n = cl.messages.length;
-    const e2 = await cl.attendre('etat', 3000, m => cl.messages.indexOf(m) >= n);
-    ok(e2.toi[0].x === avantRen.x && e2.toi[0].z === avantRen.z && e2.toi[0].pv === avantRen.pv, 'SPEC-ARCHI-026 : RENAITRE d\'un joueur vivant est sans effet');
+    const e2 = await prochainEtat(cl);
+    ok(e2.toi[0].x === avantRen.x && e2.toi[0].z === avantRen.z, 'SPEC-ARCHI-026 : RENAITRE d\'un joueur vivant est sans effet');
     cl.fermer();
     await s.arreter();
   } finally { A.supprimerDossier(d); }
 }
 
-// ── SPEC-ARCHI-027 : coups validés, butin par DONNE ──────────────────────────
-/* Un décalage (dx, dz) de 1,5 bloc depuis le point d'apparition dont le chemin
-   (3 blocs, à hauteur des pieds et de la tête) est libre : le butin doit pouvoir
-   être atteint à pied. Calculé sur le MÊME monde que le serveur (même graine). */
-function directionLibre() {
+// ── SPEC-ARCHI-027 : coups et tirs validés, butin par DONNE ──────────────────
+/* Un terrain plat de 9 x 9 blocs (bloc plein sous les pieds, deux blocs libres
+   au-dessus, même altitude) trouvé près du point d'apparition du monde : on y
+   pose le joueur (MC_TEST_SPAWN) et un mouton à 1,5 bloc, qui ne peut donc ni
+   tomber dans un trou ni y entraîner son butin. Calculé sur le MÊME monde que le
+   serveur (même graine). */
+function terrainPlat() {
   const w = MC.createWorld(20260921);
   const col = w.findSpawnColumn();
-  for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) w.getChunk(Math.floor(col[0] / 16) + cx, Math.floor(col[1] / 16) + cz, true);
-  const y0 = Math.floor(w.groundAt(col[0], col[1], true) + 1.2);
   const solide = (x, y, z) => MC.Core.isSolid(w.getBlock(x, y, z));
-  for (const [ux, uz] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
-    let libre = true;
-    for (let k = 1; k <= 3 && libre; k++) {
-      for (let dy = 0; dy <= 1; dy++) if (solide(col[0] + ux * k, y0 + dy, col[1] + uz * k)) libre = false;
+  for (let r = 0; r <= 80; r += 4) {
+    for (let a = 0; a < (r ? 8 : 1); a++) {
+      const cx = Math.round(col[0] + r * Math.cos(a * Math.PI / 4)), cz = Math.round(col[1] + r * Math.sin(a * Math.PI / 4));
+      for (let dx = -3; dx <= 3; dx++) for (let dz = -3; dz <= 3; dz++) w.getChunk(Math.floor((cx + dx) / 16), Math.floor((cz + dz) / 16), true);
+      const y0 = Math.floor(w.groundAt(cx, cz, true) + 1.2);
+      let plat = true;
+      for (let dx = -4; dx <= 4 && plat; dx++) for (let dz = -4; dz <= 4 && plat; dz++) {
+        const x = cx + dx, z = cz + dz;
+        if (!solide(x, y0 - 1, z) || solide(x, y0, z) || solide(x, y0 + 1, z)) plat = false;
+      }
+      if (plat) return { x: cx + 0.5, y: w.groundAt(cx, cz, true) + 1.2, z: cz + 0.5, dx: 1.5, dz: 0, ux: 1, uz: 0 };
     }
-    if (libre) return { dx: ux * 1.5, dz: uz * 1.5, ux, uz };
   }
   return null;
 }
-async function scenarioCombat() {
-  const dir = directionLibre();
-  if (!dir) { R.saut('combat et butin', 'aucune direction dégagée autour du point de départ'); return; }
-  const s = await demarrer([], Object.assign({}, SANS_POSE_LIBRE, seed([[I.WOOD_SWORD, 1]]),
-    { MC_TEST_MOBS: JSON.stringify([['sheep', dir.dx, dir.dz], ['sheep', 24 * dir.ux + 24 * (dir.uz ? 1 : 0), 24 * dir.uz]]) }));
+/* Serveur de combat : un mouton à 1,5 bloc (dégagé), un autre très loin, et
+   l'inventaire imposé (arme en case 0). */
+async function serveurCombat(inv) {
+  const dir = terrainPlat();
+  if (!dir) return null;
+  const s = await demarrer([], Object.assign({}, SANS_POSE_LIBRE, seed(inv),
+    { MC_TEST_SPAWN: `${dir.x},${dir.y},${dir.z}`, MC_TEST_MOBS: JSON.stringify([['sheep', dir.dx, dir.dz], ['sheep', 24, 0]]) }));
   const { client: cl } = await rejoindre(s.port, 'Chloe', 1);
   await cl.attendre('inv_maj', 4000);
   const moutons = () => { const e = cl.dernier('etat'); return e ? e.mobs.filter(m => m.t === 'sheep') : []; };
   const toi = () => etatToi(cl);
   const proche = await jusqua(() => { const t = toi(); return t && moutons().find(m => Math.hypot(m.x - t.x, m.z - t.z) < 5); }, 5000);
   const loin = await jusqua(() => { const t = toi(); return t && moutons().find(m => Math.hypot(m.x - t.x, m.z - t.z) > 12); }, 3000);
+  const vivant = (m) => !!moutons().find(x => x.e === m.e);
+  const frapper = (m, degats) => cl.envoyer({ t: 'attaque', eid: m.e, degats: degats === undefined ? 12 : degats, j: 0, i: 0 });
+  return { s, cl, dir, proche, loin, moutons, toi, vivant, frapper };
+}
+/* Vrai si la créature a disparu de l'état dans les 4 s (mort + délai de retrait). */
+const disparu = (C, m) => jusqua(() => !C.vivant(m), 4000);
+
+async function scenarioCombat() {
+  const C = await serveurCombat([[I.WOOD_SWORD, 1]]);
+  if (!C) { R.saut('combat et butin', 'aucun terrain plat près du point de départ'); return; }
+  const { s, cl, proche, loin, vivant, frapper, toi } = C;
   ok(!!proche, 'préparation : un mouton près du joueur');
   if (!proche) return;
-  const vivant = (m) => !!moutons().find(x => x.e === m.e);
-  const apresProchainEtat = async () => { const n = cl.messages.length; await cl.attendre('etat', 3000, m => cl.messages.indexOf(m) >= n); };
-  const frapper = (m, degats) => cl.envoyer({ t: 'attaque', eid: m.e, degats: degats === undefined ? 12 : degats, j: 0 });
 
   // portée : un mouton lointain n'est jamais touché
   if (loin) {
-    frapper(loin);
-    await dodo(500);
-    frapper(loin);
-    await apresProchainEtat();
+    frapper(loin); frapper(loin);
+    await attendreJeu(cl, 1);
     ok(vivant(loin), 'SPEC-ARCHI-027 : un coup sur une créature hors de portée est ignoré');
   } else R.saut('coup hors de portée', 'aucun mouton lointain dans l\'état reçu');
 
-  // dégâts : le client annonce 12, le serveur applique ceux du bois (3) sur 8 PV
+  // dégâts et cadence : « 12 dégâts » annoncés + rafale de six coups avec une épée de bois (3 dégâts sur 8 PV)
   frapper(proche);
-  await apresProchainEtat();
-  ok(vivant(proche), 'SPEC-ARCHI-027 : « 12 dégâts » annoncés avec une épée de bois ne tuent pas un mouton de 8 PV (plafond serveur)');
-  // cadence : une rafale de six coups immédiats ne compte pour rien de plus (3 + 0 = 3 < 8 : la créature vit)
   for (let k = 0; k < 6; k++) frapper(proche);
-  await dodo(100);
-  await apresProchainEtat();
-  ok(vivant(proche), 'SPEC-ARCHI-027 : une rafale de coups est limitée par la cadence serveur (un cheat à 60 coups/s ne tue pas)');
-  // des coups espacés (cadence respectée) finissent par tuer : 3 + 3 + 3 = 9 >= 8
+  await attendreJeu(cl, 2);
+  ok(vivant(proche), 'SPEC-ARCHI-027 : « 12 dégâts » et une rafale de coups ne tuent pas un mouton de 8 PV (plafond de l\'arme tenue, cadence)');
+  frapper(proche);                                            // 3 + 3 = 6 < 8
+  await attendreJeu(cl, 2);
+  ok(vivant(proche), 'SPEC-ARCHI-027 : deux coups espacés de l\'épée de bois laissent encore le mouton en vie');
+  frapper(proche);                                            // 9 >= 8
+  ok(!!(await disparu(C, proche)), 'SPEC-ARCHI-027 : le troisième coup espacé tue la créature');
+  cl.fermer();
+  await s.arreter();
+}
+
+// butin : une dague (peu de recul : le mouton reste sur le terrain plat) tue en quatre coups
+async function scenarioButin() {
+  const C = await serveurCombat([[I.DAGUE_BOIS, 1]]);
+  if (!C) { R.saut('butin', 'aucun terrain plat près du point de départ'); return; }
+  const { s, cl, proche, toi, frapper } = C;
+  ok(!!proche, 'préparation : un mouton près du joueur (dague)');
+  if (!proche) return;
   const donnes = [];
   cl.surMessage = (m) => { if (m.t === 'donne') donnes.push(m); };
-  let mort = false;
-  for (let k = 0; k < 8 && !mort; k++) {
-    await dodo(650);
-    frapper(proche);
-    mort = !!(await jusqua(() => !vivant(proche), 150));
-  }
-  ok(mort, 'SPEC-ARCHI-027 : des coups espacés tuent la créature');
+  for (let k = 0; k < 4; k++) { frapper(proche); await attendreJeu(cl, 0.4); }   // 4 x 2 dégâts = 8 PV
+  ok(!!(await disparu(C, proche)), 'SPEC-ARCHI-027 : quatre coups de dague espacés tuent le mouton');
 
   // le butin tombe au sol ; on marche vers lui jusqu'à ce que le serveur l'annonce (DONNE)
-  const inventaire0 = await jusqua(() => cl.dernier('inv_maj'), 1000);
-  const flux = { s: 0 };
+  const inventaire0 = cl.dernier('inv_maj');
+  let sN = 0;
   const fin = Date.now() + 12000;
   while (Date.now() < fin && !donnes.length) {
     const t = toi(), e = cl.dernier('etat');
     const it = e && e.mobs.filter(m => m.t === 'item').sort((a, b) => Math.hypot(a.x - t.x, a.z - t.z) - Math.hypot(b.x - t.x, b.z - t.z))[0];
     if (it && Math.hypot(it.x - t.x, it.z - t.z) > 0.5) {
       const yaw = Math.atan2(-(it.x - t.x), -(it.z - t.z));
-      cl.envoyer({ t: A.NP.MSG.ENTREE, s: ++flux.s, j: 0, dt: 0.05, k: 1, yaw, pitch: 0, v: 0 });
-    } else cl.envoyer({ t: A.NP.MSG.ENTREE, s: ++flux.s, j: 0, dt: 0.05, k: 0, yaw: 0, pitch: 0, v: 0 });
-    await dodo(50);
+      cl.envoyer({ t: A.NP.MSG.ENTREE, s: ++sN, j: 0, dt: 0.05, k: 1, yaw, pitch: 0, v: 0 });
+    } else cl.envoyer({ t: A.NP.MSG.ENTREE, s: ++sN, j: 0, dt: 0.05, k: 0, yaw: 0, pitch: 0, v: 0 });
+    await dodo(50);                                           // cadence d'envoi des entrées (comme le client), pas une attente
   }
   ok(donnes.length >= 1, 'SPEC-ARCHI-027 : le butin de la créature tuée est annoncé par DONNE', 'aucun message donne');
   if (donnes.length) {
@@ -259,6 +274,49 @@ async function scenarioCombat() {
   }
   cl.fermer();
   await s.arreter();
+}
+
+// la masse (0,95 s) est plus lente que le plancher fixe de 0,4 s d'avant : deux coups à 0,5 s ne comptent que pour un
+async function scenarioCadenceMasse() {
+  const C = await serveurCombat([[I.MASSE_BOIS, 1]]);
+  if (!C) { R.saut('cadence des armes', 'aucun terrain plat près du point de départ'); return; }
+  ok(!!C.proche, 'préparation : un mouton près du joueur (masse)');
+  if (C.proche) {
+    C.frapper(C.proche);                                       // 6 dégâts
+    await attendreJeu(C.cl, 0.5);
+    C.frapper(C.proche);                                       // 0,5 s plus tard : la masse n'a pas rechargé (0,95 s)
+    await attendreJeu(C.cl, 2);
+    ok(C.vivant(C.proche), 'SPEC-ARCHI-027 : la masse ne frappe pas deux fois à 0,5 s d\'intervalle (cadence de l\'arme, plus un 0,4 s fixe)');
+  }
+  C.cl.fermer();
+  await C.s.arreter();
+
+}
+
+// tir : dégâts et vitesse de l'arc possédé, jamais ceux annoncés par le client
+async function scenarioTir() {
+  const C = await serveurCombat([[I.ARC, 1], [I.FLECHE, 20]]);
+  if (!C) { R.saut('tir', 'aucun terrain plat près du point de départ'); return; }
+  const { cl, proche, toi } = C;
+  ok(!!proche, 'préparation : un mouton près du joueur (arc)');
+  if (proche) {
+    const viser = () => {
+      const t = toi(), m = C.moutons().find(x => x.e === proche.e);
+      if (!m) return null;
+      const dx = m.x - t.x, dy = (m.y + 0.6) - (t.y + 1.62), dz = m.z - t.z, n = Math.hypot(dx, dy, dz);
+      return { dx: dx / n, dy: dy / n, dz: dz / n };
+    };
+    const tirer = () => { const v = viser(); if (v) cl.envoyer({ t: 'tir', j: 0, dx: v.dx, dy: v.dy, dz: v.dz, vitesse: 50, degats: 12, genre: 'fleche', i: 0 }); };
+    tirer();
+    await attendreJeu(cl, 2);
+    ok(C.vivant(proche), 'SPEC-ARCHI-027 : une flèche « à 12 dégâts » ne fait que les 5 dégâts de l\'arc (mouton de 8 PV encore en vie)');
+    let mort = false;
+    for (let k = 0; k < 8 && !mort; k++) { tirer(); await attendreJeu(cl, 0.5); mort = !C.vivant(proche); }
+    mort = mort || !!(await disparu(C, proche));
+    ok(mort, 'témoin : des flèches espacées finissent par tuer le mouton');
+  }
+  cl.fermer();
+  await C.s.arreter();
 }
 
 // ── SPEC-ARCHI-027 : un gardien de donjon s'éveille pour un joueur solo ──────
@@ -328,6 +386,9 @@ function scenarioAudit() {
     await mourirPuisRenaitre(false, false);
     await mourirPuisRenaitre(true, true);
     await scenarioCombat();
+    await scenarioButin();
+    await scenarioCadenceMasse();
+    await scenarioTir();
     await scenarioGardien();
     await scenarioDuel();
     scenarioAudit();

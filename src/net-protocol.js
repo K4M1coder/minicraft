@@ -354,10 +354,10 @@
         // jamais aucun des deux, sinon on ne sait pas viser.
         var degats = estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 1;
         if (estEntier(msg.eid)) {
-          return { t: msg.t, eid: msg.eid | 0, j: joueurLocal(msg.j), degats: degats };
+          return caseTenue({ t: msg.t, eid: msg.eid | 0, j: joueurLocal(msg.j), degats: degats }, msg);
         }
         if (typeof msg.joueurCible === 'string' && /^\d+(\/\d+)?$/.test(msg.joueurCible)) {
-          return { t: msg.t, joueurCible: msg.joueurCible.slice(0, 16), j: joueurLocal(msg.j), degats: degats };
+          return caseTenue({ t: msg.t, joueurCible: msg.joueurCible.slice(0, 16), j: joueurLocal(msg.j), degats: degats }, msg);
         }
         return null;
       }
@@ -370,10 +370,10 @@
         var n = Math.hypot(msg.dx, msg.dy, msg.dz);
         if (n < 0.5 || n > 1.5) return null;
         var genres = ['fleche', 'galet', 'sortilege'];
-        return { t: msg.t, j: joueurLocal(msg.j), dx: msg.dx / n, dy: msg.dy / n, dz: msg.dz / n,
+        return caseTenue({ t: msg.t, j: joueurLocal(msg.j), dx: msg.dx / n, dy: msg.dy / n, dz: msg.dz / n,
                  vitesse: estFini(msg.vitesse) ? Math.max(10, Math.min(50, +msg.vitesse)) : 34,
                  degats: estFini(msg.degats) ? Math.max(1, Math.min(12, +msg.degats)) : 5,
-                 genre: genres.indexOf(msg.genre) >= 0 ? msg.genre : 'fleche' };
+                 genre: genres.indexOf(msg.genre) >= 0 ? msg.genre : 'fleche' }, msg);
       }
       case MSG.BOUGE:
         // SPEC-SECU-008 : la position n'est plus autoritaire (SPEC-NET-026)
@@ -432,6 +432,12 @@
   // indice du joueur local sur le poste (écran partagé) : 0 à 3
   function joueurLocal(j) { return estEntier(j) && j >= 0 && j < 4 ? j : 0; }
   function estEntier(v) { return estFini(v) && Math.floor(v) === v; }
+  /* SPEC-ARCHI-027 : la case d'inventaire tenue (facultative) accompagne un coup
+     ou un tir ; le serveur y lit l'arme réelle. */
+  function caseTenue(o, msg) {
+    if (estEntier(msg.i) && msg.i >= 0 && msg.i < 64) o.i = msg.i | 0;
+    return o;
+  }
   // SPEC-SECU-008 : x/z dans ±COORD_MAX, y dans la hauteur réelle du monde.
   function estCoordHorizontale(v) { return estEntier(v) && Math.abs(v) <= COORD_MAX; }
   function estCoordVerticale(v) { return estEntier(v) && v >= 0 && v <= WORLD_H - 1; }
