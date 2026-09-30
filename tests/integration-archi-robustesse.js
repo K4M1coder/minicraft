@@ -31,9 +31,8 @@ async function attendreActif(port, id) {
   }
   return false;
 }
-async function arreterSurPort(port) {
-  try { const c = await connecter(port); c.envoyer({ t: 'arret' }); await dodo(700); c.fermer(); } catch (e) { /* déjà arrêté */ }
-}
+// arrêt fiable de la relance détachée : voir A.arreterSurPort (PID par l'API, repli par kill)
+const arreterSurPort = (port) => A.arreterSurPort(port, 15000);
 
 // ── SPEC-ARCHI-010 : fourneau et messages d'inventaire gelés en pause ────────
 async function scenarioPauseComplete() {

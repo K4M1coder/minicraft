@@ -196,7 +196,7 @@ function sonde(port, hote) {
    lu ET l'index servi ; rejette si le processus se termine avant. */
 function lancer(args, env) {
   const proc = spawn(process.execPath, [path.join(RACINE, 'server.js')].concat(args || []),
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1' }, env || {}) });   // SPEC-SYNC-028 : les suites d'inventaire passent MC_TEST_POSE_LIBRE: ''
+    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid) }, env || {}) });   // SPEC-SYNC-028 : les suites d'inventaire passent MC_TEST_POSE_LIBRE: ''
   const logs = [];
   const srv = { proc, logs, port: null, code: undefined, vivant: true, t0: Date.now(), heureLog: [] };
   proc.stdout.on('data', d => { String(d).split('\n').forEach(l => { if (l) { logs.push(l); srv.heureLog.push([Date.now(), l]); } }); });
@@ -276,4 +276,25 @@ function dossierTemp(prefixe) {
 }
 function supprimerDossier(d) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* tant pis */ } }
 
-module.exports = { RACINE, NP, CA, C, dodo, creerRapport, adresseReseau, adressesNonLocales, connecter, requete, sonde, lancer, rejoindre, attendreClients, chargerModules, dossierTemp, supprimerDossier };
+/* Arrête le serveur qui écoute sur ce port, y compris celui d'une relance détachée
+   (bascule de partie : un autre PID que celui lancé par `lancer`). Le PID vient de
+   l'API (monde.pid) ; si le message ARRET n'aboutit pas (serveur encore en train de
+   se relancer, connexion refusée), on le tue. `attendreMs` : temps laissé à une
+   relance en cours pour réécouter avant d'abandonner. */
+async function arreterSurPort(port, attendreMs) {
+  const vivant = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  let pid = null;
+  const fin = Date.now() + (attendreMs || 0);
+  for (;;) {
+    try { const r = await requete(port, '/api/parties'); if (r.json && r.json.monde) { pid = r.json.monde.pid; break; } } catch (e) { /* injoignable */ }
+    if (Date.now() >= fin) break;
+    await dodo(200);
+  }
+  if (!pid) return false;
+  try { const c = await connecter(port); c.envoyer({ t: 'arret' }); await dodo(300); c.fermer(); } catch (e) { /* tant pis */ }
+  for (let k = 0; k < 20 && vivant(pid); k++) await dodo(150);
+  if (vivant(pid)) { try { process.kill(pid); } catch (e) { /* déjà parti */ } }
+  return true;
+}
+
+module.exports = { arreterSurPort, RACINE, NP, CA, C, dodo, creerRapport, adresseReseau, adressesNonLocales, connecter, requete, sonde, lancer, rejoindre, attendreClients, chargerModules, dossierTemp, supprimerDossier };

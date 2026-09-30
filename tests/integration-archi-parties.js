@@ -28,14 +28,8 @@ async function attendreActif(port, id, ms) {
   }
   return false;
 }
-async function arreterSurPort(port) {
-  try {
-    const c = await connecter(port);
-    c.envoyer({ t: 'arret' });
-    await dodo(600);
-    c.fermer();
-  } catch (e) { /* déjà arrêté */ }
-}
+// arrêt fiable de la relance détachée : voir A.arreterSurPort (PID par l'API, repli par kill)
+const arreterSurPort = (port) => A.arreterSurPort(port, 15000);
 
 // ── 013 : créer, charger, poser, changer de partie, revenir, supprimer ───────
 async function scenarioParties() {
@@ -253,9 +247,63 @@ async function scenarioJoueur() {
   } finally { supprimerDossier(dossier); }
 }
 
+// ── relance détachée : jamais de serveur orphelin ───────────────────────────
+const vivant = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+async function attendreMort(pid, ms) {
+  const fin = Date.now() + ms;
+  while (vivant(pid) && Date.now() < fin) await dodo(200);
+  return !vivant(pid);
+}
+async function basculer(port) {
+  const p = await post(port, '/api/parties', { nom: 'Orphelin', mode: 'survie', difficulte: 'facile', graine: 77 });
+  const id = p.json.partie.id;
+  await post(port, '/api/parties/charger', { id });
+  if (!(await attendreActif(port, id))) return null;
+  return (await requete(port, '/api/parties')).json.monde.pid;
+}
+async function scenarioOrphelin() {
+  const dossier = dossierTemp('mc-archi-or-');
+  // un faux « propriétaire » : le processus de test dont dépend le serveur (MC_TEST_ARRET_SI_MORT)
+  const proprio = require('child_process').spawn(process.execPath, ['-e', 'setTimeout(()=>{},120000)'], { stdio: 'ignore' });
+  let pidEnfant = null;
+  try {
+    // (a) serveur OUVERT (ne s'arrête jamais de lui-même) : la relance détachée meurt avec le propriétaire
+    const s = await demarrer(['--port', '0', '--ouvert', '--dossier-parties', dossier], { MC_TEST_ARRET_SI_MORT: String(proprio.pid) });
+    pidEnfant = await basculer(s.port);
+    ok(!!pidEnfant && pidEnfant !== s.proc.pid, 'relance détachée : le serveur relancé est un autre processus', String(pidEnfant));
+    ok(vivant(pidEnfant), 'relance détachée : témoin — le serveur relancé tourne tant que son propriétaire vit');
+    proprio.kill();
+    ok(await attendreMort(pidEnfant, 15000), 'relance détachée : le serveur relancé s\'arrête seul quand le processus de test qui l\'a lancé disparaît');
+  } finally {
+    try { proprio.kill(); } catch (e) { /* déjà parti */ }
+    if (pidEnfant && vivant(pidEnfant)) { try { process.kill(pidEnfant); } catch (e) { /* déjà parti */ } }
+    await dodo(300);
+    supprimerDossier(dossier);
+  }
+}
+async function scenarioRelanceFermee() {
+  const dossier = dossierTemp('mc-archi-rf-');
+  let pidEnfant = null;
+  try {
+    // (b) serveur FERMÉ : la relance s'arrête après le départ du dernier client (délai de grâce)
+    const s = await demarrer(['--port', '0', '--dossier-parties', dossier]);
+    pidEnfant = await basculer(s.port);
+    ok(!!pidEnfant, 'relance fermée : le serveur relancé répond');
+    const c = await connecter(s.port);
+    c.envoyer({ t: 'pause', actif: false });               // parle au poste : compte comme client actif
+    await dodo(500);
+    c.fermer();
+    ok(await attendreMort(pidEnfant, 30000), 'relance fermée : le serveur relancé s\'arrête seul après le départ de son dernier client');
+  } finally {
+    if (pidEnfant && vivant(pidEnfant)) { try { process.kill(pidEnfant); } catch (e) { /* déjà parti */ } }
+    await dodo(300);
+    supprimerDossier(dossier);
+  }
+}
+
 (async function () {
   try {
-    const tous = { parties: scenarioParties, import: scenarioImport, joueur: scenarioJoueur };
+    const tous = { parties: scenarioParties, import: scenarioImport, joueur: scenarioJoueur, orphelin: scenarioOrphelin, fermee: scenarioRelanceFermee };
     const choix = process.argv[2] ? [process.argv[2]] : Object.keys(tous);
     for (const k of choix) await tous[k]();            // en série : chaque bascule de partie relance un processus
   } catch (e) {

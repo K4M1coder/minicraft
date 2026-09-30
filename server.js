@@ -1428,7 +1428,7 @@ function traiterApiParties(req, res) {
       dedie: !!(CONF.mondeFichier && !partieActive),
       // instantané du monde pour les lanceurs et les tests : l'heure, la pause, les créatures
       monde: {
-        heure: +heure.toFixed(3), pause: enPause, rev: pauseRev, clients: clients.size,
+        heure: +heure.toFixed(3), pause: enPause, rev: pauseRev, clients: clients.size, pid: process.pid,
         creatures: entites.list.length,
         fours: Array.from(conteneursPoses.entries()).filter(([, ct]) => ct.four)
           .map(([cle, ct]) => ({ cle, burn: +ct.four.burn.toFixed(3), cook: +ct.four.cook.toFixed(3), sortie: ct.slots[2] ? ct.slots[2].n : 0 })),
@@ -4053,6 +4053,24 @@ async function arreter(signal) {
 }
 process.on('SIGINT', () => arreter('SIGINT'));
 process.on('SIGTERM', () => arreter('SIGTERM'));
+
+/* MC_TEST_ARRET_SI_MORT=<pid> : réservé aux suites d'intégration (même principe
+   que MC_TEST_INV/MC_TEST_PANNE, désactivé par défaut, jamais en exploitation).
+   Le serveur s'arrête de lui-même dès que ce processus (la suite de test qui l'a
+   lancé) n'existe plus. La variable est héritée par la relance détachée d'une
+   bascule de partie : un test interrompu (délai du crochet, plantage) ou dont le
+   nettoyage échoue ne laisse plus de serveur --ouvert orphelin tourner à 60 Hz. */
+if (process.env.MC_TEST_ARRET_SI_MORT) {
+  const pidProprietaire = parseInt(process.env.MC_TEST_ARRET_SI_MORT, 10);
+  if (pidProprietaire > 0) {
+    setImmediate(() => journal('ATTENTION : MC_TEST_ARRET_SI_MORT actif — arrêt dès que le processus ' + pidProprietaire + ' disparaît (réglage de test, jamais en exploitation)'));
+    setInterval(() => {
+      let vivant = true;
+      try { process.kill(pidProprietaire, 0); } catch (e) { vivant = e.code === 'EPERM'; }
+      if (!vivant) arreter('propriétaire de test disparu');
+    }, 2000);
+  }
+}
 
 // ── résilience du processus (SPEC-SECU-002) ─────────────────────────────────
 /* Une exception hors d'un handler de message (minuteur, promesse, callback
