@@ -1991,6 +1991,20 @@ function traiter(c, m) {
          déjà présent, déclenche `getChunk(cx, cz, true)` plus bas. */
       const js = c.joueurs && c.joueurs[m.j];
       const avant = monde.getBlock(m.x, m.y, m.z);
+      /* Bascule d'une porte ou d'une trappe (ouvrir/fermer) : un changement d'état
+         d'un bloc DÉJÀ posé, sans objet ; on n'accepte que la vraie bascule
+         (C.bascule) d'un bloc à portée, jamais un autre remplacement. */
+      if (m.id !== 0 && avant !== m.id && C.bascule(avant) === m.id) {
+        const st0 = js && js.joueur.state;
+        const proche = st0 && !st0.dead &&
+          Math.hypot(m.x + 0.5 - st0.pos.x, m.y + 0.5 - st0.pos.y - 1.62, m.z + 0.5 - st0.pos.z) <= PORTEE_BLOC;
+        if (!proche) { envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) }); break; }
+        const etatBascule = monde.getEtat(m.x, m.y, m.z);
+        monde.setBlock(m.x, m.y, m.z, m.id);
+        diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: etatBascule });
+        MC.Admin.journaliser(admin, { auteur: c.nom, action: 'bloc_bascule', cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
+        break;
+      }
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
@@ -1999,6 +2013,21 @@ function traiter(c, m) {
       /* SPEC-SYNC-028 : en survie, poser exige l'objet dans l'inventaire SERVEUR
          (retiré ici). Refus : le bloc autoritaire est rappelé et l'inventaire
          renvoyé, la prédiction du client ayant supposé un objet qu'il n'a pas. */
+      if (m.id !== 0 && cellulesCompagnes(m).some(cc => !C.isReplaceable(monde.getBlock(cc.x, cc.y, cc.z)))) {
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });   // la case voisine est prise : rien ne se pose
+        break;
+      }
+      // un conteneur généré jamais ouvert (coffre de donjon, bibliothèque) : son contenu se tire AVANT que la case ne change
+      let contNeuf = null;
+      if (m.id === 0 && avant) {
+        const dA = C.BLOCKS[avant];
+        const tA = dA && dA.interactive && MC.ContratsV2.TYPES_CONTENEUR[dA.interactive];
+        const kA = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
+        if (tA && !tA.parJoueur && !conteneursPoses.has(kA)) {
+          contNeuf = MC.Conteneurs.creerConteneur(dA.interactive);
+          if (contNeuf) remplirConteneurNeuf(contNeuf, dA.interactive, m.x, m.y, m.z, kA);
+        }
+      }
       if (m.id !== 0 && !regles.blocsIllimites && !POSE_LIBRE && !debiterPose(js, m.id, m.i)) {
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
         envoyerInvMaj(c, m.j, {});
@@ -2021,6 +2050,17 @@ function traiter(c, m) {
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
+      // la case compagne d'une porte ou d'un lit se pose avec elle ; à la casse, l'autre moitié part aussi
+      cellulesCompagnes(m).forEach(cc => {
+        monde.getChunk(Math.floor(cc.x / 16), Math.floor(cc.z / 16), true);
+        monde.setBlock(cc.x, cc.y, cc.z, cc.id);
+        if (monde.setEtat) monde.setEtat(cc.x, cc.y, cc.z, cc.etat);
+        diffuser({ t: NP.MSG.BLOC, x: cc.x, y: cc.y, z: cc.z, id: cc.id, etat: cc.etat });
+      });
+      if (m.id === 0 && avant) compagnesDeCasse(avant, m).forEach(cc => {
+        monde.setBlock(cc.x, cc.y, cc.z, 0);
+        diffuser({ t: NP.MSG.BLOC, x: cc.x, y: cc.y, z: cc.z, id: 0, etat: 0 });
+      });
       /* Escalier (SPEC-CONSTR-001) : le serveur fait autorité sur l'angle,
          recalculé ici (même algorithme que le client) plutôt que confié au
          message reçu — pose ou casse peut aussi changer l'angle des 4
@@ -2055,7 +2095,7 @@ function traiter(c, m) {
         const tAvant = defAvant && defAvant.interactive && MC.ContratsV2.TYPES_CONTENEUR[defAvant.interactive];
         if (tAvant && !tAvant.parJoueur) {
           const kc = MC.ContratsV2.cleConteneur(m.x, m.y, m.z);
-          const contCasse = conteneursPoses.get(kc);
+          const contCasse = conteneursPoses.get(kc) || contNeuf;
           if (contCasse) {
             fermerConteneurPourAbonnes(kc);
             contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
@@ -2700,16 +2740,51 @@ const PORTEE_BLOC = 7;
    INV_CONSOMMER : pour ne jamais la compter deux fois, chaque débit fait par le
    serveur laisse un CRÉDIT (id → 1, valable DELAI_CREDIT_MS) que la
    consommation journalisée correspondante absorbe au lieu de la rejouer. */
-const DELAI_CREDIT_MS = 3000;
+const DELAI_CREDIT_MS = 120000;     // long : un journal en retard (onglet en arrière-plan, latence) ne doit jamais faire payer deux fois
+const CREDITS_MAX = 128;            // borne : un client qui ne journalise jamais ne cumule pas indéfiniment
 /* MC_TEST_POSE_LIBRE=1 : suspend ce contrôle (poser/tirer sans posséder) pour les
    suites d'intégration dont l'objet n'est PAS l'inventaire (réseau, flood,
    sauvegarde…) et qui posent des blocs sans s'en donner ; même principe que
    MC_TEST_PANNE, jamais en exploitation. Les suites d'inventaire ne l'utilisent pas. */
 const POSE_LIBRE = process.env.MC_TEST_POSE_LIBRE === '1';
+if (POSE_LIBRE) journal('ATTENTION : MC_TEST_POSE_LIBRE actif — poser et tirer ne sont PAS contrôlés contre l inventaire (réglage de test, jamais en exploitation)');
+
+/* Blocs posés d'un seul geste : une porte occupe deux cases (dessus), un lit
+   deux cases (la tête, dans la direction de son orientation). Le client annonce
+   la case visée ; le serveur pose lui-même la compagne, sans second objet. */
+function cellulesCompagnes(m) {
+  const d = C.BLOCKS[m.id];
+  if (!d) return [];
+  if (d.porte && !d.porte.ouverte) return [{ x: m.x, y: m.y + 1, z: m.z, id: m.id, etat: m.etat || 0 }];
+  if (d.meuble === 'lit' && MC.Formes) {
+    const e = MC.Formes.unpackMeuble(m.etat || 0);
+    if (e.variante) return [];
+    const dir = MC.Formes.DIRS[e.orientation];
+    return [{ x: m.x + dir[0], y: m.y, z: m.z + dir[1], id: m.id, etat: MC.Formes.packMeuble(e.orientation, true) }];
+  }
+  return [];
+}
+// la moitié d'une porte cassée, la moitié d'un lit cassé : l'autre case disparaît avec elle
+function compagnesDeCasse(avant, m) {
+  const d = C.BLOCKS[avant];
+  if (!d) return [];
+  const out = [];
+  if (d.porte) {
+    [1, -1].some(dy => { if (monde.getBlock(m.x, m.y + dy, m.z) === avant) { out.push({ x: m.x, y: m.y + dy, z: m.z }); return true; } return false; });
+  } else if (d.meuble === 'lit' && MC.Formes) {
+    const e = MC.Formes.unpackMeuble(monde.getEtat(m.x, m.y, m.z));
+    const dir = MC.Formes.DIRS[e.orientation];
+    const sens = e.variante ? -1 : 1;
+    const x = m.x + sens * dir[0], z = m.z + sens * dir[1];
+    if (monde.getBlock(x, m.y, z) === avant) out.push({ x, y: m.y, z });
+  }
+  return out;
+}
 function crediterDebit(js, id) {
   const maintenant = Date.now();
   js.debitsPrevus = (js.debitsPrevus || []).filter(d => maintenant - d.t < DELAI_CREDIT_MS);
   js.debitsPrevus.push({ id, t: maintenant });
+  if (js.debitsPrevus.length > CREDITS_MAX) js.debitsPrevus.shift();
 }
 /* Retire des opérations `{ i, id, n }` d'un INV_CONSOMMER ce que le serveur a
    déjà débité (un crédit par exemplaire) ; les autres opérations passent. */
@@ -2752,7 +2827,10 @@ function debiterPose(js, idBloc, preferee) {
   crediterDebit(js, id);
   return true;
 }
-/* Tir : true si le joueur peut tirer ce `genre` ; débite alors la munition. */
+/* Tir : true si le joueur peut tirer ce `genre` ; débite alors la munition.
+   Limite documentée (SPEC-SYNC-028) : le serveur ne connaît pas la case
+   sélectionnée du client, il exige donc l'arme du genre quelque part dans
+   l'inventaire, pas forcément en main. */
 function debiterTir(js, genre) {
   const inv = js.joueur.state.inv;
   const aArme = inv.slots.some(s => { const d = s && C.def(s.id); return !!(d && d.ranged === genre); });
@@ -2761,7 +2839,8 @@ function debiterTir(js, genre) {
   if (sans) return true;
   for (let i = 0; i < inv.slots.length; i++) {
     const s = inv.slots[i], d = s && C.def(s.id);
-    if (d && d.ammo && (!d.ammoType || d.ammoType === genre)) {
+    // une munition sans type ne sert que l'arc et l'arbalète (genre « fleche »), jamais la fronde
+    if (d && d.ammo && (d.ammoType ? d.ammoType === genre : genre === 'fleche')) {
       inv.consumeAt(i, 1);
       crediterDebit(js, s.id);
       return true;

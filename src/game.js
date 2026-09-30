@@ -2180,27 +2180,10 @@
        exposé plutôt que de le refuser : on vise en général pour remplacer,
        et l'ancien objet retombe au sol pour ne rien perdre. */
     function interagirExposition(action, target) {
-      var k = target.x + ',' + target.y + ',' + target.z;
-      var st = player.state;
-      if (action === 'retirer') {
-        var expose = expositions[k];
-        if (!expose) { ui.toast('Rien à reprendre ici', 'warn'); return; }
-        delete expositions[k];
-        var reste = st.inv.add(expose.id, expose.n);
-        if (reste && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, expose.id, reste);
-        audio.play('poser');
-        return;
-      }
-      var main = st.inv.stackAt(st.selected);
-      if (!main) return;
-      var ancien = expositions[k];
-      expositions[k] = { id: main.id, n: 1, data: main.data };
-      st.inv.consumeAt(st.selected, 1);
-      if (ancien) {
-        var resteA = st.inv.add(ancien.id, ancien.n);
-        if (resteA && entities.dropItem) entities.dropItem(target.x + 0.5, target.y + 1, target.z + 0.5, ancien.id, resteA);
-      }
-      audio.play('poser');
+      // SPEC-ARCHI-043 (reporté) : le contenu exposé n'est pas encore tenu par le
+      // serveur (SPEC-SYNC-027) ; toucher à l'inventaire ici sans lui dupliquerait
+      // ou perdrait l'objet. On refuse proprement, sans rien modifier.
+      ui.toast('Les présentoirs ne sont pas encore disponibles avec le serveur de jeu', 'warn');
     }
     g.interagirExposition = interagirExposition;
 
@@ -2465,6 +2448,7 @@
       var target = player.aim();
       if (!target) return;
       var mange = player.heldId();
+      var avantBascule = instantaneBascule(target);
       var res = player.useOn(target);
       if (!res) return;
       if (res === 'interdit') { ui.toast('Cette histoire ne vous permet pas de l\'utiliser', 'warn'); return; }
@@ -2518,7 +2502,22 @@
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
       else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      else if (res === 'bascule') { annoncerBascule(equipe[0], avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
+    }
+
+    /* Une porte se compose de deux blocs et se bascule des deux à la fois : on
+       relève les trois cases concernées (visée, dessus, dessous) AVANT que
+       useOn ne les change, puis on annonce au serveur celles qui ont basculé
+       (il vérifie que c'est bien une bascule et la portée ; aucun objet requis). */
+    function instantaneBascule(t) {
+      return [0, 1, -1].map(function (dy) { return { x: t.x, y: t.y + dy, z: t.z, id: world.getBlock(t.x, t.y + dy, t.z) }; });
+    }
+    function annoncerBascule(j, avant) {
+      avant.forEach(function (c) {
+        var maintenant = world.getBlock(c.x, c.y, c.z);
+        if (maintenant !== c.id && C.bascule(c.id) === maintenant)
+          net.poserBloc(c.x, c.y, c.z, maintenant, 0, j.index, world.getEtat(c.x, c.y, c.z));
+      });
     }
 
     /* SPEC-ARCHI-031 : une pose prédite localement est TOUJOURS annoncée au
@@ -2549,66 +2548,10 @@
        lui (ou en cas d'échec), il se déclenche immédiatement. Un coffre
        surprise cache soit un butin rare, soit un mimic hostile. */
     function ouvrirCoffreSuspect(kind, target, k) {
-      var aLeKit = player.heldId() === I.KIT_DESAMORCAGE;
-      if (aLeKit) {
-        var ok = MC.Core.tenterDesamorcage(true, Math.random);
-        if (!player.regles.blocsIllimites) player.state.inv.consumeAt(player.state.selected, 1);
-        if (ok) {
-          world.setBlock(target.x, target.y, target.z, B.CHEST);
-          ui.toast('Piège désamorcé.');
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-          return;
-        }
-        ui.toast('Le désamorçage échoue !', 'warn');
-      }
-      declencherPiege(kind, target, k);
-    }
-
-    function declencherPiege(kind, target, k) {
-      if (kind === 'coffre_surprise') {
-        world.setBlock(target.x, target.y, target.z, 0);
-        var s = MC.Core.tirerSurprise(Math.random);
-        if (s === 'mimic') {
-          entities.spawn('mimic', target.x + 0.5, target.y, target.z + 0.5);
-          ui.toast("Ce n'était pas un vrai coffre !", 'warn');
-        } else {
-          var inv = Inv.create(27);
-          var rare = [[I.DIAMOND, 1, 3], [I.EMERALD, 2, 5], [I.GOLD_INGOT, 2, 4], [I.BIJOU, 0, 1]];
-          rare.forEach(function (r) {
-            var n = r[1] + Math.floor(Math.random() * (r[2] - r[1] + 1));
-            if (n > 0) inv.add(r[0], n);
-          });
-          chests[k] = inv;
-          ui.openContainer('chest', player.state.inv, chests[k], k);
-          audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-          input.setState('ui');
-        }
-        return;
-      }
-      var t = MC.Core.tirerPiege(Math.random);
-      if (t === 'fleches') {
-        player.hurt(6);
-        ui.toast('Un mécanisme vous tire dessus !', 'warn');
-      } else if (t === 'explosion') {
-        player.hurt(10);
-        world.setBlock(target.x, target.y, target.z, 0);
-        ui.toast('Ça explose !', 'warn');
-        audio.play('brise');
-        return;
-      } else if (t === 'alarme') {
-        entities.spawn('garde', target.x + 0.5, target.y + 1, target.z + 0.5);
-        entities.spawn('garde', target.x - 0.5, target.y + 1, target.z - 0.5);
-        ui.toast('Une alarme retentit, des gardes accourent !', 'warn');
-      } else if (t === 'gaz') {
-        player.state.malade += 15;
-        ui.toast('Un gaz toxique vous saisit...', 'warn');
-      }
-      // le piège se déclenche une fois : le coffre redevient un coffre normal
-      world.setBlock(target.x, target.y, target.z, B.CHEST);
-      chests[k] = Inv.create(27);
-      ui.openContainer('chest', player.state.inv, chests[k], k);
-      audio.jouer(MC.Ambiance.sonInteraction('coffre'), interactionOpts(target));
-      input.setState('ui');
+      // SPEC-ARCHI-044 (reporté) : pièges, surprises et kit de désamorçage
+      // modifient inventaire et monde hors du serveur ; refusés proprement
+      // plutôt que de dupliquer ou perdre des objets.
+      ui.toast('Ce coffre suspect ne peut pas encore être ouvert avec le serveur de jeu', 'warn');
     }
 
     /* Traduit une opération de MC.Conteneurs en message réseau : applique
@@ -3035,6 +2978,7 @@
       var target = pl.aim();
       if (!target) return;
       var idMain = pl.heldId();
+      var avantBascule = instantaneBascule(target);
       var res = pl.useOn(target);
       if (!res) return;
       if (res === 'eat') net.manger(idMain, j.index, pl.state.selected);
@@ -3052,7 +2996,7 @@
       else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: idMain }); }
       else if (res === 'till' || res === 'plant') audio.play('poser');
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      else if (res === 'bascule') { annoncerBascule(j, avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
     }
 
     /* SPEC-MECA-007 : petite interface (une invite texte suffit — pas besoin

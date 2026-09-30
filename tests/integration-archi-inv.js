@@ -251,6 +251,81 @@ async function scenarioBlocCommande() {
   await s3.arreter();
 }
 
+
+// ── poses à deux blocs, bascule, coffre généré, crédit tardif (revue B-INV) ───
+async function scenarioMultiBlocs() {
+  const d = A.dossierTemp('mc-inv-mb-');
+  const f = path.join(d, 'monde.json');
+  try {
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], seed([[I.PORTE, 1], [B.LIT, 1], [B.COBBLE, 2]]));
+    const { client: cl, bienvenue } = await rejoindre(s.port, 'Fanny', 1);
+    const inv0 = await inventaireInitial(cl);
+    // porte : la case visée ET celle du dessus arrivent au monde serveur
+    const pp = positionBloc(bienvenue, 0);
+    const idPorte = C.PORTE_FERMEE_LIST[0];
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y, z: pp.z, id: idPorte, j: 0, i: indexDe(inv0, I.PORTE) });
+    await cl.attendre('bloc', 3000, m => m.y === pp.y + 1 && m.id === idPorte);
+    ok(true, 'SPEC-ARCHI-031 : poser une porte pose aussi sa moitié haute côté serveur');
+    // lit : la tête suit l'orientation
+    const pl = positionBloc(bienvenue, 3);
+    cl.envoyer({ t: 'bloc', x: pl.x, y: pl.y, z: pl.z, id: B.LIT, j: 0, etat: 0, i: indexDe(inv0, B.LIT) });
+    const tete = await cl.attendre('bloc', 3000, m => m.z === pl.z - 1 && m.x === pl.x && m.id === B.LIT);
+    eq(tete.etat & 4, 4, 'SPEC-ARCHI-031 : poser un lit pose sa tête (variante) côté serveur');
+
+    // bascule : ouvrir la porte sans aucun objet, les deux moitiés
+    const ouverte = C.bascule(idPorte);
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y, z: pp.z, id: ouverte, j: 0 });
+    await cl.attendre('bloc', 3000, m => m.y === pp.y && m.id === ouverte);
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y + 1, z: pp.z, id: ouverte, j: 0 });
+    await cl.attendre('bloc', 3000, m => m.y === pp.y + 1 && m.id === ouverte);
+    ok(true, 'SPEC-ARCHI-031 : ouvrir une porte est accepté et diffusé, sans objet');
+    // une « bascule » qui n'en est pas une reste refusée
+    cl.messages.length = 0;
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y, z: pp.z, id: B.COBBLE, j: 0 });
+    const rappel = await cl.attendre('bloc', 3000, m => m.y === pp.y);
+    eq(rappel.id, ouverte, 'SPEC-ARCHI-031 : remplacer une porte par un autre bloc est refusé (état autoritaire rappelé)');
+    // pause : la bascule est gelée
+    cl.envoyer({ t: 'pause', actif: true });
+    await cl.attendre('pause_etat', 3000, m => m.actif === true);
+    cl.messages.length = 0;
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y, z: pp.z, id: idPorte, j: 0 });
+    await dodo(600);
+    eq(cl.messages.filter(m => m.t === 'bloc').length, 0, 'SPEC-ARCHI-031 : la bascule est refusée en pause');
+    cl.envoyer({ t: 'pause', actif: false });
+    await cl.attendre('pause_etat', 3000, m => m.actif === false);
+
+    // crédit tardif : le journal INV_CONSOMMER arrive plus de 3 s après la pose, sans double débit
+    const iCob = indexDe(inv0, B.COBBLE);
+    const pc = positionBloc(bienvenue, 6);
+    cl.envoyer({ t: 'bloc', x: pc.x, y: pc.y, z: pc.z, id: B.COBBLE, j: 0, i: iCob });
+    await cl.attendre('bloc', 3000, m => m.x === pc.x && m.id === B.COBBLE);
+    await dodo(3600);
+    cl.envoyer({ t: 'inv_consommer', j: 0, seq: 1, ops: [{ i: iCob, id: B.COBBLE, n: 1 }] });
+    const maj = await cl.attendre('inv_maj', 3000, m => m.ack === 1);
+    eq(compte(maj.inv, B.COBBLE), 1, 'SPEC-SYNC-028 : un journal arrivé plus de 3 s après la pose ne fait pas payer deux fois (2 → 1)');
+    cl.fermer();
+    await s.arreter();
+    // le monde sauvegardé garde les deux moitiés (ouvertes) et le lit entier
+    const sauve = JSON.parse(fs.readFileSync(f, 'utf8'));
+    const bl = (x, y, z) => { const o = sauve.overrides.find(e => e[0] === x && e[1] === y && e[2] === z); return o ? o[3] : null; };
+    // (le mécanisme des circuits referme une porte sans signal au tic suivant : on vérifie donc les DEUX moitiés, fermées)
+    eq(bl(pp.x, pp.y, pp.z), idPorte, 'SPEC-ARCHI-031 : la porte (case basse) survit à la sauvegarde');
+    eq(bl(pp.x, pp.y + 1, pp.z), idPorte, 'SPEC-ARCHI-031 : la porte (case haute) survit à la sauvegarde');
+    eq(bl(pl.x, pl.y, pl.z - 1), B.LIT, 'SPEC-ARCHI-031 : la tête du lit survit à la sauvegarde');
+  } finally { A.supprimerDossier(d); }
+}
+
+async function scenarioCoffreGenere() {
+  // graine 344 : un coffre de donjon réel à (221,37,-67), jamais ouvert ; on le CASSE d'emblée
+  const s = await demarrer(['--graine', '344'], Object.assign({ MC_TEST_SPAWN: '219.5,37,-64.5' }, seed([])));
+  const { client: cl } = await rejoindre(s.port, 'Gaspard', 1);
+  cl.envoyer({ t: 'bloc', x: 221, y: 37, z: -67, id: 0, outil: 0, j: 0 });
+  const vu = await cl.attendre('etat', 6000, m => (m.mobs || []).some(e => e.t === 'item')).then(() => true).catch(() => false);
+  ok(vu, 'SPEC-ARCHI-030 : casser un coffre généré jamais ouvert lâche son butin (tiré par le serveur avant la casse)');
+  cl.fermer();
+  await s.arreter();
+}
+
 // ── audit statique de src/game.js ───────────────────────────────────────────
 function scenarioAudit() {
   const src = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
@@ -265,6 +340,11 @@ function scenarioAudit() {
     const fin = sansCommentaires.indexOf('\n' + m[1] + '}', debut);
     return sansCommentaires.slice(debut, fin);
   };
+  ['interagirExposition', 'ouvrirCoffreSuspect'].forEach((nom) => {
+    const c = corps(nom);
+    ok(!!c && /pas encore/.test(c) && !/consumeAt|dropItem|\.add\(|expositions\[|chests\[/.test(c),
+       `SPEC-ARCHI-043/044 (reportées) : ${nom} refuse avec un message et ne touche ni l'inventaire ni des tables locales`);
+  });
   ['ouvrirBlocCommande', 'ouvrirConteneur', 'operer', 'purgerJournalInv', 'frameConteneurs', 'forceCloseContainer', 'ouvrirBanque'].forEach((nom) => {
     const c = corps(nom);
     if (c === null) { ok(true, `audit : ${nom} n'existe plus (branche supprimée)`); return; }
@@ -278,6 +358,8 @@ function scenarioAudit() {
     await scenarioInventaire();
     await scenarioCommerce();
     await scenarioBlocCommande();
+    await scenarioMultiBlocs();
+    await scenarioCoffreGenere();
     scenarioAudit();
   } catch (e) {
     ok(false, 'le scénario ne doit pas lever d\'exception', e && e.stack);
