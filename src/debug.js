@@ -34,6 +34,7 @@
     /* Règle l'heure du jour, en heures (0 à 24). */
     function heure(h) {
       var DC = MC.DayCycle;
+      if (typeof h !== 'number' || !isFinite(h)) return g.time;   // heure() sans argument : NaN écrit dans g.time
       var frac = ((h % 24) + 24) % 24 / 24;
       var jourCourant = Math.floor(g.time / DC.DAY_LENGTH);
       g.time = jourCourant * DC.DAY_LENGTH + frac * DC.DAY_LENGTH;

@@ -383,8 +383,10 @@
       return pousse;
     }
 
-    /* Repousse corps (un joueur) hors des créatures. Le joueur seul bouge :
-       une créature repoussée par le joueur serait injouable en combat. */
+    /* Repousse corps hors des créatures, corps seul bouge. Plus appelé pour un
+       joueur par le serveur (SPEC-ARCHI-047) : la poussée d'un corps PRÉDIT par
+       son client le recalait à chaque relevé — ce sont les créatures qui
+       cèdent (cederAuxJoueurs). */
     function separer(corps, dt) {
       if (!corps || corps.dead) return 0;
       var total = 0;
@@ -429,6 +431,43 @@
             }
             if (P.collides(world, b.pos.x, b.pos.y, b.pos.z, b.w, b.h)) {
               b.pos.x = avant.bx; b.pos.z = avant.bz;
+            }
+          }
+        }
+      }
+      return n;
+    }
+
+    /* Une créature ne traverse pas un joueur : c'est ELLE qui cède (SPEC-ARCHI-047),
+       face à TOUS les joueurs qu'elle chevauche, sans entrer dans un mur — sinon le
+       joueur l'enfonçait dans la roche. Appelé après separerEntites, qui sinon la
+       repousserait dans le joueur. Le corps d'un joueur, lui, n'est jamais déplacé
+       ici : le client le prédit avec le même code que le serveur (MC.Synchro), une
+       poussée que lui seul ignore le recalerait à chaque relevé. Un véhicule ne cède
+       pas (son conducteur le prédit aussi) ; objets et projectiles traversent. */
+    function cederAuxJoueurs(joueurs, dt) {
+      var n = 0;
+      for (var i = 0; i < list.length; i++) {
+        var e = list[i];
+        if (!corpsSolide(e) || e.vehicule || (SPECS[e.type] && SPECS[e.type].vehicule)) continue;
+        for (var q = 0; q < joueurs.length; q++) {
+          var pj = joueurs[q];
+          if (!pj || pj.dead || !pj.pos) continue;
+          var avX = e.pos.x, avZ = e.pos.z;
+          if (ecarter(e, pj, dt, 1, 0) > 0) {
+            n++;
+            if (P.collides(world, e.pos.x, e.pos.y, e.pos.z, e.w, e.h)) {
+              /* poussée vers un mur : elle glisse le long de lui (un seul axe, même
+                 longueur) ; acculée dans un coin, elle reste où elle est */
+              var px = e.pos.x - avX, pz = e.pos.z - avZ, L = Math.hypot(px, pz);
+              var essais = [[px >= 0 ? L : -L, 0], [0, pz >= 0 ? L : -L]];
+              if (Math.abs(px) > Math.abs(pz)) essais.reverse();     // d'abord l'axe qui longe le mur
+              e.pos.x = avX; e.pos.z = avZ;
+              for (var k = 0; k < essais.length; k++) {
+                if (!P.collides(world, avX + essais[k][0], e.pos.y, avZ + essais[k][1], e.w, e.h)) {
+                  e.pos.x = avX + essais[k][0]; e.pos.z = avZ + essais[k][1]; break;
+                }
+              }
             }
           }
         }
@@ -974,19 +1013,11 @@
           events.invocations = (events.invocations || 0) + 1;
         }
 
-        // une créature ne traverse pas le joueur — sans pour autant entrer dans un mur,
-        // comme les deux autres séparations : sinon le joueur l'enfonçait dans la roche
-        if (pj && !pj.dead) {
-          var avX = e.pos.x, avZ = e.pos.z;
-          if (ecarter(e, pj, dt, 1, 0) > 0 && P.collides(world, e.pos.x, e.pos.y, e.pos.z, e.w, e.h)) {
-            e.pos.x = avX; e.pos.z = avZ;
-          }
-        }
-
         // noyade et chute dans le vide
         if (e.pos.y < -20) remove(e);
       }
       separerEntites(dt);
+      cederAuxJoueurs(joueurs, dt);
       reproduire(dt, rand, events, !!opts.hiver);
       return events;
     }
@@ -1290,7 +1321,7 @@
       list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
-      separer: separer, separerEntites: separerEntites, ecarter: ecarter,
+      separer: separer, separerEntites: separerEntites, cederAuxJoueurs: cederAuxJoueurs, ecarter: ecarter,
       countOf: countOf, trySpawn: trySpawn, trySpawnSouterrain: trySpawnSouterrain, burnUndead: burnUndead, stepBody: stepBody,
       stepAI: stepAI, evenements: evenements, choisirCible: choisirCible, voitCible: voitCible, viser: viser,
       sbires: sbires, sousPlafond: sousPlafond, zoneChargee: zoneChargee, stepFaune: stepFaune,

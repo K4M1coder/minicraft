@@ -366,7 +366,10 @@ async function scenarioSeparation() {
   ok(!!etat && !!mob, 'préparation : le serveur diffuse la créature de test');
   if (etat && mob) {
     const d = Math.hypot(etat.toi[0].x - mob.x, etat.toi[0].z - mob.z);
-    ok(d >= 0.5, 'SPEC-ARCHI-037 : les créatures repoussent le joueur côté serveur (distance ' + d.toFixed(2) + ' au lieu de 0,3 au départ)');
+    ok(d >= 0.5, 'SPEC-ARCHI-037 : une créature et le joueur ne se chevauchent pas (distance ' + d.toFixed(2) + ' au lieu de 0,3 au départ)');
+    // SPEC-ARCHI-047 : c'est la créature qui cède — le corps du joueur, prédit par son client, ne bouge pas
+    const t0 = a.bienvenue.toi[0];
+    ok(Math.hypot(etat.toi[0].x - t0.x, etat.toi[0].z - t0.z) < 0.01, 'SPEC-ARCHI-047 : le serveur ne pousse pas le joueur immobile (déplacement ' + Math.hypot(etat.toi[0].x - t0.x, etat.toi[0].z - t0.z).toFixed(3) + ')');
   }
   a.client.fermer();
   await s.arreter();
