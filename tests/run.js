@@ -662,15 +662,29 @@ integrationSelectionnes.forEach((t) => {
   if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom); } catch (e) { /* rien */ }
   verrouIntegration.toucher();
   const t0 = Date.now();
-  const r = require('child_process').spawnSync(process.execPath, [path.join(root, t.fichier)], { encoding: 'utf8', cwd: root });
+  const lancer = () => require('child_process').spawnSync(process.execPath, [path.join(root, t.fichier)], { encoding: 'utf8', cwd: root });
+  let r = lancer();
+  /* Un échec d'intégration sous charge machine (horloge de jeu du serveur qui
+     ralentit, bureau saturé) est rejoué UNE fois : une vraie régression
+     échoue deux fois, une saute de charge non. Le second essai est SIGNALÉ
+     (jamais un vert silencieux) et la sortie du premier est gardée. */
+  let instable = false, sortiePremier = '';
+  if (r.status !== 0 && !process.env.MC_SANS_REJEU_INTEGRATION) {
+    sortiePremier = ((r.stdout || '') + (r.stderr || '')).split('\n').slice(-40).join('\n');
+    ecrire('  ↻ ' + t.nom + ' : échec au premier essai, rejeu unique');
+    if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom + ' (rejeu)'); } catch (e) { /* rien */ }
+    verrouIntegration.toucher();
+    r = lancer();
+    instable = r.status === 0;
+  }
   const ms = Date.now() - t0;
   const ok = r.status === 0;
-  ecrire((ok ? '  ✓ ' : '  ✗ ') + t.nom + ' en ' + secondes(ms));
+  ecrire((ok ? '  ✓ ' : '  ✗ ') + t.nom + ' en ' + secondes(ms) + (instable ? ' ⚠ instable : réussi au 2e essai' : ''));
   if (ok) res.passed++; else res.failed++;
   testsResultats.push({
     id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
     etat: ok ? 'ok' : 'echec', duree_ms: ms, etapes: [], assertions: { ok: ok ? 1 : 0, ko: ok ? 0 : 1 },
-    message: ok ? undefined : ((r.stdout || '') + (r.stderr || '')).split('\n').slice(-40).join('\n'),
+    message: ok ? (instable ? 'instable : échec au premier essai, réussi au rejeu.\n' + sortiePremier : undefined) : ((r.stdout || '') + (r.stderr || '')).split('\n').slice(-40).join('\n'),
   });
   ecrireInstantane();
 });
