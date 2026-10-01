@@ -341,7 +341,7 @@ async function scenarioSoute() {
     if (cbat) {
       // Bob n'a pas de diamants : il détruit le bateau vide de ses mains, la soute (vide) se ferme
       const fermeBat = prochain(b.client, 'cont_fermer', 30000, m => m.cle === cbat.cle);
-      for (let k = 0; k < 12; k++) {
+      for (let k = 0, fin = Date.now() + 60000; Date.now() < fin; k++) {
         b.client.envoyer({ t: 'attaque', j: 0, eid: bateau.eid, degats: 12, i: 0 });
         await jusqua(() => !mobVeh(b.client, bateau.eid), 550, 30);     // cadence de frappe : sondage borné
         if (!mobVeh(b.client, bateau.eid)) break;

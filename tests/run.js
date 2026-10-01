@@ -656,6 +656,12 @@ const verrouIntegration = (function () {
   return { toucher() { try { const maintenant = new Date(); fs.utimesSync(chemin, maintenant, maintenant); } catch (e) { /* rien */ } }, relacher() { try { if (fs.readFileSync(chemin, 'utf8') === String(process.pid)) fs.unlinkSync(chemin); } catch (e) { /* déjà parti */ } } };
 })();
 process.on('exit', () => verrouIntegration.relacher());
+/* Les lignes « ✗ » d'abord (elles disent QUELLE assertion), puis la fin du journal. */
+function resumeEchec(sortie) {
+  const lignes = sortie.split('\n');
+  const echecs = lignes.filter(l => l.indexOf('✗') >= 0).slice(0, 20);
+  return (echecs.length ? echecs.join('\n') + '\n…\n' : '') + lignes.slice(-40).join('\n');
+}
 integrationSelectionnes.forEach((t) => {
   ecrire('▶ ' + t.nom);
   // battement de cœur du filet d'inactivité (--delai) : chaque script d'intégration en est un
@@ -670,7 +676,7 @@ integrationSelectionnes.forEach((t) => {
      (jamais un vert silencieux) et la sortie du premier est gardée. */
   let instable = false, sortiePremier = '';
   if (r.status !== 0 && !process.env.MC_SANS_REJEU_INTEGRATION) {
-    sortiePremier = ((r.stdout || '') + (r.stderr || '')).split('\n').slice(-40).join('\n');
+    sortiePremier = resumeEchec((r.stdout || '') + (r.stderr || ''));
     ecrire('  ↻ ' + t.nom + ' : échec au premier essai, rejeu unique');
     if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom + ' (rejeu)'); } catch (e) { /* rien */ }
     verrouIntegration.toucher();
@@ -684,7 +690,7 @@ integrationSelectionnes.forEach((t) => {
   testsResultats.push({
     id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
     etat: ok ? 'ok' : 'echec', duree_ms: ms, etapes: [], assertions: { ok: ok ? 1 : 0, ko: ok ? 0 : 1 },
-    message: ok ? (instable ? 'instable : échec au premier essai, réussi au rejeu.\n' + sortiePremier : undefined) : ((r.stdout || '') + (r.stderr || '')).split('\n').slice(-40).join('\n'),
+    message: ok ? (instable ? 'instable : échec au premier essai, réussi au rejeu.\n' + sortiePremier : undefined) : resumeEchec((r.stdout || '') + (r.stderr || '')),
   });
   ecrireInstantane();
 });
