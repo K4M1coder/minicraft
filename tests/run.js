@@ -623,6 +623,36 @@ const res = ctx.T.run(nomsAExecuter, {
    script (stdout/stderr) est repris dans `message` pour que le cahier de
    test garde le détail, même s'il n'est pas décomposé assertion par
    assertion comme les tests Node classiques. */
+/* Ces scripts lancent de vrais serveurs sur des PORTS FIXES : deux campagnes
+   simultanées (hooks de plusieurs worktrees, agents en parallèle) se
+   marcheraient dessus et échoueraient au démarrage. Un verrou inter-processus
+   (fichier créé en exclusivité, PID dedans, repris s'il est périmé) sérialise
+   donc cette phase — l'attente est bornée par le filet d'inactivité. */
+const verrouIntegration = (function () {
+  if (!integrationSelectionnes.length) return { relacher() {} };
+  const os = require('os');
+  const chemin = path.join(os.tmpdir(), 'mc-integration.lock');
+  const dort = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* pas de pause : tant pis */ } };
+  const vivant = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
+  let signale = false;
+  for (;;) {
+    try { fs.writeFileSync(chemin, String(process.pid), { flag: 'wx' }); break; }
+    catch (e) {
+      if (e.code !== 'EEXIST') break;                       // pas de verrou possible : on continue sans
+      let perime = false;
+      try {
+        const pid = parseInt(fs.readFileSync(chemin, 'utf8'), 10);
+        perime = !pid || !vivant(pid) || (Date.now() - fs.statSync(chemin).mtimeMs > 3 * 3600 * 1000);
+      } catch (e2) { perime = true; }
+      if (perime) { try { fs.unlinkSync(chemin); } catch (e3) { /* course avec un autre : on réessaie */ } continue; }
+      if (!signale) { ecrire('… une autre campagne exécute ses intégrations : attente du verrou'); signale = true; }
+      if (fichierEtat) try { fs.writeFileSync(fichierEtat, 'attente du verrou des intégrations'); } catch (e4) { /* rien */ }
+      dort(2000);
+    }
+  }
+  return { relacher() { try { if (fs.readFileSync(chemin, 'utf8') === String(process.pid)) fs.unlinkSync(chemin); } catch (e) { /* déjà parti */ } } };
+})();
+process.on('exit', () => verrouIntegration.relacher());
 integrationSelectionnes.forEach((t) => {
   ecrire('▶ ' + t.nom);
   const t0 = Date.now();
@@ -638,6 +668,7 @@ integrationSelectionnes.forEach((t) => {
   });
   ecrireInstantane();
 });
+verrouIntegration.relacher();
 
 // ── tests e2e : navigateur sans fenêtre, piloté par CDP (SPEC-BANC-023) ────
 /* Délégué à tools/e2e-headless.js, en SOUS-PROCESSUS (comme les scripts
