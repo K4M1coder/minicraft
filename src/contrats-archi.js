@@ -29,10 +29,13 @@
     DORMIR: 'dormir',                     // c→s : { j, actif } — un joueur local se couche / se lève (lot B-ENV)
     HISTOIRE_ETAT: 'histoire_etat',       // s→c : { j, etat } — état du récit d'un joueur (lot P-HIST)
     SUCCES_DEBLOQUE: 'succes_debloque',   // s→c : { j, id } — un succès vient d'être obtenu (lot P-SUCC)
+    SUCCES_ETAT: 'succes_etat',           // s→c : { j, etat:{compte,debloques} } — compteurs du panneau (lot P-SUCC)
+    FOUDROYE: 'foudroye',                 // s→c : { j } — ce joueur vient d'être foudroyé (lot P-SUCC)
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
     dormir: 'c>s', histoire_etat: 's>c', succes_debloque: 's>c',
+    succes_etat: 's>c', foudroye: 's>c',
   };
 
   /* État du réseau tel que le CLIENT le lit (jamais `net.enLigne()`, qui est
@@ -57,6 +60,7 @@
     SAUVEGARDE_FERME_MS: 45000, // SPEC-ARCHI-012 : cadence en mode fermé
     SAUVEGARDE_OUVERT_MS: 120000,
     ID_SUCCES_MAX: 64,
+    SUCCES_ETAT_MAX: 128,       // entrées maximales de compte / debloques dans SUCCES_ETAT
     HISTOIRE_JSON_MAX: 8000,    // taille JSON maximale de HISTOIRE_ETAT.etat
     JOUEURS_LOCAUX_MAX: 4,
     PARTIE_ID_MAX: 64,
@@ -139,6 +143,39 @@
     if (typeof m.id !== 'string' || !m.id || m.id.length > BORNES.ID_SUCCES_MAX) return null;
     return { t: MSG.SUCCES_DEBLOQUE, j: j, id: m.id };
   }
+  /* SUCCES_ETAT.etat = la sérialisation de MC.Succes ({ compte:{id:n}, debloques:[id] }),
+     normalisée : seuls des identifiants courts, des compteurs finis positifs. */
+  function validerSuccesEtat(m) {
+    if (!objet(m) || m.t !== MSG.SUCCES_ETAT || !objet(m.etat)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    var compte = {}, debloques = [], n = 0, id;
+    if (m.etat.compte !== undefined) {
+      if (!objet(m.etat.compte)) return null;
+      for (id in m.etat.compte) {
+        if (!Object.prototype.hasOwnProperty.call(m.etat.compte, id)) continue;
+        if (!id || id.length > BORNES.ID_SUCCES_MAX || ++n > BORNES.SUCCES_ETAT_MAX) return null;
+        var v = m.etat.compte[id];
+        if (!estFini(v) || v < 0) return null;
+        compte[id] = v;
+      }
+    }
+    if (m.etat.debloques !== undefined) {
+      if (!Array.isArray(m.etat.debloques) || m.etat.debloques.length > BORNES.SUCCES_ETAT_MAX) return null;
+      for (var i = 0; i < m.etat.debloques.length; i++) {
+        var d = m.etat.debloques[i];
+        if (typeof d !== 'string' || !d || d.length > BORNES.ID_SUCCES_MAX) return null;
+        debloques.push(d);
+      }
+    }
+    return { t: MSG.SUCCES_ETAT, j: j, etat: { compte: compte, debloques: debloques } };
+  }
+  function validerFoudroye(m) {
+    if (!objet(m) || m.t !== MSG.FOUDROYE) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.FOUDROYE, j: j };
+  }
   // côté client : valide un message reçu du serveur parmi les nouveaux types s→c
   function validerRecu(m) {
     if (!objet(m)) return null;
@@ -147,6 +184,8 @@
       case MSG.RESEAU_ETAT: return validerReseauEtat(m);
       case MSG.HISTOIRE_ETAT: return validerHistoireEtat(m);
       case MSG.SUCCES_DEBLOQUE: return validerSuccesDebloque(m);
+      case MSG.SUCCES_ETAT: return validerSuccesEtat(m);
+      case MSG.FOUDROYE: return validerFoudroye(m);
       default: return null;
     }
   }
@@ -181,6 +220,7 @@
     validerArret: validerArret, validerDormir: validerDormir,
     validerRecu: validerRecu, validerPauseEtat: validerPauseEtat, validerReseauEtat: validerReseauEtat,
     validerHistoireEtat: validerHistoireEtat, validerSuccesDebloque: validerSuccesDebloque,
+    validerSuccesEtat: validerSuccesEtat, validerFoudroye: validerFoudroye,
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -10,16 +10,16 @@
   var NP = MC.NetProtocol;
 
   describe('Contrat ARCHI — messages, états et validateurs', {
-    teste: 'Le contrat figé du chantier « solo = serveur » (src/contrats-archi.js) : PAUSE, PAUSE_ETAT, RESEAU, RESEAU_ETAT, ARRET, DORMIR, HISTOIRE_ETAT, SUCCES_DEBLOQUE, ETAT_RESEAU, motifs de refus, bornes.',
+    teste: 'Le contrat figé du chantier « solo = serveur » (src/contrats-archi.js) : PAUSE, PAUSE_ETAT, RESEAU, RESEAU_ETAT, ARRET, DORMIR, HISTOIRE_ETAT, SUCCES_DEBLOQUE, SUCCES_ETAT, FOUDROYE, ETAT_RESEAU, motifs de refus, bornes.',
     pourquoi: 'Les lots A0, B-* et P-* codent en parallèle contre cette interface : un contrat qui dérive casserait leurs fusions sans qu\'aucun ne le voie.',
     attendu: 'chaque validateur accepte exactement le message bien formé, le normalise en copie, et renvoie null (sans exception) pour tout message sans champ, de mauvais type ou hors borne ; NP.MSG contient les nouveaux types.',
   }, function () {
 
-    it('SPEC-ARCHI-019 : les huit types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
-      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE'];
-      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces huit types');
+    it('SPEC-ARCHI-019 : les dix types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
+      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE', 'SUCCES_ETAT', 'FOUDROYE'];
+      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces dix types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
-      A.equal(new Set(valeurs).size, 8, 'aucun doublon interne');
+      A.equal(new Set(valeurs).size, 10, 'aucun doublon interne');
       attendus.forEach(function (k) {
         A.equal(NP.MSG[k], K.MSG[k], 'NP.MSG.' + k + ' fusionné tel quel');
         A.ok(['c>s', 's>c'].indexOf(K.SENS[K.MSG[k]]) >= 0, 'sens défini pour ' + k);
@@ -90,6 +90,25 @@
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: '' }), null);
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: 5 }), null);
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: new Array(70).join('x') }), null);
+    });
+
+    it('SPEC-ARCHI-019 : SUCCES_ETAT et FOUDROYE — bornes et normalisation', function () {
+      var ok = { t: 'succes_etat', j: 1, etat: { compte: { premier_bloc: 1, cinq_mille_blocs: 212.5 }, debloques: ['premier_bloc'] } };
+      A.deep(K.validerSuccesEtat(ok), ok);
+      A.ok(K.validerSuccesEtat(ok) !== ok, 'une copie');
+      A.deep(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: {} }).etat, { compte: {}, debloques: [] }, 'etat vide toléré');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0 }), null, 'etat manquant');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 7, etat: {} }), null, 'j hors borne');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: { compte: { x: -1 } } }), null, 'compteur négatif');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: { compte: { x: 'a' } } }), null, 'compteur non numérique');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: { debloques: [5] } }), null, 'identifiant non texte');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: { debloques: [new Array(70).join('x')] } }), null, 'identifiant trop long');
+      A.equal(K.validerSuccesEtat({ t: 'succes_etat', j: 0, etat: { debloques: new Array(K.BORNES.SUCCES_ETAT_MAX + 1).fill('a') } }), null, 'trop de succès');
+      A.deep(K.validerFoudroye({ t: 'foudroye', j: 2 }), { t: 'foudroye', j: 2 });
+      A.deep(K.validerFoudroye({ t: 'foudroye' }), { t: 'foudroye', j: 0 }, 'j par défaut : 0');
+      A.equal(K.validerFoudroye({ t: 'foudroye', j: 4 }), null);
+      A.ok(K.validerRecu(ok) && K.validerRecu({ t: 'foudroye', j: 0 }), 'routés par validerRecu');
+      A.equal(K.valider({ t: 'succes_etat', j: 0, etat: {} }), null, 's→c refusé côté serveur');
     });
 
     it('SPEC-ARCHI-019 : validerRecu route les quatre types s→c et ne lève jamais', function () {
