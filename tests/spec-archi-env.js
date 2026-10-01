@@ -64,9 +64,10 @@
       A.equal(volcans.indexOf('entities.'), -1, 'volcans() ne touche à aucune entité');
       A.equal(volcans.indexOf('world.setBlock'), -1, 'volcans() ne modifie pas le monde');
       A.ok(volcans.indexOf('render.majVolcans') >= 0 && volcans.indexOf('audio.jouer') >= 0, 'mais le panache, le grondement et l\'éruption restent visibles et audibles');
-      var cl = changelogNonPublie();
-      var supprime = /### Supprimé[\s\S]*bombes/i.exec(cl);
-      A.ok(supprime, 'le CHANGELOG « Non publié » a une ligne « Supprimé » sur les bombes volcaniques');
+      // « Non publié » avant la publication, la section de version après : le journal ENTIER
+      var cl = require('fs').readFileSync(require('path').join(__dirname, '..', 'CHANGELOG.md'), 'utf8');
+      var supprime = /### Supprimé[\s\S]*?bombes/i.exec(cl);
+      A.ok(supprime, 'le CHANGELOG a une ligne « Supprimé » sur les bombes volcaniques');
     });
 
     it('SPEC-ARCHI-024 : game.js n\'a plus de peuplerLieux : les habitants viennent des créatures du serveur', function () {

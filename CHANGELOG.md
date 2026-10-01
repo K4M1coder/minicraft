@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.5.0] - 2026-10-01
 ### Ajouté
 - SPEC-ARCHI-021, SPEC-SYNC-022 et SPEC-SERVEUR-006 (lot P-VEH, chantier « solo = serveur toujours présent », L50) — les véhicules sont simulés par le SERVEUR, pour tous les joueurs (solo fermé, écran partagé, réseau) : le refus « Les véhicules ne sont pas disponibles en ligne » et la conduite locale de `game.js` disparaissent.
   - **Messages** (`src/contrats-archi.js`) : `VEHICULE_POSER { j, nom, i, x, y, z, nx, ny, nz }`, `VEHICULE_MONTER { j, eid }`, `VEHICULE_DESCENDRE { j }`, `VEHICULE_REPARER { j, eid }` (c→s, budgets anti-flood, gelés en pause) et `VEHICULE_EVT { j, evt, nom?, motif? }` (s→c : `pose`, `monte`, `descend`, `repare`, ou `refus` avec un motif de liste fermée : `portee`, `occupe`, `deja_a_bord`, `inconnu`, `place`, `inventaire`, `mort`).
@@ -1407,6 +1409,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.5.0]: #
 [0.4.0]: #
 [0.3.0]: #
 [0.2.0]: #
