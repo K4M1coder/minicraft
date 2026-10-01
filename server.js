@@ -2054,7 +2054,12 @@ function traiter(c, m) {
           if (!rec && j === 0 && soloJoueur) {
             rec = soloJoueur; soloJoueur = null;
             // SPEC-ARCHI-042 : les succès de la partie solo importée passent au joueur qui l'adopte
-            if (!rec.succes && extrasSolo && extrasSolo.succes) { js.succes.charger(extrasSolo.succes); extrasSolo.succes = null; }
+            // (l'enregistrement importé peut porter un `succes` VIDE : il ne doit pas
+            // masquer ceux, réels, conservés dans extras.succes)
+            const vide = (x) => !x || (!(x.debloques && x.debloques.length) && !Object.keys(x.compte || {}).length);
+            if (vide(rec.succes) && extrasSolo && extrasSolo.succes && !vide(extrasSolo.succes)) {
+              rec.succes = extrasSolo.succes; extrasSolo.succes = null;
+            }
           }
           if (rec) {
             MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
