@@ -901,7 +901,18 @@
         if (se.vehicule) {
           // un véhicule abandonné roule sur son élan, flotte ou retombe ; piloté,
           // c'est le jeu qui le conduit, avec les commandes du joueur
-          if (!e.conducteur && MC.Vehicules) MC.Vehicules.conduire(e, dt, world, null);
+          if (!e.conducteur && MC.Vehicules) {
+            /* Un véhicule au repos (posé, vitesse nulle, personne dedans) ne se réintègre pas à
+               chaque tic : cent engins garés coûteraient cent collisions par tic pour rien.
+               Il vérifie seulement son appui deux fois par seconde (un bloc cassé dessous le
+               fait retomber) ; dès qu'il bouge, il redevient intégré à chaque tic. */
+            var repos = e.onGround && !e.vitesse && Math.abs(e.vel.x) + Math.abs(e.vel.y) + Math.abs(e.vel.z) < 0.02;
+            if (!repos) { e.reposT = 0; MC.Vehicules.conduire(e, dt, world, null); }
+            else {
+              e.reposT = (e.reposT || 0) + dt;
+              if (e.reposT >= 0.5) { e.reposT = 0; MC.Vehicules.conduire(e, 0.05, world, null); }
+            }
+          }
           continue;
         }
         var choix = choisirCible(e, se, pj, opts.reputation, dt);

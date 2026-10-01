@@ -148,6 +148,31 @@
       .slice(0, max);
   }
 
+  /* Comme selectionnerMobsProches, avec HYSTÉRÉSIS : une entité déjà envoyée au relevé précédent
+     (`precedents`, un Set d'eid) compte pour 20 % plus proche qu'elle ne l'est, de sorte que deux
+     véhicules presque à égale distance de la frontière du plafond ne s'évincent pas à tour de
+     rôle d'un relevé à l'autre (apparitions et disparitions chez le client). Renvoie la liste. */
+  function selectionnerAvecHysteresis(entites, positionsRef, portee, max, precedents) {
+    var portee2 = portee * portee;
+    function d2(e) {
+      var m = Infinity;
+      for (var i = 0; i < positionsRef.length; i++) {
+        var dx = e.pos.x - positionsRef[i].x, dz = e.pos.z - positionsRef[i].z;
+        var d = dx * dx + dz * dz;
+        if (d < m) m = d;
+      }
+      return m;
+    }
+    var cand = [];
+    entites.forEach(function (e) {
+      var d = d2(e);
+      if (d >= portee2) return;
+      cand.push({ e: e, k: precedents && precedents.has(e.eid) ? d * 0.64 : d });
+    });
+    cand.sort(function (a, b) { return a.k - b.k; });
+    return cand.slice(0, max).map(function (c) { return c.e; });
+  }
+
   /* Cadence de diffusion adaptée à la charge : paliers sur le nombre de
      clients connectés (moins de travail réseau par tic quand beaucoup de
      clients sont là, plutôt que de laisser le tic serveur se dégrader — voir
@@ -454,7 +479,7 @@
     origineAutorisee: origineAutorisee,
     CSP_STATIQUE: CSP_STATIQUE, entetesSecuriteStatiques: entetesSecuriteStatiques,
     MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, MAX_ITEMS_DIFFUSES: MAX_ITEMS_DIFFUSES, MAX_VEHICULES_DIFFUSES: MAX_VEHICULES_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
-    selectionnerMobsProches: selectionnerMobsProches,
+    selectionnerMobsProches: selectionnerMobsProches, selectionnerAvecHysteresis: selectionnerAvecHysteresis,
     ETAT_HZ_MIN: ETAT_HZ_MIN, SEUIL_FILE_OCTETS: SEUIL_FILE_OCTETS,
     PALIERS_ETAT_HZ: PALIERS_ETAT_HZ, calculerEtatHz: calculerEtatHz,
     encoder: encoder, decoder: decoder,

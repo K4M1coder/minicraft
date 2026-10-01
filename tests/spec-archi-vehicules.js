@@ -195,5 +195,90 @@
       A.equal(c2.soute.type, 'soute27', 'avec son type');
       A.equal(c2.soute.taille, 27, 'et sa taille');
     });
+
+    it('SPEC-SERVEUR-006 : un fichier de monde forgé ne fait entrer aucun véhicule invalide (modèle, coordonnées, soute, carburant, avarie)', function () {
+      var ents = MC.createEntities(flatWorld(10, B.STONE));
+      var bonneSoute = new Array(27).fill(0); bonneSoute[2] = [I.DIAMOND, 5];
+      var forges = [
+        ['zeppelin', 0, 11, 0, 0, 0, 10, 0],                       // modèle inconnu
+        ['voiture', NaN, 11, 0, 0, 0, 10, 0],                      // coordonnée non finie
+        ['voiture', 1e12, 11, 0, 0, 0, 10, 0],                     // hors du monde
+        ['voiture', 0, 11, 0, 0, [[I.DIAMOND, 5]], 10, 0],         // la voiture n'a pas de soute
+        ['camion', 0, 11, 0, 0, [[I.DIAMOND, 5]], 10, 0],          // soute de la mauvaise taille
+        ['camion', 0, 11, 0, 0, (function () { var l = new Array(27).fill(0); l[0] = [I.DIAMOND, 99999]; return l; })(), 10, 0],   // pile absurde
+        ['camion', 0, 11, 0, 0, 0, 'beaucoup', 0],                 // carburant non numérique
+        ['camion', 0, 11, 0, 0, 0, 10, 9],                         // gravité d'avarie hors 0..3
+        'n\'importe quoi', null, 42
+      ];
+      A.equal(V.restaurer(ents, forges), 0, 'aucune entrée forgée n\'est acceptée');
+      var bonne = ['camion', 3.5, 11, 2.5, 7 * Math.PI, bonneSoute, 1e9, 2];
+      A.equal(V.restaurer(ents, [bonne]), 1, 'une entrée valide passe');
+      var c = ents.list.filter(function (e) { return e.vehicule; })[0];
+      A.equal(c.carburant, V.DEFS.camion.carburant, 'un carburant démesuré est ramené au plein du modèle');
+      A.ok(Math.abs(c.yaw) < 2 * Math.PI, 'le cap est ramené dans un tour');
+      A.equal(c.soute.slots[2].n, 5, 'la soute valide est reprise');
+      A.ok(c.avarie && c.avarieGravite === 2, 'avarie conservée');
+    });
+
+    it('SPEC-VEHIC-006 : descendre ne met jamais le joueur dans un bloc, même encerclé (couronnes élargies, puis toit libre)', function () {
+      var w = piste(), ents = MC.createEntities(w), pl = joueur(w, ents);
+      var car = V.poser(ents, 'voiture', 0.5, 11, 0.5, 0);
+      // un anneau de pierre de deux blocs de haut, sur deux couronnes : aucune place au sol
+      for (var x = -4; x <= 5; x++) for (var z = -4; z <= 5; z++) {
+        var d = Math.max(Math.abs(x - 0.5), Math.abs(z - 0.5));
+        if (d >= 1.5 && d <= 3.5) for (var y = 11; y <= 13; y++) w.setBlock(x, y, z, B.STONE);
+      }
+      V.monter(pl.state, car);
+      V.descendre(pl.state, w, 0.6, 1.8);
+      A.notOk(MC.Physics.collides(w, pl.state.pos.x, pl.state.pos.y, pl.state.pos.z, 0.6, 1.8), 'le joueur n\'est pas dans un bloc (' + pl.state.pos.x.toFixed(1) + ', ' + pl.state.pos.y.toFixed(1) + ')');
+      A.equal(car.conducteur, null, 'le siège est libéré');
+      // plafond bas au-dessus du toit : il monte jusqu'à une place libre, jamais dans le bloc
+      var w2 = piste(), ents2 = MC.createEntities(w2), pl2 = joueur(w2, ents2);
+      var car2 = V.poser(ents2, 'voiture', 0.5, 11, 0.5, 0);
+      for (var x2 = -4; x2 <= 5; x2++) for (var z2 = -4; z2 <= 5; z2++) for (var y2 = 11; y2 <= 12; y2++) {
+        if (!(Math.abs(x2 - 0.5) < 1.5 && Math.abs(z2 - 0.5) < 1.5)) w2.setBlock(x2, y2, z2, B.STONE);
+      }
+      V.monter(pl2.state, car2);
+      V.descendre(pl2.state, w2, 0.6, 1.8);
+      A.notOk(MC.Physics.collides(w2, pl2.state.pos.x, pl2.state.pos.y, pl2.state.pos.z, 0.6, 1.8), 'et le toit lui-même est vérifié');
+    });
+
+    it('SPEC-SYNC-022 : un véhicule au repos ne se réintègre pas à chaque tic, mais retombe si on casse le bloc dessous', function () {
+      var w = piste(), ents = MC.createEntities(w);
+      var car = V.poser(ents, 'voiture', 0.5, 11, 0.5, 0);
+      var ref = { pos: { x: 0, y: 11, z: 0 } };
+      for (var i = 0; i < 5; i++) ents.update(1 / 20, ref);                 // se pose
+      var appels = 0, orig = V.conduire;
+      V.conduire = function () { appels++; return orig.apply(V, arguments); };
+      try {
+        for (var k = 0; k < 40; k++) ents.update(1 / 20, ref);              // 2 s à l'arrêt
+      } finally { V.conduire = orig; }
+      A.ok(appels <= 5, 'au plus 5 intégrations en 40 tics au repos (' + appels + ')');
+      for (var x = -1; x <= 1; x++) for (var z = -1; z <= 1; z++) w.setBlock(x, 10, z, 0);
+      w.setBlock(0, 9, 0, 0);
+      for (var m = 0; m < 60; m++) ents.update(1 / 20, ref);                // 3 s
+      A.ok(car.pos.y < 10.5, 'privée d\'appui, la voiture retombe (y = ' + car.pos.y.toFixed(2) + ')');
+    });
+
+    it('SPEC-SYNC-022 : au-delà du plafond, la sélection reste bornée et ne s\'inverse pas d\'un relevé à l\'autre (hystérésis)', function () {
+      var NP = MC.NetProtocol, max = NP.MAX_VEHICULES_DIFFUSES;
+      A.equal(max, 32);
+      var l = [];
+      for (var i = 0; i < 50; i++) l.push({ eid: i + 1, pos: { x: 10 + i, z: 0 } });     // 50 véhicules à portée
+      var pos = [{ x: 0, z: 0 }];
+      var premier = NP.selectionnerAvecHysteresis(l, pos, 96, max, null);
+      A.equal(premier.length, max, 'jamais plus que le plafond');
+      A.equal(premier[0].eid, 1, 'les plus proches d\'abord');
+      var vus = new Set(premier.map(function (e) { return e.eid; }));
+      // le 33e et le 32e sont presque à égale distance : l'un puis l'autre devient légèrement plus proche
+      var frontiere = l[31], voisin = l[32];
+      frontiere.pos.x = 10 + 32.2; voisin.pos.x = 10 + 31.8;                 // sans hystérésis, le 33e prendrait la place
+      var sans = NP.selectionnerMobsProches(l, pos, 96, max).map(function (e) { return e.eid; });
+      var avec = NP.selectionnerAvecHysteresis(l, pos, 96, max, vus).map(function (e) { return e.eid; });
+      A.ok(sans.indexOf(voisin.eid) >= 0 && sans.indexOf(frontiere.eid) < 0, 'témoin : sans hystérésis la frontière bascule');
+      A.ok(avec.indexOf(frontiere.eid) >= 0 && avec.indexOf(voisin.eid) < 0, 'avec hystérésis, l\'engin déjà envoyé reste');
+      A.equal(avec.length, max, 'et le plafond tient');
+      A.equal(NP.selectionnerAvecHysteresis(l, pos, 20, max, null).length, 10, 'la portée borne aussi');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

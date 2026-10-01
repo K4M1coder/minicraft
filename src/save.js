@@ -72,7 +72,7 @@
                   state.histoire.archetype ? state.histoire : { archetype: 'epopee', histoire: state.histoire })
                 : (state.histoire && MC.Histoire ? MC.Histoire.serialiser(state.histoire) : null),
       // les créatures ne sont pas sauvegardées, les véhicules si : on les a construits
-      vehicules: state.entities && MC.Vehicules ? MC.Vehicules.serialiser(state.entities) : [],
+      vehicules: state.entities && MC.Vehicules && !state.sansVehiculesLocaux ? MC.Vehicules.serialiser(state.entities) : [],
       // les succès débloqués et leurs compteurs (SPEC-SUCCES-001)
       succes: state.succes ? state.succes.serialiser() : null,
       player: {
@@ -181,7 +181,10 @@
       w.donjonsVaincus.clear();
       (data.donjons || []).forEach(function (id) { w.donjonsVaincus.add(id); });
     }
-    if (state.entities && MC.Vehicules) {
+    /* `sansVehiculesLocaux` (la page du jeu) : les véhicules appartiennent au SERVEUR
+       (SPEC-ARCHI-021) ; une ancienne sauvegarde du navigateur ne doit pas en faire
+       apparaître de fantômes dans les entités locales. */
+    if (state.entities && MC.Vehicules && !state.sansVehiculesLocaux) {
       // les véhicules de la partie en cours cèdent la place à ceux de la sauvegarde
       state.entities.list.filter(function (e) { return e.vehicule; })
         .forEach(function (e) { state.entities.remove(e); });

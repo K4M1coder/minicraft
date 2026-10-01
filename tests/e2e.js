@@ -2668,7 +2668,7 @@
         "pourquoi": "les véhicules n'existent plus que dans le serveur (solo fermé, écran partagé et réseau : un seul chemin) ; une conduite simulée par la page elle-même ne prouverait plus rien",
         "attendu": "la voiture apparaît dans net.mobsDistants, s.monture devient cette réplique, elle avance de plusieurs blocs sans correction du serveur de plus d'un bloc, le conducteur la suit, le HUD affiche des km/h, F remet le joueur à pied à côté de l'engin"
   }, async function (g) {
-    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    A.ok(await serveurPresent(), 'le serveur de jeu sert la page (sans lui ce test ne prouve rien : échec explicite, pas un faux vert)');
     await reset(g);
     g.rejoindreServeur({ pseudo: 'Pilote' + Date.now() % 100000, joueurs: 1 });
     for (var t = 0; t < 40 && g.net.etat !== 'en ligne'; t++) await wait(100);

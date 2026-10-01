@@ -382,6 +382,7 @@ function etatMonde() {
 }
 let soloJoueur = null;      // enregistrement du joueur d'une partie solo importée, adopté à la première connexion
 let extrasSolo = null;      // champs d'une partie solo importée que le serveur conserve sans encore les jouer (ARCHI-014)
+const VEHICULES_JOUEUR_MAX = 12;            // véhicules posés, libres, par joueur (en plus du plafond global)
 const VEHICULES_MAX = 256;               // véhicules posés dans le monde (borne contre la pose en rafale, en créatif surtout)
 const vehiculesSoute = new Set();        // véhicules à soute vivants (pour libérer leur soute à leur destruction)
 /* Enregistrement d'un joueur nommé + son état de personnage (SPEC-SYNC-020,
@@ -978,8 +979,9 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
 if (process.env.MC_TEST_MOBS) {
   journal('ATTENTION : MC_TEST_MOBS actif — des créatures sont posées au point d apparition (réglage de test, jamais en exploitation)');
   try {
-    JSON.parse(process.env.MC_TEST_MOBS).forEach(([type, dx, dz]) => {
-      if (entites.SPECS[type]) entites.spawn(type, SPAWN.x + (+dx || 0), SPAWN.y, SPAWN.z + (+dz || 0));
+    JSON.parse(process.env.MC_TEST_MOBS).forEach(([type, dx, dz, role]) => {
+      // 4e élément facultatif : le métier d'un habitant (ex. « forgeron »)
+      if (entites.SPECS[type]) entites.spawn(type, SPAWN.x + (+dx || 0), SPAWN.y, SPAWN.z + (+dz || 0), role ? { role: String(role), nom: 'Test' } : undefined);
     });
   } catch (e) { /* réglage de test invalide : ignoré */ }
 }
@@ -3290,7 +3292,10 @@ function poserVehiculeServeur(c, m) {
   let x = m.x + m.nx + 0.5, y = m.y + m.ny, z = m.z + m.nz + 0.5;
   // un peu de place : on remonte d'un cran si l'engin serait dans le décor
   for (let k = 0; k < 3 && MC.Physics.collides(monde, x, y, z, def.w, def.h); k++) y++;
-  if (MC.Physics.collides(monde, x, y, z, def.w, def.h) || entites.list.filter(e => e.vehicule).length >= VEHICULES_MAX) {
+  const poseur = c.nom + '#' + m.j;
+  const posesLibres = entites.list.filter(e => e.vehicule && e.poseur === poseur && !e.conducteur).length;
+  if (MC.Physics.collides(monde, x, y, z, def.w, def.h) || posesLibres >= VEHICULES_JOUEUR_MAX
+      || entites.list.filter(e => e.vehicule).length >= VEHICULES_MAX) {
     return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.PLACE);
   }
   // en survie, l'objet est retiré de l'inventaire SERVEUR (case annoncée si elle convient, sinon la première qui convient)
@@ -3304,6 +3309,7 @@ function poserVehiculeServeur(c, m) {
     paye = true;
   }
   const e = V.poser(entites, m.nom, x, y, z, st.yaw);
+  if (e) e.poseur = poseur;
   if (e && e.soute) vehiculesSoute.add(e);
   if (paye) envoyerInvMaj(c, m.j, {});
   MC.Admin.journaliser(admin, { auteur: c.nom, action: 'vehicule_pose', cible: `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`, details: m.nom, heure });
@@ -4119,7 +4125,8 @@ setInterval(() => {
         commun.mobs = NP.selectionnerMobsProches(vivants, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrireUne)
           .concat(NP.selectionnerMobsProches(objetsAuSol, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_ITEMS_DIFFUSES).map(decrireUne))
           // les véhicules ont leur propre plafond (SPEC-SYNC-022) : ni évincés par les créatures, ni sans borne
-          .concat(NP.selectionnerMobsProches(vehicules, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_VEHICULES_DIFFUSES).map(decrireUne));
+          .concat(((sel) => { c.vehiculesVus = new Set(sel.map(e => e.eid)); return sel.map(decrireUne); })(
+            NP.selectionnerAvecHysteresis(vehicules, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_VEHICULES_DIFFUSES, c.vehiculesVus)));
         /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
            ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
            liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques

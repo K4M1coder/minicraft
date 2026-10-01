@@ -343,7 +343,7 @@ async function scenarioSoute() {
       const fermeBat = prochain(b.client, 'cont_fermer', 30000, m => m.cle === cbat.cle);
       for (let k = 0; k < 12; k++) {
         b.client.envoyer({ t: 'attaque', j: 0, eid: bateau.eid, degats: 12, i: 0 });
-        await dodo(550);
+        await jusqua(() => !mobVeh(b.client, bateau.eid), 550, 30);     // cadence de frappe : sondage borné
         if (!mobVeh(b.client, bateau.eid)) break;
       }
       const gone = await jusqua(() => !mobVeh(b.client, bateau.eid), 3000);
@@ -417,7 +417,7 @@ async function scenarioPersistance() {
 
     // relance sur le même fichier : le camion, sa soute et sa position reviennent
     const s2 = await demarrer(['--monde', f, '--dossier-parties', d], env());
-    const b = await rejoindre(s2.port, 'Alice', 1);
+    const b = await rejoindre(s2.port, 'Visiteur', 1);
     const cb = b.client;
     await jusqua(() => toi(cb), 3000);
     const revenu = await jusqua(() => ((etat(cb) && etat(cb).mobs) || []).find(m => m.ve === 'camion'), 5000);
@@ -468,6 +468,187 @@ async function scenarioImportSolo() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── messages malformés, quota par joueur, pause ─────────────────────────────────
+async function scenarioRobustesse() {
+  const d = A.dossierTemp('mc-veh-rb-');
+  const f = path.join(d, 'monde.json');
+  try {
+    fs.writeFileSync(f, JSON.stringify(monde()));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], env());
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const cl = a.client;
+    await jusqua(() => toi(cl), 3000);
+
+    // messages malformés : ignorés sans effet ni réponse, le serveur continue de répondre
+    const n0 = cl.messages.length;
+    [{ t: 'vehicule_monter', j: 0, eid: 'x' }, { t: 'vehicule_monter', j: 9, eid: 1 }, { t: 'vehicule_monter' },
+     { t: 'vehicule_poser', j: 0, nom: 'voiture', x: 1e12, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
+     { t: 'vehicule_poser', j: 0, nom: 'voiture', x: 0, y: 5, z: 0, nx: 1, ny: 1, nz: 0 },
+     { t: 'vehicule_poser', j: 0, nom: 12, x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
+     { t: 'vehicule_poser', j: 0, nom: '../../etc', x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
+     { t: 'vehicule_descendre', j: 'a' }, { t: 'vehicule_reparer', eid: -3 }, { t: 'vehicule_evt', j: 0, evt: 'monte' }]
+      .forEach(m => cl.envoyer(m));
+    const apres = await prochain(cl, 'etat', 3000);
+    ok(!!apres, 'SPEC-ARCHI-021 : des messages de véhicule malformés ne tuent pas le serveur (il envoie encore ETAT)');
+    ok(!cl.messages.slice(n0).some(m => m.t === 'vehicule_evt'), 'et ne provoquent aucune réponse ni aucun effet');
+    ok(!((etat(cl).mobs || []).some(m => m.ve)), 'aucun véhicule n\'a été créé par ces messages');
+
+    // quota : 12 véhicules libres par joueur, ensuite refus « place »
+    let poses = 0, refusPlace = 0;
+    for (let i = 0; i < 14; i++) {
+      await dodo(230);                                  // cadence humaine : sous le budget anti-flood de 5 poses par seconde
+      const r = prochain(cl, 'vehicule_evt', 3000, m => m.evt === 'pose' || m.evt === 'refus');
+      poser(cl, 'moto', sousLesPieds(a.bienvenue, i % 3 - 1, 0));
+      const rep = await r;
+      if (rep && rep.evt === 'pose') poses++;
+      else if (rep && rep.motif === 'place') refusPlace++;
+    }
+    eq(poses, 12, 'SPEC-ARCHI-021 : un joueur ne peut poser que 12 véhicules libres (quota par joueur)');
+    eq(refusPlace, 2, 'au-delà, le serveur refuse avec le motif « place »');
+
+    // pause : poser, monter et descendre sont ignorés (monde figé), puis repris
+    cl.envoyer({ t: 'pause', actif: true });
+    await cl.attendre('pause_etat', 3000, m => m.actif === true);
+    const eid = ((etat(cl).mobs || []).find(m => m.ve) || {}).e;
+    const muet = prochain(cl, 'vehicule_evt', 700);
+    cl.envoyer({ t: 'vehicule_monter', j: 0, eid });
+    poser(cl, 'moto', sousLesPieds(a.bienvenue, 0, 1));
+    ok(!(await muet), 'SPEC-ARCHI-010/021 : en pause, monter et poser un véhicule sont ignorés');
+    cl.envoyer({ t: 'pause', actif: false });
+    await cl.attendre('pause_etat', 3000, m => m.actif === false);
+    const monte = evt(cl, 'monte');
+    cl.envoyer({ t: 'vehicule_monter', j: 0, eid });
+    ok(!!(await monte), 'à la reprise, monter est de nouveau accepté');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+// ── réparation chez un forgeron : chemin heureux ──────────────────────────────────
+async function scenarioReparation() {
+  const d = A.dossierTemp('mc-veh-rp-');
+  const f = path.join(d, 'monde.json');
+  try {
+    fs.writeFileSync(f, JSON.stringify(monde({ vehicules: [['voiture', 3.5, Y_DALLE + 1, 3.5, 0, 0, 30, 2]] })));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d],
+      env(Object.assign({ MC_TEST_MOBS: JSON.stringify([['villager', 1, 0, 'forgeron']]) }, seed([[I.EMERALD, 12]]))));
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const cl = a.client;
+    await jusqua(() => toi(cl), 3000);
+    const veh = await jusqua(() => ((etat(cl).mobs || []).find(m => m.ve === 'voiture')), 4000);
+    const forge = await jusqua(() => ((etat(cl).mobs || []).find(m => m.r === 'forgeron')), 4000);
+    ok(!!veh && veh.av === 2, 'préparation : une voiture avariée (gravité 2) est dans le monde');
+    ok(!!forge, 'préparation : un forgeron est dans le monde');
+    if (!veh || !forge) return;
+    const monte = evt(cl, 'monte');
+    cl.envoyer({ t: 'vehicule_monter', j: 0, eid: veh.e });
+    await monte;
+    const maj = prochain(cl, 'inv_maj', 4000);
+    const rep = evt(cl, 'repare');
+    cl.envoyer({ t: 'vehicule_reparer', j: 0, eid: forge.e });
+    ok(!!(await rep), 'SPEC-TRANSPORT-002 : le forgeron répare le véhicule conduit (évènement « repare »)');
+    const im = await maj;
+    ok(!!im && compte(im.inv, I.EMERALD) === 12 - V.COUT_REPARATION[2], 'les émeraudes sont débitées sur l\'inventaire serveur (12 → ' + (12 - V.COUT_REPARATION[2]) + ')');
+    const net = await jusqua(() => { const v = mobVeh(cl, veh.e); return v && !v.av ? v : null; }, 3000);
+    ok(!!net, 'le véhicule n\'est plus avarié chez aucun client');
+    const refus2 = refus(cl, 'inconnu');
+    cl.envoyer({ t: 'vehicule_reparer', j: 0, eid: forge.e });
+    ok(!!(await refus2), 'un véhicule en bon état ne se répare pas une seconde fois (aucune émeraude perdue)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+// ── la mort du conducteur le fait descendre ───────────────────────────────────────
+async function scenarioMortConducteur() {
+  const d = A.dossierTemp('mc-veh-mt-');
+  const f = path.join(d, 'monde.json');
+  try {
+    const cases = new Array(MC.ContratsV2.BORNES.SLOTS_INV).fill(0);
+    fs.writeFileSync(f, JSON.stringify(monde({ soloJoueur: { v: 1, inv: cases, equip: {}, etat: { hp: 1, hunger: 0, air: 10 } } })));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], env({ MC_DIFFICULTE: 'normal' }));
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const cl = a.client;
+    await jusqua(() => toi(cl), 3000);
+    const p = await poserEtLire(cl, a.bienvenue, 'voiture');
+    const monte = evt(cl, 'monte');
+    cl.envoyer({ t: 'vehicule_monter', j: 0, eid: p.eid });
+    ok(!!(await monte), 'préparation : Alice (1 PV, affamée) est au volant');
+    const morte = await jusqua(() => { const t = toi(cl); return t && t.mort ? t : null; }, 25000);
+    ok(!!morte, 'la famine la tue');
+    const pied = await jusqua(() => { const t = toi(cl); return t && t.mort && !t.veh ? t : null; }, 3000);
+    ok(!!pied, 'SPEC-SYNC-022 : morte, elle n\'est plus à bord (toi.veh absent)');
+    const libre = await jusqua(() => { const v = mobVeh(cl, p.eid); return v && !v.co ? v : null; }, 3000);
+    ok(!!libre, 'et le véhicule est libre pour les autres');
+    const r = refus(cl, 'mort');
+    cl.envoyer({ t: 'vehicule_monter', j: 0, eid: p.eid });
+    ok(!!(await r), 'un joueur mort ne peut pas monter (motif « mort »)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+// ── un fichier de monde forgé ne fait pas entrer de véhicule invalide ───────────────
+async function scenarioFichierForge() {
+  const d = A.dossierTemp('mc-veh-fg-');
+  const f = path.join(d, 'monde.json');
+  try {
+    const bonne = new Array(27).fill(0); bonne[1] = [I.DIAMOND, 4];
+    fs.writeFileSync(f, JSON.stringify(monde({ vehicules: [
+      ['camion', 2.5, Y_DALLE + 1, 2.5, 0, bonne, 1e9, 0],              // valide, carburant démesuré
+      ['zeppelin', 0, 200, 0, 0, 0, 5, 0],
+      ['voiture', 1e12, 50, 0, 0, 0, 5, 0],
+      ['camion', 5.5, Y_DALLE + 1, 5.5, 0, [[I.DIAMOND, 4]], 5, 0],     // soute de la mauvaise taille
+      ['voiture', 7.5, Y_DALLE + 1, 7.5, 0, 0, 5, 77],                  // avarie hors borne
+      'n\'importe quoi', null,
+    ] })));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], env());
+    const a = await rejoindre(s.port, 'Alice', 1);
+    await jusqua(() => toi(a.client), 3000);
+    await dodo(300);
+    const vs = (etat(a.client).mobs || []).filter(m => m.ve);
+    eq(vs.length, 1, 'SPEC-SERVEUR-006 : seule l\'entrée valide d\'un fichier de monde forgé devient un véhicule');
+    ok(vs[0] && vs[0].ve === 'camion' && vs[0].ca <= V.DEFS.camion.carburant, 'son carburant démesuré est ramené au plein du modèle (' + (vs[0] && vs[0].ca) + ')');
+    a.client.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+// ── une soute NON vide rend son contenu au sol à la destruction ────────────────────
+async function scenarioSouteDetruite() {
+  const d = A.dossierTemp('mc-veh-sd-');
+  const f = path.join(d, 'monde.json');
+  try {
+    fs.writeFileSync(f, JSON.stringify(monde()));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], env(seed([[I.DIAMOND, 12]])));
+    const a = await rejoindre(s.port, 'Alice', 1);
+    const cl = a.client;
+    await jusqua(() => toi(cl), 3000);
+    const p = await poserEtLire(cl, a.bienvenue, 'bateau', 0, 0);
+    const etatA = prochain(cl, 'cont_etat', 4000);
+    cl.envoyer({ t: 'cont_ouvrir', j: 0, eid: p.eid });
+    const ca = await etatA;
+    const iD = indiceDe(bienvenueInv(a.bienvenue, cl), I.DIAMOND);
+    const maj = prochain(cl, 'inv_maj', 4000, m => m.ack >= 1);
+    cl.envoyer({ t: 'cont_transfert', j: 0, seq: 1, de: { z: 'inv', i: iD }, vers: { z: 'cont', cle: ca.cle, i: 0 }, n: 4 });
+    await maj;
+    const ferme = prochain(cl, 'cont_fermer', 30000, m => m.cle === ca.cle);
+    for (let k = 0; k < 14 && mobVeh(cl, p.eid); k++) {
+      cl.envoyer({ t: 'attaque', j: 0, eid: p.eid, degats: 12, i: 0 });
+      await jusqua(() => !mobVeh(cl, p.eid), 550, 30);
+    }
+    ok(!!(await ferme), 'le bateau détruit ferme l\'écran de sa soute');
+    const sol = await jusqua(() => {
+      const e = etat(cl);
+      const n = ((e && e.mobs) || []).filter(m => m.t === 'item' && m.i === I.DIAMOND).length;
+      return n ? n : null;
+    }, 4000);
+    ok(!!sol, 'SPEC-SYNC-022 : les 4 diamants de la soute NON vide sont tombés au sol (objets visibles dans ETAT)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 // ── audit statique : le refus a disparu, plus aucune conduite simulée côté client ──
 function scenarioAudit() {
   const src = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
@@ -489,6 +670,11 @@ function scenarioAudit() {
     await scenarioSoute();
     await scenarioPersistance();
     await scenarioImportSolo();
+    await scenarioRobustesse();
+    await scenarioReparation();
+    await scenarioMortConducteur();
+    await scenarioFichierForge();
+    await scenarioSouteDetruite();
     scenarioAudit();
   } catch (e) {
     ok(false, 'le scénario ne doit pas lever d\'exception', e && e.stack);

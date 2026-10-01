@@ -338,19 +338,26 @@
     var d = defDe(e);
     e.conducteur = null;
     joueur.monture = null;
-    var r = (d ? d.w : 1) / 2 + 0.6;
-    for (var k = 0; k < 8; k++) {
-      var a = e.yaw + Math.PI / 2 + k * Math.PI / 4;
-      var x = e.pos.x + Math.cos(a) * r, z = e.pos.z - Math.sin(a) * r;
-      for (var dy = 0; dy <= 1; dy++) {
-        if (!P.collides(world, x, e.pos.y + dy, z, largeurJ || 0.6, hauteurJ || 1.8)) {
-          joueur.pos.x = x; joueur.pos.y = e.pos.y + dy; joueur.pos.z = z;
-          joueur.fallFrom = null;
-          return true;
+    var wJ = largeurJ || 0.6, hJ = hauteurJ || 1.8;
+    // deux couronnes autour de l'engin, côté gauche d'abord ; jamais une place qui touche le décor
+    for (var ring = 0; ring < 2; ring++) {
+      var r = (d ? d.w : 1) / 2 + 0.6 + ring * 1.0;
+      for (var k = 0; k < 8; k++) {
+        var a = e.yaw + Math.PI / 2 + k * Math.PI / 4;
+        var x = e.pos.x + Math.cos(a) * r, z = e.pos.z - Math.sin(a) * r;
+        for (var dy = 0; dy <= 2; dy++) {
+          if (!P.collides(world, x, e.pos.y + dy, z, wJ, hJ)) {
+            joueur.pos.x = x; joueur.pos.y = e.pos.y + dy; joueur.pos.z = z;
+            joueur.fallFrom = null;
+            return true;
+          }
         }
       }
     }
-    joueur.pos.x = e.pos.x; joueur.pos.y = e.pos.y + (d ? d.h : 1) + 0.05; joueur.pos.z = e.pos.z;
+    // encerclé : sur le toit, en montant jusqu'à une place libre (la dernière tentative est gardée)
+    var yToit = e.pos.y + (d ? d.h : 1) + 0.05;
+    for (var h = 0; h < 6 && P.collides(world, e.pos.x, yToit, e.pos.z, wJ, hJ); h++) yToit += 1;
+    joueur.pos.x = e.pos.x; joueur.pos.y = yToit; joueur.pos.z = e.pos.z;
     joueur.fallFrom = null;
     return true;
   }
@@ -407,13 +414,47 @@
     });
     return out;
   }
+  /* Une pile de soute sérialisée : 0 (vide) ou [id, n, usure?, data?] avec id entier
+     1..65535, n entier 1..999, usure entière positive, data de taille bornée. */
+  function pileSouteValide(c) {
+    if (c === 0 || c === null) return true;
+    if (!Array.isArray(c) || c.length < 2 || c.length > 4) return false;
+    if (!(Number.isInteger(c[0]) && c[0] >= 1 && c[0] <= 65535)) return false;
+    if (!(Number.isInteger(c[1]) && c[1] >= 1 && c[1] <= 999)) return false;
+    if (c[2] !== undefined && !(Number.isInteger(c[2]) && c[2] >= 0 && c[2] <= 100000)) return false;
+    if (c[3] !== undefined) { try { if (JSON.stringify(c[3]).length > 2000) return false; } catch (e) { return false; } }
+    return true;
+  }
+  /* Valide UNE entrée de sauvegarde (fichier de monde forgé ou corrompu) : modèle connu,
+     coordonnées finies dans le monde, cap fini, soute de la bonne taille et de piles
+     plausibles, carburant fini borné par le plein du modèle, gravité d'avarie 0..3.
+     Renvoie une entrée normalisée, ou null. */
+  function entreeValide(v) {
+    if (!Array.isArray(v) || typeof v[0] !== 'string' || !DEFS[v[0]]) return null;
+    var d = DEFS[v[0]];
+    var fini = function (x) { return typeof x === 'number' && isFinite(x); };
+    if (!fini(v[1]) || !fini(v[2]) || !fini(v[3]) || !fini(v[4])) return null;
+    if (Math.abs(v[1]) >= 1e7 || Math.abs(v[3]) >= 1e7 || v[2] <= -64 || v[2] >= 400) return null;
+    var soute = 0;
+    if (v[5]) {
+      if (!d.soute || !Array.isArray(v[5]) || v[5].length !== d.soute || !v[5].every(pileSouteValide)) return null;
+      soute = v[5];
+    }
+    var carb = v[6] == null ? undefined : (fini(v[6]) ? Math.max(0, Math.min(d.carburant, v[6])) : null);
+    if (carb === null) return null;
+    var av = v[7] ? (Number.isInteger(v[7]) && v[7] >= 1 && v[7] <= 3 ? v[7] : null) : 0;
+    if (av === null) return null;
+    return [v[0], v[1], v[2], v[3], v[4] % (2 * Math.PI), soute, carb, av];
+  }
   function restaurer(entities, data) {
     var n = 0;
-    (data || []).forEach(function (v) {
+    (data || []).forEach(function (brut) {
+      var v = entreeValide(brut);
+      if (!v) return;
       var e = poser(entities, v[0], v[1], v[2], v[3], v[4]);
       if (!e) return;
       if (e.soute && v[5]) { e.soute.load(v[5]); e.soute.rev = 0; }
-      if (v[6] != null) e.carburant = v[6];               // sinon : plein (anciennes sauvegardes)
+      if (v[6] !== undefined) e.carburant = v[6];          // sinon : plein (anciennes sauvegardes)
       if (v[7]) { e.avarie = true; e.avarieGravite = v[7]; }
       n++;
     });
@@ -424,7 +465,7 @@
                    gabarits: gabarits, poser: poser, conduire: conduire, milieuDe: milieuDe,
                    vmaxDans: vmaxDans, surfaceEau: surfaceEau, siege: siege, monter: monter,
                    descendre: descendre, caler: caler, vitesseKmh: vitesseKmh,
-                   serialiser: serialiser, restaurer: restaurer, commandeDeTouches: commandeDeTouches,
+                   serialiser: serialiser, restaurer: restaurer, entreeValide: entreeValide, commandeDeTouches: commandeDeTouches,
                    etatSync: etatSync, appliquerSync: appliquerSync, equiperSoute: equiperSoute, rouler: rouler, railEn: railEn,
                    // SPEC-TRANSPORT-002 : collision, avarie, réparation au forgeron
                    SEUIL_COLLISION: SEUIL_COLLISION, PENALITE_AVARIE: PENALITE_AVARIE,

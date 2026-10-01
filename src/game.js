@@ -484,6 +484,7 @@
       world: world, entities: entities, player: player, render: render,
       time: 60, fps: 0, chests: chests, expositions: expositions, distributeurs: distributeurs,
       audio: audio, chat: chat,
+      sansVehiculesLocaux: true,      // les véhicules sont ceux du serveur (voir save.js)
       equipe: equipe, regles: regles, vues: [], nbLocaux: 1, net: net, hud: hud,
       disposeChunk: render.disposeChunk,
       succes: MC.Succes.creer(),
