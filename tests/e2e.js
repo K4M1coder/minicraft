@@ -3089,78 +3089,100 @@
       '/255 (sans la correction, le motif étiré fausse la silhouette de l\'ombre et fait grimper cet écart bien au-delà du seuil)');
   });
 
-  /* En dernier : ce test change de partie (mode histoire, autre graine). */
+  /* Mode histoire (SPEC-ARCHI-041) : le récit vit sur le SERVEUR. Ces tests jouent donc sur un VRAI
+     serveur en mode histoire : le serveur de test (--tests) en lance un second, jetable, sur un port
+     libre (POST /tests/serveur-histoire), auquel la page se connecte comme à n'importe quel serveur
+     distant. Le client n'affiche que ce que le serveur annonce ; rien n'est simulé localement.
+     En dernier : ces tests changent de règles (mode histoire) ; chacun les rend en partant. */
+  async function rejoindreHistoire(g, histoire, presGuide) {
+    var rep = null;
+    try {
+      var r = await fetch('/tests/serveur-histoire', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                       body: JSON.stringify({ histoire: histoire, presGuide: !!presGuide }) });
+      rep = await r.json();
+    } catch (e) { rep = null; }
+    if (!rep || !rep.ok) return false;                      // pas de serveur de test : test ignoré, comme les autres tests réseau
+    g.net.connecter('ws://127.0.0.1:' + rep.port, 'Testeur', 1);
+    await sonderE2E(function () { return g.net.etat === 'en ligne'; }, 30000);
+    A.equal(g.net.etat, 'en ligne', 'connecté au serveur d\'histoire');
+    return true;
+  }
+  async function quitterHistoire(g) {
+    g.net.deconnecter();
+    g.oublierHistoire();
+    g.ui.objectifHistoire(null);
+    g.adopterRegles('survie', 'facile', null);
+    fakeLock(g, true); g.input.setState('playing');
+    await frames(2);
+  }
+
   e2e('SPEC-HISTOIRE-009 : une partie en mode histoire raconte, guide, limite et tient un journal', async function (g) {
     await reset(g);
-    videParties();
     g.render.setDistance(5);
-    g.creerPartie({ nom: 'Récit', mode: 'histoire', difficulte: 'facile', graineTexte: 'couronne', joueurs: 1,
-                    histoire: { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
-    await frames(5);
-    A.ok(g.histoire && g.regles.histoire, 'le récit est lancé');
-    var dlg = document.querySelector('.dialogue-histoire');
-    A.ok(dlg && dlg.style.display !== 'none', 'le premier chapitre est raconté');
-    A.ok(/réveil/i.test(dlg.textContent), 'Le réveil du village : ' + dlg.querySelector('h3').textContent);
-    A.equal(g.input.state, 'ui', 'la main est à l interface pendant le récit');
-    dlg.querySelector('button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    await frames(3);
-    A.equal(g.input.state, 'playing', 'on reprend la main après « Continuer »');
-    fakeLock(g, true);
-    for (var i = 0; i < 40; i++) await frames(1);
-    var obj = document.querySelector('.objectif-histoire');
-    A.ok(obj && obj.style.display !== 'none' && /guide/i.test(obj.textContent), 'l objectif s affiche : ' + (obj && obj.textContent));
-    A.ok(g.world.reperes.liste.some(function (r) { return /★/.test(r.nom); }), 'un repère marque l objectif');
-    // interactions restreintes : la pierre ne se casse pas
-    A.notOk(MC.Modes.peutCasser(g.regles, B.STONE), 'la pierre est hors de l histoire');
-    // le guide du village : l'histoire avance
-    var guide = null;
-    // SPEC-ARCHI-024 : les habitants viennent du serveur ; sans serveur (page de test) on les fait naître comme server.js
-    var sp = g.player.state.pos;
-    var lieuxAutour = g.world.habitats.lieuxProches(sp.x, sp.z, 200);
-    MC.Habitats.pnjsManquants(lieuxAutour, g.entities.list, g.world.pnjsMorts, g.time).forEach(function (p) {
-      g.entities.spawn('villager', p.x, p.y + 0.05, p.z, { pnj: p.id, role: p.role, nom: p.nom, foyer: { x: p.x, z: p.z }, lieu: p.lieu });
-    });
-    for (var t = 0; t < 240 && !guide; t++) {
-      await frames(1);
-      guide = g.entities.list.filter(function (e) { return e.role === 'guide' && g.histoire.histoire.liens.depart && e.lieu === g.histoire.histoire.liens.depart.id; })[0];
-    }
-    A.ok(guide, 'le guide du village de départ est là');
-    var avant = g.histoire.histoire.etape + g.histoire.histoire.chap * 10;
-    g.parlerA(guide);
-    await frames(3);
-    A.ok(document.querySelector('.dialogue-histoire').style.display !== 'none', 'il raconte');
-    A.gt(g.histoire.histoire.etape + g.histoire.histoire.chap * 10, avant, 'et l histoire avance');
-    document.querySelector('.dialogue-histoire button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
-    await frames(3);
-    // le journal
-    fakeLock(g, true);
-    g.input.setState('playing');
-    key('KeyH');
-    await frames(2);
-    var j = document.querySelector('.journal-histoire');
-    A.ok(j && j.style.display !== 'none' && /Couronne des Saisons/.test(j.textContent), 'H ouvre le journal');
-    key('KeyH');
-    await frames(2);
-    A.equal(j.style.display, 'none', 'H le referme');
+    try {
+      if (!(await rejoindreHistoire(g, { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, true))) {
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
+      }
+      await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
+      A.ok(g.histoire && g.regles.histoire, 'le récit est lancé, annoncé par le serveur');
+      var dlg = document.querySelector('.dialogue-histoire');
+      A.ok(dlg && dlg.style.display !== 'none', 'le premier chapitre est raconté');
+      A.ok(/réveil/i.test(dlg.textContent), 'Le réveil du village : ' + dlg.querySelector('h3').textContent);
+      A.equal(g.input.state, 'ui', 'la main est à l interface pendant le récit');
+      dlg.querySelector('button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await frames(3);
+      A.equal(g.input.state, 'playing', 'on reprend la main après « Continuer »');
+      fakeLock(g, true);
+      for (var i = 0; i < 40; i++) await frames(1);
+      var obj = document.querySelector('.objectif-histoire');
+      A.ok(obj && obj.style.display !== 'none' && /guide/i.test(obj.textContent), 'l objectif s affiche : ' + (obj && obj.textContent));
+      A.ok(g.world.reperes.liste.some(function (r) { return /★/.test(r.nom); }), 'un repère marque l objectif');
+      // interactions restreintes : la pierre ne se casse pas (règle adoptée du serveur)
+      A.notOk(MC.Modes.peutCasser(g.regles, B.STONE), 'la pierre est hors de l histoire');
+      // le guide du village : le serveur le fait naître, le joueur s'éveille à côté de lui
+      var guide = null;
+      for (var t = 0; t < 600 && !guide; t++) {
+        await frames(1);
+        g.net.mobsDistants.forEach(function (m) { if (m.role === 'guide') guide = m; });
+      }
+      A.ok(guide, 'le guide du village de départ est là');
+      var avant = g.histoire.histoire.etape + g.histoire.histoire.chap * 10;
+      g.parlerA(guide);
+      await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return d && d.style.display !== 'none'; }, 8000);
+      A.ok(document.querySelector('.dialogue-histoire').style.display !== 'none', 'il raconte (réplique envoyée par le serveur)');
+      await sonderE2E(function () { return g.histoire.histoire.etape + g.histoire.histoire.chap * 10 > avant; }, 8000);
+      A.gt(g.histoire.histoire.etape + g.histoire.histoire.chap * 10, avant, 'et l histoire avance, côté serveur');
+      document.querySelector('.dialogue-histoire button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await frames(3);
+      // le journal
+      fakeLock(g, true);
+      g.input.setState('playing');
+      key('KeyH');
+      await frames(2);
+      var j = document.querySelector('.journal-histoire');
+      A.ok(j && j.style.display !== 'none' && /Couronne des Saisons/.test(j.textContent), 'H ouvre le journal');
+      key('KeyH');
+      await frames(2);
+      A.equal(j.style.display, 'none', 'H le referme');
+    } finally { await quitterHistoire(g); }
   });
 
-  /* Tout à la fin aussi : encore un changement de partie, vers un autre
-     archétype (l enquête). */
+  /* Tout à la fin aussi : encore une connexion à un serveur d'histoire. */
   e2e('SPEC-HISTOIRE-014 : une réplique du récit libère la souris et se répond au clic ou au clavier', async function (g) {
     await reset(g);
-    videParties();
     g.render.setDistance(5);
     var sortie = document.exitPointerLock, sorties = 0;
     try {
-      g.creerPartie({ nom: 'Récit clavier', mode: 'histoire', difficulte: 'facile', graineTexte: 'couronne', joueurs: 1,
-                      histoire: { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
-      await frames(5);
+      document.exitPointerLock = function () { sorties++; };
+      if (!(await rejoindreHistoire(g, { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, false))) {
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
+      }
+      await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
       var dlg = document.querySelector('.dialogue-histoire');
       A.ok(dlg.style.display !== 'none', 'le premier chapitre est raconté');
       A.equal(g.input.state, 'ui', 'la main est à l interface');
       // la capture demandée au lancement arrive APRÈS l'ouverture du récit :
       // elle doit être relâchée aussitôt, sinon la réplique est incliquable
-      document.exitPointerLock = function () { sorties++; };
       fakeLock(g, true);
       A.gt(sorties, 0, 'une capture tardive est relâchée');
       A.equal(g.input.state, 'ui', 'et l on reste sur l interface');
@@ -3182,23 +3204,28 @@
       A.equal(pris, 'b', 'la touche 2 prend le deuxième choix');
     } finally {
       document.exitPointerLock = sortie;
-      fakeLock(g, true); g.input.setState('playing'); await frames(2);
+      await quitterHistoire(g);
     }
   });
 
   e2e('SPEC-HISTOIRE-010 : les trois archétypes se choisissent et se jouent — ici, l enquête', async function (g) {
     await reset(g);
-    videParties();
     g.render.setDistance(5);
-    g.creerPartie({ nom: 'Enquête', mode: 'histoire', difficulte: 'facile', graineTexte: 'crime', joueurs: 1,
-                    histoire: { archetype: 'enquete', heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } } });
-    await frames(5);
-    A.ok(g.histoire && g.histoire.archetype === 'enquete', 'le récit choisi est bien une enquête');
-    var dlg = document.querySelector('.dialogue-histoire');
-    A.ok(dlg && dlg.style.display !== 'none', 'un dialogue de chapitre s affiche');
-    var obj = document.querySelector('.objectif-histoire');
-    A.ok(obj && obj.style.display !== 'none' && /enquête/i.test(obj.textContent),
-         'l objectif parle de l enquête : ' + (obj && obj.textContent));
+    try {
+      if (!(await rejoindreHistoire(g, { archetype: 'enquete', heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, false))) {
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
+      }
+      await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
+      A.ok(g.histoire && g.histoire.archetype === 'enquete', 'le récit choisi est bien une enquête');
+      var dlg = document.querySelector('.dialogue-histoire');
+      A.ok(dlg && dlg.style.display !== 'none', 'un dialogue de chapitre s affiche');
+      dlg.querySelector('button').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+      await frames(3);
+      var obj = document.querySelector('.objectif-histoire');
+      await sonderE2E(function () { return obj && obj.style.display !== 'none'; }, 5000);
+      A.ok(obj && obj.style.display !== 'none' && /enquête/i.test(obj.textContent),
+           'l objectif parle de l enquête : ' + (obj && obj.textContent));
+    } finally { await quitterHistoire(g); }
   });
 
   // ══════════════════════════════════════════════════════════════════════════

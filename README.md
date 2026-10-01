@@ -626,9 +626,10 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 
 - L'obscurité n'influence pas l'apparition des monstres en surface, qui dépend
   de l'heure seule.
-- Le mode histoire (trois archétypes : épopée, enquête, colonie) n'est pas encore
-  porté sur le serveur : il ne se joue que sur la page de test (chantier « solo =
-  serveur », lot P-HIST).
+- Le mode histoire (trois archétypes : épopée, enquête, colonie) est tenu par le
+  serveur, un récit par joueur : en réseau chacun avance à son rythme ; en écran
+  partagé, le dialogue et l'objectif plein écran suivent le premier joueur, les
+  annonces des autres s'affichent en bulles.
 - La météo ne change pas le vol des avions.
 - Inventaire, fabrication, conteneurs (coffres, fourneaux, banque…), commerce, objets au sol et cultures sont tenus par le
   serveur, en solo comme en réseau ; le client ne fait que les afficher.

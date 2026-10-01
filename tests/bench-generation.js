@@ -23,7 +23,7 @@ const N = parseInt(process.argv[2] || '80', 10);
 const budget = JSON.parse(fs.readFileSync(path.join(root, 'tests', 'budget-perf.json'), 'utf8')).generation;
 
 const SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs',
-  'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain',
+  'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain',
   'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'faune', 'factions', 'inventory',
   'vehicules', 'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'modes', 'chat', 'commandes',
   'options', 'apparence', 'split', 'hud', 'gamepad', 'net-protocol', 'parametres', 'admin', 'politique',
