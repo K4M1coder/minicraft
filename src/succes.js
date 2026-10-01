@@ -61,10 +61,9 @@
                           evenement: 'foudre', seuil: 1 },
     vingt_repas:       { nom: 'Bon appétit', description: 'Manger vingt fois.',
                           evenement: 'manger', seuil: 20 },
-    // B4 (SPEC-PVP-004) : victoires PvP — en ligne, `game.js` signale
-    // { type: 'pvp_victoire' } sur chaque message PVP `victoire` reçu du
-    // serveur (seul arbitre du compte réel) ; hors ligne, jamais déclenché
-    // (pas de PvP réseau en solo, docs/vague-2/B4.md § 5).
+    // B4 (SPEC-PVP-004) : victoires PvP — le serveur signale
+    // { type: 'pvp_victoire' } à l'issue d'un combat (`issuePvp`, seul
+    // arbitre du compte réel).
     premiere_victoire_pvp:  { nom: 'Premier sang', description: 'Remporter un premier combat PvP.',
                               evenement: 'pvp_victoire', seuil: 1 },
     cinq_victoires_pvp:     { nom: 'Guerrier', description: 'Remporter cinq victoires PvP.',
@@ -74,6 +73,8 @@
   };
 
   var IDS = Object.keys(LISTE);
+  // un identifiant venu de l'extérieur (fichier, réseau) : jamais « constructor » ni « toString »
+  function existe(id) { return typeof id === 'string' && Object.prototype.hasOwnProperty.call(LISTE, id); }
 
   /* Le suivi d'une partie : ses compteurs, ce qui est débloqué, dans quel
      ordre. `signaler` est appelé pour chaque événement du jeu ; il rend la
@@ -83,6 +84,7 @@
     var compte = {};             // id de succès -> compteur cumulé
     var debloque = {};           // id de succès -> true une fois obtenu
     var ordre = [];              // ids dans l'ordre d'obtention
+    var rev = 0;                 // augmente à chaque changement de compteur ou de déblocage
 
     function signaler(ev) {
       var nouveaux = [];
@@ -94,6 +96,7 @@
         if (def.filtre && !def.filtre(ev)) return;        // ne correspond pas à ce succès précis
         var ajout = def.valeur ? def.valeur(ev) : 1;
         compte[id] = (compte[id] || 0) + ajout;
+        rev++;
         if (compte[id] >= def.seuil) {
           debloque[id] = true;
           ordre.push(id);
@@ -104,6 +107,9 @@
     }
 
     function estDebloque(id) { return !!debloque[id]; }
+    /* Numéro de version de l'état : le serveur (SPEC-ARCHI-042) ne renvoie les
+       compteurs au client que lorsqu'il a changé depuis le dernier envoi. */
+    function revision() { return rev; }
     function debloques() { return ordre.slice(); }
 
     function progression() {
@@ -127,6 +133,7 @@
       compte = {};
       debloque = {};
       ordre = [];
+      rev++;
       if (!obj || typeof obj !== 'object') return;
       if (obj.compte && typeof obj.compte === 'object') {
         IDS.forEach(function (id) {
@@ -136,16 +143,59 @@
       }
       if (Array.isArray(obj.debloques)) {
         obj.debloques.forEach(function (id) {
-          if (LISTE[id] && !debloque[id]) { debloque[id] = true; ordre.push(id); }
+          if (existe(id) && !debloque[id]) { debloque[id] = true; ordre.push(id); }
         });
       }
     }
 
-    return { signaler: signaler, estDebloque: estDebloque, debloques: debloques,
+    return { signaler: signaler, estDebloque: estDebloque, debloques: debloques, revision: revision,
              progression: progression, serialiser: serialiser, charger: charger };
+  }
+
+  /* Le suivi des succès « d'état », qui ne viennent d'aucune action isolée
+     mais de la position et de l'heure d'un joueur : altitude, distance
+     parcourue, nuit survécue. Logique pure (SPEC-ARCHI-042) : le serveur
+     l'appelle à chaque tic avec la position qui fait foi, et signale les
+     événements rendus. Mêmes règles qu'avant que le client s'en charge :
+     la distance est l'intégrale des déplacements entre deux appels (un bond
+     de 20 blocs ou plus — téléportation, renaissance — n'est pas du chemin
+     parcouru, et un joueur mort ne parcourt rien), l'altitude et la
+     distance accumulée sont remises une fois par seconde de jeu, la nuit est
+     survécue quand le jour se lève sur un joueur vivant qui en a VU le début
+     pendant cette session et l'a vécue au moins NUIT_MIN_S secondes ÉVEILLÉ :
+     rejoindre à l'aube, ou dormir pour passer la nuit, n'en rapporte pas. */
+  var PERIODE_ECHANTILLON_S = 1, BOND_MAX = 20, NUIT_MIN_S = 120;
+  function creerSuiveur() {
+    var prec = null, dist = 0, nuitPrec = null, reste = 0, debutVu = false, eveille = 0;
+    /* `pos` {x,y,z}, `vivant`, `estNuit` : l'état au moment de l'appel ;
+       `dort` : le joueur est couché ; `dt` : secondes de jeu écoulées. */
+    function tic(dt, pos, vivant, estNuit, dort) {
+      var evts = [];
+      if (prec && vivant) {
+        var d = Math.hypot(pos.x - prec.x, pos.y - prec.y, pos.z - prec.z);
+        if (isFinite(d) && d < BOND_MAX) dist += d;
+      }
+      // un mort n'a plus de position suivie : la renaissance (même proche) n'est pas du chemin parcouru
+      prec = vivant ? { x: pos.x, y: pos.y, z: pos.z } : null;
+      estNuit = !!estNuit;
+      if (estNuit && nuitPrec === false) { debutVu = true; eveille = 0; }     // la nuit tombe sous nos yeux
+      if (!estNuit) {
+        if (nuitPrec === true && vivant && debutVu && eveille >= NUIT_MIN_S) evts.push({ type: 'nuit' });
+        debutVu = false; eveille = 0;
+      } else if (!vivant) { debutVu = false; eveille = 0; }
+      else if (!dort) eveille += dt;
+      nuitPrec = estNuit;
+      reste -= dt;
+      if (reste > 0) return evts;
+      reste = PERIODE_ECHANTILLON_S;
+      evts.push({ type: 'altitude', y: pos.y });
+      if (dist > 0) { evts.push({ type: 'distance', blocs: dist }); dist = 0; }
+      return evts;
+    }
+    return { tic: tic };
   }
 
   function total() { return IDS.length; }
 
-  MC.Succes = { LISTE: LISTE, creer: creer, total: total };
+  MC.Succes = { LISTE: LISTE, existe: existe, creer: creer, creerSuiveur: creerSuiveur, total: total, NUIT_MIN_S: NUIT_MIN_S };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

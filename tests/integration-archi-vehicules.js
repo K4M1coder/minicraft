@@ -483,7 +483,6 @@ async function scenarioRobustesse() {
     const n0 = cl.messages.length;
     [{ t: 'vehicule_monter', j: 0, eid: 'x' }, { t: 'vehicule_monter', j: 9, eid: 1 }, { t: 'vehicule_monter' },
      { t: 'vehicule_poser', j: 0, nom: 'voiture', x: 1e12, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
-     { t: 'vehicule_poser', j: 0, nom: 'voiture', x: 0, y: 5, z: 0, nx: 1, ny: 1, nz: 0 },
      { t: 'vehicule_poser', j: 0, nom: 12, x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
      { t: 'vehicule_poser', j: 0, nom: '../../etc', x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 },
      { t: 'vehicule_descendre', j: 'a' }, { t: 'vehicule_reparer', eid: -3 }, { t: 'vehicule_evt', j: 0, evt: 'monte' }]
@@ -492,6 +491,9 @@ async function scenarioRobustesse() {
     ok(!!apres, 'SPEC-ARCHI-021 : des messages de véhicule malformés ne tuent pas le serveur (il envoie encore ETAT)');
     ok(!cl.messages.slice(n0).some(m => m.t === 'vehicule_evt'), 'et ne provoquent aucune réponse ni aucun effet');
     ok(!((etat(cl).mobs || []).some(m => m.ve)), 'aucun véhicule n\'a été créé par ces messages');
+    const diag = refus(cl, 'inconnu');
+    cl.envoyer({ t: 'vehicule_poser', j: 0, nom: 'voiture', i: -1, x: 0, y: Y_DALLE, z: 0, nx: 1, ny: 1, nz: 0 });
+    ok(!!(await diag), 'une normale en diagonale (bien formée mais absurde) est refusée avec un motif');
 
     // quota : 12 véhicules libres par joueur, ensuite refus « place »
     let poses = 0, refusPlace = 0;
@@ -649,12 +651,44 @@ async function scenarioSouteDetruite() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── succès « premier véhicule » : arbitré par le serveur, pour le bon joueur local ─────
+async function scenarioSucces() {
+  const d = A.dossierTemp('mc-veh-su-');
+  const f = path.join(d, 'monde.json');
+  try {
+    fs.writeFileSync(f, JSON.stringify(monde()));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], env());
+    const a = await rejoindre(s.port, 'Duo', 2);                    // écran partagé : deux joueurs locaux sur une connexion
+    const cl = a.client;
+    await jusqua(() => { const t = etat(cl) && etat(cl).toi; return t && t.length === 2 ? t : null; }, 4000);
+    const p1 = a.bienvenue.toi[1];
+    const cible = { x: Math.floor(p1.x), y: Y_DALLE, z: Math.floor(p1.z), nx: 0, ny: 1, nz: 0 };
+    const avant = new Set(((etat(cl).mobs) || []).filter(m => m.ve).map(m => m.e));
+    const pose = prochain(cl, 'vehicule_evt', 4000, m => m.evt === 'pose' && m.j === 1);
+    cl.envoyer(Object.assign({ t: 'vehicule_poser', j: 1, nom: 'moto', i: -1 }, cible));
+    ok(!!(await pose), 'préparation : le joueur 2 pose une moto');
+    const mob = await jusqua(() => ((etat(cl).mobs) || []).find(m => m.ve === 'moto' && !avant.has(m.e)), 3000);
+    if (!mob) return;
+    const n0 = cl.messages.length;
+    const debloque = prochain(cl, 'succes_debloque', 4000, m => m.id === 'premier_vehicule');
+    const monte = prochain(cl, 'vehicule_evt', 4000, m => m.evt === 'monte' && m.j === 1);
+    cl.envoyer({ t: 'vehicule_monter', j: 1, eid: mob.e });
+    ok(!!(await monte), 'le joueur 2 monte dans la moto');
+    const su = await debloque;
+    ok(!!su && su.j === 1, 'SPEC-SUCCES-001 : embarquer donne « premier_vehicule » au joueur local 2, annoncé par SUCCES_DEBLOQUE du serveur', JSON.stringify(su));
+    ok(!cl.messages.slice(n0).some(m => m.t === 'succes_debloque' && m.id === 'premier_vehicule' && m.j === 0), 'et pas au joueur 1, qui n\'est pas monté');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 // ── audit statique : le refus a disparu, plus aucune conduite simulée côté client ──
 function scenarioAudit() {
   const src = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
   const sansCommentaires = src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
   ok(!/pas disponibles en ligne/.test(src), 'SPEC-ARCHI-021 (audit) : la chaîne « pas disponibles en ligne » n\'existe plus dans game.js');
   ok(!/V\.(monter|descendre|conduire|caler|poser)\(/.test(sansCommentaires), 'SPEC-ARCHI-021 (audit) : game.js ne simule plus aucun véhicule (monter, descendre, conduire, caler, poser)');
+  ok(!/signalerSucces\(\s*\{\s*type:\s*'vehicule'/.test(sansCommentaires), 'SPEC-SUCCES-001 (audit) : game.js ne signale plus le succès véhicule lui-même');
   ok(!/entities\.list\.[^\n]*vehicule/.test(sansCommentaires), 'SPEC-ARCHI-021 (audit) : game.js ne cherche plus de véhicule dans ses entités locales');
   const lisezMoi = fs.readFileSync(path.join(RACINE, 'README.md'), 'utf8');
   ok(!/véhicules ne sont pas disponibles en ligne/i.test(lisezMoi), 'SPEC-ARCHI-021 : le README ne dit plus que les véhicules sont indisponibles en ligne');
@@ -675,6 +709,7 @@ function scenarioAudit() {
     await scenarioMortConducteur();
     await scenarioFichierForge();
     await scenarioSouteDetruite();
+    await scenarioSucces();
     scenarioAudit();
   } catch (e) {
     ok(false, 'le scénario ne doit pas lever d\'exception', e && e.stack);

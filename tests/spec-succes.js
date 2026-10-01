@@ -173,6 +173,120 @@
       A.deep(vide.debloques(), [], 'des champs du mauvais type sont ignorés sans planter');
     });
 
+    /* SPEC-ARCHI-042 : le suivi par position/heure, désormais appelé par le
+       SERVEUR à chaque tic avec la position qui fait foi. */
+    function marcher(suiveur, secondes, vitesse, opts) {
+      opts = opts || {};
+      var evts = [], x = opts.x0 || 0, dt = 0.05;
+      for (var i = 0; i < Math.round(secondes / dt); i++) {
+        x += vitesse * dt;
+        suiveur.tic(dt, { x: x, y: opts.y === undefined ? 64 : opts.y, z: 0 }, opts.vivant !== false, !!opts.nuit)
+          .forEach(function (e) { evts.push(e); });
+      }
+      return evts;
+    }
+    function somme(evts, type, champ) {
+      return evts.filter(function (e) { return e.type === type; }).reduce(function (a, e) { return a + e[champ]; }, 0);
+    }
+
+    it('SPEC-ARCHI-042 : distance — l\'intégrale des positions échantillonnée à 1 Hz, à une seconde de marche près', function () {
+      var evts = marcher(S.creerSuiveur(), 10, 6);                 // 60 blocs en 10 s
+      var d = somme(evts, 'distance', 'blocs');
+      A.ok(d <= 60.01 && d >= 60 - 6 - 0.01, 'distance rapportée ' + d.toFixed(2) + ' pour 60 blocs parcourus (≤ 1 s de retard)');
+      A.equal(evts.filter(function (e) { return e.type === 'altitude'; }).length, 10, 'un échantillon d\'altitude par seconde de jeu');
+      var suivi = S.creer();
+      evts.forEach(function (e) { suivi.signaler(e); });
+      A.ok(Math.abs(suivi.progression().filter(function (l) { return l.id === 'cinq_mille_blocs'; })[0].compte - 60) <= 6.01,
+        'le compteur « Grand voyageur » suit la marche');
+    });
+
+    it('SPEC-ARCHI-042 : un bond de 20 blocs ou plus (renaissance, téléportation) n\'est pas du chemin parcouru ; un mort ne parcourt rien', function () {
+      var sv = S.creerSuiveur(), evts = [];
+      sv.tic(0.05, { x: 0, y: 64, z: 0 }, true, false);
+      sv.tic(0.05, { x: 500, y: 64, z: 0 }, true, false);                           // bond
+      evts = evts.concat(sv.tic(1.1, { x: 500.5, y: 64, z: 0 }, true, false));
+      A.ok(somme(evts, 'distance', 'blocs') <= 0.51, 'seuls les 0,5 bloc suivants comptent');
+      var mort = marcher(S.creerSuiveur(), 5, 6, { vivant: false });
+      A.equal(somme(mort, 'distance', 'blocs'), 0, 'un joueur mort ne cumule aucune distance');
+    });
+
+    /* Fait vivre un suiveur `n` secondes (pas de 1 s) dans l'état donné et rend les types d'événements. */
+    function vivre(sv, n, estNuit, opts) {
+      opts = opts || {};
+      var types = [];
+      for (var i = 0; i < n; i++)
+        sv.tic(1, { x: 0, y: 64, z: 0 }, opts.vivant !== false, estNuit, !!opts.dort).forEach(function (e) { types.push(e.type); });
+      return types;
+    }
+    it('SPEC-ARCHI-042 : nuit survécue — vue tomber, vécue éveillé assez longtemps, vivant au lever du jour', function () {
+      var sv = S.creerSuiveur();
+      vivre(sv, 5, false);
+      vivre(sv, S.NUIT_MIN_S + 10, true);
+      A.ok(vivre(sv, 1, false).indexOf('nuit') >= 0, 'le jour se lève sur un vivant qui a veillé : « nuit survécue »');
+      A.ok(vivre(sv, 1, false).indexOf('nuit') < 0, 'une seule fois par nuit');
+    });
+
+    it('SPEC-ARCHI-042 : nuit survécue — rejoindre en pleine nuit, dormir, mourir ou une nuit trop courte n\'en rapportent pas', function () {
+      var rejoint = S.creerSuiveur();                                  // le suiveur est neuf à chaque connexion
+      vivre(rejoint, S.NUIT_MIN_S + 30, true);
+      A.ok(vivre(rejoint, 1, false).indexOf('nuit') < 0, 'connecté en pleine nuit : le début n\'a pas été vu');
+      var dormeur = S.creerSuiveur();
+      vivre(dormeur, 3, false); vivre(dormeur, S.NUIT_MIN_S + 30, true, { dort: true });
+      A.ok(vivre(dormeur, 1, false).indexOf('nuit') < 0, 'la nuit passée à dormir ne compte pas');
+      var court = S.creerSuiveur();
+      vivre(court, 3, false); vivre(court, 5, true);
+      A.ok(vivre(court, 1, false).indexOf('nuit') < 0, 'trente secondes avant l\'aube ne suffisent pas');
+      var mort = S.creerSuiveur();
+      vivre(mort, 3, false); vivre(mort, S.NUIT_MIN_S + 30, true);
+      A.ok(vivre(mort, 1, false, { vivant: false }).indexOf('nuit') < 0, 'le jour se lève sur un mort : rien');
+      var renaitre = S.creerSuiveur();
+      vivre(renaitre, 3, false); vivre(renaitre, S.NUIT_MIN_S + 30, true); vivre(renaitre, 1, true, { vivant: false });
+      vivre(renaitre, 5, true);
+      A.ok(vivre(renaitre, 1, false).indexOf('nuit') < 0, 'mort puis réapparu dans la nuit : la veille est à refaire');
+    });
+
+    it('SPEC-ARCHI-042 : une renaissance même proche (< 20 blocs) n\'est pas du chemin parcouru', function () {
+      var sv = S.creerSuiveur(), blocs = 0;
+      var tic = function (x, vivant) { sv.tic(0.05, { x: x, y: 64, z: 0 }, vivant, false).forEach(function (e) { if (e.type === 'distance') blocs += e.blocs; }); };
+      tic(0, true); tic(0, false);                          // mort sur place
+      tic(15, true);                                        // renaissance à 15 blocs de là
+      sv.tic(1.1, { x: 15.5, y: 64, z: 0 }, true, false).forEach(function (e) { if (e.type === 'distance') blocs += e.blocs; });
+      A.ok(blocs <= 0.51, 'seuls les 0,5 bloc marchés après la renaissance comptent (' + blocs.toFixed(2) + ')');
+    });
+
+    it('SPEC-ARCHI-042 : un identifiant venu du dehors n\'est un succès que s\'il est dans la liste (« constructor », « toString »…)', function () {
+      var suivi = S.creer();
+      suivi.charger({ debloques: ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'premier_bloc'], compte: { constructor: 5 } });
+      A.deep(suivi.debloques(), ['premier_bloc'], 'seul le vrai succès est repris');
+      A.ok(!S.existe('constructor') && !S.existe('toString') && S.existe('premier_bloc'), 'existe() ne regarde pas la chaîne de prototypes');
+      A.equal(suivi.progression().length, S.total(), 'la progression n\'a pas grossi');
+    });
+
+    it('SPEC-ARCHI-042 : altitude — l\'échantillon porte la hauteur du serveur et débloque « Prise d\'altitude » au-dessus de 100', function () {
+      var suivi = S.creer();
+      marcher(S.creerSuiveur(), 3, 0, { y: 90 }).forEach(function (e) { suivi.signaler(e); });
+      A.ok(!suivi.estDebloque('haute_altitude'), 'à 90 : rien');
+      marcher(S.creerSuiveur(), 3, 0, { y: 101 }).forEach(function (e) { suivi.signaler(e); });
+      A.ok(suivi.estDebloque('haute_altitude'), 'à 101 : débloqué');
+    });
+
+    it('SPEC-ARCHI-042 : revision() n\'augmente que lorsque les compteurs ou les déblocages changent (le serveur n\'envoie rien sinon)', function () {
+      var suivi = S.creer(), r0 = suivi.revision();
+      suivi.signaler({ type: 'altitude', y: 10 });                 // filtre non satisfait : rien ne change
+      suivi.signaler({ type: 'inconnu' });
+      A.equal(suivi.revision(), r0, 'événement sans effet : même révision');
+      suivi.signaler({ type: 'casser', bloc: C.B.STONE });
+      var r1 = suivi.revision();
+      A.gt(r1, r0, 'un déblocage change la révision');
+      suivi.signaler({ type: 'casser', bloc: C.B.STONE });
+      A.equal(suivi.revision(), r1, 'un succès déjà obtenu ne change plus rien');
+      suivi.signaler({ type: 'manger', id: I.BREAD });
+      A.gt(suivi.revision(), r1, 'un compteur qui avance change la révision');
+      var r2 = suivi.revision();
+      suivi.charger(suivi.serialiser());
+      A.gt(suivi.revision(), r2, 'un rechargement change la révision');
+    });
+
     it('SPEC-SUCCES-001 : le suivi d\'une partie survit à la sauvegarde (MC.Save)', function () {
       var etat = G.etatMinimal(2026);
       etat.succes = S.creer();

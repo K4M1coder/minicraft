@@ -270,14 +270,12 @@
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
       onQuitte: function (m) { chat.systeme((m.nom || 'Un joueur') + ' est parti'); },
       /* B4 (SPEC-PVP-001 à 006) : le serveur fait foi sur tous les enjeux
-         PvP — ce hook ne fait qu'afficher, jamais recalculer. `victoire`
-         alimente les succès (SPEC-SUCCES-001), les autres évènements sont de
-         simples messages système dans le chat. */
+         PvP — ce hook ne fait qu'afficher, jamais recalculer. Les succès
+         de victoire sont décidés par le serveur (SUCCES_DEBLOQUE). */
       onPvp: function (m) {
         switch (m.evt) {
           case 'victoire':
             chat.systeme('Victoire contre ' + (m.contre || '?') + ' (' + (m.n || 0) + ' au total).');
-            signalerSucces({ type: 'pvp_victoire', n: m.n });
             break;
           case 'defaite': {
             var perte = (m.perte || []).reduce(function (a, p) { return a + p.n; }, 0);
@@ -304,6 +302,12 @@
         }
       },
       onEtat: function (m) { if (typeof m.heure === 'number') g.time = m.heure; },
+      /* SPEC-ARCHI-042 : les succès sont arbitrés par le serveur. Ces trois hooks
+         ne font qu'afficher : l'annonce d'un déblocage, le miroir des compteurs
+         pour le panneau (joueur local 0), et la foudre qui vient de nous toucher. */
+      onSuccesDebloque: function (m) { annoncerSucces(m.j, m.id); },
+      onSuccesEtat: function (m) { if (m.j === 0) { g.succes.charger(m.etat); rafraichirPanneauSucces(); } },
+      onFoudroye: function (m) { if (m.j === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); } },
       /* Le serveur fait autorité : pour chacun de nos joueurs, on adopte sa
          position et ses statistiques, puis on rejoue les entrées qu'il n'a
          pas encore traitées (voir synchro.js). */
@@ -424,7 +428,7 @@
       /* P-VEH (SPEC-ARCHI-021) : la réponse du serveur à une demande de pose, de
          montée, de descente ou de réparation. À bord, c'est le relevé d'état
          (toi.veh) qui embarque la prédiction, pas ce message : il ne sert qu'à
-         informer le joueur (et à compter le succès). */
+         informer le joueur (le succès « premier véhicule » arrive de lui-même par SUCCES_DEBLOQUE). */
       onVehiculeEvt: function (v) {
         var principal = v.j === 0;
         var def = v.nom && MC.Vehicules.DEFS[v.nom];
@@ -435,7 +439,6 @@
         } else if (v.evt === 'monte') {
           audio.play('poser');
           if (principal) ui.toast(nom + ' — ZQSD pour conduire, F pour descendre');
-          signalerSucces({ type: 'vehicule', vehicule: v.nom });
         } else if (v.evt === 'descend') {
           if (principal) ui.toast('Pied à terre');
         } else if (v.evt === 'repare') {
@@ -503,18 +506,28 @@
       niveauInitial: render.materiel && render.materiel.renduLogiciel ? 99 : 0,
     }) : null;
 
-    /* SPEC-SUCCES-001 : signale un événement au suivi de la partie ; ce qui
-       vient de se débloquer s'annonce une seule fois (toast, chat, son). */
-    function signalerSucces(ev) {
-      var nouveaux = g.succes.signaler(ev);
-      nouveaux.forEach(function (n) {
-        ui.toast('Succès : ' + n.nom);
-        chat.systeme('Succès débloqué : ' + n.nom + ' — ' + n.description);
-        audio.jouer(MC.Ambiance.sonEvenement('succes'), { categorie: 'evenement' });
-      });
-      return nouveaux;
+    /* SPEC-SUCCES-001, SPEC-ARCHI-042 : le SERVEUR décide des succès (g.succes
+       n'est que le miroir de ses compteurs, rempli par SUCCES_ETAT) ; ce qu'il
+       annonce s'affiche ici une seule fois (toast, chat, son). Un joueur
+       local autre que le premier n'a pas de panneau : il reçoit le message. */
+    // le panneau ouvert suit les compteurs du serveur (SUCCES_ETAT) sans qu'il faille le rouvrir
+    function rafraichirPanneauSucces() { if (ui && ui.succesOuverts && ui.succesOuverts()) ui.panneauSucces(g.succes); }
+    function annoncerSucces(j, id) {
+      if (!MC.Succes.existe(id)) return;        // « constructor », « toString »… : jamais un succès
+      var def = MC.Succes.LISTE[id];
+      if (j === 0) {
+        if (g.succes.estDebloque(id)) return;
+        var etat = g.succes.serialiser();
+        etat.debloques.push(id);
+        g.succes.charger(etat);
+        ui.toast('Succès : ' + def.nom);
+        chat.systeme('Succès débloqué : ' + def.nom + ' — ' + def.description);
+        rafraichirPanneauSucces();
+      } else {
+        chat.systeme('Succès du joueur ' + (j + 1) + ' : ' + def.nom + ' — ' + def.description);
+      }
+      audio.jouer(MC.Ambiance.sonEvenement('succes'), { categorie: 'evenement' });
     }
-    g.signalerSucces = signalerSucces;
 
     var ui = MC.createUI(surface, atlas, {
       onSelectSlot: selectSlot,
@@ -538,8 +551,6 @@
       onImporterLocales: function () { importerPartiesLocales(); },
       onExporterLocales: function () { exporterPartiesLocales(); },
       onImporterFichier: function (texte) { importerFichierParties(texte); },
-      onFabrique: function (id) { signalerSucces({ type: 'fabriquer', id: id }); },
-      onEchange: function () { signalerSucces({ type: 'echange' }); },
       // B1 (docs/vague-2/B1.md § 6) : chaque interaction de l'écran
       // inventaire/établi (transfert, équipement, craft, fermeture de la
       // grille) passe par ici — toujours le joueur local 0, seul à avoir un
@@ -1283,17 +1294,8 @@
         audio.tonnerre(Math.hypot(lieu.x - pc.x, lieu.z - pc.z), e.force);
         /* SPEC-ARCHI-022 : la foudre blesse qui se tient à découvert tout près,
            allume ce qu'elle touche et blesse les créatures — le SERVEUR seul en
-           décide (PV, blocs). Ici, seulement la présentation (toast, cri) et
-           le suivi de succès, sans jamais toucher à la vie ni au monde : le
-           calcul de portée est le même, pur, que celui du serveur. */
-        equipe.forEach(function (j) {
-          var st = j.player.state;
-          var lieuJ = me.lieuEclair(e, st.pos.x, st.pos.z);
-          if (!st.dead && me.foudroie(lieuJ, st.pos, abri)) {
-            if (j.index === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); }
-            signalerSucces({ type: 'foudre' });
-          }
-        });
+           décide (PV, blocs, succès) et prévient le joueur touché par FOUDROYE
+           (toast et cri : onFoudroye). Ici, seulement l'éclair et le tonnerre. */
         if (g.surEclair) g.surEclair(e, lieu, ySol);
       });
     }
@@ -1324,7 +1326,6 @@
         if (ent) {
           net.ouvrirConteneur({ eid: ent.eid }, 0);
           input.setState('ui');
-          signalerSucces({ type: 'banque' });
         }
       }
       // un panneau d'information rappelle aussi la zone de jeu ici (SPEC-ZONE-003) :
@@ -1564,7 +1565,6 @@
       }
       g.finHistoire = n;
       audio.jouer(MC.Ambiance.sonEvenement('fin'), { categorie: 'evenement' });
-      signalerSucces({ type: 'histoire', fin: n.id });
       chat.systeme('Fin : ' + n.titre);
       ui.objectifHistoire(null);
       forceCloseContainer();
@@ -1621,7 +1621,6 @@
         g.lieu = l;
         if (l) ui.toast('Bienvenue à ' + l.nom + ' — ' + MC.Habitats.LIEUX[l.kind].nom.toLowerCase() + ', ' + l.style.toLowerCase());
         if (l && g.histoire) signalerHistoire({ type: 'lieu', id: l.id });
-        if (l) signalerSucces({ type: 'lieu', kind: l.kind });
       }
     }
 
@@ -1999,8 +1998,6 @@
         }
         if (g.histoire && evts[k].type === 'mort' && evts[k].parJoueur) signalerHistoire({ type: 'tuer', mob: evts[k].victime });
         if (g.histoire && evts[k].type === 'boss_vaincu') signalerHistoire({ type: 'boss', donjon: evts[k].donjon });
-        if (evts[k].type === 'mort' && evts[k].parJoueur) signalerSucces({ type: 'tuer', mob: evts[k].victime });
-        if (evts[k].type === 'boss_vaincu') signalerSucces({ type: 'boss', donjon: evts[k].donjon });
         // une mort de la main du joueur change ce que les factions pensent de lui
         if (evts[k].type === 'mort' && evts[k].parJoueur && world.reputation) {
           MC.Factions.surMort(evts[k].victime, world.reputation).forEach(function (c) {
@@ -2218,32 +2215,6 @@
     }
     g.ejecterDistributeur = ejecterDistributeur;
 
-    /* SPEC-SUCCES-001 : altitude, distance parcourue et nuit survécue se
-       vérifient au fil du temps plutôt qu'à un événement précis. Hors ligne
-       seulement : en ligne, plusieurs joueurs partagent l'équipe et rien ne
-       fait autorité sur « la » position à suivre. */
-    var succesT = 0, succesDist = 0, succesPosPrec = null, succesNuit = DC.isNight(60);
-    function tickerSucces(dt) {
-      if (net.enLigne()) return;
-      var pos = player.state.pos;
-      if (succesPosPrec && !player.state.dead) {
-        var d = Math.hypot(pos.x - succesPosPrec.x, pos.y - succesPosPrec.y, pos.z - succesPosPrec.z);
-        // une téléportation (respawn, nouvelle partie) ne compte pas comme un déplacement
-        if (isFinite(d) && d < 20) succesDist += d;
-      }
-      succesPosPrec = { x: pos.x, y: pos.y, z: pos.z };
-
-      var nuitActuelle = DC.isNight(g.time);
-      if (succesNuit && !nuitActuelle && !player.state.dead) signalerSucces({ type: 'nuit' });
-      succesNuit = nuitActuelle;
-
-      succesT -= dt;
-      if (succesT > 0) return;
-      succesT = 1;
-      signalerSucces({ type: 'altitude', y: pos.y });
-      if (succesDist > 0) { signalerSucces({ type: 'distance', blocs: succesDist }); succesDist = 0; }
-    }
-
     function selectSlot(i) {
       if (i < 0 || i >= Inv.HOTBAR_SIZE) return;
       player.state.selected = i;
@@ -2360,7 +2331,6 @@
         if (CONTENEURS_POSES[kind]) {
           net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
           audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
-          if (kind === 'banque') signalerSucces({ type: 'banque' });
           // L'écran s'affiche vraiment à la réponse du serveur (onConteneurEtat,
           // CONTENEUR_ETAT) — un refus (portée, etc.) laisse l'écran vide,
           // Échap referme normalement (closeUI/forceCloseContainer tolèrent
@@ -2391,7 +2361,7 @@
       if (res === 'livre') { ouvrirLivreEnMain(); return; }
       if (res === 'place' || res === 'place-ici') annoncerPose(equipe[0], res, target, mange);
       if (res === 'place' || res === 'place-ici') audio.play('poser');
-      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: mange }); }
+      else if (res === 'eat') audio.play('manger');
       else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
       else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
       else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
@@ -2807,7 +2777,7 @@
             // le serveur calcule le butin et nous le donne : pas de double compte
             entities.list.splice(nAvant);
             net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
-          } else signalerSucces({ type: 'casser', bloc: res.id });
+          }
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
             ui.toast('Il faut un outil adapte pour recuperer ce bloc', 'warn');
@@ -2867,7 +2837,7 @@
         annoncerPose(j, res, target, idMain);
         audio.play('poser');
       }
-      else if (res === 'eat') { audio.play('manger'); signalerSucces({ type: 'manger', id: idMain }); }
+      else if (res === 'eat') audio.play('manger');
       else if (res === 'till' || res === 'plant') audio.play('poser');
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
       else if (res === 'bascule') { annoncerBascule(j, avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
@@ -2900,7 +2870,6 @@
       if (CONTENEURS_POSES[kind]) {
         net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
         audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
-        if (kind === 'banque') signalerSucces({ type: 'banque' });
       } else {
         ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
         audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
@@ -2943,7 +2912,6 @@
          réseau : même chemin. */
       entities.mergeItems();
       surveillerDonjons();
-      tickerSucces(dt);
     }
 
     function frameTemps(dt) {

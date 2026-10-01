@@ -258,6 +258,15 @@ P-HIST (041) et P-SUCC (042) — les véhicules (P-VEH, 021, SYNC-022, SERVEUR-0
 et P-SUCC. Bug ancien à traiter à part : les circuits referment au tic suivant une
 porte ouverte à la main.
 
+Avancement du lot P-SUCC : SPEC-ARCHI-042 est ✅. Le serveur tient les succès de
+chaque joueur (solo fermé, écran partagé, réseau) : événements décidés sur ce qu'il
+a lui-même constaté, échantillonnage de position à chaque tic (distance, altitude,
+nuit), persistance dans le fichier de monde, reprise des succès d'une partie solo
+importée. Le client n'affiche que `SUCCES_DEBLOQUE`, `SUCCES_ETAT` et `FOUDROYE`.
+Reste à brancher `signalerSucces` pour `vehicule` (P-VEH) et `histoire` (P-HIST).
+BLOQUANT POUR LA PUBLICATION : les succès `premier_vehicule` et `histoire_achevee` sont inobtenables tant que P-VEH et P-HIST ne sont pas fusionnés.
+Preuves : `tests/integration-archi-succes.js`, `tests/spec-succes.js`.
+
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
 | **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |

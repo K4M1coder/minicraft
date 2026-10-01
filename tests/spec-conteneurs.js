@@ -194,6 +194,7 @@
       j.grille.slots[0] = { id: B.LOG, n: 1 };
       var r = MCo.appliquer(ctxSansConteneurs(j), { k: 'craft', fois: 1 });
       A.ok(r.ok); A.equal(r.effets.fois, 1);
+      A.deep(r.effets.ids, [B.PLANKS], 'SPEC-ARCHI-042 : le résultat fabriqué est rendu (le serveur en tire « Premier outil »)');
       A.equal(j.inv.count(B.PLANKS), 4);
       A.equal(j.grille.slots[0], null, 'l\'ingrédient a été consommé');
 
@@ -204,6 +205,7 @@
       j.grille.slots[0] = { id: B.LOG, n: 3 };
       var r3 = MCo.appliquer(ctxSansConteneurs(j), { k: 'craft', fois: 3 });
       A.ok(r3.ok); A.equal(r3.effets.fois, 3);
+      A.deep(r3.effets.ids, [B.PLANKS, B.PLANKS, B.PLANKS], 'une entrée par fois');
       A.equal(j.inv.count(B.PLANKS), 4 + 12);
 
       // inventaire plein : aucune case libre ni pile compatible

@@ -143,7 +143,7 @@
   }
   function craft(ctx, op) {
     var grille = ctx.joueur.grille, inv = ctx.joueur.inv;
-    var fait = 0;
+    var fait = 0, faits = [];
     for (var k = 0; k < op.fois; k++) {
       var ids = grille.slots.map(function (s) { return s ? s.id : 0; });
       var m = Inv().matchRecipe(ids, 3, 3);
@@ -151,9 +151,11 @@
       if (!capacite(inv, m.id, m.n)) { if (fait === 0) return { ok: false, motif: 'plein' }; break; }
       for (var i = 0; i < grille.slots.length; i++) if (grille.slots[i]) grille.consumeAt(i, 1);
       inv.add(m.id, m.n);
+      faits.push(m.id);
       fait++;
     }
-    return { ok: true, modifs: { inv: true, equip: false, grille: true, conteneurs: [] }, effets: { fois: fait } };
+    // `ids` : ce qui a été fabriqué, une entrée par fois (le serveur en tire les succès)
+    return { ok: true, modifs: { inv: true, equip: false, grille: true, conteneurs: [] }, effets: { fois: fait, ids: faits } };
   }
 
   function equip(ctx, op) {

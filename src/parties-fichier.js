@@ -49,6 +49,8 @@
     zones: 'zones',
     histoire: 'extras.histoire',
     vehicules: 'extras.vehicules',
+    // à l'import ; le serveur (SPEC-ARCHI-042) les reprend dans l'enregistrement du joueur
+    // qui adopte la partie (joueurs[nom].succes) et retire alors `extras.succes`
     succes: 'extras.succes',
     player: 'soloJoueur.{inv,equip,etat}',
     chests: 'conteneurs',

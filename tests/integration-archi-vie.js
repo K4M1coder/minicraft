@@ -272,7 +272,7 @@ async function scenarioButin() {
   // le butin tombe au sol ; on marche vers lui jusqu'à ce que le serveur l'annonce (DONNE)
   const inventaire0 = cl.dernier('inv_maj');
   let sN = 0;
-  const fin = Date.now() + 12000;
+  const fin = Date.now() + 45000;                            // borné, mais large : l horloge de jeu du serveur ralentit sous charge
   while (Date.now() < fin && !donnes.length) {
     const t = toi(), e = cl.dernier('etat');
     const it = e && e.mobs.filter(m => m.t === 'item').sort((a, b) => Math.hypot(a.x - t.x, a.z - t.z) - Math.hypot(b.x - t.x, b.z - t.z))[0];
