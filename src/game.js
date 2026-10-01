@@ -210,6 +210,8 @@
 
     /* Client reseau. Nul tant qu on joue en solo : le jeu fonctionne
        exactement pareil, le reseau n est qu une couche en plus. */
+    // SPEC-ARCHI-046 : seul écrivain de g.time — avance avec l'image, suit les relevés du serveur sans reculer
+    var horloge = MC.Synchro.creerHorloge();
     var net = MC.createNetClient({
       onBienvenue: function (m) {
         // le serveur fait autorite sur la graine : on rebatit le monde
@@ -236,8 +238,10 @@
         }
         /* SPEC-ARCHI-041 : une partie en mode histoire impose SES règles (interactions permises, commerce)
            au client, aussi quand on la rejoint d'une autre machine ; l'inverse aussi (le serveur n'est plus en histoire). */
-        if (!!m.histoire !== !!regles.histoire) adopterRegles(m.mode, m.difficulte, m.histoire);
-        g.time = m.heure || 0;
+        /* SPEC-ARCHI-045 : de même pour le mode — un client resté en survie face à
+           un serveur créatif (ou l'inverse) prédirait le vol autrement que lui. */
+        if (!!m.histoire !== !!regles.histoire || (m.mode && m.mode !== regles.mode.id)) adopterRegles(m.mode, m.difficulte, m.histoire);
+        g.time = horloge.fixer(m.heure || 0);
         (m.blocs || []).forEach(function (b) {
           var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
           world.getChunk(cx, cz, true);
@@ -306,7 +310,8 @@
             break;
         }
       },
-      onEtat: function (m) { if (typeof m.heure === 'number') g.time = m.heure; },
+      // SPEC-ARCHI-046 : l'heure du serveur passe par l'horloge (jamais écrasée : elle reculerait)
+      onEtat: function (m) { if (typeof m.heure === 'number') g.time = horloge.recevoir(m.heure); },
       /* SPEC-ARCHI-042 : les succès sont arbitrés par le serveur. Ces trois hooks
          ne font qu'afficher : l'annonce d'un déblocage, le miroir des compteurs
          pour le panneau (joueur local 0), et la foudre qui vient de nous toucher. */
@@ -609,9 +614,9 @@
       },
       onSelectSlot: selectSlot,
       onToggleFly: function () {
-        player.state.flying = !player.state.flying;
-        player.state.vel.y = 0;
-        ui.toast(player.state.flying ? 'Vol activé' : 'Vol désactivé');
+        // SPEC-ARCHI-045 : seulement si les règles le permettent — le serveur ne ferait pas voler
+        if (!MC.Synchro.peutVoler(player.state)) return;
+        ui.toast(MC.Synchro.basculerVol(player.state) ? 'Vol activé' : 'Vol désactivé');
       },
       onKey: onKey,
       onSaisieTouche: function (k) {
@@ -985,7 +990,7 @@
       for (var k2 in chests) delete chests[k2];
       for (var ke in expositions) delete expositions[ke];
       for (var kd in distributeurs) delete distributeurs[kd];
-      g.time = 60;
+      g.time = horloge.fixer(60);
       composerEquipe(opts.joueurs || 1, regles);
       chat.vider();
       chat.systeme('Nouvelle partie « ' + meta.nom + ' » — graine ' + meta.graine);
@@ -1653,7 +1658,7 @@
       s.inv.load([]);
       s.hp = 20; s.hunger = 20; s.air = 10; s.dead = false;
       s.flying = false; s.selected = 0; s.exhaustion = 0;
-      g.time = 60;
+      g.time = horloge.fixer(60);
       g.succes = MC.Succes.creer();
       placeAtSpawn();
       prime();
@@ -2745,7 +2750,7 @@
       // boutons a front montant, pour les manettes
       if (man && man.connectee()) {
         if (man.vientDAppuyer(man.BTN.VOL)) {
-          if (!descendreDe(j)) { st.flying = !st.flying; st.vel.y = 0; }
+          if (!descendreDe(j)) MC.Synchro.basculerVol(st);
         }
         if (man.vientDAppuyer(man.BTN.SUIVANT))
           st.selected = (st.selected + 1) % Inv.HOTBAR_SIZE;
@@ -2863,7 +2868,7 @@
 
     function frameTemps(dt) {
       // temps, apparitions, cultures
-      g.time += dt;
+      g.time = horloge.avancer(dt, g.time);
       g.duree = (g.duree || 0) + dt;
       // L45 : frais de garde et économie n'avancent que dans le serveur (avancerEconomie)
     }
@@ -2929,6 +2934,7 @@
         frameFinDePartie(dt);
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
+        g.time = horloge.avancer(dt, g.time);     // le serveur ne s'arrête pas pour un inventaire ouvert
         frameMondeInterface(dt);
         render.setHighlight(null);
       } else {

@@ -15,6 +15,8 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
 ### Corrigé
+- SPEC-ARCHI-045 — immobile, le joueur était régulièrement recalé et, en « vol statique », il descendait : hors créatif le client volait (double appui sur Espace jamais refusé) alors que le serveur, qui fait foi, ignorait le vol et le faisait tomber — chaque `ETAT` le ramenait plus bas. La bascule passe désormais par `MC.Synchro.basculerVol`, sans effet hors créatif, et la réconciliation reprend l'état de vol du serveur. En créatif, reprendre le vol en pleine chute recalait aussi le joueur vers le bas (le serveur gardait l'élan de la chute) : la vitesse verticale repart de zéro chez le serveur au même point, `ETAT.toi[].vol` donne son état de vol à la réconciliation, et le client adopte le mode du serveur à la connexion.
+- SPEC-ARCHI-046 — l'heure du monde avançait puis reculait sans fin : chaque `ETAT` (jusqu'à 60 par seconde) écrasait `g.time`, que le client avançait aussi de son côté, avec une heure arrondie au dixième et parfois en retard (tic serveur plafonné à 0,25 s). Un seul écrivain désormais, `MC.Synchro.creerHorloge`, qui rattrape l'écart sans reculer (saut adopté au-delà de 2 s), et l'heure part au millième. Tests : `tests/spec-archi-reseau.js`, `tests/integration-archi-sync.js`.
 - `integration-archi-vehicules` : Bob s'éloigne à plus de 10 m avant le test « portee » (le serveur mesure en 3D moins la demi-largeur, le test à 6,x m horizontaux était au seuil).
 
 ## [0.5.0] - 2026-10-01

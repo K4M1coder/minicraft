@@ -4533,7 +4533,8 @@ setInterval(() => {
          serait recalculée cent fois pour la même créature (regroupement, SPEC-SYNC-022). */
       const decrites = new Map();
       const decrireUne = e => { let o = decrites.get(e); if (!o) { o = decrire(e); decrites.set(e, o); } return o; };
-      const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
+      // SPEC-ARCHI-046 : au millième — arrondie au dixième, l'heure restait figée puis sautait de 0,1 s
+      const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(3) };
       const vivants = [], objetsAuSol = [], vehicules = [];
       entites.list.forEach(e => { (e.type === 'item' ? objetsAuSol : e.vehicule ? vehicules : vivants).push(e); });
       clients.forEach(c => {

@@ -123,4 +123,111 @@
       A.ok(x > 0 && x < 10, 'la position avance vers la cible sans la dépasser (' + x + ')');
     });
   });
+
+  /* Bogue signalé : immobile, le joueur était régulièrement déplacé ; en « vol
+     statique » il descendait ; l'horloge avançait puis reculait sans fin. */
+  describe('Vol et horloge du monde — client et serveur d\'accord', {
+    teste: 'MC.Synchro.basculerVol, rejouer (vol décidé par les règles, vitesse verticale remise à zéro au même instant des deux côtés) et MC.Synchro.creerHorloge (heure du monde côté client).',
+    pourquoi: 'Le client prédit avec le même code que le serveur : s\'il vole quand le serveur le fait tomber, chaque relevé ETAT le ramène plus bas ; et une heure écrasée à chaque relevé, arrondie au dixième, recule des dizaines de fois par seconde.',
+    attendu: 'en survie le vol est refusé des deux côtés ; en créatif les deux trajectoires sont identiques à la bascule ; l\'heure client ne recule jamais sur des relevés ordinaires, suit le serveur à moins de 0,15 s et adopte d\'un coup un vrai saut (sommeil, /jour).',
+  }, function () {
+    function joueurMode(mode) {
+      var w = MC.createWorld(4242);
+      var col = w.findSpawnColumn();
+      w.getChunk(Math.floor(col[0] / 16), Math.floor(col[1] / 16), true);
+      var pl = MC.createPlayer(w, MC.createEntities(w), MC.Modes.regles(mode, 'facile'));
+      pl.state.pos.x = col[0] + 0.5; pl.state.pos.z = col[1] + 0.5;
+      pl.state.pos.y = w.groundAt(col[0], col[1], true) + 12;   // en l'air, loin du sol
+      return pl;
+    }
+    var REPOS = { forward: 0, back: 0, left: 0, right: 0, jump: 0, sprint: 0 };
+
+    it('SPEC-ARCHI-045 : en survie, le double appui ne fait pas voler (le serveur ne le ferait pas)', function () {
+      var pl = joueurMode('survie'), st = pl.state;
+      A.equal(MC.Synchro.basculerVol(st), false, 'bascule refusée');
+      A.equal(st.flying, false, 'toujours à pied');
+      // un état local qui volerait quand même (écrit à la main) : le serveur, lui, tombe
+      var serveur = joueurMode('survie'), pred = MC.Synchro.creerPrediction(), envoyees = [];
+      st.flying = true;
+      for (var i = 0; i < 30; i++) { var e = pred.enregistrer(1 / 60, REPOS, 0, 0, st.flying); MC.Synchro.rejouer(pl, [e]); envoyees.push(e); }
+      MC.Synchro.rejouer(serveur, envoyees);
+      A.equal(serveur.state.flying, false, 'le serveur ignore le vol demandé hors créatif');
+      var ecart = MC.Synchro.reconcilier(pl, MC.Synchro.etatJoueur(serveur, envoyees[envoyees.length - 1].s), pred);
+      A.equal(st.flying, false, 'la réconciliation reprend l\'état de vol du serveur (ETAT.toi[].vol)');
+      A.ok(ecart > 0.5, 'l\'écart venait bien du vol local (' + ecart.toFixed(2) + ' bloc)');
+      for (var k = 0; k < 10; k++) { var e2 = pred.enregistrer(1 / 60, REPOS, 0, 0, st.flying); MC.Synchro.rejouer(pl, [e2]); MC.Synchro.rejouer(serveur, [e2]); }
+      A.ok(Math.abs(serveur.state.pos.y - st.pos.y) < 1e-9, 'ensuite, plus aucun écart');
+    });
+
+    it('SPEC-ARCHI-045 : en créatif, bascule en plein saut — le client et le serveur suivent la même trajectoire', function () {
+      var client = joueurMode('creatif'), serveur = joueurMode('creatif');
+      [client, serveur].forEach(function (p) { p.state.flying = false; p.state.vel.y = 6; });
+      var pred = MC.Synchro.creerPrediction(), entrees = [];
+      for (var i = 0; i < 40; i++) {
+        if (i === 5) A.equal(MC.Synchro.basculerVol(client.state), true, 'le vol s\'active');
+        var e = pred.enregistrer(1 / 60, REPOS, 0, 0, client.state.flying);
+        MC.Synchro.rejouer(client, [e]);
+        entrees.push(e);
+      }
+      MC.Synchro.rejouer(serveur, entrees);                // le serveur ne voit que les entrées
+      A.equal(serveur.state.flying, true, 'le serveur vole aussi');
+      A.ok(Math.abs(serveur.state.pos.y - client.state.pos.y) < 1e-9,
+        'même altitude des deux côtés (écart ' + Math.abs(serveur.state.pos.y - client.state.pos.y).toFixed(4) + ')');
+      A.ok(Math.abs(serveur.state.vel.y) < 1e-9, 'vol statique : vitesse verticale nulle chez le serveur');
+    });
+
+    it('SPEC-ARCHI-045 : une bascule faite entre deux images survit à un ETAT reçu avant l\'entrée suivante', function () {
+      var client = joueurMode('creatif'), serveur = joueurMode('creatif');
+      [client, serveur].forEach(function (p) { p.state.flying = false; p.state.vel.y = -8; });   // en chute
+      var pred = MC.Synchro.creerPrediction(), envoyees = [];
+      function image() { var e = pred.enregistrer(1 / 60, REPOS, 0, 0, client.state.flying); MC.Synchro.rejouer(client, [e]); envoyees.push(e); }
+      for (var i = 0; i < 6; i++) image();
+      MC.Synchro.rejouer(serveur, envoyees.slice(0, 3));    // le serveur n'a traité que 3 entrées
+      MC.Synchro.basculerVol(client.state);                // double appui, entre deux images
+      MC.Synchro.reconcilier(client, MC.Synchro.etatJoueur(serveur, 3), pred);   // un ETAT arrive avant l'image suivante
+      A.equal(client.state.flying, true, 'la bascule n\'est pas effacée par le relevé');
+      for (var k = 0; k < 30; k++) image();
+      MC.Synchro.rejouer(serveur, envoyees.slice(3));
+      var ecart = MC.Synchro.reconcilier(client, MC.Synchro.etatJoueur(serveur, envoyees[envoyees.length - 1].s), pred);
+      A.ok(ecart < 1e-9, 'aucune correction une fois tout acquitté (écart ' + ecart.toFixed(4) + ')');
+      A.equal(serveur.state.flying, true, 'le serveur vole');
+    });
+
+    it('SPEC-ARCHI-046 : l\'heure client ne recule jamais sur des relevés ordinaires et suit le serveur', function () {
+      var h = MC.Synchro.creerHorloge();
+      h.fixer(60);
+      var serveur = 60, t = 60, reculs = 0, ecartMax = 0, precedent = t;
+      for (var i = 0; i < 600; i++) {                       // 10 s à 60 images/s
+        var dt = 1 / 60;
+        serveur += dt;
+        if (i === 200) serveur -= 0.4;                      // un tic serveur trop long, plafonné : 0,4 s perdues
+        t = h.avancer(dt, t);
+        if (i % 2 === 0) t = h.recevoir(+serveur.toFixed(1));   // ETAT à 30 Hz, heure arrondie au dixième
+        if (t < precedent - 1e-12) reculs++;
+        precedent = t;
+        if (i > 300) ecartMax = Math.max(ecartMax, Math.abs(t - serveur));
+      }
+      A.equal(reculs, 0, 'aucun recul');
+      A.ok(ecartMax < 0.15, 'à moins de 0,15 s du serveur une fois rattrapé (' + ecartMax.toFixed(3) + ')');
+    });
+
+    it('SPEC-ARCHI-046 : un vrai saut d\'heure (sommeil, /jour, /nuit) et une écriture locale sont adoptés aussitôt', function () {
+      var h = MC.Synchro.creerHorloge();
+      A.equal(h.fixer(60), 60);
+      A.equal(h.recevoir(700), 700, 'saut en avant adopté d\'un coup');
+      A.equal(h.recevoir(100), 100, 'saut en arrière (heure du jour réglée) adopté d\'un coup');
+      A.equal(h.avancer(0.5, 3000), 3000.5, 'une heure écrite à la main (outil de test, débogage) est reprise');
+    });
+
+    it('SPEC-ARCHI-045/046 : audit — game.js bascule le vol par MC.Synchro et n\'écrit l\'heure qu\'au travers de l\'horloge', function () {
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(!/flying\s*=\s*!/.test(jeu), 'aucune bascule directe de flying');
+      A.equal((jeu.match(/Synchro\.basculerVol\(/g) || []).length, 2, 'clavier et manette passent par basculerVol');
+      A.ok(!/g\.time\s*=\s*m\.heure/.test(jeu), 'aucun relevé n\'écrase g.time directement');
+      A.ok(!/g\.time\s*\+=/.test(jeu), 'g.time n\'avance que par l\'horloge');
+      A.ok(/heure:\s*\+heure\.toFixed\(3\)/.test(serveur), 'ETAT porte l\'heure au millième');
+      A.ok(/m\.mode\s*!==\s*regles\.mode\.id/.test(jeu), 'le client adopte le mode du serveur quand il diffère (règles de vol comprises)');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -62,10 +62,61 @@
     for (var i = 0; i < entrees.length; i++) {
       var e = entrees[i];
       st.yaw = e.yaw; st.pitch = e.pitch;
-      if (e.v !== undefined && st.regles && st.regles.vole) st.flying = !!e.v;
+      /* SPEC-ARCHI-045 : voler est permis par les RÈGLES, pas par l'entrée : hors
+         créatif `v` est ignoré (le serveur ne vole pas ; le client non plus, sa
+         bascule passe par basculerVol et la réconciliation reprend le vol du
+         serveur). À la bascule, la vitesse verticale repart de zéro, ici, donc
+         des DEUX côtés — le client le faisait seul : le serveur gardait l'élan
+         du saut ou de la chute, et l'ETAT suivant recalait le joueur. */
+      if (e.v !== undefined && peutVoler(st) && st.flying !== !!e.v) { st.flying = !!e.v; st.vel.y = 0; }
       joueur.updateMovement(e.dt, decoderTouches(e.k));
     }
     return entrees.length;
+  }
+
+  function peutVoler(st) { return !!(st && st.regles && st.regles.vole); }
+  /* Double appui sur Espace, bouton de vol de la manette : bascule le vol si
+     les règles le permettent (créatif), sinon ne fait rien. Renvoie l'état. */
+  function basculerVol(st) {
+    if (!peutVoler(st)) { st.flying = false; return false; }
+    st.flying = !st.flying;
+    st.vel.y = 0;
+    return st.flying;
+  }
+
+  /* ─── côté client : l'heure du monde (SPEC-ARCHI-046) ──────────────────────
+     Le serveur fait foi sur l'heure (SPEC-NET-017) mais ne l'envoie qu'à chaque
+     ETAT ; entre deux relevés le client l'avance lui-même. L'écraser à chaque
+     relevé la faisait reculer sans cesse (relevé arrondi, déjà vieux de
+     quelques millisecondes, tic serveur trop long plafonné à 0,25 s). Ici :
+     un seul écrivain, qui avance avec l'image et rattrape l'écart en douceur —
+     jamais en reculant —, sauf un vrai saut (sommeil, /jour, /nuit, reprise),
+     adopté d'un coup. */
+  var SAUT_HEURE = 2, RAPPEL_HEURE = 2;    // s ; fraction de l'écart rattrapée par seconde
+  function creerHorloge() {
+    var t = null, ecart = 0;
+    return {
+      fixer: function (h) { t = +h || 0; ecart = 0; return t; },
+      // un relevé du serveur : rend l'heure à afficher maintenant
+      recevoir: function (h) {
+        if (typeof h !== 'number' || !isFinite(h)) return t;
+        if (t === null || Math.abs(h - t) > SAUT_HEURE) { t = h; ecart = 0; }
+        else ecart = h - t;
+        return t;
+      },
+      /* une image de `dt` secondes ; `actuel` : la valeur que le jeu affiche — si
+         quelqu'un l'a écrite à la main (outil de débogage, test), on la reprend */
+      avancer: function (dt, actuel) {
+        if (typeof actuel === 'number' && actuel !== t) { t = actuel; ecart = 0; }
+        if (t === null) t = 0;
+        if (!(dt > 0)) return t;
+        var corr = Math.max(-dt, ecart * Math.min(1, dt * RAPPEL_HEURE));
+        ecart -= corr;
+        t += dt + corr;
+        return t;
+      },
+      get valeur() { return t; },
+    };
   }
 
   /* Véhicule (SPEC-SYNC-022) : le serveur dit à bord de QUEL véhicule le joueur
@@ -100,16 +151,25 @@
   function reconcilier(joueur, serveur, prediction, trouver) {
     var st = joueur.state;
     var avant = { x: st.pos.x, y: st.pos.y, z: st.pos.z };
+    var voulu = st.flying;                  // le vol que veut le client, peut-être pas encore envoyé
     ajusterMonture(joueur, serveur, trouver);
     st.pos.x = serveur.x; st.pos.y = serveur.y; st.pos.z = serveur.z;
     st.vel.x = serveur.vx || 0; st.vel.y = serveur.vy || 0; st.vel.z = serveur.vz || 0;
     st.onGround = !!serveur.sol;
+    /* SPEC-ARCHI-045 : l'état de vol du serveur au point acquitté — sans lui, le
+       rejeu partirait du vol ACTUEL du client et verrait une « bascule » (vitesse
+       verticale remise à zéro) là où le serveur n'en a vu aucune. */
+    if (serveur.vol !== undefined) st.flying = !!serveur.vol && peutVoler(st);
     if (typeof serveur.chute === 'number') st.fallFrom = serveur.chute;
     else st.fallFrom = null;
     /* À bord côté serveur mais réplique pas encore reçue : rejouer les entrées
        comme une marche à pied ferait dériver le joueur hors de son siège. */
     if (serveur.veh && !st.monture) { prediction.confirmer(serveur.s); return Math.hypot(st.pos.x - avant.x, st.pos.y - avant.y, st.pos.z - avant.z); }
     rejouer(joueur, prediction.confirmer(serveur.s));
+    /* Une bascule faite depuis la dernière entrée (double appui entre deux images)
+       n'est dans aucune entrée : on la réapplique, comme basculerVol — la
+       prochaine entrée la porte, et le serveur fera la même chose au même point. */
+    if (st.flying !== voulu && peutVoler(st)) { st.flying = voulu; st.vel.y = 0; }
     return Math.hypot(st.pos.x - avant.x, st.pos.y - avant.y, st.pos.z - avant.z);
   }
 
@@ -141,7 +201,7 @@
          millième DANS un mur, où le joueur resterait coincé. */
       s: dernier, x: st.pos.x, y: st.pos.y, z: st.pos.z,
       vx: st.vel.x, vy: st.vel.y, vz: st.vel.z,
-      sol: st.onGround ? 1 : 0, chute: st.fallFrom === null ? null : st.fallFrom,
+      sol: st.onGround ? 1 : 0, vol: st.flying ? 1 : 0, chute: st.fallFrom === null ? null : st.fallFrom,
       pv: st.hp, faim: st.hunger, air: +st.air.toFixed(1), mort: st.dead ? 1 : 0,
     };
     // à bord : l'état exact du véhicule conduit (SPEC-SYNC-022)
@@ -158,6 +218,7 @@
 
   MC.Synchro = { TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
+                 peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
                  creerBudget: creerBudget, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
                  DT_MAX: DT_MAX, RESERVE: RESERVE, arrondi: arrondi };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
