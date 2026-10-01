@@ -553,6 +553,10 @@ respecter (voir PLAN.md, « Commits et versions »).
 - SPEC-ARCHI-023 (lot B-ENV) : les **bombes volcaniques** (projectiles de lave lancés pendant une éruption) et les **coulées de lave/basalte** posées sur les flancs des volcans sont SUPPRIMÉES — le serveur n'en a pas d'équivalent et le client ne modifie plus le monde de son côté. Les éruptions restent visibles (panache) et audibles (grondement, éruption) ; un éventuel portage serveur est un chantier ultérieur non planifié.
 
 ### Corrigé
+- Triage du run complet des e2e navigateur après le chantier « solo = serveur toujours présent » (5 échecs sur 150) : trois étaient des régressions du chantier, un échec pré-existant est documenté plus bas (« Connu »), un cinquième était un effet d'ordre.
+  - **Graine des infos** (SPEC-HUD-002) : `remplacerMonde` met désormais `g.graine` à jour. Une partie chargée avant une connexion au serveur gardait son ancienne graine dans le panneau d'infos alors que le serveur avait imposé la sienne (l'e2e « la graine figure dans les infos » échouait après un test en ligne).
+  - **`g.reinitialiserQualite()`** (nouveau, pour les bancs) : remet l'adaptation de qualité (SPEC-RENDU-005) au palier plein. Les e2e SPEC-EAU-008 et SPEC-RENDU-004 l'appellent : l'adaptation coupe la réfraction sous 30 FPS et ne la rend qu'au-dessus de 50 (hystérésis), si bien que la charge des tests en ligne qui les précèdent la laissait coupée (`niveau 1`, `fpsP50 34`) et rendait les deux tests intermittents. Aucune assertion affaiblie.
+  - **e2e « la touche G jette l objet tenu »** : réécrit sur un serveur réel (`g.rejoindreServeur`, bloc cassé pour s'équiper, attente d'un inventaire stable) : depuis SPEC-ARCHI-031, l'objet jeté vient du serveur et ne naît plus d'une entité locale, donc la page sans serveur ne pouvait plus rien constater. Le test vérifie l'unité en moins, l'absence d'entité locale et l'objet au sol répliqué par le serveur, puis rend à la suite la graine d'origine.
 - Banc de test (`tests/run.js --delai`, filet d'inactivité) : la phase d'intégration (une vingtaine de scripts, plus de 15 min cumulées) n'écrivait jamais le battement de cœur : un préréglage `pr` sain était coupé « sans progrès depuis 900 s ». Chaque script d'intégration écrit maintenant son nom dans le fichier d'état avant de démarrer et rafraîchit le verrou ; le verrou est repris s'il n'a pas été touché depuis 30 min (réutilisation de PID sous Windows).
 - SPEC-ARCHI-042 (adoption du solo importé) : un enregistrement de joueur importé portant un `succes` VIDE masquait les succès réels conservés dans `extras.succes` (ils restaient à jamais dans les extras, le joueur démarrait sans rien). L'adoption reprend désormais `extras.succes` dès que le `succes` du joueur est vide. `tests/integration-archi-parties.js` : fixture avec un identifiant de succès réel (`premier_bloc` ; `premier_pas` n'existe pas et est désormais filtré) et lecture dans `joueurs[nom].succes`.
 - `tests/integration-archi-vie.js` : la marche vers le butin (annonce DONNE) attend jusqu'à 45 s (au lieu de 12 s) : l'horloge de jeu du serveur ralentit sous charge, la borne reste finie.
@@ -811,6 +815,9 @@ respecter (voir PLAN.md, « Commits et versions »).
   INSTANTANÉMENT à la pelle (terre) sous le joueur avant de miner : le
   résultat reste déterministe et rapide quel que soit le monde hérité, sans
   affaiblir ce qu'il vérifie.
+
+### Connu
+- e2e « SPEC-AUDIT-002 : retirer une entite libere ses materiaux » échoue (« cinq maillages crees — attendu 5, obtenu 0 ») ; **pré-existant**, échoue à l'identique sur la base d'avant le chantier (`6d1498f`), isolé comme en suite. Cause : le test fait naître cinq zombies, or `UMBRAL_INSTANCE_MOB = 5` (`src/render.js`, SPEC-RENDU-009) les fusionne en un seul `InstancedMesh` : il n'existe aucun maillage individuel dans `entityMeshes`. Sans rapport avec le chantier ; à corriger en faisant naître moins de mobs que le seuil (ou en vérifiant la libération de l'instance).
 
 ### Sécurité
 - Chantier ARCHI, durcissement du lot A0 après revue adversariale :

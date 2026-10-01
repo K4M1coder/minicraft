@@ -1206,18 +1206,67 @@
   });
 
   e2e('la touche G jette l objet tenu', {
-        "teste": "que la touche G jette une unité de l'objet actuellement sélectionné, en créant une entité au sol",
-        "pourquoi": "c'est le raccourci standard pour se débarrasser d'un objet",
-        "attendu": "une unité de moins dans l'inventaire, une entité supplémentaire au sol"
+        "teste": "que la touche G jette une unité de l'objet actuellement sélectionné : l'unité quitte l'inventaire et l'objet au sol vient du SERVEUR (répliqué dans net.mobsDistants), jamais d'une entité locale",
+        "pourquoi": "c'est le raccourci standard pour se débarrasser d'un objet ; depuis SPEC-ARCHI-031 l'inventaire et les objets au sol appartiennent au serveur, une page sans serveur ne peut plus rien jeter",
+        "attendu": "une unité de moins dans l'inventaire, un nouvel objet au sol dans les répliques du serveur, et aucune entité locale créée par la touche"
   }, async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
     var s = await reset(g);
-    s.inv.add(B.COBBLE, 3); s.selected = 0;
-    var avant = g.entities.list.length;
+    var graineAvant = g.world.seed;
+    g.rejoindreServeur({ pseudo: 'Jeteur' + Date.now() % 100000, joueurs: 1 });   // active aussi la prédiction d'inventaire (predInv)
+    await sonderE2E(function () { return g.net.etat === 'en ligne'; }, 15000);
+    A.equal(g.net.etat, 'en ligne', 'connecte au serveur');
+    s = g.player.state;     // rejoindreServeur recompose l'équipe : le joueur local est un autre objet
+    /* L'inventaire est celui du serveur : on s'y procure un objet RÉEL en
+       cassant un bloc du monde serveur (comme SPEC-SUCCES-001), qui tombe
+       puis est ramassé par le serveur. */
+    var cible = null;
+    await sonderE2E(function () {
+      var p = g.player.state.pos, x = Math.floor(p.x), z = Math.floor(p.z);
+      for (var y = Math.floor(p.y) - 1; y >= Math.floor(p.y) - 3; y--) {
+        var id = g.world.getBlock(x, y, z);
+        if (id && C.BLOCKS[id] && C.BLOCKS[id].hardness >= 0 && id !== B.WATER) { cible = { x: x, y: y, z: z }; return true; }
+      }
+      return false;
+    }, 15000);
+    A.ok(cible, 'un bloc réel du monde serveur est sous le joueur');
+    g.net.poserBloc(cible.x, cible.y, cible.z, 0, 0, 0);
+    function caseTenue() {
+      for (var i = 0; i < Inv.HOTBAR_SIZE; i++) if (s.inv.slots[i]) return i;
+      return -1;
+    }
+    await sonderE2E(function () { return caseTenue() >= 0; }, 15000);
+    function objetsAuSol() {
+      var out = [];
+      g.net.mobsDistants.forEach(function (m) { if (m.type === 'item') out.push(m.eid); });
+      return out;
+    }
+    /* Le bloc cassé tombe puis est ramassé par le serveur, parfois en plusieurs fois :
+       on attend que l'inventaire et le sol ne bougent plus (1,2 s de calme) avant de jeter. */
+    var signature = null, depuis = Date.now();
+    await sonderE2E(function () {
+      var sig = JSON.stringify(s.inv.slots.slice(0, Inv.HOTBAR_SIZE)) + '|' + objetsAuSol().join(',');
+      if (sig !== signature) { signature = sig; depuis = Date.now(); }
+      return caseTenue() >= 0 && objetsAuSol().length === 0 && Date.now() - depuis > 1200;
+    }, 15000);
+    var idx = caseTenue();
+    A.ok(idx >= 0, 'le serveur a rendu un objet à l inventaire (' + idx + ')');
+    s.selected = idx;
+    var id0 = s.inv.slots[idx].id, avant = s.inv.count(id0), vusAvant = objetsAuSol();
+    var localAvant = g.entities.list.length;
     key('KeyG');
-    await frames(3);
-    A.equal(s.inv.count(B.COBBLE), 2, 'une unite en moins');
-    A.gt(g.entities.list.length, avant, 'une entite au sol');
-    g.entities.list.length = 0;
+    /* Le serveur peut ramasser l'objet jeté 0,4 s plus tard : l'unité en moins se constate
+       tout de suite (prédiction), l'objet au sol dès que le relevé suivant le montre. */
+    A.equal(s.inv.count(id0), avant - 1, 'une unite en moins');
+    A.equal(g.entities.list.length, localAvant, 'la touche ne cree aucune entite locale');
+    var nouveauSol = function () { return objetsAuSol().some(function (e) { return vusAvant.indexOf(e) < 0; }); };
+    await sonderE2E(nouveauSol, 3000);
+    A.ok(nouveauSol(), 'un objet au sol, venu du serveur');
+    g.net.deconnecter();
+    await sonderE2E(function () { return g.net.etat !== 'en ligne'; }, 5000);
+    // le serveur a imposé SA graine : on rend aux tests suivants le monde qu'ils attendent
+    if (g.world.seed !== graineAvant) g.remplacerMonde(graineAvant);
+    await reset(g);
   });
 
   e2e('des grottes existent sous la surface', {
@@ -2769,6 +2818,10 @@
 
   e2e('SPEC-EAU-008 : la surface de l eau deforme ce qu on voit a travers elle, dessus comme dessous', async function (g) {
     var s = await reset(g);
+    /* L'adaptation de qualité (SPEC-RENDU-005) coupe la réfraction sous 30 FPS et ne la
+       rend qu'au-dessus de 50 : les tests lourds qui précèdent (serveur réel) peuvent
+       l'avoir laissée coupée. On repart du palier plein — ce test porte sur la réfraction, pas sur la charge. */
+    g.reinitialiserQualite();
     // la mer la plus proche : une colonne d'eau profonde autour du point de départ
     var cible = null;
     for (var r = 0; r < 400 && !cible; r += 4) for (var a2 = 0; a2 < 12 && !cible; a2++) {
@@ -3573,6 +3626,8 @@
      déclenche pas la réfraction ; approchée, elle la déclenche. */
   e2e('SPEC-RENDU-004 : la réfraction ne s’active qu’à moins d’une distance fixe de la caméra', async function (g) {
     var s = await reset(g);
+    // palier de qualité plein (voir SPEC-EAU-008) : la charge des tests précédents ne doit pas couper la réfraction
+    g.reinitialiserQualite();
     var cible = null;
     for (var r = 0; r < 400 && !cible; r += 4) for (var a2 = 0; a2 < 12 && !cible; a2++) {
       var x = Math.round(Math.cos(a2 / 12 * 6.283) * r), z = Math.round(Math.sin(a2 / 12 * 6.283) * r);

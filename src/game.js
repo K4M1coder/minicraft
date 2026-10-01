@@ -510,6 +510,20 @@
       // SPEC-RENDU-010/011 : un rendu logiciel détecté démarre au palier bas
       niveauInitial: render.materiel && render.materiel.renduLogiciel ? 99 : 0,
     }) : null;
+    /* Remet l'adaptation au palier plein et vide la fenêtre de FPS : un banc qui
+       vérifie un rendu de plein palier (réfraction de l'eau) ne dépend plus de la
+       charge des tests précédents, qui laissait l'état dégradé faute de FPS ≥ 50
+       pour remonter (hystérésis de qualite.js). */
+    g.reinitialiserQualite = function () {
+      if (!etatQualite) return;
+      fenetreFPS = MC.Qualite.creerFenetre(5);
+      etatQualite.niveau = 0; etatQualite.sousSeuilDepuis = null; etatQualite.dessusSeuilDepuis = null;
+      g.qualite = MC.Qualite.evaluer(etatQualite, 0, null);
+      render.eau.options.refraction = g.qualite.refraction;
+      render.eau.options.fpsP50 = null;
+      render.setDPR(g.qualite.dpr);
+      render.setAntialias(g.qualite.antialias);
+    };
 
     /* SPEC-SUCCES-001, SPEC-ARCHI-042 : le SERVEUR décide des succès (g.succes
        n'est que le miroir de ses compteurs, rempli par SUCCES_ETAT) ; ce qu'il
@@ -1074,6 +1088,9 @@
       entities.list.length = 0;
       render.libererToutesEntites();
       world = MC.createWorld(graine, mondeOpts);
+      /* Le monde fait foi : la graine affichée (SPEC-HUD-002) le suit, sinon une
+         partie chargée avant une connexion au serveur garderait l'ancienne. */
+      g.graine = graine;
       reconstruireDependances();
       grille = creerGrilleLointaine();
       /* SPEC-PERF-009 : nouvelle époque — tout résultat en vol d'un worker
