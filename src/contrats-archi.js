@@ -29,10 +29,15 @@
     DORMIR: 'dormir',                     // c→s : { j, actif } — un joueur local se couche / se lève (lot B-ENV)
     HISTOIRE_ETAT: 'histoire_etat',       // s→c : { j, etat } — état du récit d'un joueur (lot P-HIST)
     SUCCES_DEBLOQUE: 'succes_debloque',   // s→c : { j, id } — un succès vient d'être obtenu (lot P-SUCC)
+    // lot P-HIST (amendement) : le dialogue avec un habitant et les répliques du récit passent par le serveur
+    HISTOIRE_PARLER: 'histoire_parler',   // c→s : { j, eid } — le joueur parle à un habitant
+    HISTOIRE_REPONSE: 'histoire_reponse', // c→s : { j, id, option } — réponse à un choix du récit ou à une quête proposée
+    HISTOIRE_NOTIF: 'histoire_notif',     // s→c : { j, notifs, proposition?, libre?, eid? } — ce que le récit annonce
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
     dormir: 'c>s', histoire_etat: 's>c', succes_debloque: 's>c',
+    histoire_parler: 'c>s', histoire_reponse: 'c>s', histoire_notif: 's>c',
   };
 
   /* État du réseau tel que le CLIENT le lit (jamais `net.enLigne()`, qui est
@@ -58,13 +63,17 @@
     SAUVEGARDE_OUVERT_MS: 120000,
     ID_SUCCES_MAX: 64,
     HISTOIRE_JSON_MAX: 8000,    // taille JSON maximale de HISTOIRE_ETAT.etat
+    HISTOIRE_NOTIFS_MAX: 12,    // annonces par HISTOIRE_NOTIF
+    HISTOIRE_TEXTE_MAX: 800,
+    HISTOIRE_ID_MAX: 64,
+    HISTOIRE_OBJETS_MAX: 8,
     JOUEURS_LOCAUX_MAX: 4,
     PARTIE_ID_MAX: 64,
     PARTIES_MAX: 500,
   };
   /* Budgets anti-flood des messages c→s, en messages par seconde et par
      connexion (ou par joueur local pour DORMIR). */
-  var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10 };
+  var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10, histoire_parler: 5, histoire_reponse: 10 };
 
   // ─── primitives ────────────────────────────────────────────────────────────
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
@@ -92,6 +101,21 @@
     if (j < 0) return null;
     return { t: MSG.DORMIR, j: j, actif: m.actif };
   }
+  function validerHistoireParler(m) {
+    if (!objet(m) || m.t !== MSG.HISTOIRE_PARLER || !entierDans(m.eid, 0, 2147483647)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.HISTOIRE_PARLER, j: j, eid: m.eid };
+  }
+  function validerHistoireReponse(m) {
+    if (!objet(m) || m.t !== MSG.HISTOIRE_REPONSE) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    function ident(v) { return typeof v === 'string' && v.length > 0 && v.length <= BORNES.HISTOIRE_ID_MAX; }
+    if (!ident(m.id)) return null;
+    if (m.option !== null && m.option !== undefined && !ident(m.option)) return null;
+    return { t: MSG.HISTOIRE_REPONSE, j: j, id: m.id, option: m.option === undefined ? null : m.option };
+  }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
     if (!objet(m) || typeof m.t !== 'string') return null;
@@ -100,6 +124,8 @@
       case MSG.RESEAU: return validerReseau(m);
       case MSG.ARRET: return validerArret(m);
       case MSG.DORMIR: return validerDormir(m);
+      case MSG.HISTOIRE_PARLER: return validerHistoireParler(m);
+      case MSG.HISTOIRE_REPONSE: return validerHistoireReponse(m);
       default: return null;
     }
   }
@@ -132,6 +158,53 @@
     if (typeof txt !== 'string' || txt.length > BORNES.HISTOIRE_JSON_MAX) return null;
     return { t: MSG.HISTOIRE_ETAT, j: j, etat: JSON.parse(txt) };
   }
+  /* Une annonce du récit (lot P-HIST) : liste fermée de types, champs copiés un à un et bornés. */
+  var TYPES_NOTIF = ['chapitre', 'dialogue', 'evenement', 'etape', 'quete', 'info', 'echec', 'recompense', 'fin'];
+  function texteBorne(v, max) { return typeof v === 'string' ? v.slice(0, max) : undefined; }
+  function validerNotif(n) {
+    if (!objet(n) || TYPES_NOTIF.indexOf(n.type) < 0) return null;
+    var o = { type: n.type };
+    var t = texteBorne(n.titre, 160); if (t !== undefined) o.titre = t;
+    t = texteBorne(n.texte, BORNES.HISTOIRE_TEXTE_MAX); if (t !== undefined) o.texte = t;
+    t = texteBorne(n.id, BORNES.HISTOIRE_ID_MAX); if (t !== undefined) o.id = t;
+    t = texteBorne(n.stats, 200); if (t !== undefined) o.stats = t;
+    t = texteBorne(n.recit, 80); if (t !== undefined) o.recit = t;
+    if (n.type === 'recompense') {
+      if (!Array.isArray(n.objets) || n.objets.length > BORNES.HISTOIRE_OBJETS_MAX) return null;
+      o.objets = [];
+      for (var i = 0; i < n.objets.length; i++) {
+        var ob = n.objets[i];
+        if (!objet(ob) || !entierDans(ob.id, 1, 65535) || !entierDans(ob.n, 1, 999)) return null;
+        o.objets.push({ id: ob.id, n: ob.n });
+      }
+    }
+    return o;
+  }
+  function validerHistoireNotif(m) {
+    if (!objet(m) || m.t !== MSG.HISTOIRE_NOTIF) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    if (!Array.isArray(m.notifs) || m.notifs.length > BORNES.HISTOIRE_NOTIFS_MAX) return null;
+    var notifs = [];
+    for (var i = 0; i < m.notifs.length; i++) {
+      var n = validerNotif(m.notifs[i]);
+      if (!n) return null;
+      notifs.push(n);
+    }
+    var r = { t: MSG.HISTOIRE_NOTIF, j: j, notifs: notifs };
+    if (m.proposition !== undefined && m.proposition !== null) {
+      var p = m.proposition;
+      if (!objet(p) || typeof p.id !== 'string' || !p.id || p.id.length > BORNES.HISTOIRE_ID_MAX) return null;
+      r.proposition = { id: p.id, titre: texteBorne(p.titre, 160) || '', texte: texteBorne(p.texte, BORNES.HISTOIRE_TEXTE_MAX) || '',
+                        nom: texteBorne(p.nom, 80) || '' };
+    }
+    // le récit ne prend pas la parole : le client ouvre le commerce de l'habitant `eid`
+    if (m.libre === true) {
+      if (!entierDans(m.eid, 0, 2147483647)) return null;
+      r.libre = true; r.eid = m.eid;
+    }
+    return r;
+  }
   function validerSuccesDebloque(m) {
     if (!objet(m) || m.t !== MSG.SUCCES_DEBLOQUE) return null;
     var j = joueurLocal(m.j);
@@ -146,6 +219,7 @@
       case MSG.PAUSE_ETAT: return validerPauseEtat(m);
       case MSG.RESEAU_ETAT: return validerReseauEtat(m);
       case MSG.HISTOIRE_ETAT: return validerHistoireEtat(m);
+      case MSG.HISTOIRE_NOTIF: return validerHistoireNotif(m);
       case MSG.SUCCES_DEBLOQUE: return validerSuccesDebloque(m);
       default: return null;
     }
@@ -179,6 +253,7 @@
     ETAT_RESEAU: ETAT_RESEAU, MOTIFS_REFUS: MOTIFS_REFUS,
     valider: valider, validerPause: validerPause, validerReseau: validerReseau,
     validerArret: validerArret, validerDormir: validerDormir,
+    validerHistoireParler: validerHistoireParler, validerHistoireReponse: validerHistoireReponse, validerHistoireNotif: validerHistoireNotif,
     validerRecu: validerRecu, validerPauseEtat: validerPauseEtat, validerReseauEtat: validerReseauEtat,
     validerHistoireEtat: validerHistoireEtat, validerSuccesDebloque: validerSuccesDebloque,
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,

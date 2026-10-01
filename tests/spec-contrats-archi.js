@@ -10,16 +10,17 @@
   var NP = MC.NetProtocol;
 
   describe('Contrat ARCHI — messages, états et validateurs', {
-    teste: 'Le contrat figé du chantier « solo = serveur » (src/contrats-archi.js) : PAUSE, PAUSE_ETAT, RESEAU, RESEAU_ETAT, ARRET, DORMIR, HISTOIRE_ETAT, SUCCES_DEBLOQUE, ETAT_RESEAU, motifs de refus, bornes.',
+    teste: 'Le contrat figé du chantier « solo = serveur » (src/contrats-archi.js) : PAUSE, PAUSE_ETAT, RESEAU, RESEAU_ETAT, ARRET, DORMIR, HISTOIRE_ETAT, HISTOIRE_PARLER, HISTOIRE_REPONSE, HISTOIRE_NOTIF, SUCCES_DEBLOQUE, ETAT_RESEAU, motifs de refus, bornes.',
     pourquoi: 'Les lots A0, B-* et P-* codent en parallèle contre cette interface : un contrat qui dérive casserait leurs fusions sans qu\'aucun ne le voie.',
     attendu: 'chaque validateur accepte exactement le message bien formé, le normalise en copie, et renvoie null (sans exception) pour tout message sans champ, de mauvais type ou hors borne ; NP.MSG contient les nouveaux types.',
   }, function () {
 
-    it('SPEC-ARCHI-019 : les huit types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
-      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE'];
-      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces huit types');
+    it('SPEC-ARCHI-019 : les types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
+      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE',
+                      'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF'];
+      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
-      A.equal(new Set(valeurs).size, 8, 'aucun doublon interne');
+      A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
       attendus.forEach(function (k) {
         A.equal(NP.MSG[k], K.MSG[k], 'NP.MSG.' + k + ' fusionné tel quel');
         A.ok(['c>s', 's>c'].indexOf(K.SENS[K.MSG[k]]) >= 0, 'sens défini pour ' + k);
@@ -90,6 +91,42 @@
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: '' }), null);
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: 5 }), null);
       A.equal(K.validerSuccesDebloque({ t: 'succes_debloque', j: 0, id: new Array(70).join('x') }), null);
+    });
+
+    it('SPEC-ARCHI-041 : HISTOIRE_PARLER, HISTOIRE_REPONSE, HISTOIRE_NOTIF — formes, bornes, copies', function () {
+      A.deep(K.validerHistoireParler({ t: 'histoire_parler', eid: 12, x: 1 }), { t: 'histoire_parler', j: 0, eid: 12 });
+      A.deep(NP.valider({ t: 'histoire_parler', j: 2, eid: 5 }), { t: 'histoire_parler', j: 2, eid: 5 }, 'le serveur accepte le type c→s');
+      A.equal(K.validerHistoireParler({ t: 'histoire_parler', eid: -1 }), null);
+      A.equal(K.validerHistoireParler({ t: 'histoire_parler', eid: 1.5 }), null);
+      A.equal(K.validerHistoireParler({ t: 'histoire_parler', j: 4, eid: 1 }), null, 'j hors borne');
+      A.equal(K.validerHistoireParler({ t: 'histoire_parler' }), null, 'eid manquant');
+      A.deep(K.validerHistoireReponse({ t: 'histoire_reponse', id: 'quete:a', option: 'oui' }), { t: 'histoire_reponse', j: 0, id: 'quete:a', option: 'oui' });
+      A.deep(K.validerHistoireReponse({ t: 'histoire_reponse', j: 1, id: 'c' }), { t: 'histoire_reponse', j: 1, id: 'c', option: null }, 'option facultative');
+      A.equal(K.validerHistoireReponse({ t: 'histoire_reponse', id: '', option: 'a' }), null);
+      A.equal(K.validerHistoireReponse({ t: 'histoire_reponse', id: 5, option: 'a' }), null);
+      A.equal(K.validerHistoireReponse({ t: 'histoire_reponse', id: 'a', option: 7 }), null);
+      A.equal(K.validerHistoireReponse({ t: 'histoire_reponse', id: new Array(80).join('x') }), null, 'identifiant trop long');
+      A.equal(NP.valider({ t: 'histoire_notif', j: 0, notifs: [] }), null, 's→c refusé côté serveur');
+      A.ok(K.BUDGETS_FLOOD.histoire_parler > 0 && K.BUDGETS_FLOOD.histoire_reponse > 0, 'budgets anti-flood');
+      var n = { t: 'histoire_notif', j: 1, notifs: [
+        { type: 'chapitre', titre: 'Le réveil', texte: 'Cette nuit…', inconnu: 1 },
+        { type: 'recompense', objets: [{ id: 5, n: 2 }] },
+        { type: 'fin', id: 'aube', titre: 'L aube', texte: 'Fin', stats: 'Chapitres : 4/4', recit: 'Épopée' }],
+        proposition: { id: 'quete:x', titre: 'T', texte: 'Q', nom: 'Fermier' }, libre: false };
+      var v = K.validerHistoireNotif(n);
+      A.ok(v && v !== n, 'copie');
+      A.equal(v.notifs[0].inconnu, undefined, 'champ inconnu écarté');
+      A.equal(v.notifs[2].stats, 'Chapitres : 4/4');
+      A.deep(v.proposition, { id: 'quete:x', titre: 'T', texte: 'Q', nom: 'Fermier' });
+      A.equal(v.libre, undefined, 'libre faux = absent');
+      A.deep(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: [], libre: true, eid: 9 }), { t: 'histoire_notif', j: 0, notifs: [], libre: true, eid: 9 });
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: [], libre: true }), null, 'libre sans eid');
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: [{ type: 'pirate' }] }), null, 'type inconnu');
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: [{ type: 'recompense', objets: [{ id: 0, n: 1 }] }] }), null, 'objet invalide');
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: new Array(K.BORNES.HISTOIRE_NOTIFS_MAX + 1).fill({ type: 'info', texte: 'x' }) }), null, 'trop d annonces');
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0 }), null, 'notifs manquant');
+      A.equal(K.validerHistoireNotif({ t: 'histoire_notif', j: 0, notifs: [{ type: 'info', texte: new Array(2000).join('x') }] }).notifs[0].texte.length, K.BORNES.HISTOIRE_TEXTE_MAX, 'texte tronqué à la borne');
+      A.ok(K.validerRecu({ t: 'histoire_notif', j: 0, notifs: [] }), 'routé côté client');
     });
 
     it('SPEC-ARCHI-019 : validerRecu route les quatre types s→c et ne lève jamais', function () {
