@@ -210,16 +210,56 @@
       A.equal(somme(mort, 'distance', 'blocs'), 0, 'un joueur mort ne cumule aucune distance');
     });
 
-    it('SPEC-ARCHI-042 : nuit survécue — au lever du jour pour un joueur vivant, jamais à la tombée ni pour un mort', function () {
-      var sv = S.creerSuiveur(), pos = { x: 0, y: 64, z: 0 };
-      var types = function (l) { return l.map(function (e) { return e.type; }); };
-      A.ok(types(sv.tic(0.05, pos, true, false)).indexOf('nuit') < 0, 'jour : rien');
-      A.ok(types(sv.tic(0.05, pos, true, true)).indexOf('nuit') < 0, 'la nuit tombe : rien');
-      A.ok(types(sv.tic(0.05, pos, true, true)).indexOf('nuit') < 0, 'en pleine nuit : rien');
-      A.ok(types(sv.tic(0.05, pos, true, false)).indexOf('nuit') >= 0, 'le jour se lève sur un vivant : « nuit survécue »');
-      var sv2 = S.creerSuiveur();
-      sv2.tic(0.05, pos, true, true);
-      A.ok(types(sv2.tic(0.05, pos, false, false)).indexOf('nuit') < 0, 'le jour se lève sur un mort : rien');
+    /* Fait vivre un suiveur `n` secondes (pas de 1 s) dans l'état donné et rend les types d'événements. */
+    function vivre(sv, n, estNuit, opts) {
+      opts = opts || {};
+      var types = [];
+      for (var i = 0; i < n; i++)
+        sv.tic(1, { x: 0, y: 64, z: 0 }, opts.vivant !== false, estNuit, !!opts.dort).forEach(function (e) { types.push(e.type); });
+      return types;
+    }
+    it('SPEC-ARCHI-042 : nuit survécue — vue tomber, vécue éveillé assez longtemps, vivant au lever du jour', function () {
+      var sv = S.creerSuiveur();
+      vivre(sv, 5, false);
+      vivre(sv, S.NUIT_MIN_S + 10, true);
+      A.ok(vivre(sv, 1, false).indexOf('nuit') >= 0, 'le jour se lève sur un vivant qui a veillé : « nuit survécue »');
+      A.ok(vivre(sv, 1, false).indexOf('nuit') < 0, 'une seule fois par nuit');
+    });
+
+    it('SPEC-ARCHI-042 : nuit survécue — rejoindre en pleine nuit, dormir, mourir ou une nuit trop courte n\'en rapportent pas', function () {
+      var rejoint = S.creerSuiveur();                                  // le suiveur est neuf à chaque connexion
+      vivre(rejoint, S.NUIT_MIN_S + 30, true);
+      A.ok(vivre(rejoint, 1, false).indexOf('nuit') < 0, 'connecté en pleine nuit : le début n\'a pas été vu');
+      var dormeur = S.creerSuiveur();
+      vivre(dormeur, 3, false); vivre(dormeur, S.NUIT_MIN_S + 30, true, { dort: true });
+      A.ok(vivre(dormeur, 1, false).indexOf('nuit') < 0, 'la nuit passée à dormir ne compte pas');
+      var court = S.creerSuiveur();
+      vivre(court, 3, false); vivre(court, 5, true);
+      A.ok(vivre(court, 1, false).indexOf('nuit') < 0, 'trente secondes avant l\'aube ne suffisent pas');
+      var mort = S.creerSuiveur();
+      vivre(mort, 3, false); vivre(mort, S.NUIT_MIN_S + 30, true);
+      A.ok(vivre(mort, 1, false, { vivant: false }).indexOf('nuit') < 0, 'le jour se lève sur un mort : rien');
+      var renaitre = S.creerSuiveur();
+      vivre(renaitre, 3, false); vivre(renaitre, S.NUIT_MIN_S + 30, true); vivre(renaitre, 1, true, { vivant: false });
+      vivre(renaitre, 5, true);
+      A.ok(vivre(renaitre, 1, false).indexOf('nuit') < 0, 'mort puis réapparu dans la nuit : la veille est à refaire');
+    });
+
+    it('SPEC-ARCHI-042 : une renaissance même proche (< 20 blocs) n\'est pas du chemin parcouru', function () {
+      var sv = S.creerSuiveur(), blocs = 0;
+      var tic = function (x, vivant) { sv.tic(0.05, { x: x, y: 64, z: 0 }, vivant, false).forEach(function (e) { if (e.type === 'distance') blocs += e.blocs; }); };
+      tic(0, true); tic(0, false);                          // mort sur place
+      tic(15, true);                                        // renaissance à 15 blocs de là
+      sv.tic(1.1, { x: 15.5, y: 64, z: 0 }, true, false).forEach(function (e) { if (e.type === 'distance') blocs += e.blocs; });
+      A.ok(blocs <= 0.51, 'seuls les 0,5 bloc marchés après la renaissance comptent (' + blocs.toFixed(2) + ')');
+    });
+
+    it('SPEC-ARCHI-042 : un identifiant venu du dehors n\'est un succès que s\'il est dans la liste (« constructor », « toString »…)', function () {
+      var suivi = S.creer();
+      suivi.charger({ debloques: ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'premier_bloc'], compte: { constructor: 5 } });
+      A.deep(suivi.debloques(), ['premier_bloc'], 'seul le vrai succès est repris');
+      A.ok(!S.existe('constructor') && !S.existe('toString') && S.existe('premier_bloc'), 'existe() ne regarde pas la chaîne de prototypes');
+      A.equal(suivi.progression().length, S.total(), 'la progression n\'a pas grossi');
     });
 
     it('SPEC-ARCHI-042 : altitude — l\'échantillon porte la hauteur du serveur et débloque « Prise d\'altitude » au-dessus de 100', function () {

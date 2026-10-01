@@ -3104,7 +3104,7 @@ function crediterSuccesEvenement(evt) {
    visité, et renvoi des compteurs au client quand ils ont changé. */
 function tickerSuccesJoueur(js, dt) {
   const st = js.joueur.state;
-  js.suiveur.tic(dt, st.pos, !st.dead, MC.DayCycle.isNight(heure)).forEach(ev => signalerSucces(js, ev));
+  js.suiveur.tic(dt, st.pos, !st.dead, MC.DayCycle.isNight(heure), dormeurs.has(js)).forEach(ev => signalerSucces(js, ev));
   js.lieuT -= dt;
   if (js.lieuT <= 0 && monde.habitats && !st.dead) {
     js.lieuT = 1;
@@ -3434,7 +3434,9 @@ function issuePvp(vainqueur, vaincu, duel) {
   }
   const n = MC.PvpEnjeux.enregistrerVictoire(pvp, nomV);
   envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'victoire', contre: nomP, n });
-  signalerSucces(vainqueur.js, { type: 'pvp_victoire', n });          // SPEC-ARCHI-042
+  // SPEC-ARCHI-042 : un duel consenti n'a aucun enjeu (ni butin ni meurtre) : il ne rapporte aucun succès,
+  // sinon deux comptes se « battraient » en duel pour farmer « Champion »
+  if (!duel) signalerSucces(vainqueur.js, { type: 'pvp_victoire', n });
   const msgDefaite = { t: NP.MSG.PVP, evt: 'defaite', de: nomV };
   if (perte) msgDefaite.perte = perte;
   envoyer(vaincu.c, msgDefaite);

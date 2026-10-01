@@ -255,6 +255,7 @@ a lui-même constaté, échantillonnage de position à chaque tic (distance, alt
 nuit), persistance dans le fichier de monde, reprise des succès d'une partie solo
 importée. Le client n'affiche que `SUCCES_DEBLOQUE`, `SUCCES_ETAT` et `FOUDROYE`.
 Reste à brancher `signalerSucces` pour `vehicule` (P-VEH) et `histoire` (P-HIST).
+BLOQUANT POUR LA PUBLICATION : les succès `premier_vehicule` et `histoire_achevee` sont inobtenables tant que P-VEH et P-HIST ne sont pas fusionnés.
 Preuves : `tests/integration-archi-succes.js`, `tests/spec-succes.js`.
 
 | Lot | Contenu | Fiches | Dépend de |

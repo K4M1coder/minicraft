@@ -306,7 +306,7 @@
          ne font qu'afficher : l'annonce d'un déblocage, le miroir des compteurs
          pour le panneau (joueur local 0), et la foudre qui vient de nous toucher. */
       onSuccesDebloque: function (m) { annoncerSucces(m.j, m.id); },
-      onSuccesEtat: function (m) { if (m.j === 0) g.succes.charger(m.etat); },
+      onSuccesEtat: function (m) { if (m.j === 0) { g.succes.charger(m.etat); rafraichirPanneauSucces(); } },
       onFoudroye: function (m) { if (m.j === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); } },
       /* Le serveur fait autorité : pour chacun de nos joueurs, on adopte sa
          position et ses statistiques, puis on rejoue les entrées qu'il n'a
@@ -483,9 +483,11 @@
        n'est que le miroir de ses compteurs, rempli par SUCCES_ETAT) ; ce qu'il
        annonce s'affiche ici une seule fois (toast, chat, son). Un joueur
        local autre que le premier n'a pas de panneau : il reçoit le message. */
+    // le panneau ouvert suit les compteurs du serveur (SUCCES_ETAT) sans qu'il faille le rouvrir
+    function rafraichirPanneauSucces() { if (ui && ui.succesOuverts && ui.succesOuverts()) ui.panneauSucces(g.succes); }
     function annoncerSucces(j, id) {
+      if (!MC.Succes.existe(id)) return;        // « constructor », « toString »… : jamais un succès
       var def = MC.Succes.LISTE[id];
-      if (!def) return;
       if (j === 0) {
         if (g.succes.estDebloque(id)) return;
         var etat = g.succes.serialiser();
@@ -493,6 +495,7 @@
         g.succes.charger(etat);
         ui.toast('Succès : ' + def.nom);
         chat.systeme('Succès débloqué : ' + def.nom + ' — ' + def.description);
+        rafraichirPanneauSucces();
       } else {
         chat.systeme('Succès du joueur ' + (j + 1) + ' : ' + def.nom + ' — ' + def.description);
       }

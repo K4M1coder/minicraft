@@ -73,6 +73,8 @@
   };
 
   var IDS = Object.keys(LISTE);
+  // un identifiant venu de l'extérieur (fichier, réseau) : jamais « constructor » ni « toString »
+  function existe(id) { return typeof id === 'string' && Object.prototype.hasOwnProperty.call(LISTE, id); }
 
   /* Le suivi d'une partie : ses compteurs, ce qui est débloqué, dans quel
      ordre. `signaler` est appelé pour chaque événement du jeu ; il rend la
@@ -141,7 +143,7 @@
       }
       if (Array.isArray(obj.debloques)) {
         obj.debloques.forEach(function (id) {
-          if (LISTE[id] && !debloque[id]) { debloque[id] = true; ordre.push(id); }
+          if (existe(id) && !debloque[id]) { debloque[id] = true; ordre.push(id); }
         });
       }
     }
@@ -159,21 +161,30 @@
      de 20 blocs ou plus — téléportation, renaissance — n'est pas du chemin
      parcouru, et un joueur mort ne parcourt rien), l'altitude et la
      distance accumulée sont remises une fois par seconde de jeu, la nuit est
-     survécue quand le jour se lève sur un joueur vivant. */
-  var PERIODE_ECHANTILLON_S = 1, BOND_MAX = 20;
+     survécue quand le jour se lève sur un joueur vivant qui en a VU le début
+     pendant cette session et l'a vécue au moins NUIT_MIN_S secondes ÉVEILLÉ :
+     rejoindre à l'aube, ou dormir pour passer la nuit, n'en rapporte pas. */
+  var PERIODE_ECHANTILLON_S = 1, BOND_MAX = 20, NUIT_MIN_S = 120;
   function creerSuiveur() {
-    var prec = null, dist = 0, nuitPrec = null, reste = 0;
+    var prec = null, dist = 0, nuitPrec = null, reste = 0, debutVu = false, eveille = 0;
     /* `pos` {x,y,z}, `vivant`, `estNuit` : l'état au moment de l'appel ;
-       `dt` : secondes de jeu écoulées depuis l'appel précédent. */
-    function tic(dt, pos, vivant, estNuit) {
+       `dort` : le joueur est couché ; `dt` : secondes de jeu écoulées. */
+    function tic(dt, pos, vivant, estNuit, dort) {
       var evts = [];
       if (prec && vivant) {
         var d = Math.hypot(pos.x - prec.x, pos.y - prec.y, pos.z - prec.z);
         if (isFinite(d) && d < BOND_MAX) dist += d;
       }
-      prec = { x: pos.x, y: pos.y, z: pos.z };
-      if (nuitPrec === true && !estNuit && vivant) evts.push({ type: 'nuit' });
-      nuitPrec = !!estNuit;
+      // un mort n'a plus de position suivie : la renaissance (même proche) n'est pas du chemin parcouru
+      prec = vivant ? { x: pos.x, y: pos.y, z: pos.z } : null;
+      estNuit = !!estNuit;
+      if (estNuit && nuitPrec === false) { debutVu = true; eveille = 0; }     // la nuit tombe sous nos yeux
+      if (!estNuit) {
+        if (nuitPrec === true && vivant && debutVu && eveille >= NUIT_MIN_S) evts.push({ type: 'nuit' });
+        debutVu = false; eveille = 0;
+      } else if (!vivant) { debutVu = false; eveille = 0; }
+      else if (!dort) eveille += dt;
+      nuitPrec = estNuit;
       reste -= dt;
       if (reste > 0) return evts;
       reste = PERIODE_ECHANTILLON_S;
@@ -186,5 +197,5 @@
 
   function total() { return IDS.length; }
 
-  MC.Succes = { LISTE: LISTE, creer: creer, creerSuiveur: creerSuiveur, total: total };
+  MC.Succes = { LISTE: LISTE, existe: existe, creer: creer, creerSuiveur: creerSuiveur, total: total, NUIT_MIN_S: NUIT_MIN_S };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
