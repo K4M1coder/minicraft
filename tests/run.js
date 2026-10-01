@@ -632,7 +632,7 @@ const res = ctx.T.run(nomsAExecuter, {
    (fichier créé en exclusivité, PID dedans, repris s'il est périmé) sérialise
    donc cette phase — l'attente est bornée par le filet d'inactivité. */
 const verrouIntegration = (function () {
-  if (!integrationSelectionnes.length) return { relacher() {} };
+  if (!integrationSelectionnes.length) return { toucher() {}, relacher() {} };
   const os = require('os');
   const chemin = path.join(os.tmpdir(), 'mc-integration.lock');
   const dort = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* pas de pause : tant pis */ } };
@@ -645,7 +645,7 @@ const verrouIntegration = (function () {
       let perime = false;
       try {
         const pid = parseInt(fs.readFileSync(chemin, 'utf8'), 10);
-        perime = !pid || !vivant(pid) || (Date.now() - fs.statSync(chemin).mtimeMs > 3 * 3600 * 1000);
+        perime = !pid || !vivant(pid) || (Date.now() - fs.statSync(chemin).mtimeMs > 30 * 60 * 1000);
       } catch (e2) { perime = true; }
       if (perime) { try { fs.unlinkSync(chemin); } catch (e3) { /* course avec un autre : on réessaie */ } continue; }
       if (!signale) { ecrire('… une autre campagne exécute ses intégrations : attente du verrou'); signale = true; }
@@ -653,11 +653,14 @@ const verrouIntegration = (function () {
       dort(2000);
     }
   }
-  return { relacher() { try { if (fs.readFileSync(chemin, 'utf8') === String(process.pid)) fs.unlinkSync(chemin); } catch (e) { /* déjà parti */ } } };
+  return { toucher() { try { const maintenant = new Date(); fs.utimesSync(chemin, maintenant, maintenant); } catch (e) { /* rien */ } }, relacher() { try { if (fs.readFileSync(chemin, 'utf8') === String(process.pid)) fs.unlinkSync(chemin); } catch (e) { /* déjà parti */ } } };
 })();
 process.on('exit', () => verrouIntegration.relacher());
 integrationSelectionnes.forEach((t) => {
   ecrire('▶ ' + t.nom);
+  // battement de cœur du filet d'inactivité (--delai) : chaque script d'intégration en est un
+  if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom); } catch (e) { /* rien */ }
+  verrouIntegration.toucher();
   const t0 = Date.now();
   const r = require('child_process').spawnSync(process.execPath, [path.join(root, t.fichier)], { encoding: 'utf8', cwd: root });
   const ms = Date.now() - t0;
