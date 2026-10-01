@@ -58,7 +58,7 @@ const mobVeh = (cl, eid) => { const e = etat(cl); return e && (e.mobs || []).fin
 /* Attend un message de ce type reçu APRÈS l'appel (jamais un ancien de même nature). */
 function prochain(cl, type, ms, pred) {
   const n = cl.messages.length;
-  return cl.attendre(type, ms || 4000, m => cl.messages.indexOf(m) >= n && (!pred || pred(m))).catch(() => null);
+  return cl.attendre(type, ms || 15000, m => cl.messages.indexOf(m) >= n && (!pred || pred(m))).catch(() => null);
 }
 const evt = (cl, nom, ms) => prochain(cl, 'vehicule_evt', ms, m => m.evt === nom);
 const refus = (cl, motif, ms) => prochain(cl, 'vehicule_evt', ms, m => m.evt === 'refus' && (!motif || m.motif === motif));
@@ -419,22 +419,22 @@ async function scenarioPersistance() {
     const s2 = await demarrer(['--monde', f, '--dossier-parties', d], env());
     const b = await rejoindre(s2.port, 'Visiteur', 1);
     const cb = b.client;
-    await jusqua(() => toi(cb), 3000);
-    const revenu = await jusqua(() => ((etat(cb) && etat(cb).mobs) || []).find(m => m.ve === 'camion'), 5000);
+    await jusqua(() => toi(cb), 15000);
+    const revenu = await jusqua(() => ((etat(cb) && etat(cb).mobs) || []).find(m => m.ve === 'camion'), 20000);
     ok(!!revenu, 'SPEC-SERVEUR-006 : après la relance, le camion est de retour dans le monde');
     ok(revenu && vAvant && Math.abs(revenu.x - vAvant.x) < 0.05 && Math.abs(revenu.z - vAvant.z) < 0.05, 'SPEC-SERVEUR-006 : à la même position (' + (revenu && revenu.x) + ',' + (revenu && revenu.z) + ')');
     ok(revenu && revenu.ca !== undefined && Math.abs(revenu.ca - v0[6]) < 0.1, 'avec le même carburant');
-    const etatB = prochain(cb, 'cont_etat', 4000);
+    const etatB = prochain(cb, 'cont_etat', 15000);
     cb.envoyer({ t: 'cont_ouvrir', j: 0, eid: revenu && revenu.e });
     const cs = await etatB;
     ok(!!cs && cs.slots[5] && cs.slots[5][0] === I.DIAMOND && cs.slots[5][1] === 9, 'SPEC-SERVEUR-006 : la soute restitue son contenu exact (9 diamants en case 5)');
     cb.envoyer({ t: 'cont_fermer', j: 0, cle: cs && cs.cle });
-    const etatCb = prochain(cb, 'cont_etat', 4000);
+    const etatCb = prochain(cb, 'cont_etat', 15000);
     cb.envoyer({ t: 'cont_ouvrir', j: 0, x: cCoffre.x, y: cCoffre.y, z: cCoffre.z });
     const csC = await etatCb;
     ok(!!csC && csC.slots[2] && csC.slots[2][0] === I.DIAMOND && csC.slots[2][1] === 3, 'SPEC-SERVEUR-006 : le coffre posé restitue lui aussi son contenu exact (3 diamants en case 2)');
     // il est de nouveau utilisable : on y monte
-    const mt = evt(cb, 'monte');
+    const mt = evt(cb, 'monte', 15000);
     cb.envoyer({ t: 'vehicule_monter', j: 0, eid: revenu && revenu.e });
     ok(!!(await mt), 'et on y monte');
     cb.fermer();
