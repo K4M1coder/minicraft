@@ -315,6 +315,11 @@
     s.inv.load([]);
     s.hp = 20; s.hunger = 20; s.air = 10; s.dead = false; s.flying = false;
     s.selected = 0; s.exhaustion = 0; s.vel.x = s.vel.y = s.vel.z = 0;
+    /* Le suivi de chute survit à la téléportation ci-dessous : un test qui
+       laisse le joueur tomber de haut (« avancer » finit en l'air, vol coupé)
+       ferait sinon « atterrir » d'une chute de 60 blocs au point d'apparition
+       et le tuerait, de façon intermittente selon les images écoulées. */
+    s.fallFrom = null; s.onGround = false;
     g.entities.list.length = 0;
     var col = g.world.findSpawnColumn();
     /* Le chunk du point d'apparition doit être VRAIMENT chargé avant qu'on y
