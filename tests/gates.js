@@ -10,6 +10,9 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { execFileSync, spawnSync } = require('child_process');
+/* Sortie des sous-processus run.js : `--lister` dépasse déjà 1 Mo (le tampon
+   par défaut d'execFileSync) — au-delà, ENOBUFS faisait tomber G13 et G14. */
+const TAMPON_SORTIE = 64 * 1024 * 1024;
 
 const root = path.join(__dirname, '..');
 const quiet = process.argv.includes('--quiet');
@@ -130,7 +133,7 @@ porte('G2', 'Tout identifiant cité par un test existe dans SPECS.md', () => {
 porte('G3', '100 % des tests Node passent', () => {
   try {
     const out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js')],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: TAMPON_SORTIE });
     const m = out.match(/(\d+)\/(\d+) tests passent/);
     return { ok: true, detail: m ? `${m[1]}/${m[2]}` : 'tests verts' };
   } catch (e) {
@@ -289,7 +292,7 @@ porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BAN
   Object.keys(CROCHETS).forEach((h) => {
     const nom = CROCHETS[h];
     try {
-      const out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', nom, '--lister'], { encoding: 'utf8' });
+      const out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', nom, '--lister'], { encoding: 'utf8', maxBuffer: TAMPON_SORTIE });
       const m = /(\d+) test\(s\) sélectionné/.exec(out);
       if (!m || Number(m[1]) === 0) vides.push('préréglage ' + nom + ' vide');
     } catch (e) { vides.push('préréglage ' + nom + ' introuvable ou --lister en erreur : ' + e.message); }
@@ -332,7 +335,7 @@ function testsSansDomaineNiFonctionDeclaree(outListe) {
 porte('G14', '100 % des tests ont une fiche (SPEC-BANC-002) et au moins un domaine ou une fonction, déclarée ou observée (SPEC-BANC-066)', () => {
   let outListe;
   try {
-    outListe = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8' });
+    outListe = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'regression', '--lister'], { encoding: 'utf8', maxBuffer: TAMPON_SORTIE });
   } catch (e) { return { ok: false, detail: '--lister en erreur : ' + e.message }; }
   const { sansFiche, suspects } = testsSansDomaineNiFonctionDeclaree(outListe);
   if (sansFiche.length) {
@@ -392,7 +395,7 @@ porte('G15', 'Chaque test e2e du cahier produit ≥ 2 captures réelles, début 
   let out;
   try {
     out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'e2e-fumee', '--delai', '150'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], maxBuffer: TAMPON_SORTIE });
   } catch (e) {
     out = (e.stdout || '') + (e.stderr || '');
   }
