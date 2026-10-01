@@ -249,6 +249,15 @@ croissance des cultures et feu ; le client ne simule plus rien de tout cela
 `tests/integration-archi-env.js`, `tests/spec-archi-env.js` et l'espion
 `world.tick` de `tests/e2e.js`.
 
+Avancement global (2026-09-30) : A0, B-INV, B-ENV, B-VIE et B-RESEAU sont FUSIONNÉS
+sur master après revue adversariale (un tour de corrections chacun). Fiches encore
+⏳ : SPEC-ARCHI-001 et 020 (audits finaux, à refermer une fois les portages faits),
+043 et 044 (présentoirs, coffres piégés : refusés proprement en attendant),
+SPEC-SYNC-024 (relations de factions PNJ à la connexion), ainsi que les portages
+P-VEH (021), P-HIST (041) et P-SUCC (042) — la vague ne se publie pas avant P-HIST
+et P-SUCC. Bug ancien à traiter à part : les circuits referment au tic suivant une
+porte ouverte à la main.
+
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
 | **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |
