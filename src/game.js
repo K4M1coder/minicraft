@@ -325,11 +325,14 @@
         for (var i = 0; i < liste.length; i++) {
           var j = equipe[i];
           if (!j || !j.prediction) continue;
+          var st = j.player.state, etaitMort = st.dead;
+          /* les statistiques AVANT le rejeu : la faim règle la vitesse de marche
+             (affamé, on traîne) — rejouer avec l'ancienne prédirait un autre pas
+             que celui du serveur (SPEC-ARCHI-045) */
+          MC.Synchro.appliquerStats(st, liste[i]);
           // `trouver` : la réplique (net.mobsDistants) du véhicule à bord duquel le serveur nous met (SPEC-SYNC-022)
           var ecart = MC.Synchro.reconcilier(j.player, liste[i], j.prediction, trouverVehicule);
           g.ecartReseau = ecart;
-          var st = j.player.state, etaitMort = st.dead;
-          MC.Synchro.appliquerStats(st, liste[i]);
           if (i === 0 && st.dead && !etaitMort && input.state === 'playing') {
             audio.play('mort'); input.setState('dead');
           }
@@ -2906,6 +2909,15 @@
       net.interpoler(dt);
     }
 
+    /* Le monde du serveur est-il arrêté ? L'état de pause qui fait foi vient du
+       poste (PAUSE_ETAT) : en réseau ouvert, le menu pause ne l'arrête pas. Sans
+       poste (page de test), on s'en tient à l'état de session. */
+    function serveurEnPause() {
+      if (g.hoteDistant) return false;              // l'hôte d'une autre machine ne s'arrête pas pour nous
+      if (poste && poste.etat) return !!poste.etat.pause;
+      return input.state === 'paused' || input.state === 'menu';
+    }
+
     function frame(now) {
       requestAnimationFrame(frame);
       var dt = Math.min((now - last) / 1000, 0.05);   // clamp : évite l'explosion après un onglet inactif
@@ -2934,12 +2946,15 @@
         frameFinDePartie(dt);
       } else if (st === 'ui') {
         // l'inventaire est ouvert : le monde continue doucement (fourneaux, cultures)
-        g.time = horloge.avancer(dt, g.time);     // le serveur ne s'arrête pas pour un inventaire ouvert
         frameMondeInterface(dt);
         render.setHighlight(null);
       } else {
         render.setHighlight(null);
       }
+      /* SPEC-ARCHI-046 : hors jeu actif (inventaire, mort, menu pause en réseau
+         ouvert…), l'heure avance tant que le SERVEUR avance — figée, elle sautait
+         de 2 s au premier relevé ; elle ne s'arrête que quand il est en pause. */
+      if (!actif && !serveurEnPause()) g.time = horloge.avancer(dt, g.time);
 
       frameReseau(dt);
       /* On passe TOUJOURS l objet reseau, meme hors ligne : ses tables sont

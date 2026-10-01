@@ -1021,11 +1021,12 @@ if (process.env.MC_TEST_MOBS) {
 }
 
 /* MC_TEST_MOB='sheep' : réservé aux suites d'intégration (comme MC_TEST_SPAWN, désactivé
-   par défaut) — une créature PASSIVE posée à 0,3 bloc du point d'apparition, pour
-   prouver que les créatures repoussent le joueur (SPEC-ARCHI-037). */
+   par défaut) — une créature PASSIVE posée à 0,3 bloc du point d'apparition, du côté
+   ouest (dégagé pour la graine de test : un talus borde l'est), pour prouver qu'elle
+   cède et ne chevauche pas le joueur (SPEC-ARCHI-037, 047). */
 if (process.env.MC_TEST_MOB) {
   const t = process.env.MC_TEST_MOB;
-  const m = entites.spawn(t, SPAWN.x + 0.3, SPAWN.y, SPAWN.z);
+  const m = entites.spawn(t, SPAWN.x - 0.3, SPAWN.y, SPAWN.z);
   if (m) m.wanderCd = 1e9;
 }
 
@@ -4320,10 +4321,10 @@ setInterval(() => {
        muet a faim et se soigne comme les autres. Un seul appel par tic. */
     js.joueur.updateSurvival(dt);
     tickerSuccesJoueur(js, dt);
-    /* Les créatures repoussent le joueur (elles ne se traversent pas), UNE fois par tic
-       et par joueur (coût borné à 100 joueurs) ; côté serveur seulement — la prédiction
-       du client ne la connaît pas, la réconciliation absorbe l'écart. */
-    if (avance > 0 && !st.dead && !st.monture) entites.separer(st, avance);
+    /* SPEC-ARCHI-047 : le serveur ne déplace JAMAIS le corps d'un joueur pour le séparer
+       des créatures — le client le prédit (MC.Synchro) sans connaître cette poussée, et
+       chaque ETAT recalait un joueur immobile qu'une créature serrait. Ce sont les
+       créatures qui cèdent (entites.update → cederAuxJoueurs). */
     // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
     while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
     /* Le climat agit sur le corps : c'est au serveur, qui fait foi sur la

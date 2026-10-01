@@ -219,6 +219,51 @@
       A.equal(h.avancer(0.5, 3000), 3000.5, 'une heure écrite à la main (outil de test, débogage) est reprise');
     });
 
+    it('SPEC-ARCHI-046 : une heure non finie (debug.heure() sans argument) ne bloque jamais l\'horloge', function () {
+      var h = MC.Synchro.creerHorloge();
+      h.fixer(60);
+      A.equal(h.recevoir(61), 60, 'relevé ordinaire : rattrapé en douceur');
+      var t = h.avancer(0.1, NaN);                          // g.time = NaN, écrit à la main
+      A.ok(isFinite(t) && t > 60, 'NaN écrit dans g.time est ignoré (' + t + ')');
+      t = h.recevoir(NaN);
+      A.ok(isFinite(t), 'un relevé NaN est ignoré');
+      A.equal(h.fixer(NaN), 0, 'fixer(NaN) rend 0');
+      A.equal(h.recevoir(500), 500, 'le relevé suivant est adopté (saut)');
+      A.ok(Math.abs(h.avancer(0.5, 500) - 500.5) < 1e-9, 'puis l\'horloge avance de nouveau');
+      A.equal(h.avancer(Infinity, 500.5), 500.5, 'un pas infini est ignoré');
+    });
+
+    it('SPEC-ARCHI-046 : une heure écrite à la main n\'est reprise que jusqu\'au relevé suivant (écart > 2 s ramené au serveur)', function () {
+      var h = MC.Synchro.creerHorloge();
+      h.fixer(60);
+      A.equal(h.avancer(0.1, 3000), 3000.1, 'reprise par l\'horloge');
+      A.equal(h.recevoir(60.2), 60.2, 'le relevé du serveur la remplace');
+    });
+
+    it('SPEC-ARCHI-045 : les statistiques du serveur s\'appliquent AVANT le rejeu (la faim règle la vitesse)', function () {
+      var client = joueur(), serveur = joueur(), pred = MC.Synchro.creerPrediction(), envoyees = [];
+      serveur.state.hunger = 0;                             // affamé chez le serveur, qui fait foi
+      var MARCHE = { forward: 1, back: 0, left: 0, right: 0, jump: 0, sprint: 0 };
+      for (var i = 0; i < 30; i++) { var e = pred.enregistrer(1 / 60, MARCHE, 0, 0, false); MC.Synchro.rejouer(client, [e]); envoyees.push(e); }
+      MC.Synchro.rejouer(serveur, envoyees.slice(0, 10));  // le serveur n'a traité que 10 entrées
+      var etat = MC.Synchro.etatJoueur(serveur, 10);
+      MC.Synchro.appliquerStats(client.state, etat);        // l'ordre de onToi (game.js)
+      MC.Synchro.reconcilier(client, etat, pred);
+      MC.Synchro.rejouer(serveur, envoyees.slice(10));
+      var ecart = MC.Synchro.reconcilier(client, MC.Synchro.etatJoueur(serveur, 30), pred);
+      A.ok(ecart < 1e-9, 'le rejeu à la faim du serveur prédit le même pas (écart ' + ecart.toFixed(4) + ')');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      var onToi = jeu.slice(jeu.indexOf('onToi: function'), jeu.indexOf('onDonne: function'));
+      A.ok(onToi.indexOf('appliquerStats(') > 0 && onToi.indexOf('appliquerStats(') < onToi.indexOf('reconcilier('), 'game.js : appliquerStats avant reconcilier dans onToi');
+    });
+
+    it('SPEC-ARCHI-046 : audit — hors jeu actif, l\'heure avance sauf si le serveur est en pause', function () {
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
+      var frame = jeu.slice(jeu.indexOf('function frame(now)'), jeu.indexOf('frameReseau(dt);', jeu.indexOf('function frame(now)')));
+      A.ok(/if \(!actif && !serveurEnPause\(\)\) g\.time = horloge\.avancer\(dt, g\.time\)/.test(frame), 'frame : avancer pour tout état non actif (mort, pause en réseau ouvert, inventaire)');
+      A.ok(/function serveurEnPause\(\)[\s\S]{0,300}poste\.etat\.pause/.test(jeu), 'la pause qui fait foi vient du poste (PAUSE_ETAT)');
+    });
+
     it('SPEC-ARCHI-045/046 : audit — game.js bascule le vol par MC.Synchro et n\'écrit l\'heure qu\'au travers de l\'horloge', function () {
       var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
       var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');

@@ -93,23 +93,33 @@
      jamais en reculant —, sauf un vrai saut (sommeil, /jour, /nuit, reprise),
      adopté d'un coup. */
   var SAUT_HEURE = 2, RAPPEL_HEURE = 2;    // s ; fraction de l'écart rattrapée par seconde
+  function fini(v) { return typeof v === 'number' && isFinite(v); }
   function creerHorloge() {
-    var t = null, ecart = 0;
+    /* `serveur` : le dernier relevé fini reçu — l'heure de repli si `t` cessait
+       d'être un nombre fini (une heure NaN adoptée bloquerait l'horloge à jamais :
+       NaN n'est égal à rien, aucun écart ne se mesure plus). */
+    var t = null, ecart = 0, serveur = null;
+    function sain() { if (t !== null && !fini(t)) { t = serveur !== null ? serveur : 0; ecart = 0; } }
     return {
-      fixer: function (h) { t = +h || 0; ecart = 0; return t; },
+      fixer: function (h) { t = fini(+h) ? +h : 0; ecart = 0; return t; },
       // un relevé du serveur : rend l'heure à afficher maintenant
       recevoir: function (h) {
-        if (typeof h !== 'number' || !isFinite(h)) return t;
+        if (!fini(h)) { sain(); return t; }
+        serveur = h;
+        sain();
         if (t === null || Math.abs(h - t) > SAUT_HEURE) { t = h; ecart = 0; }
         else ecart = h - t;
         return t;
       },
       /* une image de `dt` secondes ; `actuel` : la valeur que le jeu affiche — si
-         quelqu'un l'a écrite à la main (outil de débogage, test), on la reprend */
+         quelqu'un l'a écrite à la main (outil de débogage, test), on la reprend,
+         jusqu'au prochain relevé : à plus de SAUT_HEURE de l'heure du serveur, il
+         la remplace d'un coup (SPEC-ARCHI-046). Une valeur non finie est ignorée. */
       avancer: function (dt, actuel) {
-        if (typeof actuel === 'number' && actuel !== t) { t = actuel; ecart = 0; }
+        if (fini(actuel) && actuel !== t) { t = actuel; ecart = 0; }
+        sain();
         if (t === null) t = 0;
-        if (!(dt > 0)) return t;
+        if (!(dt > 0) || !fini(dt)) return t;
         var corr = Math.max(-dt, ecart * Math.min(1, dt * RAPPEL_HEURE));
         ecart -= corr;
         t += dt + corr;
