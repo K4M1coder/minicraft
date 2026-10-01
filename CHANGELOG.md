@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Corrigé
+- `integration-archi-vehicules` : Bob s'éloigne à plus de 10 m avant le test « portee » (le serveur mesure en 3D moins la demi-largeur, le test à 6,x m horizontaux était au seuil).
 
 ## [0.5.0] - 2026-10-01
 ### Ajouté

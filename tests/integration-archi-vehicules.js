@@ -174,9 +174,16 @@ async function scenarioConduite() {
     ok(!!pied, 'SPEC-SYNC-022 : à pied, l\'état du joueur ne porte plus de véhicule');
     // Bob marche jusqu'à la voiture arrêtée (à plus de six blocs de lui), puis y monte
     const vArret = await jusqua(() => mobVeh(cl, p.eid), 2000);
-    const bPos = toi(b.client);
+    let bPos = toi(b.client);
     const vers = Math.atan2(-(vArret.x - bPos.x), -(vArret.z - bPos.z));          // cap vers la voiture
-    const distBob = Math.hypot(vArret.x - bPos.x, vArret.z - bPos.z);
+    let distBob = Math.hypot(vArret.x - bPos.x, vArret.z - bPos.z);
+    // le serveur mesure en 3D, de l'œil au centre du véhicule, moins sa demi-largeur : une marge franche évite le seuil
+    if (distBob < 10) {
+      await conduire(b.client, (10.5 - distBob) / 4.8, TOUCHE.arriere, vers);
+      await jusqua(() => { const t = toi(b.client); return t && t.s >= b.client.seqE ? t : null; }, 3000);
+      bPos = toi(b.client);
+      distBob = Math.hypot(vArret.x - bPos.x, vArret.z - bPos.z);
+    }
     ok(distBob > 6, 'préparation : la voiture est à ' + distBob.toFixed(1) + ' m de Bob (hors de portée)');
     const horsPortee = refus(b.client, 'portee');
     b.client.envoyer({ t: 'vehicule_monter', j: 0, eid: p.eid });
