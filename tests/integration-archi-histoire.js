@@ -86,19 +86,25 @@ async function main() {
 
     // ── trois parties d'histoire créées par l'API du serveur ──────────────────
     const s0 = await demarrer(['--dossier-parties', D]);
-    const creer = async (nom, histoire) => {
-      const r = await requete(s0.port, '/api/parties', { corps: { nom, mode: 'histoire', difficulte: 'facile', graine: GRAINE, histoire } });
+    const creer = async (nom, histoire, difficulte) => {
+      const r = await requete(s0.port, '/api/parties', { corps: { nom, mode: 'histoire', difficulte: difficulte || 'facile', graine: GRAINE, histoire } });
       return r.json && r.json.partie && r.json.partie.id;
     };
     const idEpopee = await creer('Épopée', { archetype: 'epopee', heros: 'Alice', longueur: 'courte', interactions: { preset: 'restreinte' } });
     const idColonie = await creer('Colonie', { archetype: 'colonie', heros: 'Bob', longueur: 'courte', interactions: { preset: 'libre' } });
     const idSolo = await creer('Ancien solo', { archetype: 'epopee', heros: 'Claire', longueur: 'courte', interactions: { preset: 'libre' } });
-    ok(!!(idEpopee && idColonie && idSolo), 'le serveur accepte de créer des parties en mode histoire');
+    const ids = {};
+    for (const [k, diff] of [['aller', 'facile'], ['collecte', 'facile'], ['mort', 'cauchemar'], ['illisible', 'facile']]) {
+      ids[k] = await creer('Sonde ' + k, { archetype: 'epopee', heros: 'Eve', longueur: 'courte', interactions: { preset: 'libre' } }, diff);
+    }
+    ok(!!(idEpopee && idColonie && idSolo && ids.aller && ids.collecte && ids.mort && ids.illisible), 'le serveur accepte de créer des parties en mode histoire');
     await s0.arreter();
 
     await epopee(D, idEpopee);
     await colonie(D, idColonie);
     await ancienSolo(D, idSolo);
+    await sondes(D, ids);
+    await routeTest();
   } finally {
     for (const s of serveurs) { try { await s.arreter(); } catch (e) { /* déjà arrêté */ } }
     supprimerDossier(D);
@@ -301,6 +307,115 @@ async function ancienSolo(D, id) {
   ok(!!data, 'le récit adopté est écrit dans le fichier de monde (parité ARCHI-014)');
   ok(data && !(data.extras && data.extras.histoire), 'et n\'est plus conservé en double dans les extras');
   await s.arreter();
+}
+
+// ── les sondes du serveur : lieu atteint, objet porté, mort en cauchemar ──────
+const LIENS_TEST = {
+  depart: { id: 'village:0,0', nom: 'Hameau-Clair', x: 0, z: 0, h: 64, kind: 'lieu' },
+  ville: { id: 'ville:1,0', nom: 'Grandbourg', x: 400, z: 0, h: 64, kind: 'lieu' },
+  ermite: { id: 'maison:2', nom: 'Ermitage', x: 900, z: 0, h: 64, kind: 'lieu' },
+};
+/* Fichier de monde fabriqué : le récit de `nom` à l'étape voulue, le joueur du poste à `solo`, les lieux déjà liés
+   (aucune recherche de 6 s au démarrage). */
+function ecrireMonde(D, id, nom, modif, solo, extras) {
+  const RS = MC.RecitServeur;
+  const cr = RS.creer({ monde: null, graine: GRAINE, liens: LIENS_TEST, params: { archetype: 'epopee', longueur: 'courte', heros: nom }, peut: () => true });
+  MC.Recits.commencer(cr.etat);
+  if (modif) modif(cr.etat.histoire);
+  const SLOTS = MC.ContratsV2.BORNES.SLOTS_INV;
+  const data = {
+    v: 2, graine: GRAINE, heure: 60, overrides: [], etats: [], crops: [], joueurs: [],
+    histoire: { v: 1, liens: LIENS_TEST, recits: modif ? [[MC.ContratsV2.cleRegistre(nom, 0), JSON.parse(JSON.stringify(RS.exporter(cr.etat, null)))]] : [] },
+    soloJoueur: solo ? { v: 1, inv: new Array(SLOTS).fill(0), equip: {}, etat: Object.assign({ hp: 20, hunger: 20, air: 10 }, solo) } : null,
+    extras: extras || null,
+  };
+  fs.writeFileSync(fichierMonde(D, id), JSON.stringify(data));
+}
+async function sondes(D, ids) {
+  // (a) le héros est au lieu cible : « Rejoignez la ville » avance, sans que personne ne parle ni ne pose rien
+  ecrireMonde(D, ids.aller, 'Eve', h => { h.chap = 1; h.etape = 0; }, { x: 400.5, y: 120, z: 0.5 });
+  let s = await demarrer(['--dossier-parties', D, '--partie', ids.aller]);
+  let a = await rejoindre(s.port, 'Eve');
+  const e0 = await a.client.attendre('histoire_etat', 10000).catch(() => null);
+  ok(e0 && e0.etat.recit.histoire.chap === 1 && e0.etat.recit.histoire.etape === 0, 'le récit repris attend « Rejoignez la ville »');
+  const arrive = await jusqua(() => { const r = dernierRecit({ client: a.client }); return r && r.histoire.etape > 0 ? r : null; }, 12000, 100);
+  ok(!!arrive, 'être arrivé au lieu cible fait avancer l\'étape, évalué par le serveur (position)');
+  await partir({ client: a.client }, s); await s.arreter();
+
+  // (b) avoir l'objet requis : six rondins dans l'inventaire serveur font avancer « rassemblez du bois »
+  ecrireMonde(D, ids.collecte, 'Dora', h => { h.chap = 0; h.etape = 1; }, null);
+  s = await demarrer(['--dossier-parties', D, '--partie', ids.collecte], { MC_TEST_INV: JSON.stringify([[B.LOG, 6]]) });
+  a = await rejoindre(s.port, 'Dora');
+  const e1 = await a.client.attendre('histoire_etat', 10000).catch(() => null);
+  ok(e1 && e1.etat.recit.histoire.chap === 0, 'le récit repris attend le bois');
+  const bois = await jusqua(() => { const r = dernierRecit({ client: a.client }); return r && r.histoire.etape > 1 ? r : null; }, 12000, 100);
+  ok(!!bois, 'détenir six rondins fait avancer l\'étape, évalué par le serveur (inventaire)');
+  await partir({ client: a.client }, s); await s.arreter();
+  // sans l'objet, rien ne bouge (le correctif ne fait pas avancer à vide)
+  ecrireMonde(D, ids.collecte, 'Dora', h => { h.chap = 0; h.etape = 1; }, null);
+  s = await demarrer(['--dossier-parties', D, '--partie', ids.collecte]);
+  a = await rejoindre(s.port, 'Dora');
+  await a.client.attendre('histoire_etat', 10000).catch(() => null);
+  ok(await observer(1500, () => dernierRecit({ client: a.client }).histoire.etape === 1), 'sans les rondins, l\'étape n\'avance pas');
+  await partir({ client: a.client }, s); await s.arreter();
+
+  // (c) mort définitive en cauchemar : le serveur la transmet au récit, qui s'achève
+  ecrireMonde(D, ids.mort, 'Gus', h => { h.chap = 0; h.etape = 1; }, { x: 0.5, y: 330, z: 0.5 });
+  s = await demarrer(['--dossier-parties', D, '--partie', ids.mort]);
+  a = await rejoindre(s.port, 'Gus');
+  const fin = await a.client.attendre('histoire_notif', 40000, m => m.notifs.some(n => n.type === 'fin')).catch(() => null);
+  ok(!!fin, 'la mort en cauchemar achève le récit (annonce de fin du serveur)');
+  const etatFin = await jusqua(() => { const r = dernierRecit({ client: a.client }); return r && r.histoire.fin ? r : null; }, 5000);
+  ok(!!etatFin && a.client.dernier('histoire_etat').etat.fin, 'et HISTOIRE_ETAT porte la fin');
+  await a.client.fermer(); await s.arreter();
+
+  // (d) un récit de partie importée illisible n'est pas perdu
+  ecrireMonde(D, ids.illisible, 'Hana', null, { x: 0.5, y: 100, z: 0.5 }, { histoire: { n: 'illisible' }, succes: null });
+  s = await demarrer(['--dossier-parties', D, '--partie', ids.illisible]);
+  a = await rejoindre(s.port, 'Hana');
+  await a.client.attendre('histoire_etat', 10000).catch(() => null);
+  await partir({ client: a.client }, s);
+  const d = await jusqua(() => { try { const x = JSON.parse(fs.readFileSync(fichierMonde(D, ids.illisible), 'utf8')); return x.histoire && x.histoire.recits && x.histoire.recits.length ? x : null; } catch (e) { return null; } }, 10000, 100);
+  ok(!!d, 'le joueur a quand même un récit neuf');
+  ok(d && d.extras && d.extras.histoire && d.extras.histoire.n === 'illisible', 'et le récit importé illisible reste conservé tel quel dans les extras');
+  await s.arreter();
+}
+
+// ── POST /tests/serveur-histoire : réservé à la boucle locale, en JSON, avec --tests ──
+async function routeTest() {
+  const http = require('http');
+  const brut = (port, entetes, hote) => new Promise((resolve) => {
+    const req = http.request({ host: hote || '127.0.0.1', port, path: '/tests/serveur-histoire', method: 'POST', headers: entetes }, (res) => {
+      let t = ''; res.on('data', d => { t += d; }); res.on('end', () => resolve({ code: res.statusCode, corps: t }));
+    });
+    req.on('error', () => resolve({ code: 0, corps: '' }));
+    req.end('{}');
+  });
+  const sSans = await demarrer([]);
+  const r0 = await brut(sSans.port, { 'Content-Type': 'application/json' });
+  ok(r0.code !== 200, 'sans --tests la route n\'existe pas (' + r0.code + ')');
+  await sSans.arreter();
+  const s = await demarrer(['--serveur', '--tests']);
+  const sans = await brut(s.port, {});
+  eq(sans.code, 415, 'sans Content-Type JSON : refusé');
+  const proxy = await brut(s.port, { 'Content-Type': 'application/json', 'X-Forwarded-For': '10.0.0.9' });
+  eq(proxy.code, 403, 'derrière un mandataire : refusé');
+  const ext = A.adresseReseau();
+  if (ext) {
+    const distant = await brut(s.port, { 'Content-Type': 'application/json' }, ext);
+    eq(distant.code, 403, 'depuis une adresse non locale : refusé (serveur ouvert)');
+  } else R.saut('route de test depuis une autre adresse', 'aucune adresse réseau non locale');
+  const bon = await brut(s.port, { 'Content-Type': 'application/json' });
+  let port = null;
+  try { port = JSON.parse(bon.corps).port; } catch (e) { /* illisible */ }
+  ok(bon.code === 200 && port > 0, 'depuis la boucle locale, en JSON : un serveur d\'histoire jetable démarre');
+  await s.arreter();
+  if (port) ok(await attendreInjoignable(port), 'et il s\'arrête avec son parent (pas d\'orphelin)');
+}
+async function attendreInjoignable(port) {
+  const fin = Date.now() + 8000;
+  while (Date.now() < fin) { if ((await A.sonde(port)) !== 'ok') return true; await dodo(100); }
+  return false;
 }
 
 main().then(() => { process.exit(R.fin()); }, (e) => { ok(false, 'exception : ' + (e && e.stack || e)); process.exit(R.fin()); });

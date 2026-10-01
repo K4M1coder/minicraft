@@ -779,7 +779,7 @@
         for (var k2 in chests) delete chests[k2];
         for (var ke in expositions) delete expositions[ke];
         for (var kd in distributeurs) delete distributeurs[kd];
-        g.histoire = null;
+        g.oublierHistoire();
         g.succes = MC.Succes.creer();
         chat.vider();
         var optsRejoindre = { hote: '', pseudo: g.nomJoueur || pseudoLocal(), joueurs: joueurs };
@@ -1377,7 +1377,7 @@
        joueur (parler à un habitant, choisir). Un joueur d'écran partagé a
        aussi son récit : l'affichage plein écran (dialogue, objectif) suit le
        premier joueur, les annonces des autres arrivent en bulles. */
-    var choixAffiche = null, fileRecit = [], repereObjectif = null, histoireT = 0, parlerEnAttente = null;
+    var histoires = [], choixAffiche = [], fileRecit = [], repereObjectif = null, histoireT = 0, parlerEnAttente = null;
     function peutCategorie(cat) { return MC.Modes.categoriePermise(regles, cat); }
     // paramètres d'histoire complets (archétype, interactions) : la même fonction pure que le serveur
     function construireParametresHistoire(o) { return MC.RecitServeur.parametres(o); }
@@ -1386,56 +1386,55 @@
     // l'état du récit reçu du serveur (premier joueur : celui qu'on affiche)
     function surHistoireEtat(m) {
       var e = m.etat || {};
-      if (m.j !== 0) return;
-      g.histoire = e.recit ? MC.Recits.charger(e.recit, peutCategorie) : null;
-      if (e.fin) g.finHistoire = e.fin;
-      choixAffiche = null;                     // un choix refusé par le serveur se repose
-      if (!g.histoire) fileRecit.length = 0;
+      histoires[m.j] = e.recit ? MC.Recits.charger(e.recit, peutCategorie) : null;
+      choixAffiche[m.j] = null;                // un choix refusé par le serveur se repose
+      if (m.j === 0) {
+        g.histoire = histoires[0];
+        if (e.fin) g.finHistoire = e.fin;
+        if (!g.histoire) fileRecit.length = 0;
+      }
       afficherRecit();
     }
     g.surHistoireEtat = surHistoireEtat;
+    g.oublierHistoire = function () { histoires.length = 0; choixAffiche.length = 0; fileRecit.length = 0; g.histoire = null; g.finHistoire = null; };
     function surHistoireNotif(m) {
-      if (m.j !== 0) {
-        (m.notifs || []).forEach(function (n) { if (n.texte) ui.toast('Joueur ' + (m.j + 1) + ' — ' + (n.titre ? n.titre + ' : ' : '') + n.texte); });
-        return;
-      }
-      presenter(m.notifs);
+      presenter(m.notifs, m.j);
       if (m.libre) {
         // le récit ne prend pas la parole : le commerce normal de l'habitant
         var ent = parlerEnAttente;
         parlerEnAttente = null;
-        if (ent && ent.eid === m.eid) commerceAvec(ent);
+        if (m.j === 0 && ent && ent.eid === m.eid) commerceAvec(ent);
       } else if (m.proposition) {
-        var p = m.proposition;
-        if (ui.isContainerOpen()) forceCloseContainer();
-        input.setState('ui');
-        ui.dialogueHistoire({ titre: p.nom, texte: p.texte,
-                              choix: [{ id: 'oui', texte: 'Accepter la quête' }, { id: 'non', texte: 'Refuser' }] },
-                            function (c) {
-                              net.histoireReponse(p.id, c === 'oui' ? 'oui' : 'non', 0);
-                              if (c === 'oui') chat.systeme('Quête : ' + p.titre);
-                              fermerRecit();
-                            });
+        var p = m.proposition, jp = m.j;
+        fileRecit.push({ titre: p.nom, texte: p.texte, j: jp,
+                         choix: [{ id: 'oui', texte: 'Accepter la quête' }, { id: 'non', texte: 'Refuser' }],
+                         repondre: function (c) {
+                           net.histoireReponse(p.id, c === 'oui' ? 'oui' : 'non', jp);
+                           if (c === 'oui') chat.systeme('Quête : ' + p.titre);
+                         } });
+        afficherRecit();
       }
     }
     g.surHistoireNotif = surHistoireNotif;
     /* Ce que le serveur annonce : raconter, informer, récompenser. Les objets
        eux-mêmes sont déjà dans l'inventaire (INV_MAJ) ; ici, juste l'affichage. */
-    function presenter(notifs) {
+    function presenter(notifs, j) {
+      j = j || 0;
+      var pre = j ? 'Joueur ' + (j + 1) + ' — ' : '';       // écran partagé : un seul panneau, on dit à qui l'on parle
       (notifs || []).forEach(function (n) {
         switch (n.type) {
-          case 'chapitre': fileRecit.push({ titre: n.titre, texte: n.texte }); chat.systeme('— ' + n.titre + ' —');
-                           audio.jouer(MC.Ambiance.sonEvenement('chapitre'), { categorie: 'evenement' }); break;
-          case 'dialogue': fileRecit.push({ titre: n.titre, texte: n.texte }); break;
-          case 'evenement': fileRecit.push({ titre: n.titre, texte: n.texte }); break;
-          case 'etape': ui.toast(n.texte); audio.play('craft'); break;
-          case 'quete': ui.toast(n.texte); audio.play('echange'); break;
-          case 'info': ui.toast(n.texte); break;
-          case 'echec': ui.toast(n.texte, 'warn'); break;
+          case 'chapitre': fileRecit.push({ titre: pre + n.titre, texte: n.texte, j: j }); chat.systeme(pre + '— ' + n.titre + ' —');
+                           if (!j) audio.jouer(MC.Ambiance.sonEvenement('chapitre'), { categorie: 'evenement' }); break;
+          case 'dialogue': fileRecit.push({ titre: pre + n.titre, texte: n.texte, j: j }); break;
+          case 'evenement': fileRecit.push({ titre: pre + n.titre, texte: n.texte, j: j }); break;
+          case 'etape': ui.toast(pre + n.texte); if (!j) audio.play('craft'); break;
+          case 'quete': ui.toast(pre + n.texte); if (!j) audio.play('echange'); break;
+          case 'info': ui.toast(pre + n.texte); break;
+          case 'echec': ui.toast(pre + n.texte, 'warn'); break;
           case 'recompense':
-            (n.objets || []).forEach(function (o) { ui.toast('Récompense : ' + o.n + ' ' + C.nameOf(o.id)); });
+            (n.objets || []).forEach(function (o) { ui.toast(pre + 'Récompense : ' + o.n + ' ' + C.nameOf(o.id)); });
             break;
-          case 'fin': finHistoire(n); break;
+          case 'fin': if (j === 0) finHistoire(n); else ui.toast(pre + 'Fin : ' + n.titre); break;
         }
       });
       afficherRecit();
@@ -1445,25 +1444,30 @@
     }
     /* Une réplique à la fois ; puis, s'il y en a un, le choix en attente. */
     function afficherRecit() {
-      if (!g.histoire || ui.dialogueOuvert() || input.state === 'menu' || input.state === 'dead') return;
+      if (!histoires.some(Boolean) || ui.dialogueOuvert() || input.state === 'menu' || input.state === 'dead') return;
       var d = fileRecit.shift();
       if (d) {
         if (ui.isContainerOpen()) forceCloseContainer();
         input.setState('ui');
-        ui.dialogueHistoire(d, function () { afficherRecit(); fermerRecit(); });
+        ui.dialogueHistoire(d, function (c) { if (d.repondre) d.repondre(c); afficherRecit(); fermerRecit(); });
         return;
       }
-      var c = finRecit(g.histoire) ? null : MC.Recits.choixEnAttente(g.histoire);
-      if (c && choixAffiche !== c.id) {
-        choixAffiche = c.id;
+      for (var jj = 0; jj < histoires.length; jj++) {
+        var h = histoires[jj];
+        var c = h && !finRecit(h) ? MC.Recits.choixEnAttente(h) : null;
+        if (!c || choixAffiche[jj] === c.id) continue;
+        choixAffiche[jj] = c.id;
         if (ui.isContainerOpen()) forceCloseContainer();
         input.setState('ui');
-        ui.dialogueHistoire({ titre: 'Votre choix', texte: c.texte,
-                              choix: c.options.map(function (o) { return { id: o.id, texte: o.texte }; }) },
-                            function (opt) {
-                              net.histoireReponse(c.id, opt, 0);      // le serveur valide ; son état suit (surHistoireEtat)
-                              fermerRecit();
-                            });
+        (function (c2, j2) {
+          ui.dialogueHistoire({ titre: j2 ? 'Joueur ' + (j2 + 1) + ' — votre choix' : 'Votre choix', texte: c2.texte,
+                                choix: c2.options.map(function (o) { return { id: o.id, texte: o.texte }; }) },
+                              function (opt) {
+                                net.histoireReponse(c2.id, opt, j2);      // le serveur valide ; son état suit (surHistoireEtat)
+                                fermerRecit();
+                              });
+        })(c, jj);
+        return;
       }
     }
     /* Parler à un habitant pendant le récit : le serveur arbitre (portée,
@@ -1475,7 +1479,6 @@
     function finHistoire(n) {
       g.finHistoire = n;
       audio.jouer(MC.Ambiance.sonEvenement('fin'), { categorie: 'evenement' });
-      signalerSucces({ type: 'histoire', fin: n.id });   // P-SUCC : le serveur en prend le relais (signalerSucces(js, ev))
       chat.systeme('Fin : ' + n.titre);
       ui.objectifHistoire(null);
       forceCloseContainer();

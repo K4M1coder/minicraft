@@ -984,6 +984,8 @@ if (regles.histoire && PARAMS_HISTOIRE.archetype === 'epopee' && !histoireMonde.
   const t0Histoire = Date.now();
   histoireMonde.liens = MC.Histoire.lier(monde, SPAWN.x, SPAWN.z);
   journal(`histoire : lieux liés au monde en ${Date.now() - t0Histoire} ms`);
+  // persistés tout de suite : un redémarrage de la même partie ne refait pas ce calcul (l'écran d'attente de ARCHI-017 couvre ce délai la première fois)
+  if (CONF.mondeFichier) setTimeout(() => sauvegarderMondeAsync('liens de l\'histoire', true), 3000);
 }
 /* MC_TEST_MOBS='[["sheep",1.5,0]]' : réservé aux suites d'intégration (même
    principe que MC_TEST_SPAWN, désactivé par défaut) — fait apparaître des
@@ -1491,13 +1493,21 @@ function lireCorpsGros(req, max, cb) {
     catch (e) { cb(e); }
   });
 }
-function apiPartiesAutorisee(req, res) {
-  if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) { repondreJSON(res, 403, { ok: false, motif: 'mandataire refusé' }); return false; }     // comme connexionLocale
-  if (!CA.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return false; }
+/* Garde commune des routes réservées à la boucle locale (API des parties, serveur d'histoire de test) :
+   adresse locale ET hôte local ET pas de mandataire ET origine/Sec-Fetch-Site sûrs. Renvoie le motif
+   du refus, ou null. */
+function refusRequeteLocale(req) {
+  if (req.headers['x-forwarded-for'] || req.headers['forwarded'] || req.headers['x-real-ip']) return 'mandataire refusé';     // comme connexionLocale
+  if (!CA.estAdresseLocale(req.socket.remoteAddress)) return 'adresse non locale';
   const origine = req.headers['origin'];
-  if (origine && CA.originesLocales(portActuel).indexOf(origine) < 0) { repondreJSON(res, 403, { ok: false, motif: 'origine refusée' }); return false; }
-  if (!hoteLocal(req)) { repondreJSON(res, 403, { ok: false, motif: 'hôte refusé' }); return false; }
-  if (req.headers['sec-fetch-site'] === 'cross-site') { repondreJSON(res, 403, { ok: false, motif: 'requête intersites refusée' }); return false; }
+  if (origine && CA.originesLocales(portActuel).indexOf(origine) < 0) return 'origine refusée';
+  if (!hoteLocal(req)) return 'hôte refusé';
+  if (req.headers['sec-fetch-site'] === 'cross-site') return 'requête intersites refusée';
+  return null;
+}
+function apiPartiesAutorisee(req, res) {
+  const motif = refusRequeteLocale(req);
+  if (motif) { repondreJSON(res, 403, { ok: false, motif }); return false; }
   return true;
 }
 let derniereDemandeSauvegarde = 0;
@@ -1663,8 +1673,12 @@ function arreterServeurHistoireTest() {
 function traiterServeurHistoireTest(req, res) {
   if (!PARAMS.tests) return false;
   if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
-  const fiable = requeteFiable(req, portActuel);
-  if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
+  const refus = refusRequeteLocale(req);
+  if (refus) { repondreJSON(res, 403, { ok: false, motif: refus }); return true; }
+  if (String(req.headers['content-type'] || '').split(';')[0].trim() !== 'application/json') {
+    repondreJSON(res, 415, { ok: false, motif: 'Content-Type attendu : application/json' });
+    return true;
+  }
   lireCorpsJSON(req, (corps) => {
     arreterServeurHistoireTest();
     const histoire = corps && corps.histoire && typeof corps.histoire === 'object' ? corps.histoire : {};
@@ -1681,11 +1695,16 @@ function traiterServeurHistoireTest(req, res) {
     let sortie = '', repondu = false;
     const repondre = (code, obj) => { if (repondu) return; repondu = true; clearTimeout(limite); repondreJSON(res, code, obj); };
     const limite = setTimeout(() => { arreterServeurHistoireTest(); repondre(504, { ok: false, motif: 'demarrage_trop_long' }); }, 90000);
-    enfant.stdout.on('data', (d) => {
+    const ecouteSortie = (d) => {
       sortie += d;
       const m = /MC_PORT=(\d+)/.exec(sortie);
-      if (m) repondre(200, { ok: true, port: parseInt(m[1], 10) });
-    });
+      if (!m) return;
+      enfant.stdout.removeListener('data', ecouteSortie);     // plus rien à lire : on vide sans accumuler
+      enfant.stdout.on('data', () => {});
+      sortie = '';
+      repondre(200, { ok: true, port: parseInt(m[1], 10) });
+    };
+    enfant.stdout.on('data', ecouteSortie);
     enfant.stderr.on('data', () => {});
     enfant.on('exit', () => { if (serveurHistoireTest === enfant) serveurHistoireTest = null; repondre(500, { ok: false, motif: 'serveur_arrete' }); });
   });
@@ -2076,7 +2095,12 @@ function preparerRecit(js, j) {
   if (!regles.histoire) return;
   let rec = null;
   if (js.cleReg && recitsRegistre.has(js.cleReg)) rec = RS.importer(recitsRegistre.get(js.cleReg), peutHistoire);
-  if (!rec && js.recitSolo) rec = RS.importer(js.recitSolo, peutHistoire);
+  if (!rec && js.recitSolo) {
+    rec = RS.importer(js.recitSolo, peutHistoire);
+    // le brut n'est lâché qu'une fois le récit rattaché à une clé de registre persistée ; illisible, il est conservé tel quel
+    if (rec && js.cleReg) { soloRecit = null; if (extrasSolo) extrasSolo.histoire = null; }
+    else if (!rec) journal(`histoire : le récit de la partie importée est illisible, conservé tel quel (${js.cleReg || 'sans clé'})`);
+  }
   js.recitSolo = null;
   if (rec) { js.recit = rec.etat; js.recitFin = rec.fin; return; }
   const cr = RS.creer({ monde, graine: CONF.graine, params: PARAMS_HISTOIRE, peut: peutHistoire, liens: histoireMonde.liens, pos: SPAWN });
@@ -2105,19 +2129,29 @@ function demarrerRecit(c, js, j) {
   if (!js.recit) return;
   const notifs = js.recitNotifs || [];
   js.recitNotifs = [];
-  js.recitT = 0; js.lieuRecit = null; js.recitMort = false; js.attenteRecit = null; js.recitVue = null;
+  js.recitT = 0; js.lieuRecit = null; js.recitMort = false; js.attenteRecit = null; js.recitSig = null;
   livrerRecit(c, j, js, notifs);
 }
 function envoyerEtatRecit(c, j, js, force) {
+  /* Signature légère (objectif, journal, fin, choix) comparée à chaque sonde : la vue complète
+     (copie profonde + sérialisation) n'est construite que si elle a changé. */
+  const i0 = RS.interne(js.recit);
+  const choix = RS.choixPose(js.recit);
+  const sig = JSON.stringify([MC.Recits.objectif(js.recit), i0 && i0.journal ? i0.journal.length : 0, i0 && i0.fin, choix && choix.id,
+    MC.Recits.quetesActives(js.recit).map(q => q.etat).join()]);
+  if (!force && sig === js.recitSig) return;
+  js.recitSig = sig;
   const v = RS.vue(js.recit, js.recitFin);
   let txt = JSON.stringify(v);
   if (txt.length > CA.BORNES.HISTOIRE_JSON_MAX) {                 // jamais au-delà de la borne du contrat : le journal d'abord
     const i = RS.interne(v.recit);
     if (i && i.journal) i.journal = [];
     txt = JSON.stringify(v);
+    if (txt.length > CA.BORNES.HISTOIRE_JSON_MAX) {
+      journal(`! histoire : l'état du récit de ${c.nom} dépasse la borne du contrat (${txt.length} octets), non envoyé`);
+      return;
+    }
   }
-  if (!force && txt === js.recitVue) return;
-  js.recitVue = txt;
   envoyer(c, { t: NP.MSG.HISTOIRE_ETAT, j, etat: v });
 }
 /* Applique les effets d'un lot d'annonces du moteur de récit (objets repris,
@@ -2318,7 +2352,7 @@ function traiter(c, m) {
           // premier joueur local qui rejoint (son nom n'était pas connu à l'import)
           if (!rec && j === 0 && soloJoueur) {
             rec = soloJoueur; soloJoueur = null;
-            if (soloRecit) { js.recitSolo = soloRecit; soloRecit = null; if (extrasSolo) extrasSolo.histoire = null; }   // ARCHI-041 : son récit l'accompagne
+            if (soloRecit) js.recitSolo = soloRecit;   // ARCHI-041 : son récit l'accompagne (retiré des extras seulement une fois rattaché, voir preparerRecit)
           }
           if (rec) {
             MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
@@ -3345,6 +3379,8 @@ const CREDITS_MAX = 128;            // borne : un client qui ne journalise jamai
    sauvegarde…) et qui posent des blocs sans s'en donner ; même principe que
    MC_TEST_PANNE, jamais en exploitation. Les suites d'inventaire ne l'utilisent pas. */
 const POSE_LIBRE = process.env.MC_TEST_POSE_LIBRE === '1';
+if (process.env.MC_HISTOIRE) journal('ATTENTION : MC_HISTOIRE actif — paramètres du récit imposés sans partie (réglage de test, jamais en exploitation)');
+if (process.env.MC_TEST_PRES_GUIDE) journal('ATTENTION : MC_TEST_PRES_GUIDE actif — le héros s\'éveille à côté du guide (réglage de test, jamais en exploitation)');
 if (POSE_LIBRE) journal('ATTENTION : MC_TEST_POSE_LIBRE actif — poser et tirer ne sont PAS contrôlés contre l inventaire (réglage de test, jamais en exploitation)');
 
 /* Blocs posés d'un seul geste : une porte occupe deux cases (dessus), un lit
@@ -4061,6 +4097,8 @@ setInterval(() => {
   }
 
   appliquerTornades(dt, joueurs);
+  // ARCHI-041 : le récit de chaque joueur évalue où il est et ce qu'il porte (temps de jeu : gelé en pause avec toute la boucle)
+  if (regles.histoire) joueurs.forEach(({ c, j, js }) => sonderRecit(c, j, js, dt));
 
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();

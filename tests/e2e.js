@@ -3112,8 +3112,7 @@
   }
   async function quitterHistoire(g) {
     g.net.deconnecter();
-    g.histoire = null;
-    g.finHistoire = null;
+    g.oublierHistoire();
     g.ui.objectifHistoire(null);
     g.adopterRegles('survie', 'facile', null);
     fakeLock(g, true); g.input.setState('playing');
@@ -3125,7 +3124,7 @@
     g.render.setDistance(5);
     try {
       if (!(await rejoindreHistoire(g, { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, true))) {
-        A.ok(true, 'serveur de test absent : test ignoré'); return;
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
       }
       await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
       A.ok(g.histoire && g.regles.histoire, 'le récit est lancé, annoncé par le serveur');
@@ -3179,7 +3178,7 @@
     try {
       document.exitPointerLock = function () { sorties++; };
       if (!(await rejoindreHistoire(g, { heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, false))) {
-        A.ok(true, 'serveur de test absent : test ignoré'); return;
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
       }
       await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
       var dlg = document.querySelector('.dialogue-histoire');
@@ -3217,7 +3216,7 @@
     g.render.setDistance(5);
     try {
       if (!(await rejoindreHistoire(g, { archetype: 'enquete', heros: 'Testeur', longueur: 'courte', interactions: { preset: 'restreinte' } }, false))) {
-        A.ok(true, 'serveur de test absent : test ignoré'); return;
+        A.ok(false, 'serveur d histoire indisponible (POST /tests/serveur-histoire : lancer le banc avec server.js --tests)'); return;
       }
       await sonderE2E(function () { var d = document.querySelector('.dialogue-histoire'); return g.histoire && d && d.style.display !== 'none'; }, 30000);
       A.ok(g.histoire && g.histoire.archetype === 'enquete', 'le récit choisi est bien une enquête');
