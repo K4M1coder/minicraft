@@ -65,6 +65,55 @@
       A.equal(net.etat, 'hors ligne', 'l\'état de la liaison n\'a pas bougé');
     });
 
+    /* SPEC-ARCHI-042 : les succès sont arbitrés par le serveur ; le client ne fait
+       qu'afficher ce qu'un message VALIDE lui annonce. */
+    function clientAvecFauxSocket(hooks) {
+      if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
+      var ancien = G.WebSocket, socket = null;
+      G.WebSocket = function () { socket = this; this.readyState = 1; this.send = function () {}; this.close = function () {}; };
+      try {
+        var net = MC.createNetClient(hooks);
+        net.connecter('ws://faux', 'Test', 1);
+      } finally { G.WebSocket = ancien; }
+      return function recevoir(m) { socket.onmessage({ data: JSON.stringify(m) }); };
+    }
+
+    it('SPEC-ARCHI-042 : SUCCES_DEBLOQUE, SUCCES_ETAT et FOUDROYE valides atteignent leurs hooks, normalisés ; les invalides sont ignorés', function () {
+      var vus = { debloque: [], etat: [], foudre: [] };
+      var recevoir = clientAvecFauxSocket({
+        onSuccesDebloque: function (m) { vus.debloque.push(m); },
+        onSuccesEtat: function (m) { vus.etat.push(m); },
+        onFoudroye: function (m) { vus.foudre.push(m); },
+      });
+      recevoir({ t: 'succes_debloque', j: 1, id: 'premier_bloc', parasite: 1 });
+      recevoir({ t: 'succes_etat', j: 0, etat: { compte: { premier_bloc: 1 }, debloques: ['premier_bloc'] } });
+      recevoir({ t: 'foudroye', j: 0 });
+      A.deep(vus.debloque, [{ t: 'succes_debloque', j: 1, id: 'premier_bloc' }], 'déblocage normalisé (champ parasite écarté)');
+      A.deep(vus.etat[0].etat, { compte: { premier_bloc: 1 }, debloques: ['premier_bloc'] });
+      A.deep(vus.foudre, [{ t: 'foudroye', j: 0 }]);
+      recevoir({ t: 'succes_debloque', j: 9, id: 'x' });
+      recevoir({ t: 'succes_debloque', j: 0, id: '' });
+      recevoir({ t: 'succes_etat', j: 0, etat: { compte: { x: -3 } } });
+      recevoir({ t: 'succes_etat', j: 0 });
+      recevoir({ t: 'foudroye', j: 7 });
+      A.equal(vus.debloque.length, 1, 'déblocage invalide ignoré');
+      A.equal(vus.etat.length, 1, 'état invalide ignoré');
+      A.equal(vus.foudre.length, 1, 'foudre invalide ignorée');
+    });
+
+    it('SPEC-ARCHI-042 : audit statique — le client n\'attribue plus aucun succès, le serveur le fait', function () {
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(!/signalerSucces\s*\(/.test(jeu), 'game.js n\'appelle plus signalerSucces');
+      A.ok(!/tickerSucces/.test(jeu), 'game.js n\'échantillonne plus altitude, distance et nuit');
+      A.ok(!/\.succes\.signaler\s*\(/.test(jeu), 'game.js n\'appelle jamais le suivi directement');
+      A.ok(/onSuccesDebloque/.test(jeu) && /onSuccesEtat/.test(jeu) && /onFoudroye/.test(jeu), 'game.js câble les trois hooks d\'affichage');
+      ['casser', 'fabriquer', 'manger', 'echange', 'banque', 'pvp_victoire', 'foudre', 'tuer', 'boss', 'lieu'].forEach(function (type) {
+        A.ok(new RegExp("type: '" + type + "'").test(serveur), 'server.js signale l\'événement « ' + type + ' »');
+      });
+      A.ok(/'daycycle', 'succes'/.test(serveur), 'server.js charge le module des succès');
+    });
+
     it('SPEC-ARCHI-040 : avec un joueur distant, interpoler rapproche sa position de sa cible', function () {
       if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
       var net = MC.createNetClient({});

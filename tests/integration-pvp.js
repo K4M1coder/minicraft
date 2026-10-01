@@ -195,6 +195,8 @@ async function attendreDemarrage(port) {
     const victoire1 = await a1.attendre('pvp', 3000, m => m.evt === 'victoire');
     eq(victoire1.n, 1, 'SPEC-PVP-004 : première victoire comptée (message PVP victoire reçu par le vainqueur)');
     await dodo(200);
+    ok(!a1.messages.some(m => m.t === 'succes_debloque' && /victoire_pvp/.test(m.id)),
+       'SPEC-ARCHI-042 : une victoire en duel (sans enjeu) ne débloque aucun succès PvP (« Champion » non farmable)');
     const invBobApres = (b1.messages.filter(m => m.t === 'inv_maj').pop() || {}).inv;
     ok(JSON.stringify(invBobAvant) === JSON.stringify(invBobApres),
        'SPEC-PVP-001 : l\'inventaire de Bob est inchangé après une défaite en duel', JSON.stringify(invBobApres));
@@ -306,6 +308,8 @@ async function attendreDemarrage(port) {
     const victoire = await a.attendre('pvp', 3000, m => m.evt === 'victoire');
     eq(victoire.contre, 'Bob', 'SPEC-PVP-004 : Alice reçoit sa victoire contre Bob');
     eq(victoire.n, 1, 'SPEC-PVP-004 : première victoire d\'Alice comptée par le serveur');
+    const succesPvp = await a.attendre('succes_debloque', 3000, m => m.id === 'premiere_victoire_pvp').catch(() => null);
+    ok(!!succesPvp, 'SPEC-ARCHI-042 : une vraie victoire PvP (hors duel) débloque « Premier sang » côté serveur');
     const defaite = await b.attendre('pvp', 3000, m => m.evt === 'defaite');
     eq(defaite.de, 'Alice', 'SPEC-PVP-001 : Bob apprend qui l\'a vaincu');
     const pertesBob = (defaite.perte || []).reduce((s, p) => s + p.n, 0);
