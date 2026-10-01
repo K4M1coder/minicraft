@@ -258,13 +258,23 @@ P-HIST (041) et P-SUCC (042) — les véhicules (P-VEH, 021, SYNC-022, SERVEUR-0
 et P-SUCC. Bug ancien à traiter à part : les circuits referment au tic suivant une
 porte ouverte à la main.
 
+Avancement du lot P-HIST (SPEC-ARCHI-041, ✅) : le mode histoire est tenu par le
+serveur. Règle réseau : un récit PAR JOUEUR nommé (clé de registre), persisté dans
+`histoire` du fichier de monde ; un récit de partie solo importée (`extras.histoire`)
+est adopté par le joueur du poste. Le client n'affiche que `HISTOIRE_ETAT` et
+`HISTOIRE_NOTIF` et renvoie `HISTOIRE_PARLER` / `HISTOIRE_REPONSE`. Le succès
+`histoire_achevee` est demandé à `signalerSucces(js, ev)` à l'achèvement du récit :
+ce point d'appel (`succesHistoire`, server.js) est branché sur celui de P-SUCC : `histoire_achevee` est obtenu par la fin du récit. Les e2e
+SPEC-HISTOIRE-009/010/014 jouent sur un serveur d'histoire réel lancé par le serveur
+de test (`POST /tests/serveur-histoire`, uniquement avec `--tests`).
+
 Avancement du lot P-SUCC : SPEC-ARCHI-042 est ✅. Le serveur tient les succès de
 chaque joueur (solo fermé, écran partagé, réseau) : événements décidés sur ce qu'il
 a lui-même constaté, échantillonnage de position à chaque tic (distance, altitude,
 nuit), persistance dans le fichier de monde, reprise des succès d'une partie solo
 importée. Le client n'affiche que `SUCCES_DEBLOQUE`, `SUCCES_ETAT` et `FOUDROYE`.
-Reste à brancher `signalerSucces` pour `vehicule` (P-VEH) et `histoire` (P-HIST).
-BLOQUANT POUR LA PUBLICATION : les succès `premier_vehicule` et `histoire_achevee` sont inobtenables tant que P-VEH et P-HIST ne sont pas fusionnés.
+Reste à brancher `signalerSucces` pour `vehicule` (P-VEH).
+BLOQUANT POUR LA PUBLICATION : le succès `premier_vehicule` est inobtenable tant que P-VEH n'est pas fusionné (`histoire_achevee` l'est depuis P-HIST).
 Preuves : `tests/integration-archi-succes.js`, `tests/spec-succes.js`.
 
 | Lot | Contenu | Fiches | Dépend de |

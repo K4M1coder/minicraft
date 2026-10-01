@@ -47,7 +47,7 @@
     banque: 'soloJoueur.banque',
     pnjsMorts: 'pnjsMorts',
     zones: 'zones',
-    histoire: 'extras.histoire',
+    histoire: 'extras.histoire',   // ARCHI-041 : adopté par le joueur du poste à sa première connexion, puis réécrit dans histoire.recits
     vehicules: 'extras.vehicules',
     // à l'import ; le serveur (SPEC-ARCHI-042) les reprend dans l'enregistrement du joueur
     // qui adopte la partie (joueurs[nom].succes) et retire alors `extras.succes`

@@ -158,7 +158,7 @@
 
       ['commit', 'pr'].forEach(function (nom) {
         var out = cp.execFileSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--preset', nom, '--lister'],
-          { encoding: 'utf8', cwd: RACINE });
+          { encoding: 'utf8', cwd: RACINE, maxBuffer: 64 * 1024 * 1024 });
         var n = /(\d+) test\(s\) sélectionné/.exec(out);
         A.ok(n && Number(n[1]) > 0, 'le préréglage ' + nom + ' cité par un crochet n\'est pas vide');
       });

@@ -56,6 +56,9 @@
       onOverridesChunk: opts.onOverridesChunk || function () {},
       // P-VEH : à bord / pied à terre / refus motivé (VEHICULE_EVT)
       onVehiculeEvt: opts.onVehiculeEvt || function () {},
+      // SPEC-ARCHI-041 : l'état du récit d'un joueur, et ce que le récit annonce (répliques, quêtes proposées…)
+      onHistoireEtat: opts.onHistoireEtat || function () {},
+      onHistoireNotif: opts.onHistoireNotif || function () {},
       // SPEC-ARCHI-042 : succès arbitrés par le serveur — annonce d'un déblocage,
       // état des compteurs du panneau, foudre qui vient de toucher un joueur
       onSuccesDebloque: opts.onSuccesDebloque || function () {},
@@ -180,6 +183,12 @@
         case NP.MSG.ADMIN_REP:
           hooks.onAdminRep(m);
           break;
+
+        case NP.MSG.HISTOIRE_ETAT: case NP.MSG.HISTOIRE_NOTIF: {
+          var hv = MC.ContratsArchi.validerRecu(m);
+          if (hv) (hv.t === NP.MSG.HISTOIRE_ETAT ? hooks.onHistoireEtat : hooks.onHistoireNotif)(hv);
+          break;
+        }
 
         case NP.MSG.BLOC:
           hooks.onBloc(m.x, m.y, m.z, m.id, m.etat || 0);
@@ -349,6 +358,10 @@
       if (caseInv !== undefined && caseInv !== null) m.i = caseInv;
       return envoyer(m);
     }
+    /* SPEC-ARCHI-041 : parler à un habitant dans le récit, répondre à un choix ou à une quête proposée.
+       Le serveur valide tout (portée, étape en cours, identifiant) : ici, on ne fait que demander. */
+    function histoireParler(eid, j) { return envoyer({ t: NP.MSG.HISTOIRE_PARLER, j: j || 0, eid: eid }); }
+    function histoireReponse(id, option, j) { return envoyer({ t: NP.MSG.HISTOIRE_REPONSE, j: j || 0, id: id, option: option === undefined ? null : option }); }
     function renaitre(j) { return envoyer({ t: NP.MSG.RENAITRE, j: j || 0 }); }
     /* SPEC-ARCHI-025 : un joueur local se couche (actif) ou se lève — le serveur
        tient le compte des dormeurs et fait passer la nuit. */
@@ -425,7 +438,7 @@
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, dormir: dormir, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      envoyer: envoyer, dormir: dormir, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       poserVehicule: poserVehicule, monterVehicule: monterVehicule, descendreVehicule: descendreVehicule, reparerVehicule: reparerVehicule,

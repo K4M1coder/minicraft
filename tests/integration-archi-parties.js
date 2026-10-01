@@ -11,6 +11,12 @@ const A = require('./aide-integration-archi.js');
 const { dodo, connecter, requete, lancer, rejoindre, attendreClients, chargerModules, dossierTemp, supprimerDossier } = A;
 const R = A.creerRapport('Intégration ARCHI — parties sur disque, import, parité (SPEC-ARCHI-013, 014, 015)');
 const { ok, eq } = R;
+/* SPEC-ARCHI-042 : une fois le joueur solo adopté, ses succès vivent dans son
+   enregistrement nommé (joueurs[nom].succes), plus dans extras.succes. */
+function succesAdoptes(f) {
+  return ((f && f.joueurs) || []).some(([, rec]) => rec && rec.succes && (rec.succes.debloques || []).indexOf('premier_bloc') >= 0);
+}
+
 
 const serveurs = [];
 async function demarrer(args, env) { const s = await lancer(args, env); serveurs.push(s); return s; }
@@ -133,7 +139,7 @@ function fabriquerExport() {
     const coffre = MC.Inventory.create(27);
     coffre.add(I.STICK, 7);
     const etat = { world: w, player: pl, entities: ents, time: 250, furnaces: {}, chests: { '3,40,2': coffre }, regles, duree: 321,
-                   succes: { serialiser: () => ({ debloques: ['premier_pas'], compteurs: { pas: 12 } }) } };
+                   succes: { serialiser: () => ({ debloques: ['premier_bloc'], compteurs: { pas: 12 } }) } };
     MC.Saves.sauvegarder(st, meta.id, etat);
     return meta;
   }
@@ -189,10 +195,10 @@ async function scenarioImport() {
     for (let essai = 0; essai < 40; essai++) {
       await dodo(250);
       try { f = JSON.parse(fs.readFileSync(fichier, 'utf8')); } catch (e) { f = null; }
-      if (f && (f.soloJoueur === null || f.soloJoueur === undefined) && f.extras && f.extras.succes) break;
+      if (f && (f.soloJoueur === null || f.soloJoueur === undefined) && succesAdoptes(f)) break;
     }
     if (!f) f = JSON.parse(fs.readFileSync(fichier, 'utf8'));
-    ok(f.extras && f.extras.succes && f.extras.succes.debloques[0] === 'premier_pas', 'SPEC-ARCHI-014 : les succès du solo survivent à la sauvegarde du serveur');
+    ok(succesAdoptes(f), 'SPEC-ARCHI-014/042 : les succès du solo survivent à la sauvegarde du serveur (adoptés par le joueur nommé)');
     ok(f.conteneurs.some(c2 => c2.cle === '3,40,2' && c2.type === 'chest' && c2.slots[0] && c2.slots[0][1] === 7), 'SPEC-ARCHI-014 : le coffre et son contenu survivent');
     ok(f.soloJoueur === null || f.soloJoueur === undefined, 'SPEC-ARCHI-014 : le joueur solo a été adopté (il n\'est plus en attente)');
     ok(f.joueurs.some(([, rec]) => rec.etat && Math.abs(rec.etat.x - 12.5) < 1), 'SPEC-ARCHI-014 : sa position est écrite dans son enregistrement (SYNC-020)');
