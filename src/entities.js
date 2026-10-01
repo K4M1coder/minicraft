@@ -498,9 +498,10 @@
             p.vel.x = Math.cos(ang) * 3; p.vel.z = Math.sin(ang) * 3; p.vel.y = 5;
           }
         }
-        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur),
+        // `par` : l'état du joueur auteur du coup (le serveur y rattache le récit de CE joueur, SPEC-ARCHI-041)
+        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur), par: estJoueur(auteur) ? auteur : null,
                        pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
-        if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom,
+        if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom, par: estJoueur(auteur) ? auteur : null,
                                    donjon: e.donjon || null, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         remove(e);
         return true;

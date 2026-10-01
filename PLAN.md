@@ -258,6 +258,16 @@ P-VEH (021), P-HIST (041) et P-SUCC (042) — la vague ne se publie pas avant P-
 et P-SUCC. Bug ancien à traiter à part : les circuits referment au tic suivant une
 porte ouverte à la main.
 
+Avancement du lot P-HIST (SPEC-ARCHI-041, ✅) : le mode histoire est tenu par le
+serveur. Règle réseau : un récit PAR JOUEUR nommé (clé de registre), persisté dans
+`histoire` du fichier de monde ; un récit de partie solo importée (`extras.histoire`)
+est adopté par le joueur du poste. Le client n'affiche que `HISTOIRE_ETAT` et
+`HISTOIRE_NOTIF` et renvoie `HISTOIRE_PARLER` / `HISTOIRE_REPONSE`. Le succès
+`histoire_achevee` est demandé à `signalerSucces(js, ev)` à l'achèvement du récit :
+ce point d'appel (`succesHistoire`, server.js) attend le lot P-SUCC. Les e2e
+SPEC-HISTOIRE-009/010/014 jouent sur un serveur d'histoire réel lancé par le serveur
+de test (`POST /tests/serveur-histoire`, uniquement avec `--tests`).
+
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
 | **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |

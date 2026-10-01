@@ -58,7 +58,7 @@ Par thème, avec la fiche et le lot (la table ligne par ligne est au § 4) :
 | Overrides de chunks | 1704 | génération locale | `OVERRIDES_DEMANDE` (SERVEUR-009) | 038 | B-RESEAU |
 | Affichage réseau | 653, 2629, 2642 | texte « hors ligne » | texte « en ligne » | 039 | A0 (653), B-RESEAU |
 | Interpolation | 3067 | non appelée | `net.interpoler` | 040 | B-RESEAU |
-| Mode histoire | 1426 | état du récit client | aucun équivalent serveur | 041 | P-HIST |
+| Mode histoire | 1426 | état du récit client | récit par joueur tenu par le serveur (`src/recit-serveur.js`, `HISTOIRE_*`) | 041 | P-HIST (livré) |
 | Succès | 2141 | suivi client | aucun équivalent serveur | 042 | P-SUCC |
 
 Total : 1+2+2+1+3+3+6+1+1+7+5+2+2+4+1+1+1+3+1+1+1 = **49**. La fiche 035

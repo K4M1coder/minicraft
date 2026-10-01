@@ -27,9 +27,9 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
+const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'modes',
-                 'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres'];
+                 'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres', 'recit-serveur'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
@@ -154,7 +154,16 @@ if (!PARAMS.admin && !ADMIN_HERITE) {
   journal('conservez-le : il ne sera plus jamais affiché (relancez avec --admin=... pour le fixer)');
 }
 
-const regles = MC.Modes.regles(CONF.mode, CONF.difficulte);
+/* SPEC-ARCHI-041 : en mode histoire, les paramètres du récit (archétype, héros,
+   longueur, interactions permises, commerce) sont ceux de la PARTIE chargée ;
+   `MC_HISTOIRE` (JSON) est un réglage de test, sans partie (jamais en exploitation). */
+let PARAMS_HISTOIRE = null;
+if (CONF.mode === 'histoire') {
+  let brutHistoire = partieActive && partieActive.histoire;
+  if (!brutHistoire && process.env.MC_HISTOIRE) { try { brutHistoire = JSON.parse(process.env.MC_HISTOIRE); } catch (e) { brutHistoire = null; } }
+  PARAMS_HISTOIRE = MC.RecitServeur.parametres(brutHistoire);
+}
+const regles = MC.Modes.regles(CONF.mode, CONF.difficulte, PARAMS_HISTOIRE);
 const monde = MC.createWorld(CONF.graine, { zonePolitique: PARAMS.zone });
 const entites = MC.createEntities(monde);
 /* Index des overrides PAR CHUNK (SPEC-SERVEUR-009) : « cx,cz » → ensemble des clés
@@ -374,11 +383,20 @@ function etatMonde() {
       const p = k.split(',');
       return [+p[0], +p[1], +p[2], texte];
     }),
+    // SPEC-ARCHI-041 : l'état du récit de chaque joueur (parité ARCHI-014 : l'ancien `histoire` solo y est adopté)
+    histoire: regles.histoire ? { v: 1, liens: histoireMonde.liens, recits: Array.from(snapshotRecits().entries()) } : null,
     soloJoueur, extras: extrasSolo,
   };
 }
 let soloJoueur = null;      // enregistrement du joueur d'une partie solo importée, adopté à la première connexion
 let extrasSolo = null;      // champs d'une partie solo importée que le serveur conserve sans encore les jouer (ARCHI-014)
+/* SPEC-ARCHI-041 : le récit. `histoireMonde.liens` : lieux d'épopée liés au monde (leur recherche
+   coûte quelques secondes : faite UNE fois, au démarrage, puis persistée) ; `recitsRegistre` :
+   récit de chaque joueur nommé (clé de registre) ; `soloRecit` : récit d'une partie solo importée,
+   adopté avec son joueur. */
+const histoireMonde = { liens: null };
+const recitsRegistre = new Map();
+let soloRecit = null;
 /* Enregistrement d'un joueur nommé + son état de personnage (SPEC-SYNC-020,
    nécessaire à la parité de sauvegarde SPEC-ARCHI-014) : position, regard,
    vie, faim, air, case sélectionnée, vol. */
@@ -500,6 +518,12 @@ function appliquerEtatMonde(data) {
   });
   soloJoueur = data.soloJoueur && MC.ContratsV2 ? MC.ContratsV2.validerEnregistrementJoueur(data.soloJoueur) : null;
   extrasSolo = data.extras && typeof data.extras === 'object' ? data.extras : null;
+  histoireMonde.liens = data.histoire && data.histoire.liens && typeof data.histoire.liens === 'object' ? data.histoire.liens : null;
+  recitsRegistre.clear();
+  if (data.histoire && Array.isArray(data.histoire.recits)) {
+    data.histoire.recits.forEach(e => { if (Array.isArray(e) && typeof e[0] === 'string' && e[1] && typeof e[1] === 'object') recitsRegistre.set(e[0], e[1]); });
+  }
+  soloRecit = regles.histoire && extrasSolo && extrasSolo.histoire && typeof extrasSolo.histoire === 'object' ? extrasSolo.histoire : null;
   // B1 (étape 7, SPEC-SYNC-021 partiel) : conteneurs POSÉS — absents d'un
   // fichier plus ancien, donc simplement vides, comme aujourd'hui.
   conteneursPoses.clear();
@@ -954,6 +978,13 @@ if (MC_TEST_SPAWN && MC_TEST_SPAWN.length === 3 && MC_TEST_SPAWN.every(Number.is
     z: spawnCol[1] + 0.5,
   };
 }
+/* SPEC-ARCHI-041 : la recherche des lieux de l'épopée (village, ville, ermite, trois donjons) génère du
+   terrain : on la fait ICI, au démarrage, plutôt qu'au premier joueur (elle bloquerait le serveur). */
+if (regles.histoire && PARAMS_HISTOIRE.archetype === 'epopee' && !histoireMonde.liens) {
+  const t0Histoire = Date.now();
+  histoireMonde.liens = MC.Histoire.lier(monde, SPAWN.x, SPAWN.z);
+  journal(`histoire : lieux liés au monde en ${Date.now() - t0Histoire} ms`);
+}
 /* MC_TEST_MOBS='[["sheep",1.5,0]]' : réservé aux suites d'intégration (même
    principe que MC_TEST_SPAWN, désactivé par défaut) — fait apparaître des
    créatures à des décalages [type, dx, dz] du point d'apparition, pour tester
@@ -1091,6 +1122,7 @@ function fermer(c, raison) {
     c.joueurs.forEach(js => {
       if (!js.cleReg) return;
       joueursRegistre.set(js.cleReg, enregistrementJoueur(js));
+      if (js.recit) recitsRegistre.set(js.cleReg, RS.exporter(js.recit, js.recitFin));
     });
   }
   if (c.sessionId) MC.Admin.fermerSession(admin, c.sessionId, heure);
@@ -1620,6 +1652,45 @@ function relancerSurPartie(id) {
   });
 }
 
+/* SPEC-ARCHI-041 (banc d'essai) : les e2e du mode histoire jouent sur un VRAI serveur en mode
+   histoire. Le serveur de test (--tests) en lance un second, jetable, sur un port libre : mode
+   histoire, paramètres du récit donnés par la page ; il s'arrête avec son parent (jamais d'orphelin).
+   Réservé au serveur lancé avec --tests, depuis la boucle locale ; sans --tests la route n'existe pas. */
+let serveurHistoireTest = null;
+function arreterServeurHistoireTest() {
+  if (serveurHistoireTest) { try { serveurHistoireTest.kill(); } catch (e) { /* déjà parti */ } serveurHistoireTest = null; }
+}
+function traiterServeurHistoireTest(req, res) {
+  if (!PARAMS.tests) return false;
+  if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const fiable = requeteFiable(req, portActuel);
+  if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
+  lireCorpsJSON(req, (corps) => {
+    arreterServeurHistoireTest();
+    const histoire = corps && corps.histoire && typeof corps.histoire === 'object' ? corps.histoire : {};
+    const graine = corps && Number.isInteger(corps.graine) ? corps.graine : CONF.graine;
+    const enfant = require('child_process').spawn(process.execPath, [__filename, '--port', '0', '--serveur'], {
+      cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
+      env: Object.assign({}, process.env, {
+        MC_MODE: 'histoire', MC_HISTOIRE: JSON.stringify(histoire), MC_GRAINE: String(graine),
+        MC_TEST_POSE_LIBRE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
+        MC_TEST_PRES_GUIDE: corps && corps.presGuide ? '1' : '',
+      }),
+    });
+    serveurHistoireTest = enfant;
+    let sortie = '', repondu = false;
+    const repondre = (code, obj) => { if (repondu) return; repondu = true; clearTimeout(limite); repondreJSON(res, code, obj); };
+    const limite = setTimeout(() => { arreterServeurHistoireTest(); repondre(504, { ok: false, motif: 'demarrage_trop_long' }); }, 90000);
+    enfant.stdout.on('data', (d) => {
+      sortie += d;
+      const m = /MC_PORT=(\d+)/.exec(sortie);
+      if (m) repondre(200, { ok: true, port: parseInt(m[1], 10) });
+    });
+    enfant.stderr.on('data', () => {});
+    enfant.on('exit', () => { if (serveurHistoireTest === enfant) serveurHistoireTest = null; repondre(500, { ok: false, motif: 'serveur_arrete' }); });
+  });
+  return true;
+}
 function servir(req, res) {
   // rebond DNS : en mode fermé, toute requête HTTP doit viser un nom local
   if (!reseauOuvert && !hoteLocal(req)) { res.writeHead(403); res.end('403 hôte refusé'); return; }
@@ -1627,6 +1698,7 @@ function servir(req, res) {
   if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
   if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
+  if (req.url.split('?')[0] === '/tests/serveur-histoire' && traiterServeurHistoireTest(req, res)) return;
   if (req.url.indexOf('/tests/cahiers') === 0 && traiterCahiers(req, res)) return;
   if (req.url.indexOf('/tests/historique/') === 0 && traiterHistorique(req, res)) return;
   if (req.url.indexOf('/tests/registre/images/') === 0 && traiterImageRegistre(req, res)) return;
@@ -1826,6 +1898,8 @@ const FLOOD_TYPES_PAR_JOUEUR = new Set([
    MC.ContratsV2.BUDGETS_FLOOD (« troc » y figure déjà, pour B2). */
 if (MC.ContratsV2) Object.keys(MC.ContratsV2.BUDGETS_FLOOD).forEach(t => FLOOD_TYPES_PAR_JOUEUR.add(t));
 FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.DORMIR);
+FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.HISTOIRE_PARLER);
+FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.HISTOIRE_REPONSE);
 
 /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
    TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un
@@ -1913,7 +1987,7 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 const MESSAGES_GELES = new Set([
   'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'DISTRIB', 'CRAFT', 'EQUIP',
   'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
-  'DORMIR',
+  'DORMIR', 'HISTOIRE_PARLER', 'HISTOIRE_REPONSE',
 ].map(k => NP.MSG[k]).filter(Boolean));
 
 /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -1985,6 +2059,199 @@ function parametresTir(js, genre, i) {
   }
   return { degats, vitesse: arme.vitesseTir || 34, cd: Math.max(0.3, arme.cadenceTir || 0) };
 }
+// ── mode histoire (SPEC-ARCHI-041, lot P-HIST) ──────────────────────────────
+/* Le récit de CHAQUE joueur vit ICI : le serveur le crée (lié aux lieux réels
+   du monde), le fait avancer à partir de ce qu'il arbitre lui-même (blocs
+   posés, créatures tuées, gardiens vaincus, position, inventaire, paroles) et
+   n'envoie au client que des annonces (HISTOIRE_NOTIF) et la vue de l'état
+   (HISTOIRE_ETAT). Règle : un récit PAR JOUEUR nommé (clé de registre), même
+   avec plusieurs joueurs ou un écran partagé ; il survit au fichier de monde. */
+const RS = MC.RecitServeur;
+const peutHistoire = (cat) => MC.Modes.categoriePermise(regles, cat);
+function ctxInventaire(js) { const inv = js.joueur.state.inv; return { compter: (id) => inv.count(id) }; }
+/* Avant BIENVENUE : reprend le récit enregistré (ou celui d'une partie solo
+   importée), sinon en crée un et place le héros sur la place de son village. */
+function preparerRecit(js, j) {
+  js.recit = null; js.recitFin = null; js.recitNotifs = [];
+  if (!regles.histoire) return;
+  let rec = null;
+  if (js.cleReg && recitsRegistre.has(js.cleReg)) rec = RS.importer(recitsRegistre.get(js.cleReg), peutHistoire);
+  if (!rec && js.recitSolo) rec = RS.importer(js.recitSolo, peutHistoire);
+  js.recitSolo = null;
+  if (rec) { js.recit = rec.etat; js.recitFin = rec.fin; return; }
+  const cr = RS.creer({ monde, graine: CONF.graine, params: PARAMS_HISTOIRE, peut: peutHistoire, liens: histoireMonde.liens, pos: SPAWN });
+  if (cr.liens && !histoireMonde.liens) histoireMonde.liens = cr.liens;
+  js.recit = cr.etat;
+  js.recitNotifs = MC.Recits.commencer(js.recit);
+  const dep = RS.pointDepart(js.recit);
+  if (dep) {
+    const px = Math.floor(dep.x), pz = Math.floor(dep.z) + 3;
+    for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) monde.getChunk(Math.floor(px / 16) + cx, Math.floor(pz / 16) + cz, true);
+    const st = js.joueur.state;
+    st.pos.x = px + 0.5 + j * 1.2; st.pos.z = pz + 0.5; st.pos.y = monde.groundAt(px, pz, true) + 1.2;
+    st.vel.x = st.vel.y = st.vel.z = 0;
+    js.spawn = { x: st.pos.x, y: st.pos.y, z: st.pos.z };
+    /* MC_TEST_PRES_GUIDE : réservé aux e2e (serveur jetable de `--tests`), jamais en exploitation — le héros s'éveille
+       à côté du guide du village de départ, sans qu'un test ait à marcher jusqu'à lui. */
+    if (process.env.MC_TEST_PRES_GUIDE && js.recit.archetype === 'epopee' && monde.habitats) {
+      const guide = MC.Habitats.pnjsManquants(monde.habitats.lieuxProches(dep.x, dep.z, 90), [], new Map(), 0)
+        .filter(p => p.role === 'guide' && p.lieu === dep.id)[0];
+      if (guide) { st.pos.x = guide.x + 1.5; st.pos.z = guide.z + 0.5; st.pos.y = monde.groundAt(Math.floor(st.pos.x), Math.floor(st.pos.z), true) + 1.2; js.spawn = { x: st.pos.x, y: st.pos.y, z: st.pos.z }; }
+    }
+  }
+}
+// Après BIENVENUE : l'état du récit, et ses premières répliques.
+function demarrerRecit(c, js, j) {
+  if (!js.recit) return;
+  const notifs = js.recitNotifs || [];
+  js.recitNotifs = [];
+  js.recitT = 0; js.lieuRecit = null; js.recitMort = false; js.attenteRecit = null; js.recitVue = null;
+  livrerRecit(c, j, js, notifs);
+}
+function envoyerEtatRecit(c, j, js, force) {
+  const v = RS.vue(js.recit, js.recitFin);
+  let txt = JSON.stringify(v);
+  if (txt.length > CA.BORNES.HISTOIRE_JSON_MAX) {                 // jamais au-delà de la borne du contrat : le journal d'abord
+    const i = RS.interne(v.recit);
+    if (i && i.journal) i.journal = [];
+    txt = JSON.stringify(v);
+  }
+  if (!force && txt === js.recitVue) return;
+  js.recitVue = txt;
+  envoyer(c, { t: NP.MSG.HISTOIRE_ETAT, j, etat: v });
+}
+/* Applique les effets d'un lot d'annonces du moteur de récit (objets repris,
+   récompenses, créatures, fin) puis les envoie au joueur. */
+function livrerRecit(c, j, js, notifs, extra) {
+  const cl = RS.classer(js.recit, notifs);
+  const inv = js.joueur.state.inv;
+  let invTouche = false;
+  cl.prises.forEach(p => {
+    let reste = p.objets[0].n;
+    (p.parmi || [p.objets[0].id]).forEach(id => {
+      const k = Math.min(reste, inv.count(id));
+      if (k > 0) { inv.remove(id, k); reste -= k; }
+    });
+    invTouche = true;
+  });
+  cl.recompenses.forEach(o => {
+    const reste = js.joueur.pickUp(o.id, o.n);
+    if (reste) lacherAuxPieds(js, { id: o.id, n: reste });
+    invTouche = true;
+  });
+  if (invTouche) envoyerInvMaj(c, j, {});
+  cl.apparitions.forEach(a => apparitionsRecit(js, a));
+  if (cl.fin) {
+    js.recitFin = cl.fin;
+    succesHistoire(c, js, cl.fin);
+    journal(`* ${c.nom} achève le récit (${cl.fin.id})`);
+  }
+  const MAX = CA.BORNES.HISTOIRE_NOTIFS_MAX;
+  for (let k = 0; k < cl.client.length || (k === 0 && extra); k += MAX) {
+    const msg = { t: NP.MSG.HISTOIRE_NOTIF, j, notifs: cl.client.slice(k, k + MAX) };
+    if (k + MAX >= cl.client.length && extra) {
+      if (extra.proposition) msg.proposition = extra.proposition;
+      if (extra.libre) { msg.libre = true; msg.eid = extra.eid; }
+      extra = null;
+    }
+    envoyer(c, msg);
+    if (k === 0 && !cl.client.length) break;
+  }
+  envoyerEtatRecit(c, j, js, true);
+}
+/* Le succès « histoire_achevee » (SPEC-SUCCES) : attribué par signalerSucces(js, ev),
+   exposé par le lot P-SUCC. Tant qu'il n'existe pas, l'achèvement est seulement journalisé. */
+function succesHistoire(c, js, fin) {
+  if (typeof signalerSucces === 'function') signalerSucces(js, { type: 'histoire', fin: fin.id });
+  else journal(`histoire : ${c.nom} a achevé le récit (${fin.id}) — succès à attribuer par signalerSucces (lot P-SUCC)`);
+}
+// Un évènement de jeu arbitré ici (poser, tuer, boss…) : le récit du joueur concerné l'évalue.
+function signalerRecit(c, j, js, ev) {
+  if (!js || !js.recit || RS.fin(js.recit)) return;
+  ev.t = heure;
+  const notifs = RS.signaler(js.recit, ev, ctxInventaire(js));
+  if (notifs.length) livrerRecit(c, j, js, notifs); else envoyerEtatRecit(c, j, js, false);
+}
+function apparitionsRecit(js, a) {
+  const st = js.joueur.state;
+  const ctr = a.pres && a.pres !== 'joueur' && monde.estCharge(a.pres.x, a.pres.z) ? a.pres : st.pos;
+  (a.apparitions || []).forEach((ap, ia) => {
+    for (let k = 0; k < ap.n; k++) {
+      const ang = (k + ia * 3) * 2.1, d = 8 + (k % 3) * 3;
+      const x = Math.floor(ctr.x + Math.cos(ang) * d), z = Math.floor(ctr.z + Math.sin(ang) * d);
+      if (!monde.estCharge(x, z)) continue;
+      const y = monde.groundAt(x, z, true) + 1;
+      if (entites.SPECS[ap.type]) entites.spawn(ap.type, x + 0.5, y, z + 0.5, ap.role ? { role: ap.role, nom: 'le caravanier' } : { histoire: a.id });
+    }
+  });
+}
+/* Deux fois par seconde de temps de jeu, par joueur : où il est, ce qu'il porte,
+   l'heure, le ciel, le lieu où il entre ; et la mort définitive (cauchemar). */
+function sonderRecit(c, j, js, dt) {
+  if (!js.recit) return;
+  const st = js.joueur.state;
+  if (st.dead) {
+    if (regles.permadeath && !js.recitMort && !RS.fin(js.recit)) {
+      js.recitMort = true;
+      livrerRecit(c, j, js, RS.signaler(js.recit, { type: 'mort', t: heure }));
+    }
+    return;
+  }
+  js.recitMort = false;
+  js.recitT -= dt;
+  if (js.recitT > 0 || RS.fin(js.recit)) return;
+  js.recitT = 0.5;
+  const x = Math.floor(st.pos.x), z = Math.floor(st.pos.z);
+  const lieu = monde.habitats ? monde.habitats.lieuA(x, z) : null;
+  const lieuId = lieu ? lieu.id : null;
+  const entre = lieuId && lieuId !== js.lieuRecit ? lieuId : null;
+  js.lieuRecit = lieuId;
+  let habitants = null;
+  if (js.recit.archetype === 'colonie' && monde.habitats) {
+    const ctr = RS.interne(js.recit).centre;
+    habitants = 0;
+    monde.habitats.lieuxProches(ctr.x, ctr.z, 200).forEach(l => { habitants += (l.pnjs || []).length; });
+  }
+  const notifs = RS.sonder(js.recit, {
+    pos: { x: st.pos.x, z: st.pos.z }, biome: monde.biomeAt(x, z).id, nuit: MC.DayCycle.isNight(heure),
+    meteo: monde.meteo ? monde.meteo.etat(heure).type : null, t: heure, lieu: entre, habitants,
+  }, ctxInventaire(js));
+  if (notifs.length) livrerRecit(c, j, js, notifs); else envoyerEtatRecit(c, j, js, false);
+}
+/* HISTOIRE_PARLER : le joueur parle à un habitant. Portée, étape en cours et
+   quêtes sont jugées ICI ; le client reçoit des répliques, ou la main pour le commerce. */
+function traiterHistoireParler(c, m) {
+  const js = c.joueurs && c.joueurs[m.j];
+  if (!js || !js.recit || js.joueur.state.dead) return;
+  const ent = entites.list.find(e => e.eid === m.eid && !e.dead && entites.SPECS[e.type] && entites.SPECS[e.type].npc);
+  if (!ent) return;
+  const st = js.joueur.state;
+  const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
+  if (d > MC.ContratsV2.BORNES.PORTEE_TROC) return;
+  const r = RS.parler(js.recit, regles, ent, ctxInventaire(js), heure);
+  js.attenteRecit = r.proposition ? { id: r.proposition.id, role: ent.role || 'habitant' } : null;
+  livrerRecit(c, m.j, js, r.notifs, { proposition: r.proposition, libre: r.libre, eid: m.eid });
+}
+/* HISTOIRE_REPONSE : choix du récit ou quête proposée. Un identifiant périmé ou
+   rejoué ne change rien ; le client est alors resynchronisé. */
+function traiterHistoireReponse(c, m) {
+  const js = c.joueurs && c.joueurs[m.j];
+  if (!js || !js.recit || js.joueur.state.dead) return;
+  const attente = js.attenteRecit;
+  if (attente && attente.id === m.id) js.attenteRecit = null;     // une proposition ne se répond qu'une fois
+  const r = RS.repondre(js.recit, attente, m.id, m.option);
+  if (r.ok) livrerRecit(c, m.j, js, r.notifs); else envoyerEtatRecit(c, m.j, js, true);
+}
+/* Ce que le fichier de monde garde du récit : registre des joueurs hors ligne + joueurs connectés. */
+function snapshotRecits() {
+  const out = new Map(recitsRegistre);
+  clients.forEach(c => {
+    if (!c.joueurs) return;
+    c.joueurs.forEach(js => { if (js.cleReg && js.recit) out.set(js.cleReg, RS.exporter(js.recit, js.recitFin)); });
+  });
+  return out;
+}
+
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
   // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
@@ -2049,7 +2316,10 @@ function traiter(c, m) {
           let rec = joueursRegistre.get(js.cleReg);
           // ARCHI-015 : le joueur d'une partie solo importée est adopté par le
           // premier joueur local qui rejoint (son nom n'était pas connu à l'import)
-          if (!rec && j === 0 && soloJoueur) { rec = soloJoueur; soloJoueur = null; }
+          if (!rec && j === 0 && soloJoueur) {
+            rec = soloJoueur; soloJoueur = null;
+            if (soloRecit) { js.recitSolo = soloRecit; soloRecit = null; if (extrasSolo) extrasSolo.histoire = null; }   // ARCHI-041 : son récit l'accompagne
+          }
           if (rec) {
             MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
             appliquerEtatPersonnage(js, rec.etat);              // SPEC-SYNC-020 : position, vie, faim, air…
@@ -2058,6 +2328,7 @@ function traiter(c, m) {
         }
         c.joueurs.push(js);
       }
+      c.joueurs.forEach((js, j) => preparerRecit(js, j));     // avant BIENVENUE : le héros peut être déplacé sur sa place de village
       c.pos = c.joueurs[0].joueur.state.pos;
       // SPEC-SERVEUR-009 : seul un voisinage borné des overrides accompagne
       // BIENVENUE — plus loin, le client les demande chunk par chunk au fur
@@ -2069,6 +2340,7 @@ function traiter(c, m) {
       envoyer(c, {
         t: NP.MSG.BIENVENUE,
         id: c.id, graine: CONF.graine, mode: CONF.mode, difficulte: CONF.difficulte,
+        histoire: PARAMS_HISTOIRE ? { interactions: PARAMS_HISTOIRE.interactions || null, commerce: PARAMS_HISTOIRE.commerce } : null,
         zone: monde.zonesEtat ? monde.zonesEtat.politique : 'generee',
         heure, blocs,
         // la position qui fait foi, pour chaque joueur local du poste
@@ -2086,6 +2358,7 @@ function traiter(c, m) {
       // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
       // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
       c.joueurs.forEach((js, j) => envoyerInvMaj(c, j, {}));
+      c.joueurs.forEach((js, j) => demarrerRecit(c, js, j));   // ARCHI-041 : l'état du récit et ses premières répliques
       // SPEC-SYNC-011 : l'équipement déjà visible des joueurs présents (et
       // réciproquement, le sien à eux) — un emplacement vide n'est pas annoncé.
       tousLesJoueurs().forEach(({ c: autreC, j: autreJ, js: autreJs }) => {
@@ -2337,6 +2610,7 @@ function traiter(c, m) {
           entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
       }
       diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
+      if (m.id !== 0) signalerRecit(c, m.j, js, { type: 'poser', bloc: m.id, x: m.x, y: m.y, z: m.z });   // ARCHI-041
       // la case compagne d'une porte ou d'un lit se pose avec elle ; à la casse, l'autre moitié part aussi
       cellulesCompagnes(m).forEach(cc => {
         monde.getChunk(Math.floor(cc.x / 16), Math.floor(cc.z / 16), true);
@@ -2548,6 +2822,8 @@ function traiter(c, m) {
        helpers de l'API inter-lots (docs/vague-2/B1.md § 5) : `seqNouveau`,
        `envoyerInvMaj`, `refuserOp`, `etatJoueurServeur`, la Map `banques` —
        tous fournis par B1 (fusionné). */
+    case NP.MSG.HISTOIRE_PARLER: traiterHistoireParler(c, m); break;
+    case NP.MSG.HISTOIRE_REPONSE: traiterHistoireReponse(c, m); break;
     case NP.MSG.TROC: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js || js.joueur.state.dead) break;
@@ -3178,6 +3454,7 @@ function blocAutorise(js, m, avant, c) {
   if (m.id === 0) {
     const def = C.BLOCKS[avant];
     if (!def || def.hardness < 0) return false;            // ni le socle ni l'eau
+    if (!MC.Modes.peutCasser(regles, avant)) return false;  // mode histoire : ce bloc ne se casse pas dans cette aventure (ARCHI-041)
     if (def.circuit && def.circuit.adminSeul) return blocCommandeAutorise(c);
     return true;
   }
@@ -3189,6 +3466,7 @@ function blocAutorise(js, m, avant, c) {
   if (!fusionDalle && !C.isReplaceable(avant)) return false;
   const posee = C.BLOCKS[m.id];
   if (posee && posee.circuit && posee.circuit.adminSeul) return blocCommandeAutorise(c);
+  if (!MC.Modes.peutPoser(regles, m.id)) return false;      // mode histoire : cet objet n'a pas sa place dans l'aventure (ARCHI-041)
   return true;
 }
 /* SPEC-MECA-007 : poser ou casser un bloc de commande — en ligne, réservé à
@@ -3794,6 +4072,22 @@ setInterval(() => {
   // au chargement d'une sauvegarde) ET profite à la faction dont le
   // territoire couvre ce donjon, s'il y en a une.
   entites.evenements().forEach(evt => {
+    // ARCHI-041 : le récit du joueur qui a tué la créature (ou vaincu le gardien) l'apprend
+    if (regles.histoire && (evt.type === 'mort' || evt.type === 'boss_vaincu')) {
+      if (evt.type === 'mort' && evt.parJoueur && evt.par) {
+        const x = joueurParEtat(evt.par);
+        if (x) signalerRecit(x.c, x.j, x.js, { type: 'tuer', mob: evt.victime });
+      }
+      if (evt.type === 'boss_vaincu') {
+        tousLesJoueurs().forEach(x => {
+          if (!x.js.recit) return;
+          const st = x.js.joueur.state;
+          if (evt.par === st || (evt.pos && Math.hypot(evt.pos.x - st.pos.x, evt.pos.z - st.pos.z) <= 96)) {
+            signalerRecit(x.c, x.j, x.js, { type: 'boss', donjon: evt.donjon });
+          }
+        });
+      }
+    }
     if (evt.type !== 'boss_vaincu') return;
     const msgV = chat.systeme(evt.nom + ' est vaincu !');
     if (msgV) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msgV.texte, type: 'systeme', ts: msgV.t });
@@ -4124,6 +4418,7 @@ async function arreter(signal) {
   arretEnCours = true;
   journal(`arrêt demandé (${signal})`);
   sauvegardeArretee = true;
+  arreterServeurHistoireTest();
   if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
   if (CONF.mondeFichier) {
     if (sauvegardeEnCours && sauvegardeEnCoursAttente) {
