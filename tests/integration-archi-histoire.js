@@ -367,6 +367,10 @@ async function sondes(D, ids) {
   ok(!!fin, 'la mort en cauchemar achève le récit (annonce de fin du serveur)');
   const etatFin = await jusqua(() => { const r = dernierRecit({ client: a.client }); return r && r.histoire.fin ? r : null; }, 5000);
   ok(!!etatFin && a.client.dernier('histoire_etat').etat.fin, 'et HISTOIRE_ETAT porte la fin');
+  const succes = await a.client.attendre('succes_debloque', 8000, m => m.id === 'histoire_achevee').catch(() => null);
+  ok(!!succes, 'la fin du récit débloque le succès histoire_achevee, arbitré par le serveur');
+  await dodo(300);
+  eq(a.client.messages.filter(m => m.t === 'succes_debloque' && m.id === 'histoire_achevee').length, 1, 'une seule fois');
   await a.client.fermer(); await s.arreter();
 
   // (d) un récit de partie importée illisible n'est pas perdu

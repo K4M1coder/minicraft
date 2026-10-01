@@ -28,7 +28,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
-                 'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'modes',
+                 'entities', 'player', 'synchro', 'daycycle', 'succes', 'save', 'saves', 'parties-fichier', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres', 'recit-serveur'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
@@ -403,6 +403,7 @@ let soloRecit = null;
 function enregistrementJoueur(js) {
   const rec = MC.Conteneurs.versEnregistrement(js.joueur.state, banqueDe(js.cleReg));
   const st = js.joueur.state;
+  rec.succes = js.succes.serialiser();           // SPEC-ARCHI-042 : les succès suivent le joueur nommé
   rec.etat = {
     x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2), z: +st.pos.z.toFixed(2),
     yaw: +st.yaw.toFixed(3), pitch: +st.pitch.toFixed(3),
@@ -2193,11 +2194,10 @@ function livrerRecit(c, j, js, notifs, extra) {
   }
   envoyerEtatRecit(c, j, js, true);
 }
-/* Le succès « histoire_achevee » (SPEC-SUCCES) : attribué par signalerSucces(js, ev),
-   exposé par le lot P-SUCC. Tant qu'il n'existe pas, l'achèvement est seulement journalisé. */
+/* Le succès « histoire_achevee » (SPEC-ARCHI-042) : signalé UNE fois, à l'achèvement du récit (qui ne s'achève
+   qu'une fois : plus aucun évènement n'est évalué ensuite). */
 function succesHistoire(c, js, fin) {
-  if (typeof signalerSucces === 'function') signalerSucces(js, { type: 'histoire', fin: fin.id });
-  else journal(`histoire : ${c.nom} a achevé le récit (${fin.id}) — succès à attribuer par signalerSucces (lot P-SUCC)`);
+  signalerSucces(js, { type: 'histoire', fin: fin.id });
 }
 // Un évènement de jeu arbitré ici (poser, tuer, boss…) : le récit du joueur concerné l'évalue.
 function signalerRecit(c, j, js, ev) {
@@ -2341,6 +2341,7 @@ function traiter(c, m) {
       c.joueurs = [];
       for (let j = 0; j < c.locaux; j++) {
         const js = creerJoueurServeur(j);
+        js.cid = c.id; js.j = j;                         // pour retrouver sa connexion (succès, SPEC-ARCHI-042)
         // B1 (registre des joueurs nommés) : une clé tenue par un joueur DÉJÀ
         // connecté (même nom, écran partagé compris) reste éphémère — jamais
         // restaurée, jamais écrasée dans le registre à la fermeture.
@@ -2353,10 +2354,13 @@ function traiter(c, m) {
           if (!rec && j === 0 && soloJoueur) {
             rec = soloJoueur; soloJoueur = null;
             if (soloRecit) js.recitSolo = soloRecit;   // ARCHI-041 : son récit l'accompagne (retiré des extras seulement une fois rattaché, voir preparerRecit)
+            // SPEC-ARCHI-042 : les succès de la partie solo importée passent au joueur qui l'adopte
+            if (!rec.succes && extrasSolo && extrasSolo.succes) { js.succes.charger(extrasSolo.succes); extrasSolo.succes = null; }
           }
           if (rec) {
             MC.Conteneurs.depuisEnregistrement(js.joueur.state, banqueDe(js.cleReg), rec);
             appliquerEtatPersonnage(js, rec.etat);              // SPEC-SYNC-020 : position, vie, faim, air…
+            if (rec.succes) js.succes.charger(rec.succes);      // SPEC-ARCHI-042
           }
           else if (MC_TEST_INV) MC_TEST_INV.forEach(p => js.joueur.state.inv.add(p[0], p[1]));
         }
@@ -2393,6 +2397,8 @@ function traiter(c, m) {
       // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
       c.joueurs.forEach((js, j) => envoyerInvMaj(c, j, {}));
       c.joueurs.forEach((js, j) => demarrerRecit(c, js, j));   // ARCHI-041 : l'état du récit et ses premières répliques
+      // SPEC-ARCHI-042 : l'état des succès de chaque joueur local (compteurs du panneau), sans annonce
+      c.joueurs.forEach(js => envoyerSuccesEtat(js));
       // SPEC-SYNC-011 : l'équipement déjà visible des joueurs présents (et
       // réciproquement, le sien à eux) — un emplacement vide n'est pas annoncé.
       tousLesJoueurs().forEach(({ c: autreC, j: autreJ, js: autreJs }) => {
@@ -2555,6 +2561,7 @@ function traiter(c, m) {
         if (r.effets.soin) js.joueur.heal(r.effets.soin);
         if (r.effets.cru) { st.malade = (st.malade || 0) + 20; st.malaiseT = 0; }
         if (r.effets.lache) lacherAuxPieds(js, r.effets.lache);
+        signalerSucces(js, { type: 'manger', id: m.id });
         if (m.seq !== undefined && seqNouveau(js, m.seq)) envoyerInvMaj(c, m.j, {});
       } else if (m.seq !== undefined && seqNouveau(js, m.seq)) {
         refuserOp(c, m.j, m.seq, r.motif);
@@ -2675,6 +2682,8 @@ function traiter(c, m) {
       // journal des actions (SPEC-ADMIN-002) : de quoi rejouer qui a construit ou détruit quoi
       MC.Admin.journaliser(admin, { auteur: c.nom, action: m.id ? 'bloc_pose' : 'bloc_casse',
                                      cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
+      // SPEC-ARCHI-042 : le succès se décide ici, sur une casse que le serveur a acceptée
+      if (m.id === 0 && avant) signalerSucces(js, { type: 'casser', bloc: avant });
       /* B1 (étape 7) : un conteneur posé cassé lâche son contenu au sol —
          UNE SEULE FOIS ici (le serveur fait autorité sur la casse), même si
          deux joueurs l'avaient ouvert en même temps. `fermerConteneurPourAbonnes`
@@ -2778,7 +2787,8 @@ function traiter(c, m) {
     case NP.MSG.CRAFT: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
-      traiterOp(c, m, js, { k: 'craft', fois: m.fois });
+      const rc = traiterOp(c, m, js, { k: 'craft', fois: m.fois });
+      if (rc && rc.ok && rc.effets && rc.effets.ids) rc.effets.ids.forEach(id => signalerSucces(js, { type: 'fabriquer', id }));
       break;
     }
     case NP.MSG.EQUIP: {
@@ -2804,6 +2814,7 @@ function traiter(c, m) {
       if (m.seq !== undefined && !seqNouveau(js, m.seq)) break;
       const r = ouvrirConteneurPourJoueur(js, m);
       if (!r) { if (m.seq !== undefined) refuserOp(c, m.j, m.seq, 'portee'); break; }
+      if (r.type === 'banque') signalerSucces(js, { type: 'banque' });
       envoyer(c, {
         t: NP.MSG.CONTENEUR_ETAT, j: m.j, cle: r.cle, type: r.type, rev: r.cont.rev || 0,
         slots: r.cont.slots.map(MC.ContratsV2.pileVersCase),
@@ -2895,6 +2906,7 @@ function traiter(c, m) {
         nom: c.nom, embargo,
       });
       if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); break; }
+      signalerSucces(js, { type: 'echange' });
       envoyerInvMaj(c, m.j, {});
       MC.Admin.journaliser(admin, { auteur: c.nom, action: 'troc', cible: m.eid, details: r.transaction, heure });
       envoyer(c, { t: NP.MSG.TROC, action: 'offres', eid: m.eid, offres: offresPour(ent, c.nom) });
@@ -3346,6 +3358,73 @@ function diffuserEquipVu(c, j, js, slot) {
   });
 }
 
+// ── succès (SPEC-ARCHI-042) ──────────────────────────────────────────────────
+/* Le serveur est le SEUL arbitre des succès : il les décide à partir de ce
+   qu'il a lui-même constaté (blocs cassés acceptés, fabrication validée,
+   position qui fait foi…), jamais d'un message du client. Chaque joueur
+   (solo fermé, écran partagé, réseau) a son suivi `js.succes`, persisté dans
+   son enregistrement nommé. Le client reçoit SUCCES_DEBLOQUE (annonce, une
+   seule fois) et SUCCES_ETAT (compteurs du panneau, au plus toutes les 2 s).
+   Les événements `vehicule` (pas de véhicules côté serveur) et `histoire`
+   (lot P-HIST) passeront par ce même `signalerSucces` quand ils existeront. */
+const SUCCES_ETAT_PERIODE_S = 2;
+const RAYON_SUCCES_BOSS = 64;
+function clientDeJoueur(js) { return js && js.cid !== null ? clients.get(js.cid) || null : null; }
+function envoyerSuccesEtat(js) {
+  const c = clientDeJoueur(js);
+  js.succesRevEnvoyee = js.succes.revision();
+  js.succesEnvoiT = SUCCES_ETAT_PERIODE_S;
+  if (!c || !c.rejoint) return;
+  envoyer(c, { t: NP.MSG.SUCCES_ETAT, j: js.j, etat: js.succes.serialiser() });
+}
+function signalerSucces(js, ev) {
+  if (!js || !js.succes) return [];
+  const nouveaux = js.succes.signaler(ev);
+  const c = clientDeJoueur(js);
+  if (nouveaux.length && c && c.rejoint) {
+    nouveaux.forEach(n => {
+      envoyer(c, { t: NP.MSG.SUCCES_DEBLOQUE, j: js.j, id: n.id });
+      journal(`succès : ${c.nom} (joueur ${js.j + 1}) — ${n.nom}`);
+    });
+    envoyerSuccesEtat(js);
+  }
+  return nouveaux;
+}
+/* Événements du journal des créatures : tuer crédite l'auteur du coup fatal ;
+   un gardien vaincu crédite son vainqueur et les joueurs à moins de 64 blocs. */
+function crediterSuccesEvenement(evt) {
+  if (evt.type === 'mort') {
+    const x = evt.auteur ? joueurParEtat(evt.auteur) : null;
+    if (x) signalerSucces(x.js, { type: 'tuer', mob: evt.victime });
+  } else if (evt.type === 'boss_vaincu') {
+    const credites = new Set();
+    const x = evt.auteur ? joueurParEtat(evt.auteur) : null;
+    if (x) credites.add(x.js);
+    tousLesJoueurs().forEach(({ js }) => {
+      const st = js.joueur.state, p = st.pos;
+      if (!st.dead && evt.pos && Math.hypot(p.x - evt.pos.x, p.y - evt.pos.y, p.z - evt.pos.z) <= RAYON_SUCCES_BOSS) credites.add(js);
+    });
+    credites.forEach(js => signalerSucces(js, { type: 'boss', donjon: evt.donjon }));
+  }
+}
+/* Une fois par tic et par joueur : position (distance, altitude, nuit), lieu
+   visité, et renvoi des compteurs au client quand ils ont changé. */
+function tickerSuccesJoueur(js, dt) {
+  const st = js.joueur.state;
+  js.suiveur.tic(dt, st.pos, !st.dead, MC.DayCycle.isNight(heure), dormeurs.has(js)).forEach(ev => signalerSucces(js, ev));
+  js.lieuT -= dt;
+  if (js.lieuT <= 0 && monde.habitats && !st.dead) {
+    js.lieuT = 1;
+    const l = monde.habitats.lieuA(Math.floor(st.pos.x), Math.floor(st.pos.z));
+    if (l !== js.lieuSucces) {
+      js.lieuSucces = l;
+      if (l) signalerSucces(js, { type: 'lieu', kind: l.kind });
+    }
+  }
+  js.succesEnvoiT -= dt;
+  if (js.succesEnvoiT <= 0 && js.succes.revision() !== js.succesRevEnvoyee) envoyerSuccesEtat(js);
+}
+
 // ── joueurs simulés ──────────────────────────────────────────────────────────
 /* Un joueur du serveur : le MÊME code que celui du client (player.js), piloté
    par les entrées reçues. C'est lui qui fait foi sur la position et les
@@ -3357,6 +3436,10 @@ function creerJoueurServeur(j) {
   // messages d'inventaire (dernierSeq, revInv — voir seqNouveau/envoyerInvMaj).
   const grille = MC.Inventory.create(MC.ContratsV2 ? MC.ContratsV2.BORNES.SLOTS_GRILLE : 9);
   return { joueur, grille, cleReg: null, dernierSeq: 0, revInv: 0,
+           // SPEC-ARCHI-042 : succès du joueur, suivi de position (distance, altitude, nuit),
+           // connexion et rang local (renseignés à REJOINDRE), dernier état de succès envoyé
+           succes: MC.Succes.creer(), suiveur: MC.Succes.creerSuiveur(), cid: null, j: 0,
+           succesRevEnvoyee: -1, succesEnvoiT: 0, lieuSucces: null, lieuT: 0,
            // B1 (étape 7) : conteneur posé (ou 'banque') actuellement ouvert par
            // ce joueur local — un seul à la fois, voir resoudreConteneur/ctxJoueur.
            conteneurOuvert: null, banquePos: null, banqueEid: null,
@@ -3662,6 +3745,9 @@ function issuePvp(vainqueur, vaincu, duel) {
   }
   const n = MC.PvpEnjeux.enregistrerVictoire(pvp, nomV);
   envoyer(vainqueur.c, { t: NP.MSG.PVP, evt: 'victoire', contre: nomP, n });
+  // SPEC-ARCHI-042 : un duel consenti n'a aucun enjeu (ni butin ni meurtre) : il ne rapporte aucun succès,
+  // sinon deux comptes se « battraient » en duel pour farmer « Champion »
+  if (!duel) signalerSucces(vainqueur.js, { type: 'pvp_victoire', n });
   const msgDefaite = { t: NP.MSG.PVP, evt: 'defaite', de: nomV };
   if (perte) msgDefaite.perte = perte;
   envoyer(vaincu.c, msgDefaite);
@@ -4050,6 +4136,7 @@ setInterval(() => {
        avec toute la boucle), jamais au rythme des entrées reçues : un client
        muet a faim et se soigne comme les autres. Un seul appel par tic. */
     js.joueur.updateSurvival(dt);
+    tickerSuccesJoueur(js, dt);
     /* Les créatures repoussent le joueur (elles ne se traversent pas), UNE fois par tic
        et par joueur (coût borné à 100 joueurs) ; côté serveur seulement — la prédiction
        du client ne la connaît pas, la réconciliation absorbe l'écart. */
@@ -4077,10 +4164,15 @@ setInterval(() => {
     const l = monde.meteo.eclairs(meteoT, heure);
     meteoT = heure;
     l.forEach(e => {
-      joueurs.forEach(({ js }) => {
+      joueurs.forEach(({ c, j, js }) => {
         const st = js.joueur.state;
         const lieu = monde.meteo.lieuEclair(e, st.pos.x, st.pos.z);
-        if (!st.dead && monde.meteo.foudroie(lieu, st.pos, abriServeur)) js.joueur.hurt(monde.meteo.DEGATS_FOUDRE);
+        if (!st.dead && monde.meteo.foudroie(lieu, st.pos, abriServeur)) {
+          js.joueur.hurt(monde.meteo.DEGATS_FOUDRE);
+          // SPEC-ARCHI-042 : le cri et l'annonce sont décidés ici ; « Rescapé » seulement si l'on survit
+          envoyer(c, { t: NP.MSG.FOUDROYE, j });
+          if (!st.dead) signalerSucces(js, { type: 'foudre' });
+        }
         entites.list.forEach(en => {
           if (en.kind !== 'item' && en.pos && monde.meteo.foudroie(lieu, en.pos, abriServeur)) entites.damage(en, 8, null, null);
         });
@@ -4112,20 +4204,21 @@ setInterval(() => {
   entites.evenements().forEach(evt => {
     // ARCHI-041 : le récit du joueur qui a tué la créature (ou vaincu le gardien) l'apprend
     if (regles.histoire && (evt.type === 'mort' || evt.type === 'boss_vaincu')) {
-      if (evt.type === 'mort' && evt.parJoueur && evt.par) {
-        const x = joueurParEtat(evt.par);
+      if (evt.type === 'mort' && evt.auteurJoueur && evt.auteur) {
+        const x = joueurParEtat(evt.auteur);
         if (x) signalerRecit(x.c, x.j, x.js, { type: 'tuer', mob: evt.victime });
       }
       if (evt.type === 'boss_vaincu') {
         tousLesJoueurs().forEach(x => {
           if (!x.js.recit) return;
           const st = x.js.joueur.state;
-          if (evt.par === st || (evt.pos && Math.hypot(evt.pos.x - st.pos.x, evt.pos.z - st.pos.z) <= 96)) {
+          if (evt.auteur === st || (evt.pos && Math.hypot(evt.pos.x - st.pos.x, evt.pos.z - st.pos.z) <= 96)) {
             signalerRecit(x.c, x.j, x.js, { type: 'boss', donjon: evt.donjon });
           }
         });
       }
     }
+    crediterSuccesEvenement(evt);
     if (evt.type !== 'boss_vaincu') return;
     const msgV = chat.systeme(evt.nom + ' est vaincu !');
     if (msgV) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: msgV.texte, type: 'systeme', ts: msgV.t });

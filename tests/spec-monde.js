@@ -745,6 +745,24 @@
       A.ok(C.ITEMS[I.EPEE_RUNIQUE].damage > C.ITEMS[I.IRON_SWORD].damage, 'plus forte qu une épée en fer');
     });
 
+    it('SPEC-ARCHI-042 : les événements de mort et de victoire désignent l\'auteur du coup fatal (le serveur y crédite les succès)', function () {
+      var s = { w: flatWorld(10, B.STONE) };
+      s.ents = MC.createEntities(s.w);
+      var joueur = { inv: {}, pos: { x: 0, y: 11, z: 0 }, equip: {} };
+      var g = s.ents.spawn('boss_squelette', 0.5, 11, 0.5, { donjon: '4,4' });
+      A.ok(s.ents.damage(g, 999, joueur.pos, joueur), 'le coup est fatal');
+      var ev = s.ents.evenements();
+      var mort = ev.filter(function (x) { return x.type === 'mort'; })[0];
+      var boss = ev.filter(function (x) { return x.type === 'boss_vaincu'; })[0];
+      A.ok(mort && mort.parJoueur && mort.auteur === joueur, 'la mort porte le joueur qui a frappé');
+      A.ok(boss && boss.auteur === joueur, 'la victoire sur le gardien aussi');
+      // sans joueur (foudre, lave, chute) : personne à créditer
+      var z = s.ents.spawn('zombie', 3.5, 11, 0.5, {});
+      A.ok(s.ents.damage(z, 999, null, null), 'un zombie meurt sans auteur');
+      var mort2 = s.ents.evenements().filter(function (x) { return x.type === 'mort'; })[0];
+      A.ok(mort2 && !mort2.parJoueur && mort2.auteur === null, 'mort sans auteur : auteur nul');
+    });
+
     it('SPEC-DONJON-006 : un gardien encaisse sans etre projete', function () {
       var s = { w: flatWorld(10, B.STONE) };
       s.ents = MC.createEntities(s.w);

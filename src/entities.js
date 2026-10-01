@@ -498,10 +498,12 @@
             p.vel.x = Math.cos(ang) * 3; p.vel.z = Math.sin(ang) * 3; p.vel.y = 5;
           }
         }
-        // `par` : l'état du joueur auteur du coup (le serveur y rattache le récit de CE joueur, SPEC-ARCHI-041)
-        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur), par: estJoueur(auteur) ? auteur : null,
+        // `auteur` : l'état du joueur qui a porté le coup fatal (null si ce n'est pas un joueur) —
+        // le serveur y crédite les succès (SPEC-ARCHI-042)
+        var tueur = estJoueur(auteur) ? auteur : null;
+        journal.push({ type: 'mort', victime: e.type, parJoueur: estJoueur(auteur), auteur: tueur,
                        pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
-        if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom, par: estJoueur(auteur) ? auteur : null,
+        if (s.boss) journal.push({ type: 'boss_vaincu', boss: e.type, nom: s.nom, auteur: tueur,
                                    donjon: e.donjon || null, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
         remove(e);
         return true;
