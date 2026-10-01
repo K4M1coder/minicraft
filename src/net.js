@@ -54,6 +54,11 @@
       // SPEC-SERVEUR-009 : réponse à demanderOverrides — les seuls overrides
       // du chunk (cx, cz) demandé, jamais le monde entier.
       onOverridesChunk: opts.onOverridesChunk || function () {},
+      // SPEC-ARCHI-042 : succès arbitrés par le serveur — annonce d'un déblocage,
+      // état des compteurs du panneau, foudre qui vient de toucher un joueur
+      onSuccesDebloque: opts.onSuccesDebloque || function () {},
+      onSuccesEtat: opts.onSuccesEtat || function () {},
+      onFoudroye: opts.onFoudroye || function () {},
     };
 
     function statut(e, info) {
@@ -207,6 +212,24 @@
         case NP.MSG.PVP: {
           var vp = MC.ContratsV2.validerPvp(m);
           if (vp) hooks.onPvp(vp);
+          break;
+        }
+
+        // SPEC-ARCHI-042 : le serveur est le seul à décider des succès ; le client
+        // n'affiche que ce qu'un message valide lui annonce
+        case NP.MSG.SUCCES_DEBLOQUE: {
+          var sd = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
+          if (sd) hooks.onSuccesDebloque(sd);
+          break;
+        }
+        case NP.MSG.SUCCES_ETAT: {
+          var se = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
+          if (se) hooks.onSuccesEtat(se);
+          break;
+        }
+        case NP.MSG.FOUDROYE: {
+          var fd = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
+          if (fd) hooks.onFoudroye(fd);
           break;
         }
 

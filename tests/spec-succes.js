@@ -173,6 +173,80 @@
       A.deep(vide.debloques(), [], 'des champs du mauvais type sont ignorés sans planter');
     });
 
+    /* SPEC-ARCHI-042 : le suivi par position/heure, désormais appelé par le
+       SERVEUR à chaque tic avec la position qui fait foi. */
+    function marcher(suiveur, secondes, vitesse, opts) {
+      opts = opts || {};
+      var evts = [], x = opts.x0 || 0, dt = 0.05;
+      for (var i = 0; i < Math.round(secondes / dt); i++) {
+        x += vitesse * dt;
+        suiveur.tic(dt, { x: x, y: opts.y === undefined ? 64 : opts.y, z: 0 }, opts.vivant !== false, !!opts.nuit)
+          .forEach(function (e) { evts.push(e); });
+      }
+      return evts;
+    }
+    function somme(evts, type, champ) {
+      return evts.filter(function (e) { return e.type === type; }).reduce(function (a, e) { return a + e[champ]; }, 0);
+    }
+
+    it('SPEC-ARCHI-042 : distance — l\'intégrale des positions échantillonnée à 1 Hz, à une seconde de marche près', function () {
+      var evts = marcher(S.creerSuiveur(), 10, 6);                 // 60 blocs en 10 s
+      var d = somme(evts, 'distance', 'blocs');
+      A.ok(d <= 60.01 && d >= 60 - 6 - 0.01, 'distance rapportée ' + d.toFixed(2) + ' pour 60 blocs parcourus (≤ 1 s de retard)');
+      A.equal(evts.filter(function (e) { return e.type === 'altitude'; }).length, 10, 'un échantillon d\'altitude par seconde de jeu');
+      var suivi = S.creer();
+      evts.forEach(function (e) { suivi.signaler(e); });
+      A.ok(Math.abs(suivi.progression().filter(function (l) { return l.id === 'cinq_mille_blocs'; })[0].compte - 60) <= 6.01,
+        'le compteur « Grand voyageur » suit la marche');
+    });
+
+    it('SPEC-ARCHI-042 : un bond de 20 blocs ou plus (renaissance, téléportation) n\'est pas du chemin parcouru ; un mort ne parcourt rien', function () {
+      var sv = S.creerSuiveur(), evts = [];
+      sv.tic(0.05, { x: 0, y: 64, z: 0 }, true, false);
+      sv.tic(0.05, { x: 500, y: 64, z: 0 }, true, false);                           // bond
+      evts = evts.concat(sv.tic(1.1, { x: 500.5, y: 64, z: 0 }, true, false));
+      A.ok(somme(evts, 'distance', 'blocs') <= 0.51, 'seuls les 0,5 bloc suivants comptent');
+      var mort = marcher(S.creerSuiveur(), 5, 6, { vivant: false });
+      A.equal(somme(mort, 'distance', 'blocs'), 0, 'un joueur mort ne cumule aucune distance');
+    });
+
+    it('SPEC-ARCHI-042 : nuit survécue — au lever du jour pour un joueur vivant, jamais à la tombée ni pour un mort', function () {
+      var sv = S.creerSuiveur(), pos = { x: 0, y: 64, z: 0 };
+      var types = function (l) { return l.map(function (e) { return e.type; }); };
+      A.ok(types(sv.tic(0.05, pos, true, false)).indexOf('nuit') < 0, 'jour : rien');
+      A.ok(types(sv.tic(0.05, pos, true, true)).indexOf('nuit') < 0, 'la nuit tombe : rien');
+      A.ok(types(sv.tic(0.05, pos, true, true)).indexOf('nuit') < 0, 'en pleine nuit : rien');
+      A.ok(types(sv.tic(0.05, pos, true, false)).indexOf('nuit') >= 0, 'le jour se lève sur un vivant : « nuit survécue »');
+      var sv2 = S.creerSuiveur();
+      sv2.tic(0.05, pos, true, true);
+      A.ok(types(sv2.tic(0.05, pos, false, false)).indexOf('nuit') < 0, 'le jour se lève sur un mort : rien');
+    });
+
+    it('SPEC-ARCHI-042 : altitude — l\'échantillon porte la hauteur du serveur et débloque « Prise d\'altitude » au-dessus de 100', function () {
+      var suivi = S.creer();
+      marcher(S.creerSuiveur(), 3, 0, { y: 90 }).forEach(function (e) { suivi.signaler(e); });
+      A.ok(!suivi.estDebloque('haute_altitude'), 'à 90 : rien');
+      marcher(S.creerSuiveur(), 3, 0, { y: 101 }).forEach(function (e) { suivi.signaler(e); });
+      A.ok(suivi.estDebloque('haute_altitude'), 'à 101 : débloqué');
+    });
+
+    it('SPEC-ARCHI-042 : revision() n\'augmente que lorsque les compteurs ou les déblocages changent (le serveur n\'envoie rien sinon)', function () {
+      var suivi = S.creer(), r0 = suivi.revision();
+      suivi.signaler({ type: 'altitude', y: 10 });                 // filtre non satisfait : rien ne change
+      suivi.signaler({ type: 'inconnu' });
+      A.equal(suivi.revision(), r0, 'événement sans effet : même révision');
+      suivi.signaler({ type: 'casser', bloc: C.B.STONE });
+      var r1 = suivi.revision();
+      A.gt(r1, r0, 'un déblocage change la révision');
+      suivi.signaler({ type: 'casser', bloc: C.B.STONE });
+      A.equal(suivi.revision(), r1, 'un succès déjà obtenu ne change plus rien');
+      suivi.signaler({ type: 'manger', id: I.BREAD });
+      A.gt(suivi.revision(), r1, 'un compteur qui avance change la révision');
+      var r2 = suivi.revision();
+      suivi.charger(suivi.serialiser());
+      A.gt(suivi.revision(), r2, 'un rechargement change la révision');
+    });
+
     it('SPEC-SUCCES-001 : le suivi d\'une partie survit à la sauvegarde (MC.Save)', function () {
       var etat = G.etatMinimal(2026);
       etat.succes = S.creer();

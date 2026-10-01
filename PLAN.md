@@ -249,6 +249,14 @@ croissance des cultures et feu ; le client ne simule plus rien de tout cela
 `tests/integration-archi-env.js`, `tests/spec-archi-env.js` et l'espion
 `world.tick` de `tests/e2e.js`.
 
+Avancement du lot P-SUCC : SPEC-ARCHI-042 est ✅. Le serveur tient les succès de
+chaque joueur (solo fermé, écran partagé, réseau) : événements décidés sur ce qu'il
+a lui-même constaté, échantillonnage de position à chaque tic (distance, altitude,
+nuit), persistance dans le fichier de monde, reprise des succès d'une partie solo
+importée. Le client n'affiche que `SUCCES_DEBLOQUE`, `SUCCES_ETAT` et `FOUDROYE`.
+Reste à brancher `signalerSucces` pour `vehicule` (P-VEH) et `histoire` (P-HIST).
+Preuves : `tests/integration-archi-succes.js`, `tests/spec-succes.js`.
+
 | Lot | Contenu | Fiches | Dépend de |
 |---|---|---|---|
 | **A0-pré** | bouton « Exporter mes parties » dans le client actuel (les parties `localStorage` ne se partagent pas entre origines) | 015 (b) | — |
