@@ -311,7 +311,8 @@
         for (var i = 0; i < liste.length; i++) {
           var j = equipe[i];
           if (!j || !j.prediction) continue;
-          var ecart = MC.Synchro.reconcilier(j.player, liste[i], j.prediction);
+          // `trouver` : la réplique (net.mobsDistants) du véhicule à bord duquel le serveur nous met (SPEC-SYNC-022)
+          var ecart = MC.Synchro.reconcilier(j.player, liste[i], j.prediction, trouverVehicule);
           g.ecartReseau = ecart;
           var st = j.player.state, etaitMort = st.dead;
           MC.Synchro.appliquerStats(st, liste[i]);
@@ -419,6 +420,32 @@
       onConteneurMaj: function (m) {
         var v = MC.ContratsV2.validerConteneurMaj(m);
         if (v) appliquerDeltaConteneur(v);
+      },
+      /* P-VEH (SPEC-ARCHI-021) : la réponse du serveur à une demande de pose, de
+         montée, de descente ou de réparation. À bord, c'est le relevé d'état
+         (toi.veh) qui embarque la prédiction, pas ce message : il ne sert qu'à
+         informer le joueur (et à compter le succès). */
+      onVehiculeEvt: function (v) {
+        var principal = v.j === 0;
+        var def = v.nom && MC.Vehicules.DEFS[v.nom];
+        var nom = def ? def.nom : 'Véhicule';
+        if (v.evt === 'pose') {
+          audio.play('poser');
+          if (principal) ui.toast(nom + ' posé — clic droit pour monter');
+        } else if (v.evt === 'monte') {
+          audio.play('poser');
+          if (principal) ui.toast(nom + ' — ZQSD pour conduire, F pour descendre');
+          signalerSucces({ type: 'vehicule', vehicule: v.nom });
+        } else if (v.evt === 'descend') {
+          if (principal) ui.toast('Pied à terre');
+        } else if (v.evt === 'repare') {
+          if (principal) ui.toast('Véhicule réparé : comme neuf.');
+        } else if (v.evt === 'refus' && principal) {
+          var MOTIFS = { portee: 'Trop loin', occupe: 'Déjà occupé', deja_a_bord: 'Vous êtes déjà à bord',
+                         place: 'Pas assez de place', inventaire: 'Il vous manque l\'objet ou les émeraudes',
+                         mort: 'Impossible dans cet état', inconnu: 'Impossible ici' };
+          ui.toast(MOTIFS[v.motif] || 'Impossible', 'warn');
+        }
       },
       /* Revue adversariale (item 3) : le serveur force la fermeture d'un
          conteneur qu'on avait ouvert (cassé, éventuellement remplacé par un
@@ -1274,13 +1301,17 @@
     var lieuActuel = null, zoneActuelle = null;
     function rendreService(service, ent) {
       var st = player.state;
+      /* SPEC-TRANSPORT-002 : réparer le véhicule qu'on conduit se paie sur l'inventaire du
+         SERVEUR, chez ce forgeron (VEHICULE_REPARER) — jamais sur la réplique locale. */
+      if (service === 'reparer' && st.monture && st.monture.avarie && ent) {
+        net.reparerVehicule(ent.eid, 0);
+        return { ok: true, message: 'Réparation du véhicule demandée…' };
+      }
       var r = MC.Habitats.servir(service, {
         inv: st.inv, etat: st, temps: g.time, dureeJour: DC.DAY_LENGTH, estNuit: DC.isNight(g.time),
         habitats: world.habitats, reperes: world.reperes, x: st.pos.x, z: st.pos.z,
         lieu: world.habitats ? world.habitats.lieuA(Math.floor(st.pos.x), Math.floor(st.pos.z)) : null,
         pvMax: player.MAX_HP || 20,
-        // SPEC-TRANSPORT-002 : réparer le véhicule qu'on conduit, s'il y en a un
-        vehicule: st.monture || null,
       });
       /* SPEC-ARCHI-025 : une chambre d'auberge fait dormir jusqu'au matin — le
          client ne touche pas à l'heure, il se couche (le serveur fait passer
@@ -2100,50 +2131,44 @@
 
     // ─── véhicules ──────────────────────────────────────────────────────────
     var V = MC.Vehicules;
+    // la réplique (net.mobsDistants) d'un véhicule du serveur, pour s'y embarquer en prédiction (MC.Synchro)
+    function trouverVehicule(eid) { var m = net.mobsDistants.get(eid); return m && m.vehicule ? m : null; }
 
-    /* Pose un véhicule devant le joueur, sur le bloc visé, tourné comme lui. */
-    function poserVehicule(pl, nom, cible) {
-      var st = pl.state;
-      var x = cible.x + cible.nx + 0.5, y = cible.y + cible.ny, z = cible.z + cible.nz + 0.5;
-      var d = V.DEFS[nom];
-      // un peu de place : on remonte d'un cran si l'engin serait dans le décor
-      for (var k = 0; k < 3 && P.collides(world, x, y, z, d.w, d.h); k++) y++;
-      if (P.collides(world, x, y, z, d.w, d.h)) { ui.toast('Pas assez de place pour ' + d.nom, 'warn'); return false; }
-      V.poser(entities, nom, x, y, z, st.yaw);
-      if (!regles.blocsIllimites) st.inv.consumeAt(st.selected, 1);
-      audio.play('poser');
-      ui.toast(d.nom + ' posé — clic droit pour monter');
+    /* SPEC-ARCHI-021, SPEC-SYNC-022 : les véhicules appartiennent au SERVEUR (solo
+       fermé, écran partagé, réseau : un seul chemin). Poser, monter, descendre,
+       réparer et ouvrir la soute sont des DEMANDES ; il valide (portée, place,
+       inventaire, occupation) et répond par VEHICULE_EVT. Le véhicule qu'on
+       conduit est prédit comme le joueur (MC.Synchro, réplique de net.mobsDistants). */
+
+    /* Pose un véhicule sur le bloc visé, tourné comme le joueur : l'objet de la case
+       tenue est retiré par le serveur (INV_MAJ), jamais ici. */
+    function poserVehicule(pl, nom, cible, indexJoueur) {
+      net.poserVehicule(nom, cible, pl.state.selected, indexJoueur || 0);
       return true;
     }
 
-    /* Clic droit sur un véhicule : monter, ou ouvrir la soute du camion en
-       tenant Maj. Renvoie true si l'action a été prise. */
+    /* Clic droit sur un véhicule (sa réplique du serveur) : monter, ou ouvrir la soute
+       du camion/bateau en tenant Maj. Renvoie true si l'action a été prise. */
     function interagirVehicule(j, e, sprint) {
       var st = j.player.state;
       if (!e || !e.vehicule || e === st.monture) return false;
-      if (net.enLigne()) { ui.toast('Les véhicules ne sont pas disponibles en ligne', 'warn'); return true; }
-      if (sprint && e.soute && j.index === 0) {
-        ui.openContainer('chest', st.inv, e.soute, 'soute');
-        input.setState('ui');
+      var d = V.DEFS[e.vehicule];
+      if (sprint && d && d.soute) {
+        if (j.index === 0) net.ouvrirConteneur({ eid: e.eid }, 0);     // l'écran s'ouvre à la réponse (onConteneurEtat)
         return true;
       }
-      if (e.conducteur) { if (j.index === 0) ui.toast('Déjà occupé', 'warn'); return true; }
-      if (V.monter(st, e)) {
-        if (j.index === 0) ui.toast(V.DEFS[e.vehicule].nom + ' — ZQSD pour conduire, F pour descendre');
-        audio.play('poser');
-        signalerSucces({ type: 'vehicule', vehicule: e.vehicule });
-      }
+      if (e.occupe) { if (j.index === 0) ui.toast('Déjà occupé', 'warn'); return true; }
+      net.monterVehicule(e.eid, j.index);
       return true;
     }
 
     function descendreDe(j) {
-      var st = j.player.state;
-      if (!st.monture) return false;
-      V.descendre(st, world, j.player.PW, j.player.PH);
-      if (j.index === 0) ui.toast('Pied à terre');
+      if (!j.player.state.monture) return false;
+      net.descendreVehicule(j.index);
       return true;
     }
     g.descendreDe = descendreDe;
+    g.poserVehicule = poserVehicule;
     g.monterDans = function (e) { return interagirVehicule(equipe[0], e, false); };
 
     // ─── actions ─────────────────────────────────────────────────────────────
@@ -2229,7 +2254,7 @@
     function mobDistantVise(pl) {
       var o = pl.eyePos(), d = pl.lookDir(), best = null, bt = Infinity;
       net.mobsDistants.forEach(function (m) {
-        if (m.type === 'item' || m.type === 'arrow') return;
+        if (m.type === 'item' || m.type === 'arrow' || m === pl.state.monture) return;
         var sp = MC.EntitySpecs[m.type] || { w: 0.6, h: 1.8 };
         var hw = sp.w / 2 + 0.12;
         var t = entities.rayBox(o, d, m.pos.x - hw, m.pos.y - 0.12, m.pos.z - hw,
@@ -2305,10 +2330,10 @@
 
       // interagir avec un PNJ a priorité sur le bloc derrière lui
       var ent = entities.aimedAt(player.eyePos(), player.lookDir(), player.REACH);
-      if (ent && ent.vehicule && interagirVehicule(equipe[0], ent, input.actions().sprint)) return;
-      // les habitants appartiennent au serveur : on vise toujours leur reflet
+      // les habitants et les véhicules appartiennent au serveur : on vise toujours leur reflet
       if (!ent) {
         var md = mobDistantVise(player);
+        if (md && md.vehicule && interagirVehicule(equipe[0], md, input.actions().sprint)) return;
         if (md && MC.EntitySpecs[md.type] && MC.EntitySpecs[md.type].npc) ent = md;
       }
       if (ent && entities.SPECS[ent.type] && entities.SPECS[ent.type].npc) { parlerA(ent); return; }
@@ -2321,7 +2346,7 @@
       if (!res) return;
       if (res === 'interdit') { ui.toast('Cette histoire ne vous permet pas de l\'utiliser', 'warn'); return; }
       if (res === 'eat') net.manger(mange, 0, player.state.selected);
-      if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target); return; }
+      if (res.indexOf('vehicule:') === 0) { poserVehicule(player, res.slice(9), target, 0); return; }
       if (res === 'carte') { ouvrirCarte(); return; }
       if (res.indexOf('open:') === 0) {
         var kind = res.slice(5);
@@ -2728,31 +2753,17 @@
         touches = { forward: 0, back: 0, left: 0, right: 0, jump: 0, sprint: 0 };
       }
 
-      if (st.dead) {
-        if (st.monture) V.descendre(st, world, pl.PW, pl.PH);
-        return;
-      }
-      if (st.monture) {
-        // à bord : les touches de déplacement deviennent les commandes de l'engin
-        // (P-VEH : simulé par le client tant que les véhicules ne sont pas portés au serveur)
-        var mt = st.monture;
-        V.conduire(mt, dt, world, {
-          avant: touches.forward, arriere: touches.back, gauche: touches.left,
-          droite: touches.right, monter: touches.jump, descendre: touches.sprint,
-        });
-        if (!V.caler(st)) { /* engin détruit : on est à pied */ }
-        else if (V.DEFS[mt.vehicule].respire) st.air = pl.MAX_AIR;     // cabine étanche
-      } else {
-        /* SPEC-ARCHI-037 : prédiction + réconciliation pour TOUT joueur local
-           (solo fermé, écran partagé, réseau) : l'entrée part au serveur ET
-           s'applique tout de suite, par le même code que lui (MC.Synchro).
-           Aucun déplacement n'est appliqué hors de `prediction`. Les
-           statistiques (vie, faim, air) ne sont pas calculées ici : elles
-           arrivent du serveur. */
-        var entree = j.prediction.enregistrer(dt, touches, st.yaw, st.pitch, st.flying);
-        net.envoyerEntree(entree, j.index);
-        MC.Synchro.rejouer(pl, [entree]);
-      }
+      if (st.dead) return;           // un mort descend de l'engin côté serveur (entretenirMonture)
+      /* SPEC-ARCHI-037 : prédiction + réconciliation pour TOUT joueur local
+         (solo fermé, écran partagé, réseau) : l'entrée part au serveur ET
+         s'applique tout de suite, par le même code que lui (MC.Synchro).
+         Aucun déplacement n'est appliqué hors de `prediction`. À bord d'un
+         véhicule (SPEC-SYNC-022), le même code conduit sa réplique : les touches
+         deviennent les commandes de l'engin. Les statistiques (vie, faim, air)
+         ne sont pas calculées ici : elles arrivent du serveur. */
+      var entree = j.prediction.enregistrer(dt, touches, st.yaw, st.pitch, st.flying);
+      net.envoyerEntree(entree, j.index);
+      MC.Synchro.rejouer(pl, [entree]);
       /* SPEC-ARCHI-026 : vie, faim, air et climat sont calculés par le SERVEUR
          (updateSurvival, subirClimat) et arrivent dans l'état reçu : le client
          ne fait plus qu'afficher. Solo fermé, écran partagé et réseau : même chemin. */
@@ -2834,7 +2845,7 @@
         if (tir) audio.play('frapper');
         return;
       }
-      var vis = entities.aimedAt(pl.eyePos(), pl.lookDir(), pl.REACH);
+      var vis = mobDistantVise(pl);
       if (vis && vis.vehicule && interagirVehicule(j, vis, false)) return;
       var target = pl.aim();
       if (!target) return;
@@ -2843,7 +2854,7 @@
       var res = pl.useOn(target);
       if (!res) return;
       if (res === 'eat') net.manger(idMain, j.index, pl.state.selected);
-      if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target); return; }
+      if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target, j.index); return; }
       if (res === 'dormir') { dormir(target, j); return; }
       if (res.indexOf('open:') === 0) {
         // seules les interfaces du joueur 1 s'ouvrent : un seul clavier

@@ -374,11 +374,16 @@ function etatMonde() {
       const p = k.split(',');
       return [+p[0], +p[1], +p[2], texte];
     }),
+    // SPEC-SERVEUR-006 : les véhicules (position, cap, soute, carburant, avarie),
+    // au format de MC.Vehicules.serialiser — le même qu'écrivait la sauvegarde solo
+    vehicules: MC.Vehicules.serialiser(entites),
     soloJoueur, extras: extrasSolo,
   };
 }
 let soloJoueur = null;      // enregistrement du joueur d'une partie solo importée, adopté à la première connexion
 let extrasSolo = null;      // champs d'une partie solo importée que le serveur conserve sans encore les jouer (ARCHI-014)
+const VEHICULES_MAX = 256;               // véhicules posés dans le monde (borne contre la pose en rafale, en créatif surtout)
+const vehiculesSoute = new Set();        // véhicules à soute vivants (pour libérer leur soute à leur destruction)
 /* Enregistrement d'un joueur nommé + son état de personnage (SPEC-SYNC-020,
    nécessaire à la parité de sauvegarde SPEC-ARCHI-014) : position, regard,
    vie, faim, air, case sélectionnée, vol. */
@@ -500,6 +505,18 @@ function appliquerEtatMonde(data) {
   });
   soloJoueur = data.soloJoueur && MC.ContratsV2 ? MC.ContratsV2.validerEnregistrementJoueur(data.soloJoueur) : null;
   extrasSolo = data.extras && typeof data.extras === 'object' ? data.extras : null;
+  /* SPEC-SERVEUR-006 : les véhicules reviennent dans le monde. Une partie solo
+     importée les porte dans `extras.vehicules` (même format) : ils sont repris
+     UNE fois puis retirés des extras, sinon la sauvegarde suivante les
+     écrirait deux fois. Les véhicules déjà présents (re-chargement) sont retirés. */
+  entites.list.filter(e => e.vehicule).forEach(e => entites.remove(e));
+  vehiculesSoute.clear();
+  let brutsVeh = Array.isArray(data.vehicules) ? data.vehicules : [];
+  if (!brutsVeh.length && extrasSolo && Array.isArray(extrasSolo.vehicules)) brutsVeh = extrasSolo.vehicules;
+  if (extrasSolo && 'vehicules' in extrasSolo) { extrasSolo = Object.assign({}, extrasSolo); delete extrasSolo.vehicules; }
+  MC.Vehicules.restaurer(entites, brutsVeh.slice(0, VEHICULES_MAX).filter(v => Array.isArray(v) && MC.Vehicules.DEFS[v[0]]
+    && [v[1], v[2], v[3]].every(Number.isFinite) && Math.abs(v[1]) < 1e7 && Math.abs(v[3]) < 1e7 && v[2] > -64 && v[2] < 400));
+  entites.list.forEach(e => { if (e.vehicule && e.soute) vehiculesSoute.add(e); });
   // B1 (étape 7, SPEC-SYNC-021 partiel) : conteneurs POSÉS — absents d'un
   // fichier plus ancien, donc simplement vides, comme aujourd'hui.
   conteneursPoses.clear();
@@ -1089,6 +1106,9 @@ function fermer(c, raison) {
   // registre nommé (la banque, elle, reste un conteneur vivant dans `banques`).
   if (c.joueurs) {
     c.joueurs.forEach(js => {
+      // un conducteur qui part met pied à terre : l'engin reste là, libre, et le siège n'est pas gardé
+      const stV = js.joueur && js.joueur.state;
+      if (stV && stV.monture) MC.Vehicules.descendre(stV, monde, MC.PlayerConst.PW, MC.PlayerConst.PH);
       if (!js.cleReg) return;
       joueursRegistre.set(js.cleReg, enregistrementJoueur(js));
     });
@@ -1826,6 +1846,7 @@ const FLOOD_TYPES_PAR_JOUEUR = new Set([
    MC.ContratsV2.BUDGETS_FLOOD (« troc » y figure déjà, pour B2). */
 if (MC.ContratsV2) Object.keys(MC.ContratsV2.BUDGETS_FLOOD).forEach(t => FLOOD_TYPES_PAR_JOUEUR.add(t));
 FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.DORMIR);
+[NP.MSG.VEHICULE_POSER, NP.MSG.VEHICULE_MONTER, NP.MSG.VEHICULE_DESCENDRE, NP.MSG.VEHICULE_REPARER].forEach(t => FLOOD_TYPES_PAR_JOUEUR.add(t));
 
 /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
    TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un
@@ -1913,7 +1934,7 @@ const MC_TEST_PANNE = process.env.MC_TEST_PANNE === '1';
 const MESSAGES_GELES = new Set([
   'ENTREE', 'BLOC', 'ATTAQUE', 'TIR', 'MANGER', 'DISTRIB', 'CRAFT', 'EQUIP',
   'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
-  'DORMIR',
+  'DORMIR', 'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER',
 ].map(k => NP.MSG[k]).filter(Boolean));
 
 /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -2143,6 +2164,17 @@ function traiter(c, m) {
       break;
     }
 
+    // ── véhicules (P-VEH, SPEC-ARCHI-021 / SPEC-SYNC-022) : le serveur crée, embarque, conduit ──
+    case NP.MSG.VEHICULE_POSER: poserVehiculeServeur(c, m); break;
+    case NP.MSG.VEHICULE_MONTER: monterVehiculeServeur(c, m); break;
+    case NP.MSG.VEHICULE_REPARER: reparerVehiculeServeur(c, m); break;
+    case NP.MSG.VEHICULE_DESCENDRE: {
+      const js = c.joueurs && c.joueurs[m.j];
+      if (!js || !js.joueur.state.monture) { evtVehicule(c, m.j, 'refus', { motif: CA.MOTIFS_VEHICULE.INCONNU }); break; }
+      descendreVehiculeServeur(c, m.j, js);
+      break;
+    }
+
     case NP.MSG.BOUGE:
       /* Ancien message : le client imposait sa position. Le serveur fait
          désormais autorité — on n'en retient que le regard. */
@@ -2210,7 +2242,7 @@ function traiter(c, m) {
       }
 
       const e = entites.list.find(x => x.eid === m.eid);
-      if (!e || e.dead || e.type === 'item') break;
+      if (!e || e.dead || e.type === 'item' || e === st.monture) break;     // jamais l'engin qu'on conduit
       const d = Math.hypot(e.pos.x - st.pos.x, e.pos.y + e.h / 2 - st.pos.y - 1.6, e.pos.z - st.pos.z);
       // portée et cadence vérifiées : on ne frappe ni de loin ni en rafale
       if (d > pm.portee || js.attaqueCd > 0) break;
@@ -2800,6 +2832,7 @@ function distanceConteneur(st, x, y, z) {
 function resoudreConteneur(js, cle) {
   if (js.conteneurOuvert !== cle) return null;      // pas abonné (ou pas CE conteneur) : refusé
   const st = js.joueur.state;
+  if (cle[0] === 'v') return souteDeVehicule(cle, st);   // soute d'un véhicule (P-VEH), proximité REvérifiée
   if (cle === 'banque') {
     if (!js.cleReg) return null;
     // SYNC-013 : la banque exige la proximité d'un bloc coffre-fort (ou du
@@ -2850,6 +2883,14 @@ function fermerConteneurPourAbonnes(cle) {
 function ouvrirConteneurPourJoueur(js, m) {
   const st = js.joueur.state;
   if (m.eid !== undefined) {
+    // la soute d'un véhicule (SPEC-SYNC-022) : conteneur serveur, clé « v<eid> »
+    const veh = vehiculeParEid(m.eid);
+    if (veh) {
+      const cleV = 'v' + veh.eid, soute = souteDeVehicule(cleV, st);
+      if (!soute) return null;
+      js.conteneurOuvert = cleV; js.banquePos = null; js.banqueEid = null;
+      return { cle: cleV, type: soute.type, cont: soute };
+    }
     const ent = entites.list.find(e => e.eid === m.eid && e.role === 'banquier' && !e.dead);
     if (!ent || !js.cleReg) return null;
     const d = Math.hypot(ent.pos.x - st.pos.x, (ent.pos.y || 0) - st.pos.y, ent.pos.z - st.pos.z);
@@ -2983,7 +3024,8 @@ function clesConteneurDe(op) {
   return out;
 }
 function conteneurParCle(js, cle) {
-  return cle === 'banque' ? (js.cleReg ? banqueDe(js.cleReg) : null) : conteneursPoses.get(cle);
+  if (cle === 'banque') return js.cleReg ? banqueDe(js.cleReg) : null;
+  return cle[0] === 'v' ? souteDeVehicule(cle, null) : conteneursPoses.get(cle);
 }
 /* Cœur commun à CRAFT, EQUIP, CONTENEUR_TRANSFERT, INV_CONSOMMER, INV_LACHER,
    INV_CREATIF : vérifie l'idempotence du `seq`, applique l'opération pure,
@@ -3201,6 +3243,142 @@ function blocCommandeAutorise(c) {
   return !!(MC.Circuits && MC.Circuits.commandeAutorisee({
     enLigne: true, role: c && c.role, mode: regles.blocsIllimites ? 'creatif' : 'survie', hote: !!(c && c.local),
   }));
+}
+/* ── Véhicules (lot P-VEH — SPEC-ARCHI-021, SPEC-SYNC-022, SPEC-SERVEUR-006) ──
+   Un véhicule est une entité du monde (entites.list, type « v_<nom> »), donc
+   diffusée aux clients à portée avec les autres entités (ETAT.mobs, plafond
+   propre MAX_VEHICULES_DIFFUSES). Le serveur fait seul autorité :
+   - poser : validé contre la portée, la place et l'inventaire (comme un bloc) ;
+   - monter/descendre : validés contre la portée et l'occupation ;
+   - conduire : les touches de ENTREE (avant, arrière, gauche, droite, saut, course)
+     sont intégrées par MC.Vehicules.conduire à CHAQUE entrée rejouée, sous le
+     budget de temps du joueur (js.budget) — donc vitesse maximale, accélération
+     et position ne se « déclarent » jamais, ils se simulent. L'état du véhicule
+     conduit revient au conducteur dans ETAT.toi[].veh (réconciliation) ;
+   - la soute est un conteneur serveur, clé « v<eid> » (CONTENEUR_OUVRIR { eid }) ;
+   - le tout est sauvegardé dans etatMonde().vehicules (SPEC-SERVEUR-006). */
+const V = MC.Vehicules;
+function evtVehicule(c, j, evt, extra) {
+  envoyer(c, Object.assign({ t: NP.MSG.VEHICULE_EVT, j, evt }, extra || {}));
+}
+function refusVehicule(c, j, motif) { evtVehicule(c, j, CA.EVT_VEHICULE.REFUS, { motif }); }
+function vehiculeParEid(eid) {
+  return entites.list.find(e => e.eid === eid && e.vehicule && !e.dead) || null;
+}
+// distance de l'œil d'un joueur au véhicule (bord de la caisse, pas son centre)
+function distanceVehicule(st, e) {
+  const d = V.defDe(e);
+  return Math.hypot(e.pos.x - st.pos.x, e.pos.y + (d ? d.h / 2 : 0.5) - (st.pos.y + 1.62), e.pos.z - st.pos.z) - (d ? d.w / 2 : 0.5);
+}
+/* Point d'appel du succès « premier_vehicule » (SPEC-SUCCES-001) : le suivi des
+   succès vit côté serveur (lot P-SUCC, `signalerSucces(js, ev)`) ; tant que ce
+   lot n'est pas fusionné, l'appel est sans effet et le client affiche le succès
+   à réception de VEHICULE_EVT « monte » (game.js, onVehiculeEvt). */
+function signalerSuccesVehicule(js, nom) {
+  if (typeof signalerSucces === 'function') signalerSucces(js, { type: 'vehicule', vehicule: nom });
+}
+function poserVehiculeServeur(c, m) {
+  const js = c.joueurs && c.joueurs[m.j];
+  if (!js) return;
+  const st = js.joueur.state;
+  const def = V.DEFS[m.nom];
+  if (st.dead) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.MORT);
+  if (!def || Math.abs(m.nx) + Math.abs(m.ny) + Math.abs(m.nz) !== 1) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INCONNU);
+  const portee = Math.hypot(m.x + 0.5 - st.pos.x, m.y + 0.5 - (st.pos.y + 1.62), m.z + 0.5 - st.pos.z);
+  if (portee > PORTEE_BLOC) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.PORTEE);
+  if (!monde.getBlock(m.x, m.y, m.z)) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INCONNU);   // rien là (ou chunk absent)
+  let x = m.x + m.nx + 0.5, y = m.y + m.ny, z = m.z + m.nz + 0.5;
+  // un peu de place : on remonte d'un cran si l'engin serait dans le décor
+  for (let k = 0; k < 3 && MC.Physics.collides(monde, x, y, z, def.w, def.h); k++) y++;
+  if (MC.Physics.collides(monde, x, y, z, def.w, def.h) || entites.list.filter(e => e.vehicule).length >= VEHICULES_MAX) {
+    return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.PLACE);
+  }
+  // en survie, l'objet est retiré de l'inventaire SERVEUR (case annoncée si elle convient, sinon la première qui convient)
+  let paye = false;
+  if (!regles.blocsIllimites && !POSE_LIBRE) {
+    const inv = st.inv;
+    const convient = (s) => s && C.def(s.id) && C.def(s.id).vehicule === m.nom;
+    let i = m.i >= 0 && convient(inv.slots[m.i]) ? m.i : inv.slots.findIndex(convient);
+    if (i < 0) { envoyerInvMaj(c, m.j, {}); return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INVENTAIRE); }
+    inv.consumeAt(i, 1);
+    paye = true;
+  }
+  const e = V.poser(entites, m.nom, x, y, z, st.yaw);
+  if (e && e.soute) vehiculesSoute.add(e);
+  if (paye) envoyerInvMaj(c, m.j, {});
+  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'vehicule_pose', cible: `${Math.floor(x)},${Math.floor(y)},${Math.floor(z)}`, details: m.nom, heure });
+  evtVehicule(c, m.j, CA.EVT_VEHICULE.POSE, { nom: m.nom });
+}
+function monterVehiculeServeur(c, m) {
+  const js = c.joueurs && c.joueurs[m.j];
+  if (!js) return;
+  const st = js.joueur.state;
+  if (st.dead) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.MORT);
+  if (st.monture) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.DEJA_A_BORD);
+  const e = vehiculeParEid(m.eid);
+  if (!e) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INCONNU);
+  if (distanceVehicule(st, e) > CA.BORNES.PORTEE_VEHICULE) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.PORTEE);
+  if (e.conducteur && e.conducteur.monture !== e) e.conducteur = null;       // conducteur disparu sans libérer son siège
+  if (!V.monter(st, e)) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.OCCUPE);
+  js.vehInactif = 0;
+  MC.Admin.journaliser(admin, { auteur: c.nom, action: 'vehicule_monte', cible: e.vehicule, details: e.eid, heure });
+  evtVehicule(c, m.j, CA.EVT_VEHICULE.MONTE, { nom: e.vehicule });
+  signalerSuccesVehicule(js, e.vehicule);
+}
+/* SPEC-TRANSPORT-002 / METIER-002 : la réparation d'un véhicule avarié se paie en émeraudes
+   sur l'inventaire SERVEUR, chez un forgeron à portée — la même règle (MC.Habitats.servir)
+   que l'outil en main, le véhicule conduit passant en premier. */
+function reparerVehiculeServeur(c, m) {
+  const js = c.joueurs && c.joueurs[m.j];
+  if (!js) return;
+  const st = js.joueur.state, mt = st.monture;
+  if (st.dead || !mt || !mt.avarie) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INCONNU);
+  const forgeron = entites.list.find(e => e.eid === m.eid && !e.dead && e.role && MC.Habitats.ROLES[e.role] && MC.Habitats.ROLES[e.role].service === 'reparer');
+  if (!forgeron) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INCONNU);
+  if (Math.hypot(forgeron.pos.x - st.pos.x, (forgeron.pos.y || 0) - st.pos.y, forgeron.pos.z - st.pos.z) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR + 2) {
+    return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.PORTEE);
+  }
+  const r = MC.Habitats.servir('reparer', { inv: st.inv, etat: st, vehicule: mt, temps: heure });
+  envoyerInvMaj(c, m.j, {});
+  if (!r.ok) return refusVehicule(c, m.j, CA.MOTIFS_VEHICULE.INVENTAIRE);
+  evtVehicule(c, m.j, CA.EVT_VEHICULE.REPARE, { nom: mt.vehicule });
+}
+function descendreVehiculeServeur(c, j, js) {
+  const pc = MC.PlayerConst;
+  V.descendre(js.joueur.state, monde, pc.PW, pc.PH);
+  evtVehicule(c, j, CA.EVT_VEHICULE.DESCEND);
+}
+/* Une fois par tic et par joueur, après ses entrées : engin détruit (on est à
+   pied), joueur mort (il descend), client muet (l'engin n'est plus commandé :
+   il ralentit et retombe comme un véhicule abandonné, VEHIC-009). */
+function entretenirMonture(js, dt, avance) {
+  const st = js.joueur.state, mt = st.monture;
+  if (!mt) { js.vehInactif = 0; return; }
+  if (mt.dead) { mt.conducteur = null; st.monture = null; return; }
+  if (st.dead) { const pc = MC.PlayerConst; V.descendre(st, monde, pc.PW, pc.PH); return; }
+  if (avance > 0) { js.vehInactif = 0; return; }
+  js.vehInactif = (js.vehInactif || 0) + dt;
+  if (js.vehInactif > 0.5) { V.conduire(mt, dt, monde, null); V.caler(st); }
+}
+/* La soute d'un véhicule (clé « v<eid> ») s'il existe et si `st` en est assez proche. */
+function souteDeVehicule(cle, st) {
+  if (typeof cle !== 'string' || !/^v[1-9][0-9]{0,8}$/.test(cle)) return null;
+  const e = vehiculeParEid(+cle.slice(1));
+  if (!e || !e.soute) return null;
+  if (st && distanceVehicule(st, e) > MC.ContratsV2.BORNES.PORTEE_CONTENEUR) return null;
+  return e.soute;
+}
+// un véhicule détruit rend sa soute au sol et ferme l'écran de ceux qui l'avaient ouverte
+function liberSoutesDetruites() {
+  vehiculesSoute.forEach(e => {
+    if (!e.dead) return;
+    vehiculesSoute.delete(e);
+    fermerConteneurPourAbonnes('v' + e.eid);
+    e.soute.slots.forEach((s, i) => {
+      if (s) entites.dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.id, s.n, null, s.data);
+      e.soute.slots[i] = null;
+    });
+  });
 }
 function tousLesJoueurs() {
   const l = [];
@@ -3732,6 +3910,7 @@ setInterval(() => {
       js.dernier = e.s;
       avance += e.dt;
     }
+    entretenirMonture(js, dt, avance);                    // P-VEH : engin détruit, mort, client muet
     /* SPEC-ARCHI-026 : le corps vit au temps SERVEUR (dt réel, gelé en pause
        avec toute la boucle), jamais au rythme des entrées reçues : un client
        muet a faim et se soigne comme les autres. Un seul appel par tic. */
@@ -3739,7 +3918,7 @@ setInterval(() => {
     /* Les créatures repoussent le joueur (elles ne se traversent pas), UNE fois par tic
        et par joueur (coût borné à 100 joueurs) ; côté serveur seulement — la prédiction
        du client ne la connaît pas, la réconciliation absorbe l'écart. */
-    if (avance > 0 && !st.dead) entites.separer(st, avance);
+    if (avance > 0 && !st.dead && !st.monture) entites.separer(st, avance);
     // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
     while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
     /* Le climat agit sur le corps : c'est au serveur, qui fait foi sur la
@@ -3784,6 +3963,7 @@ setInterval(() => {
 
   appliquerTornades(dt, joueurs);
 
+  liberSoutesDetruites();
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
   const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
@@ -3910,11 +4090,23 @@ setInterval(() => {
         if (e.arme) o.a = e.arme;
         if (e.variante !== undefined) o.v = e.variante;
         if (e.role) { o.r = e.role; o.n = e.nom; }
+        /* Véhicule (SPEC-SYNC-022) : nom, vitesse, occupé, carburant, avarie — ce qu'il faut
+           pour l'animer et, si le client en prend le volant, le prédire. */
+        if (e.vehicule) {
+          o.ve = e.vehicule; o.vi = +(e.vitesse || 0).toFixed(2);
+          if (e.conducteur) o.co = 1;
+          if (e.carburant != null) o.ca = +e.carburant.toFixed(1);
+          if (e.avarie) o.av = e.avarieGravite || 1;
+        }
         return o;
       };
+      /* Une description par entité et par relevé, pas par client : à 100 joueurs elle
+         serait recalculée cent fois pour la même créature (regroupement, SPEC-SYNC-022). */
+      const decrites = new Map();
+      const decrireUne = e => { let o = decrites.get(e); if (!o) { o = decrire(e); decrites.set(e, o); } return o; };
       const commun = { t: NP.MSG.ETAT, joueurs: [], mobs: [], heure: +heure.toFixed(1) };
-      const vivants = [], objetsAuSol = [];
-      entites.list.forEach(e => { (e.type === 'item' ? objetsAuSol : vivants).push(e); });
+      const vivants = [], objetsAuSol = [], vehicules = [];
+      entites.list.forEach(e => { (e.type === 'item' ? objetsAuSol : e.vehicule ? vehicules : vivants).push(e); });
       clients.forEach(c => {
         if (!c.rejoint || !c.joueurs) return;
         /* À chacun les créatures les plus proches de SES joueurs, plafonnées à
@@ -3924,8 +4116,10 @@ setInterval(() => {
         const pos = c.joueurs.map(x => x.joueur.state.pos);
         const d2 = e => Math.min.apply(null, pos.map(p => (e.pos.x - p.x) ** 2 + (e.pos.z - p.z) ** 2));
         /* SPEC-SYNC-026 : les objets au sol ont leur propre plafond — jamais évincés par les créatures */
-        commun.mobs = NP.selectionnerMobsProches(vivants, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrire)
-          .concat(NP.selectionnerMobsProches(objetsAuSol, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_ITEMS_DIFFUSES).map(decrire));
+        commun.mobs = NP.selectionnerMobsProches(vivants, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_MOBS_DIFFUSES).map(decrireUne)
+          .concat(NP.selectionnerMobsProches(objetsAuSol, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_ITEMS_DIFFUSES).map(decrireUne))
+          // les véhicules ont leur propre plafond (SPEC-SYNC-022) : ni évincés par les créatures, ni sans borne
+          .concat(NP.selectionnerMobsProches(vehicules, pos, NP.PORTEE_MOBS_DIFFUSES, NP.MAX_VEHICULES_DIFFUSES).map(decrireUne));
         /* Les AUTRES joueurs, bornés à la même portée que les créatures : sans
            ce filtre, chaque diffusion d'état grandissait en O(joueurs²) — une
            liste complète envoyée à CHAQUE client. Invisible jusqu'à quelques

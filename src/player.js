@@ -89,6 +89,15 @@
 
     // ─── déplacement ─────────────────────────────────────────────────────────
     function updateMovement(dt, keys) {
+      /* À bord (SPEC-SYNC-022) : les touches deviennent les commandes de
+         l'engin, qui avance par le MÊME code (MC.Vehicules.conduire) chez le
+         serveur, qui fait foi, et chez le client, qui prédit. Le joueur
+         reste calé sur son siège ; engin détruit, on est à pied. */
+      if (pl.monture && MC.Vehicules) {
+        MC.Vehicules.conduire(pl.monture, dt, world, MC.Vehicules.commandeDeTouches(keys));
+        MC.Vehicules.caler(pl);
+        return;
+      }
       var fwd = (keys.forward ? 1 : 0) - (keys.back ? 1 : 0);
       var strafe = (keys.right ? 1 : 0) - (keys.left ? 1 : 0);
       var wish = P.wishDirection(pl.yaw, fwd, strafe);
@@ -229,8 +238,10 @@
     function updateSurvival(dt) {
       if (pl.dead) return;
 
-      // noyade
-      if (P.headInWater(world, pl.pos, EYE)) {
+      // noyade (jamais dans la cabine étanche d'un sous-marin)
+      var cabineEtanche = pl.monture && MC.Vehicules && MC.Vehicules.defDe(pl.monture) && MC.Vehicules.defDe(pl.monture).respire;
+      if (cabineEtanche) { pl.air = MAX_AIR; pl.drownT = 0; }
+      else if (P.headInWater(world, pl.pos, EYE)) {
         pl.air -= dt;
         if (pl.air < 0) { pl.air = 0; pl.drownT = (pl.drownT || 0) + dt;
                           if (pl.drownT >= 1) { pl.drownT = 0; hurt(2); } }
@@ -304,6 +315,7 @@
       pl.hp = MAX_HP; pl.hunger = MAX_HUNGER; pl.air = MAX_AIR;
       pl.dead = false; pl.vel.x = pl.vel.y = pl.vel.z = 0;
       pl.exhaustion = 0; pl.fallFrom = null;
+      if (pl.monture) { pl.monture.conducteur = null; pl.monture = null; }
       pl.pos.x = spawnPos.x; pl.pos.y = spawnPos.y; pl.pos.z = spawnPos.z;
     }
 

@@ -54,6 +54,8 @@
       // SPEC-SERVEUR-009 : réponse à demanderOverrides — les seuls overrides
       // du chunk (cx, cz) demandé, jamais le monde entier.
       onOverridesChunk: opts.onOverridesChunk || function () {},
+      // P-VEH : à bord / pied à terre / refus motivé (VEHICULE_EVT)
+      onVehiculeEvt: opts.onVehiculeEvt || function () {},
     };
 
     function statut(e, info) {
@@ -183,6 +185,13 @@
           hooks.onOverridesChunk(m.cx, m.cz, m.blocs || []);
           break;
 
+        // P-VEH (SPEC-SYNC-022) : le serveur dit si on est monté, descendu, ou refusé
+        case NP.MSG.VEHICULE_EVT: {
+          var ve = MC.ContratsArchi && MC.ContratsArchi.validerVehiculeEvt(m);
+          if (ve) hooks.onVehiculeEvt(ve);
+          break;
+        }
+
         case NP.MSG.CHAT:
           hooks.onChat({ auteur: m.auteur, texte: m.texte, type: m.type, t: m.ts });
           break;
@@ -234,11 +243,27 @@
           });
           (m.mobs || []).forEach(function (e) {
             var d = mobsDistants.get(e.e);
-            if (!d) mobsDistants.set(e.e, { eid: e.e, type: e.t, item: e.i, genre: e.g, arme: e.a,
-                                            variante: e.v, role: e.r, nom: e.n, w: 0.6, h: 1.8,
-                                            pos: { x: e.x, y: e.y, z: e.z },
-                                            cible: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw });
-            else { d.cible.x = e.x; d.cible.y = e.y; d.cible.z = e.z; d.yaw = e.yaw; }
+            if (!d) {
+              d = { eid: e.e, type: e.t, item: e.i, genre: e.g, arme: e.a,
+                    variante: e.v, role: e.r, nom: e.n, w: 0.6, h: 1.8,
+                    pos: { x: e.x, y: e.y, z: e.z },
+                    cible: { x: e.x, y: e.y, z: e.z }, yaw: e.yaw };
+              mobsDistants.set(e.e, d);
+            } else if (!d.predit) {
+              // un véhicule que NOUS conduisons est prédit (synchro.js), jamais suivi d'après le relevé
+              d.cible.x = e.x; d.cible.y = e.y; d.cible.z = e.z; d.yaw = e.yaw;
+            }
+            /* Véhicule (SPEC-SYNC-022) : de quoi le reconnaître, l'animer et — si
+               nous le conduisons un jour — le prédire (mêmes champs que le serveur). */
+            if (e.ve) {
+              d.vehicule = e.ve; d.occupe = !!e.co;
+              if (!d.predit) {
+                d.vitesse = e.vi || 0; d.carburant = e.ca; d.avarie = !!e.av; d.avarieGravite = e.av || 0;
+                d.vel = d.vel || { x: 0, y: 0, z: 0 };
+                // vitesse de déplacement pour l'animation (hélice, inclinaison de l'avion)
+                d.vel.x = -Math.sin(d.yaw || 0) * d.vitesse; d.vel.z = -Math.cos(d.yaw || 0) * d.vitesse;
+              }
+            }
           });
           if (m.toi) hooks.onToi(m.toi);
           // les mobs absents du relevé ont disparu côté serveur
@@ -260,6 +285,7 @@
         d.pos.z += (d.cible.z - d.pos.z) * k;
       });
       mobsDistants.forEach(function (d) {
+        if (d.predit) return;                       // véhicule conduit par nous : la prédiction le place
         d.pos.x += (d.cible.x - d.pos.x) * k;
         d.pos.y += (d.cible.y - d.pos.y) * k;
         d.pos.z += (d.cible.z - d.pos.z) * k;
@@ -347,6 +373,17 @@
       if (seq !== undefined) m.seq = seq;
       return envoyer(m);
     }
+    /* P-VEH (SPEC-ARCHI-021) : poser (sur le bloc visé `cible`, objet de la case
+       `i`), monter à bord, mettre pied à terre — le serveur décide de tout et
+       répond par VEHICULE_EVT ; la soute s'ouvre par ouvrirConteneur({ eid }). */
+    function poserVehicule(nom, cible, i, j) {
+      return envoyer({ t: NP.MSG.VEHICULE_POSER, j: j || 0, nom: nom, i: i === undefined ? -1 : i,
+                       x: cible.x, y: cible.y, z: cible.z, nx: cible.nx | 0, ny: cible.ny | 0, nz: cible.nz | 0 });
+    }
+    function monterVehicule(eid, j) { return envoyer({ t: NP.MSG.VEHICULE_MONTER, j: j || 0, eid: eid }); }
+    function descendreVehicule(j) { return envoyer({ t: NP.MSG.VEHICULE_DESCENDRE, j: j || 0 }); }
+    // réparer le véhicule conduit chez le forgeron `eid` (SPEC-TRANSPORT-002) : payé sur l'inventaire serveur
+    function reparerVehicule(eid, j) { return envoyer({ t: NP.MSG.VEHICULE_REPARER, j: j || 0, eid: eid }); }
     /* Panneau admin en jeu (SPEC-ADMIN-006) : une seule voie d'accès, l'action
        porte le détail. Le serveur revérifie toujours le rôle qu'il a
        lui-même attribué à la connexion — jamais un rôle affiché ici. */
@@ -368,6 +405,7 @@
       envoyer: envoyer, dormir: dormir, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
+      poserVehicule: poserVehicule, monterVehicule: monterVehicule, descendreVehicule: descendreVehicule, reparerVehicule: reparerVehicule,
       pousserPosition: pousserPosition, interpoler: interpoler,
       envoyerEntree: envoyerEntree, attaquer: attaquer, attaquerJoueur: attaquerJoueur, tirer: tirer, manger: manger, renaitre: renaitre,
       distants: distants, mobsDistants: mobsDistants,

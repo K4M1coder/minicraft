@@ -2639,45 +2639,82 @@
     await reset(g);
   });
 
-  e2e('SPEC-VEHIC-006 / SPEC-VEHIC-002 : monter en voiture, rouler au clavier, descendre avec F',
-      async function (g) {
-    var s = await reset(g);
-    s.fallFrom = null;
-    var V = MC.Vehicules;
-    // une piste plate, dégagée, au-dessus du relief
-    var y0 = Math.floor(s.pos.y) + 12;
-    for (var x = -3; x <= 3; x++) for (var z = -40; z <= 3; z++) {
-      g.world.setBlock(Math.floor(s.pos.x) + x, y0, Math.floor(s.pos.z) + z, B.STONE);
-      for (var h = 1; h <= 3; h++) g.world.setBlock(Math.floor(s.pos.x) + x, y0 + h, Math.floor(s.pos.z) + z, 0);
+  /* Une piste plate et dégagée (3 de large, `longueur` de long) devant le joueur, au niveau de
+     ses pieds : les blocs manquants se POSENT et les obstacles se CASSENT par le serveur (BLOC),
+     quel que soit le relief du point d'apparition. Rend le nombre de cases encore fautives. */
+  async function aplanirPiste(g, cap, longueur) {
+    var s = g.player.state, W = g.world, sup = Math.floor(s.pos.y - 0.05);
+    var fx = Math.round(-Math.sin(cap)), fz = Math.round(-Math.cos(cap)), lx = -fz, lz = fx;
+    var px = Math.floor(s.pos.x), pz = Math.floor(s.pos.z), cases = [];
+    for (var i = 0; i <= longueur; i++) for (var l = -1; l <= 1; l++) cases.push([px + fx * i + lx * l, pz + fz * i + lz * l]);
+    cases.forEach(function (c) { W.getChunk(Math.floor(c[0] / 16), Math.floor(c[1] / 16), true); });
+    for (var k = 0; k < cases.length; k++) {
+      var x = cases[k][0], z = cases[k][1];
+      if (W.getBlock(x, sup, z) === 0 || MC.Core.isWater(W.getBlock(x, sup, z))) { g.net.poserBloc(x, sup, z, B.STONE); await wait(12); }
+      for (var h = 1; h <= 3; h++) if (W.getBlock(x, sup + h, z) !== 0) { g.net.poserBloc(x, sup + h, z, 0); await wait(12); }
     }
-    var auto = V.poser(g.entities, 'voiture', Math.floor(s.pos.x) + 0.5, y0 + 1, Math.floor(s.pos.z) + 0.5, 0);
-    await frames(3);
-    A.ok(g.monterDans(auto), 'on monte');
-    A.equal(s.monture, auto, 'le joueur est au volant');
-    var z0 = auto.pos.z;
+    var fautives = cases.length;
+    for (var t = 0; t < 50 && fautives; t++) {
+      fautives = cases.filter(function (c) {
+        return W.getBlock(c[0], sup, c[1]) === 0 || [1, 2, 3].some(function (h) { return W.getBlock(c[0], sup + h, c[1]) !== 0; });
+      }).length;
+      if (fautives) await wait(100);
+    }
+    return fautives;
+  }
+
+  e2e('SPEC-VEHIC-006 / SPEC-VEHIC-002 / SPEC-ARCHI-021 : poser, monter, rouler au clavier et descendre avec F — sur le serveur', {
+        "teste": "qu'un véhicule se pose, se monte, se conduit au clavier et se quitte par le serveur local : la voiture posée vient du serveur (réplique de net.mobsDistants), le joueur y monte à la réponse du serveur, la prédiction la conduit au clavier sans s'écarter de l'état du serveur, et F fait descendre",
+        "pourquoi": "les véhicules n'existent plus que dans le serveur (solo fermé, écran partagé et réseau : un seul chemin) ; une conduite simulée par la page elle-même ne prouverait plus rien",
+        "attendu": "la voiture apparaît dans net.mobsDistants, s.monture devient cette réplique, elle avance de plusieurs blocs sans correction du serveur de plus d'un bloc, le conducteur la suit, le HUD affiche des km/h, F remet le joueur à pied à côté de l'engin"
+  }, async function (g) {
+    if (!(await serveurPresent())) { A.ok(true, 'serveur absent : test ignore'); return; }
+    await reset(g);
+    g.rejoindreServeur({ pseudo: 'Pilote' + Date.now() % 100000, joueurs: 1 });
+    for (var t = 0; t < 40 && g.net.etat !== 'en ligne'; t++) await wait(100);
+    A.equal(g.net.etat, 'en ligne', 'connecté au serveur');
+    await wait(500);
+    var s = g.player.state;
+    // une piste plate et dégagée devant le joueur, bâtie par le serveur ; il apprend le cap par les entrées
+    s.yaw = 0;
+    await frames(15);
+    A.equal(await aplanirPiste(g, 0, 5), 0, 'la piste est plate et dégagée (blocs posés et cassés par le serveur)');
+    var sol = Math.floor(s.pos.y - 0.05);
+    var cible = { x: Math.floor(s.pos.x), y: sol, z: Math.floor(s.pos.z), nx: 0, ny: 1, nz: 0 };
+    A.ok(g.world.getBlock(cible.x, cible.y, cible.z) !== 0, 'le bloc visé est plein');
+    g.poserVehicule(g.player, 'voiture', cible, 0);
+    var auto = null;
+    for (var u = 0; u < 40 && !auto; u++) {
+      await wait(100);
+      g.net.mobsDistants.forEach(function (m) { if (m.vehicule === 'voiture') auto = m; });
+    }
+    A.ok(auto, 'la voiture posée vient du serveur (réplique dans net.mobsDistants)');
+    if (!auto) { g.net.deconnecter(); await wait(300); return; }
+    A.ok(g.monterDans(auto), 'la demande de montée part');
+    for (var v = 0; v < 40 && s.monture !== auto; v++) await wait(100);
+    A.equal(s.monture, auto, 'le serveur accepte : le joueur est au volant de la réplique');
+    A.ok(auto.predit, 'la réplique est prédite (plus interpolée)');
+    var x0 = auto.pos.x, z0 = auto.pos.z;
     key('KeyW');
-    // 7 m/s² d'accélération : deux secondes de temps SIMULÉ (g.duree) donnent
-    // une bonne dizaine de blocs. On attend ce temps simulé, pas un nombre
-    // fixe d'images réelles : poser la piste ci-dessus dirtie plusieurs
-    // chunks d'un coup, et remeshDirtyNear() les reconstruit ensuite au fil
-    // des images (jusqu'à 3 par image, maillage fusionné — coûteux) ; le
-    // clamp dt (SPEC-BANC-010, 0.05 s/image, filet anti-explosion) réduit
-    // alors le temps simulé sous ce que 120 images laissaient supposer,
-    // d'autant plus qu'une image tarde. 120 images réelles n'ont donc plus
-    // rien de garanti côté horloge simulée — seul g.duree en fait foi.
-    var dureeCible = g.duree + 2, garde = 0;
+    // 7 m/s² d'accélération : une seconde de temps SIMULÉ (g.duree) donne plus de trois
+    // blocs. On attend ce temps simulé, pas un nombre fixe d'images réelles
+    // (le clamp dt, SPEC-BANC-010, rend les images réelles peu fiables comme horloge).
+    var dureeCible = g.duree + 1.0, garde = 0;
     while (g.duree < dureeCible && garde++ < 600) await frames(1);
     key('KeyW', 'keyup');
-    A.ok(auto.pos.z < z0 - 5, 'la voiture a avancé (' + (z0 - auto.pos.z).toFixed(1) + ' blocs)');
-    A.ok(Math.abs(s.pos.z - auto.pos.z) < 0.01, 'le conducteur a suivi');
+    var parcouru = Math.hypot(auto.pos.x - x0, auto.pos.z - z0);
+    A.ok(parcouru > 2, 'la voiture a avancé (' + parcouru.toFixed(1) + ' blocs)');
+    A.ok(Math.abs(s.pos.x - auto.pos.x) < 0.01 && Math.abs(s.pos.z - auto.pos.z) < 0.01, 'le conducteur a suivi');
+    A.ok(g.ecartReseau < 1, 'la prédiction colle au serveur (dernière correction : ' + (g.ecartReseau || 0).toFixed(3) + ' bloc)');
     var hud = document.querySelector('.debug') || document.body;
     A.ok(/km\/h/.test(hud.textContent || document.body.textContent), 'le HUD affiche la vitesse');
     key('KeyF');
-    await frames(3);
-    A.equal(s.monture, null, 'F : pied à terre');
+    for (var w = 0; w < 40 && s.monture; w++) await wait(100);
+    A.notOk(s.monture, 'F : pied à terre (le serveur a fait descendre)');
+    A.notOk(auto.predit, 'et la voiture est de nouveau suivie d après le relevé du serveur');
     A.notOk(P.collides(g.world, s.pos.x, s.pos.y, s.pos.z, 0.6, 1.8), 'à côté de la voiture, pas dedans');
-    g.entities.remove(auto);
-    await reset(g);
+    g.net.deconnecter();
+    await wait(300);
   });
 
   e2e('SPEC-HUD-001 / SPEC-HUD-003 : une bascule masque .debug seul, F1 masque puis rétablit tout le HUD', async function (g) {

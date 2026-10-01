@@ -62,8 +62,15 @@
     if (!d) return null;
     var e = entities.spawn(typeEntite(nom), x, y, z, { vehicule: nom, yaw: yaw || 0, vitesse: 0,
                                                        conducteur: null, carburant: d.carburant });
-    if (d.soute && MC.Inventory) e.soute = MC.Inventory.create(d.soute);
+    if (d.soute && MC.Inventory) e.soute = equiperSoute(MC.Inventory.create(d.soute), d.soute);
     return e;
+  }
+  /* La soute est un conteneur serveur comme un autre (SPEC-SYNC-022) : le type
+     et la taille (conteneurs.js, TYPES_CONTENEUR « soute9 »/« soute27 ») et la
+     révision (delta de CONTENEUR_MAJ) la rendent adressable par la clé « v<eid> ». */
+  function equiperSoute(inv, taille) {
+    inv.type = 'soute' + taille; inv.taille = taille; inv.rev = 0;
+    return inv;
   }
 
   /* SPEC-TRANSPORT-001 : consomme le carburant proportionnellement à la
@@ -361,6 +368,31 @@
     return true;
   }
 
+  /* ── Synchronisation (SPEC-SYNC-022, SPEC-NET-026) ───────────────────────
+     Les commandes de conduite voyagent dans les touches de ENTREE (les six
+     bits de MC.Synchro) : avant/arrière/gauche/droite, saut = monter,
+     course = descendre. Le serveur intègre ; le client prédit avec le MÊME
+     code (conduire) sur la réplique du véhicule qu'il tient à bord. */
+  function commandeDeTouches(k) {
+    k = k || {};
+    return { avant: k.forward, arriere: k.back, gauche: k.left, droite: k.right,
+             monter: k.jump, descendre: k.sprint };
+  }
+  /* État complet d'un véhicule conduit, à pleine précision (une valeur
+     arrondie ferait diverger la prédiction du client de celle du serveur). */
+  function etatSync(e) {
+    return { eid: e.eid, x: e.pos.x, y: e.pos.y, z: e.pos.z, yaw: e.yaw || 0,
+             vit: e.vitesse || 0, vx: e.vel.x, vy: e.vel.y, vz: e.vel.z, sol: e.onGround ? 1 : 0,
+             carb: e.carburant == null ? null : e.carburant, av: e.avarie ? (e.avarieGravite || 1) : 0 };
+  }
+  function appliquerSync(e, s) {
+    e.pos.x = s.x; e.pos.y = s.y; e.pos.z = s.z; e.yaw = s.yaw;
+    e.vitesse = s.vit; e.vel.x = s.vx; e.vel.y = s.vy; e.vel.z = s.vz;
+    e.onGround = !!s.sol;
+    if (typeof s.carb === 'number') e.carburant = s.carb;
+    e.avarie = s.av > 0; e.avarieGravite = s.av > 0 ? s.av | 0 : 0;
+  }
+
   function vitesseKmh(e) { return Math.round(Math.hypot(e.vel.x, e.vel.y, e.vel.z) * 3.6); }
 
   // ─── sauvegarde ─────────────────────────────────────────────────────────────
@@ -380,7 +412,7 @@
     (data || []).forEach(function (v) {
       var e = poser(entities, v[0], v[1], v[2], v[3], v[4]);
       if (!e) return;
-      if (e.soute && v[5]) e.soute.load(v[5]);
+      if (e.soute && v[5]) { e.soute.load(v[5]); e.soute.rev = 0; }
       if (v[6] != null) e.carburant = v[6];               // sinon : plein (anciennes sauvegardes)
       if (v[7]) { e.avarie = true; e.avarieGravite = v[7]; }
       n++;
@@ -392,7 +424,8 @@
                    gabarits: gabarits, poser: poser, conduire: conduire, milieuDe: milieuDe,
                    vmaxDans: vmaxDans, surfaceEau: surfaceEau, siege: siege, monter: monter,
                    descendre: descendre, caler: caler, vitesseKmh: vitesseKmh,
-                   serialiser: serialiser, restaurer: restaurer, rouler: rouler, railEn: railEn,
+                   serialiser: serialiser, restaurer: restaurer, commandeDeTouches: commandeDeTouches,
+                   etatSync: etatSync, appliquerSync: appliquerSync, equiperSoute: equiperSoute, rouler: rouler, railEn: railEn,
                    // SPEC-TRANSPORT-002 : collision, avarie, réparation au forgeron
                    SEUIL_COLLISION: SEUIL_COLLISION, PENALITE_AVARIE: PENALITE_AVARIE,
                    COUT_REPARATION: COUT_REPARATION, graviteChoc: graviteChoc,

@@ -97,6 +97,10 @@
     furnace:      { taille: 3, four: true },
     banque:       { taille: 27, parJoueur: true },
     grille:       { taille: 9, parJoueur: true, transitoire: true },
+    /* Soute d'un véhicule (P-VEH, SPEC-SYNC-022) : clé « v<eid> », jamais persistée ici
+       (elle l'est avec son véhicule, vehicules.js serialiser). */
+    soute9:       { taille: 9, soute: true },
+    soute27:      { taille: 27, soute: true },
   };
   // cases d'un fourneau (conteneur 'furnace') : entrée, combustible, sortie
   var FOUR = { ENTREE: 0, COMBUSTIBLE: 1, SORTIE: 2 };
@@ -205,6 +209,7 @@
   function cleConteneur(x, y, z) { return (x | 0) + ',' + (y | 0) + ',' + (z | 0); }
   function lireCle(cle) {
     if (cle === 'banque' || cle === 'grille') return { propre: cle };
+    if (typeof cle === 'string' && /^v[1-9][0-9]{0,8}$/.test(cle)) return { vehicule: +cle.slice(1) };   // soute de véhicule
     if (typeof cle !== 'string' || cle.length > 40) return null;
     var p = cle.split(',');
     if (p.length !== 3) return null;
@@ -262,9 +267,9 @@
   function validerConteneurPersiste(o) {
     if (!o || typeof o !== 'object') return null;
     var t = TYPES_CONTENEUR[o.type];
-    if (!t || t.parJoueur) return null;
+    if (!t || t.parJoueur || t.soute) return null;
     var cle = lireCle(o.cle);
-    if (!cle || cle.propre) return null;
+    if (!cle || cle.propre || cle.vehicule !== undefined) return null;
     var slots = validerCases(o.slots, t.taille);
     if (!slots) return null;
     var out = { cle: o.cle, type: o.type, slots: slots };

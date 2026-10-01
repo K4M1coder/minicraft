@@ -29,11 +29,22 @@
     DORMIR: 'dormir',                     // c→s : { j, actif } — un joueur local se couche / se lève (lot B-ENV)
     HISTOIRE_ETAT: 'histoire_etat',       // s→c : { j, etat } — état du récit d'un joueur (lot P-HIST)
     SUCCES_DEBLOQUE: 'succes_debloque',   // s→c : { j, id } — un succès vient d'être obtenu (lot P-SUCC)
+    // lot P-VEH (SPEC-ARCHI-021, SPEC-SYNC-022) : les véhicules sont simulés par le serveur
+    VEHICULE_POSER: 'vehicule_poser',     // c→s : { j, nom, i, x, y, z, nx, ny, nz } — poser un véhicule sur le bloc visé (case `i` de l'inventaire)
+    VEHICULE_MONTER: 'vehicule_monter',   // c→s : { j, eid } — monter à bord (la soute s'ouvre par CONTENEUR_OUVRIR { eid })
+    VEHICULE_DESCENDRE: 'vehicule_descendre', // c→s : { j } — mettre pied à terre
+    VEHICULE_REPARER: 'vehicule_reparer', // c→s : { j, eid } — réparer le véhicule conduit chez le forgeron eid (SPEC-TRANSPORT-002)
+    VEHICULE_EVT: 'vehicule_evt',         // s→c : { j, evt, nom?, motif? } — à bord / pied à terre / refus motivé
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
     dormir: 'c>s', histoire_etat: 's>c', succes_debloque: 's>c',
+    vehicule_poser: 'c>s', vehicule_monter: 'c>s', vehicule_descendre: 'c>s', vehicule_reparer: 'c>s', vehicule_evt: 's>c',
   };
+  // évènements de VEHICULE_EVT et motifs de refus, listes fermées
+  var EVT_VEHICULE = { POSE: 'pose', MONTE: 'monte', DESCEND: 'descend', REPARE: 'repare', REFUS: 'refus' };
+  var MOTIFS_VEHICULE = { PORTEE: 'portee', OCCUPE: 'occupe', DEJA_A_BORD: 'deja_a_bord', INCONNU: 'inconnu',
+                          PLACE: 'place', INVENTAIRE: 'inventaire', MORT: 'mort' };
 
   /* État du réseau tel que le CLIENT le lit (jamais `net.enLigne()`, qui est
      toujours vrai : tout joueur passe par un serveur). `ferme` : serveur local,
@@ -61,10 +72,15 @@
     JOUEURS_LOCAUX_MAX: 4,
     PARTIE_ID_MAX: 64,
     PARTIES_MAX: 500,
+    COORD_MAX: 10000000,        // = NP.COORD_MAX (SPEC-SECU-008), dupliqué : aucune dépendance
+    WORLD_H: 128,               // = C.WORLD_H, dupliqué pour la même raison
+    VEHICULE_NOM_MAX: 16,       // longueur d'un nom de véhicule (« sous_marin »)
+    PORTEE_VEHICULE: 6,         // blocs : monter, poser (œil du joueur → véhicule ou bloc visé)
   };
   /* Budgets anti-flood des messages c→s, en messages par seconde et par
      connexion (ou par joueur local pour DORMIR). */
-  var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10 };
+  var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10,
+                        vehicule_poser: 5, vehicule_monter: 10, vehicule_descendre: 10, vehicule_reparer: 5 };
 
   // ─── primitives ────────────────────────────────────────────────────────────
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
@@ -92,6 +108,55 @@
     if (j < 0) return null;
     return { t: MSG.DORMIR, j: j, actif: m.actif };
   }
+  // ── lot P-VEH : poser, monter, descendre ──
+  function coordH(v) { return estEntier(v) && Math.abs(v) <= BORNES.COORD_MAX; }
+  function normale(v) { return v === -1 || v === 0 || v === 1; }
+  function validerVehiculePoser(m) {
+    if (!objet(m) || m.t !== MSG.VEHICULE_POSER) return null;
+    if (typeof m.nom !== 'string' || !/^[a-z_]+$/.test(m.nom) || m.nom.length > BORNES.VEHICULE_NOM_MAX) return null;
+    if (!coordH(m.x) || !entierDans(m.y, 0, BORNES.WORLD_H - 1) || !coordH(m.z)) return null;
+    if (!normale(m.nx) || !normale(m.ny) || !normale(m.nz)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.VEHICULE_POSER, j: j, nom: m.nom, i: entierDans(m.i, 0, 8) ? m.i : -1,
+             x: m.x, y: m.y, z: m.z, nx: m.nx, ny: m.ny, nz: m.nz };
+  }
+  function validerVehiculeMonter(m) {
+    if (!objet(m) || m.t !== MSG.VEHICULE_MONTER || !entierDans(m.eid, 0, BORNES.REV_MAX)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.VEHICULE_MONTER, j: j, eid: m.eid };
+  }
+  function validerVehiculeReparer(m) {
+    if (!objet(m) || m.t !== MSG.VEHICULE_REPARER || !entierDans(m.eid, 0, BORNES.REV_MAX)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.VEHICULE_REPARER, j: j, eid: m.eid };
+  }
+  function validerVehiculeDescendre(m) {
+    if (!objet(m) || m.t !== MSG.VEHICULE_DESCENDRE) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.VEHICULE_DESCENDRE, j: j };
+  }
+  function validerVehiculeEvt(m) {
+    if (!objet(m) || m.t !== MSG.VEHICULE_EVT) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    var evts = Object.keys(EVT_VEHICULE).map(function (k) { return EVT_VEHICULE[k]; });
+    if (evts.indexOf(m.evt) < 0) return null;
+    var out = { t: MSG.VEHICULE_EVT, j: j, evt: m.evt };
+    if (m.nom !== undefined) {
+      if (typeof m.nom !== 'string' || !/^[a-z_]+$/.test(m.nom) || m.nom.length > BORNES.VEHICULE_NOM_MAX) return null;
+      out.nom = m.nom;
+    }
+    if (m.motif !== undefined) {
+      var motifs = Object.keys(MOTIFS_VEHICULE).map(function (k) { return MOTIFS_VEHICULE[k]; });
+      if (motifs.indexOf(m.motif) < 0) return null;
+      out.motif = m.motif;
+    }
+    return out;
+  }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
     if (!objet(m) || typeof m.t !== 'string') return null;
@@ -100,6 +165,10 @@
       case MSG.RESEAU: return validerReseau(m);
       case MSG.ARRET: return validerArret(m);
       case MSG.DORMIR: return validerDormir(m);
+      case MSG.VEHICULE_POSER: return validerVehiculePoser(m);
+      case MSG.VEHICULE_MONTER: return validerVehiculeMonter(m);
+      case MSG.VEHICULE_DESCENDRE: return validerVehiculeDescendre(m);
+      case MSG.VEHICULE_REPARER: return validerVehiculeReparer(m);
       default: return null;
     }
   }
@@ -147,6 +216,7 @@
       case MSG.RESEAU_ETAT: return validerReseauEtat(m);
       case MSG.HISTOIRE_ETAT: return validerHistoireEtat(m);
       case MSG.SUCCES_DEBLOQUE: return validerSuccesDebloque(m);
+      case MSG.VEHICULE_EVT: return validerVehiculeEvt(m);
       default: return null;
     }
   }
@@ -181,6 +251,9 @@
     validerArret: validerArret, validerDormir: validerDormir,
     validerRecu: validerRecu, validerPauseEtat: validerPauseEtat, validerReseauEtat: validerReseauEtat,
     validerHistoireEtat: validerHistoireEtat, validerSuccesDebloque: validerSuccesDebloque,
+    EVT_VEHICULE: EVT_VEHICULE, MOTIFS_VEHICULE: MOTIFS_VEHICULE,
+    validerVehiculePoser: validerVehiculePoser, validerVehiculeMonter: validerVehiculeMonter,
+    validerVehiculeDescendre: validerVehiculeDescendre, validerVehiculeReparer: validerVehiculeReparer, validerVehiculeEvt: validerVehiculeEvt,
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

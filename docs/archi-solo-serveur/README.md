@@ -39,7 +39,7 @@ Par thème, avec la fiche et le lot (la table ligne par ligne est au § 4) :
 
 | Thème | Lignes | Hors ligne aujourd'hui | En ligne aujourd'hui | Fiche | Lot |
 |---|---|---|---|---|---|
-| Véhicules | 2057 | conduite simulée dans `game.js` | refusée (« pas disponibles en ligne ») | 021 | P-VEH |
+| Véhicules | 2057 | conduite simulée dans `game.js` | refusée (« pas disponibles en ligne ») ; **depuis P-VEH : simulés par le serveur pour tous (SYNC-022)** | 021 | P-VEH |
 | Tornades, foudre | 1044, 1087 | poussée et dégâts calculés côté client | simulés par le serveur (`avancerCatastrophes`) | 022 | B-ENV |
 | Bombes et coulées volcaniques | 923, 934 | projectiles et lave posés côté client | aucun équivalent serveur | 023 | B-ENV |
 | Peuplement des lieux | 1211 | `peuplerLieux` client | le serveur les fait vivre | 024 | B-ENV |
@@ -309,7 +309,8 @@ perdus. Les véhicules (P-VEH) peuvent, faute de temps, partir après une
 publication à condition qu'elle soit **marquée régressive** : commit `feat!`
 (rupture), CHANGELOG « Supprimé » listant les véhicules, README « Limites
 connues » mis à jour. Les bombes volcaniques sont dans tous les cas listées
-dans « Supprimé ».
+dans « Supprimé ». *P-VEH est fait : les véhicules sont simulés par le serveur, la
+publication n'a donc plus à être marquée régressive pour eux.*
 
 ## 9. Risques et parades
 

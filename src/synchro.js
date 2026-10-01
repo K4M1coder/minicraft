@@ -68,18 +68,47 @@
     return entrees.length;
   }
 
+  /* Véhicule (SPEC-SYNC-022) : le serveur dit à bord de QUEL véhicule le joueur
+     se trouve (`serveur.veh`, absent à pied). `trouver(eid)` rend la réplique
+     du véhicule que le client connaît (net.mobsDistants) : on s'y embarque pour
+     prédire sa conduite, ou on la quitte quand le serveur nous a fait descendre.
+     La réplique prédite cesse d'être interpolée (`predit`). */
+  function ajusterMonture(joueur, serveur, trouver) {
+    var st = joueur.state, v = serveur.veh;
+    var mt = st.monture;
+    if (mt && (!v || mt.eid !== v.eid)) {
+      mt.conducteur = null; mt.predit = false;
+      if (mt.cible) { mt.cible.x = mt.pos.x; mt.cible.y = mt.pos.y; mt.cible.z = mt.pos.z; }
+      st.monture = null;
+    }
+    if (v && !st.monture && trouver) {
+      var rep = trouver(v.eid);
+      if (rep) {
+        rep.conducteur = st; rep.predit = true;
+        rep.vel = rep.vel || { x: 0, y: 0, z: 0 };
+        st.monture = rep;
+      }
+    }
+    if (v && st.monture && st.monture.eid === v.eid && MC.Vehicules) MC.Vehicules.appliquerSync(st.monture, v);
+    return st.monture;
+  }
+
   /* Réconciliation : on adopte l'état du serveur, puis on rejoue les entrées
      qu'il n'a pas encore traitées. Renvoie l'écart entre la position prédite
      avant correction et celle qui en résulte (0 quand la prédiction était
      juste — le cas courant). */
-  function reconcilier(joueur, serveur, prediction) {
+  function reconcilier(joueur, serveur, prediction, trouver) {
     var st = joueur.state;
     var avant = { x: st.pos.x, y: st.pos.y, z: st.pos.z };
+    ajusterMonture(joueur, serveur, trouver);
     st.pos.x = serveur.x; st.pos.y = serveur.y; st.pos.z = serveur.z;
     st.vel.x = serveur.vx || 0; st.vel.y = serveur.vy || 0; st.vel.z = serveur.vz || 0;
     st.onGround = !!serveur.sol;
     if (typeof serveur.chute === 'number') st.fallFrom = serveur.chute;
     else st.fallFrom = null;
+    /* À bord côté serveur mais réplique pas encore reçue : rejouer les entrées
+       comme une marche à pied ferait dériver le joueur hors de son siège. */
+    if (serveur.veh && !st.monture) { prediction.confirmer(serveur.s); return Math.hypot(st.pos.x - avant.x, st.pos.y - avant.y, st.pos.z - avant.z); }
     rejouer(joueur, prediction.confirmer(serveur.s));
     return Math.hypot(st.pos.x - avant.x, st.pos.y - avant.y, st.pos.z - avant.z);
   }
@@ -107,7 +136,7 @@
      vitesse, sol, chute en cours, et les statistiques qui font foi. */
   function etatJoueur(joueur, dernier) {
     var st = joueur.state;
-    return {
+    var e = {
       /* Pleine précision : arrondie, la position pourrait tomber un demi-
          millième DANS un mur, où le joueur resterait coincé. */
       s: dernier, x: st.pos.x, y: st.pos.y, z: st.pos.z,
@@ -115,6 +144,9 @@
       sol: st.onGround ? 1 : 0, chute: st.fallFrom === null ? null : st.fallFrom,
       pv: st.hp, faim: st.hunger, air: +st.air.toFixed(1), mort: st.dead ? 1 : 0,
     };
+    // à bord : l'état exact du véhicule conduit (SPEC-SYNC-022)
+    if (st.monture && !st.monture.dead && MC.Vehicules) e.veh = MC.Vehicules.etatSync(st.monture);
+    return e;
   }
   // les statistiques du serveur écrasent celles du client
   function appliquerStats(st, e) {
@@ -126,6 +158,6 @@
 
   MC.Synchro = { TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
-                 creerBudget: creerBudget, etatJoueur: etatJoueur, appliquerStats: appliquerStats,
+                 creerBudget: creerBudget, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
                  DT_MAX: DT_MAX, RESERVE: RESERVE, arrondi: arrondi };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

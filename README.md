@@ -499,7 +499,9 @@ l'établi (roues, moteur, hélice), posés d'un clic droit ; clic droit sur l'en
 pour monter, ZQSD pour conduire, Espace/Maj pour monter/descendre en avion et en
 sous-marin, **F** pour descendre, Maj + clic droit pour ouvrir la soute du camion.
 Les engins à roues franchissent les marches d'un bloc. Ils sont sauvegardés, avec
-leur chargement.
+leur chargement. Le serveur les simule (pose, montée, conduite, carburant, soute) : en
+solo, en écran partagé et en réseau, c'est le même chemin, et la voiture que vous
+conduisez est prédite comme votre propre déplacement.
 
 **Recettes.** Plus de 75 : outils en diamant, arbalète, flèches empennées, échelles,
 bibliothèques, lanternes, prismarine, grès taillé, briques de glace, laine et terre
@@ -639,15 +641,14 @@ fréquente de coupures aléatoires dans un serveur WebSocket écrit à la main.
 - Le livre des objets propose tous les blocs cassables, y compris ceux qu'on ne
   trouve pas en jouant (terre labourée par exemple) ; seuls les stades de croissance
   du blé en sont écartés.
-- Les véhicules ne sont pas disponibles en ligne (le serveur ne les simule pas).
 - L'avion et le sous-marin se pilotent au clavier ; à la manette, on monte avec
   « utiliser » et l'on descend avec le bouton de vol.
 - Les créatures ne poursuivent que le joueur 1 d'un écran partagé.
 - Pas de greedy meshing ; tout tourne sur le thread principal.
 - Les parties vivent sur le disque du serveur (dossier `parties/`) ; seules les
   anciennes parties du navigateur passent par l'import (voir « Lancer »). Le serveur
-  conserve sans encore les jouer les cartes explorées, l'histoire, les succès et les
-  véhicules d'une partie importée.
+  conserve sans encore les jouer les cartes explorées, l'histoire et les succès d'une
+  partie importée (ses véhicules, eux, sont repris et joués).
 - Le journal d'administration ne couvre pas encore coffres et échanges.
 - Le PvP ne s'applique qu'en ligne : en écran partagé, les joueurs locaux ne se
   combattent pas.

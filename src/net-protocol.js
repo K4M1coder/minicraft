@@ -117,6 +117,10 @@
      plafond, à part de celui des créatures — sinon un objet lâché à côté d'un
      joueur pouvait être écarté d'ETAT par 80 créatures plus proches. */
   var MAX_ITEMS_DIFFUSES = 64;
+  /* MAX_VEHICULES_DIFFUSES (SPEC-SYNC-022) : les véhicules ont eux aussi leur plafond
+     propre — jamais évincés par les créatures, jamais plus nombreux que ce qu'un
+     client peut voir à portée : à 100 joueurs la diffusion reste bornée par client. */
+  var MAX_VEHICULES_DIFFUSES = 32;
   // PORTEE_MOBS_DIFFUSES : au-delà, une entité n'est plus envoyée à un client
   // (voir server.js — habitants des villes lointaines).
   var PORTEE_MOBS_DIFFUSES = 96;
@@ -449,7 +453,7 @@
     estRequeteWebSocket: estRequeteWebSocket,
     origineAutorisee: origineAutorisee,
     CSP_STATIQUE: CSP_STATIQUE, entetesSecuriteStatiques: entetesSecuriteStatiques,
-    MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, MAX_ITEMS_DIFFUSES: MAX_ITEMS_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
+    MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, MAX_ITEMS_DIFFUSES: MAX_ITEMS_DIFFUSES, MAX_VEHICULES_DIFFUSES: MAX_VEHICULES_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
     selectionnerMobsProches: selectionnerMobsProches,
     ETAT_HZ_MIN: ETAT_HZ_MIN, SEUIL_FILE_OCTETS: SEUIL_FILE_OCTETS,
     PALIERS_ETAT_HZ: PALIERS_ETAT_HZ, calculerEtatHz: calculerEtatHz,

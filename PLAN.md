@@ -254,7 +254,7 @@ sur master après revue adversariale (un tour de corrections chacun). Fiches enc
 ⏳ : SPEC-ARCHI-001 et 020 (audits finaux, à refermer une fois les portages faits),
 043 et 044 (présentoirs, coffres piégés : refusés proprement en attendant),
 SPEC-SYNC-024 (relations de factions PNJ à la connexion), ainsi que les portages
-P-VEH (021), P-HIST (041) et P-SUCC (042) — la vague ne se publie pas avant P-HIST
+P-HIST (041) et P-SUCC (042) — les véhicules (P-VEH, 021, SYNC-022, SERVEUR-006) sont portés au serveur ; la vague ne se publie pas avant P-HIST
 et P-SUCC. Bug ancien à traiter à part : les circuits referment au tic suivant une
 porte ouverte à la main.
 

@@ -15,11 +15,12 @@
     attendu: 'chaque validateur accepte exactement le message bien formé, le normalise en copie, et renvoie null (sans exception) pour tout message sans champ, de mauvais type ou hors borne ; NP.MSG contient les nouveaux types.',
   }, function () {
 
-    it('SPEC-ARCHI-019 : les huit types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
-      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE'];
-      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces huit types');
+    it('SPEC-ARCHI-019 : les types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
+      var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE',
+                      'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER', 'VEHICULE_EVT'];
+      A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
-      A.equal(new Set(valeurs).size, 8, 'aucun doublon interne');
+      A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
       attendus.forEach(function (k) {
         A.equal(NP.MSG[k], K.MSG[k], 'NP.MSG.' + k + ' fusionné tel quel');
         A.ok(['c>s', 's>c'].indexOf(K.SENS[K.MSG[k]]) >= 0, 'sens défini pour ' + k);
@@ -100,6 +101,39 @@
         A.equal(K.validerRecu(m), null);
         A.equal(K.valider(m), null);
       });
+    });
+
+    it('SPEC-ARCHI-021 : VEHICULE_POSER, MONTER, DESCENDRE, REPARER — forme correcte acceptée en copie, le reste rejeté ; routés par NP.valider', function () {
+      var p = { t: 'vehicule_poser', j: 1, nom: 'sous_marin', i: 3, x: 10, y: 64, z: -5, nx: 0, ny: 1, nz: 0, extra: 1 };
+      var v = K.validerVehiculePoser(p);
+      A.deep(v, { t: 'vehicule_poser', j: 1, nom: 'sous_marin', i: 3, x: 10, y: 64, z: -5, nx: 0, ny: 1, nz: 0 });
+      A.ok(v !== p, 'copie');
+      A.deep(NP.valider(p), v, 'NP.valider route le message vers le contrat');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', nom: 'voiture', x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 }).i, -1, 'case absente = une case quelconque');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', nom: 'Voiture', x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 }), null, 'nom en minuscules seulement');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', nom: 'voiture', x: 0, y: 500, z: 0, nx: 0, ny: 1, nz: 0 }), null, 'y hors du monde');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', nom: 'voiture', x: 1e9, y: 5, z: 0, nx: 0, ny: 1, nz: 0 }), null, 'x hors borne');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', nom: 'voiture', x: 0, y: 5, z: 0, nx: 2, ny: 0, nz: 0 }), null, 'normale hors {-1,0,1}');
+      A.equal(K.validerVehiculePoser({ t: 'vehicule_poser', j: 7, nom: 'voiture', x: 0, y: 5, z: 0, nx: 0, ny: 1, nz: 0 }), null, 'j hors borne');
+      A.deep(K.validerVehiculeMonter({ t: 'vehicule_monter', eid: 12 }), { t: 'vehicule_monter', j: 0, eid: 12 });
+      A.equal(K.validerVehiculeMonter({ t: 'vehicule_monter', eid: -1 }), null);
+      A.equal(K.validerVehiculeMonter({ t: 'vehicule_monter', eid: 'x' }), null);
+      A.equal(K.validerVehiculeMonter({ t: 'vehicule_monter' }), null);
+      A.deep(K.validerVehiculeDescendre({ t: 'vehicule_descendre', j: 2 }), { t: 'vehicule_descendre', j: 2 });
+      A.equal(K.validerVehiculeDescendre({ t: 'vehicule_descendre', j: 9 }), null);
+      A.deep(K.validerVehiculeReparer({ t: 'vehicule_reparer', eid: 4 }), { t: 'vehicule_reparer', j: 0, eid: 4 });
+      A.equal(K.validerVehiculeReparer({ t: 'vehicule_reparer' }), null);
+      A.equal(NP.valider({ t: 'vehicule_evt', j: 0, evt: 'monte' }), null, 's→c refusé côté serveur');
+    });
+
+    it('SPEC-ARCHI-021 : VEHICULE_EVT — évènements et motifs en liste fermée', function () {
+      A.deep(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'monte', nom: 'camion' }), { t: 'vehicule_evt', j: 0, evt: 'monte', nom: 'camion' });
+      A.deep(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 1, evt: 'refus', motif: 'occupe' }), { t: 'vehicule_evt', j: 1, evt: 'refus', motif: 'occupe' });
+      A.deep(K.validerRecu({ t: 'vehicule_evt', j: 0, evt: 'descend' }), { t: 'vehicule_evt', j: 0, evt: 'descend' });
+      A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'explose' }), null, 'évènement inconnu');
+      A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'refus', motif: 'pasvu' }), null, 'motif inconnu');
+      A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'monte', nom: 'CAMION!' }), null, 'nom mal formé');
+      A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 9, evt: 'monte' }), null, 'j hors borne');
     });
 
     it('SPEC-ARCHI-003 : les origines locales du mode fermé sont exactement trois, figées', function () {
