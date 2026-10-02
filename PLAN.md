@@ -87,6 +87,8 @@ exécutable sous Node. Sans elle, une seule référence à `window` glissée dan
 
 Chaque lot suit le cycle S1→S7 et se termine par un commit.
 
+**Ordre d'exécution des lots restants, protocole de reprise et état coché : `docs/feuille-de-route.md`** (c'est elle qui dit par quoi continuer ; cette table dit ce que contient chaque lot).
+
 | Lot | Contenu | Domaine de spec | État |
 |---|---|---|---|
 | **L0** | Outillage : `SPECS.md`, `gates.js`, dépôt git | — | fait |
