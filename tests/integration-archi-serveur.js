@@ -62,7 +62,7 @@ async function scenarioPortEtLiaison() {
     const externes = A.adressesNonLocales();
     if (!externes.length) R.saut('SPEC-ARCHI-002 : adresses non locales', 'aucune interface réseau externe');
     for (const adr of externes) {
-      const r = await sonde(s1.port, adr);
+      const r = await sonde(s4.port, adr);                     // port 0 : jamais celui d'un serveur ouvert qui occuperait 8080 sur cette machine
       ok(r !== 'ok', 'SPEC-ARCHI-002 : ' + adr + ' ne peut pas se connecter (' + r + ')', 'connexion acceptée depuis ' + adr);
       ok(r === 'ECONNREFUSED' || r === 'delai' || r === 'ETIMEDOUT' || r === 'EHOSTUNREACH', 'SPEC-ARCHI-002 : ' + adr + ' → refus de connexion', 'code ' + r);
     }

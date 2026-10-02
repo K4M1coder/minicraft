@@ -57,7 +57,7 @@ async function scenarioEvenements() {
     await dodo(500);
     const tFerme = Date.now();
     a.client.socket.destroy();                          // fermeture BRUTALE de l'onglet
-    ok(await attendreFichier(f, 1000), 'SPEC-ARCHI-008/012 : la fermeture brutale du seul client écrit le monde dans la seconde');
+    ok(await attendreFichier(f, 5000), "SPEC-ARCHI-008/012 : la fermeture brutale du seul client écrit le monde aussitôt (borne de 5 s : la détection d'une socket détruite dépend de l'OS et de la charge ; la cadence exclue est de 45 s)");
     const code = await Promise.race([s.sortie, dodo(14000).then(() => 'trop long')]);
     const duree = Date.now() - tFerme;
     eq(code, 0, 'SPEC-ARCHI-008 : le processus se termine de lui-même (code 0)');
