@@ -350,7 +350,17 @@
 
     refs.btnMenu.addEventListener('click', function () {
       refs.panneauSel.hidden = !refs.panneauSel.hidden;
+      if (!refs.panneauSel.hidden) completerUneFois();
     });
+    /* Compléments de l'arbre (catalogue Node, historique — SPEC-BANC-118)
+       chargés à la PREMIÈRE ouverture de la sélection, jamais au chargement :
+       une campagne e2e sans fenêtre ouvre cette page sans jamais regarder
+       l'arbre, et ne doit pas payer le calcul du catalogue Node (un
+       processus à part, quelques secondes de CPU) pendant ses mesures. */
+    function completerUneFois() {
+      if (!etat.complement) etat.complement = completerCatalogue().then(construireArbre, function () { /* arbre du navigateur seul */ });
+      return etat.complement;
+    }
 
     G.MC_TESTS.PRESETS.forEach(function (p) {
       refs.presets.appendChild(el('option', { value: p.nom }, [p.nom + ' — ' + p.description]));
@@ -797,19 +807,28 @@
     });
 
     // ── initialisation du catalogue ──────────────────────────────────────────
-    /* SPEC-BANC-118 : les tests que cette page ne peut pas charger
-       (intégration, fichiers Node seulement, tests disparus du catalogue
-       courant) restent CONSULTABLES : la liste des tests connus de
-       l'historique (/tests/historique/tests) les ajoute à l'arbre, non
-       cochables, avec leur lien « historique ». Sans serveur d'historique
-       (fichier ouvert hors serveur, route en erreur), l'arbre reste celui du
-       catalogue — jamais une page blanche. */
-    async function completerDepuisHistorique() {
-      var connus = [];
+    /* SPEC-BANC-118 : les tests que cette page ne peut pas charger restent
+       CONSULTABLES, de deux sources fusionnées :
+         1. le catalogue NODE complet (GET /tests/catalogue, publié par
+            `node tests/run.js --catalogue-json`) : fichiers Node seulement,
+            intégration, charge — visibles même sans aucun passage ;
+         2. l'historique (GET /tests/historique/tests) : nombre de passages et
+            dernier état de chaque test, et les tests disparus du catalogue
+            courant (renommés, supprimés) qui ont encore un historique.
+       Ils s'ajoutent à l'arbre, non cochables, « hors de ce banc ». Sans
+       serveur (fichier ouvert hors serveur, route en erreur), l'arbre reste
+       celui du catalogue du navigateur — jamais une page blanche. */
+    async function lireJSONSur(url) {
       try {
-        var rep = await fetch('/tests/historique/tests?rapide=tous');
-        if (rep.ok) { var j = await rep.json(); connus = Array.isArray(j && j.tests) ? j.tests : []; }
-      } catch (e) { connus = []; }
+        var rep = await fetch(url);
+        if (!rep.ok) return null;
+        return await rep.json();
+      } catch (e) { return null; }
+    }
+    async function completerCatalogue() {
+      var reponses = await Promise.all([lireJSONSur('/tests/catalogue'), lireJSONSur('/tests/historique/tests?rapide=tous')]);
+      var nodeTests = reponses[0] && Array.isArray(reponses[0].tests) ? reponses[0].tests : [];
+      var connus = reponses[1] && Array.isArray(reponses[1].tests) ? reponses[1].tests : [];
       etat.connusParCle = Object.create(null);
       etat.connusParNom = Object.create(null);
       connus.forEach(function (c) {
@@ -818,15 +837,22 @@
         etat.connusParNom[(c.type || '') + '\u0000' + (c.nom || '')] = c;
       });
       var presents = Object.create(null);
-      etat.catalogue.forEach(function (t) { presents[t.cle] = true; presents[t.type + '\u0000' + t.nom] = true; });
-      connus.forEach(function (c) {
-        if (!c || !c.cle || presents[c.cle] || presents[(c.type || '') + '\u0000' + (c.nom || '')]) return;
-        etat.catalogue.push({
-          id: c.test || c.cle, cle: c.cle, nom: c.nom || c.cle, type: c.type || 'inconnu', groupe: c.groupe || '—',
-          fichier: null, domaines: Array.isArray(c.domaines) ? c.domaines : [], specs: Array.isArray(c.specs) ? c.specs : [],
-          etiquettes: [], fonctions: [], fiche: c.fiche || null, horsNavigateur: true,
-        });
-      });
+      function marquer(t) { presents[t.cle] = true; presents[(t.type || '') + '\u0000' + (t.nom || '')] = true; }
+      function present(c) { return presents[c.cle] || presents[(c.type || '') + '\u0000' + (c.nom || '')]; }
+      etat.catalogue = etat.catalogue.filter(function (t) { return !t.horsNavigateur; });
+      etat.catalogue.forEach(marquer);
+      function ajouter(c, fichier) {
+        if (!c || !c.cle || present(c)) return;
+        var t = {
+          id: c.id || c.test || c.cle, cle: c.cle, nom: c.nom || c.cle, type: c.type || 'inconnu', groupe: c.groupe || '—',
+          fichier: fichier, domaines: Array.isArray(c.domaines) ? c.domaines : [], specs: Array.isArray(c.specs) ? c.specs : [],
+          etiquettes: Array.isArray(c.etiquettes) ? c.etiquettes : [], fonctions: [], fiche: c.fiche || null, horsNavigateur: true,
+        };
+        etat.catalogue.push(t);
+        marquer(t);
+      }
+      nodeTests.forEach(function (c) { ajouter(c, c && c.fichier || null); });
+      connus.forEach(function (c) { ajouter(c, null); });
     }
     async function init() {
       var specsIndex = {};
@@ -839,7 +865,6 @@
       // le remplaçait par son propre objet, et le catalogue perdait alors
       // TOUS les tests Node (SPEC-BANC-117)
       etat.catalogue = G.MC_TESTS.construire(G.T, G.E2E_LISTE, specsIndex);
-      await completerDepuisHistorique();
       construireArbre();
 
       var depuisURL = critereDepuisURL();
@@ -860,7 +885,7 @@
        le menu de sélection doit se refermer dès qu'on clique « Lancer », pas
        seulement à l'ouverture d'un test — vérifiable sans dépendre de la
        structure interne au-delà de ces quelques références. */
-    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon };
+    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer);

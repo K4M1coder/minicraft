@@ -107,9 +107,12 @@ function rafraichir() {
   liste.forEach(function (c) {
     var tr = document.createElement('tr');
     if (SELECTION.indexOf(c.dossier) >= 0) tr.className = 'selectionne';
+    // nom de dossier : JAMAIS inséré brut dans un attribut (revue) — argument
+    // JS échappé pour l'attribut, segment d'URL encodé
+    var jsArg = echapper(JSON.stringify(c.dossier)), url = encodeURIComponent(c.dossier);
     var totaux = c.totaux ? echapper(c.totaux.passes + '/' + c.totaux.total) : '?';
     tr.innerHTML =
-      '<td><input type="checkbox" ' + (SELECTION.indexOf(c.dossier) >= 0 ? 'checked' : '') + ' onchange="basculerSelection(\'' + c.dossier + '\', this.checked)"></td>' +
+      '<td><input type="checkbox" ' + (SELECTION.indexOf(c.dossier) >= 0 ? 'checked' : '') + ' onchange="basculerSelection(' + jsArg + ', this.checked)"></td>' +
       '<td>' + (c.debut ? echapper(new Date(c.debut).toLocaleString('fr-FR')) : '—') + '</td>' +
       '<td>' + (c.preset ? echapper(c.preset) : '—') + '</td>' +
       '<td>' + (c.source ? echapper(c.source) : '—') + '</td>' +
@@ -119,12 +122,12 @@ function rafraichir() {
       '<td>' + (c.commit ? echapper(c.commit) : '—') + '</td>' +
       '<td>' + (c.interrompue ? '<span class="badge interrompue">interrompue</span>' : '') + (c.conserve ? '<span class="badge conserve">conservé</span>' : '') + '</td>' +
       '<td>' +
-        '<a class="lien" href="/tests/resultats/' + c.dossier + '/rapport.html" target="_blank">ouvrir</a>' +
-        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=html" target="_blank">.html</a>' +
-        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=docx">.docx</a>' +
-        '<a class="lien" href="/tests/cahiers/' + c.dossier + '/export?format=pdf">.pdf</a>' +
-        '<button onclick="conserver(\'' + c.dossier + '\', ' + (!c.conserve) + ')">' + (c.conserve ? 'libérer' : 'conserver') + '</button> ' +
-        '<button class="danger" onclick="supprimer(\'' + c.dossier + '\')">supprimer</button>' +
+        '<a class="lien" href="/tests/resultats/' + url + '/rapport.html" target="_blank">ouvrir</a>' +
+        '<a class="lien" href="/tests/cahiers/' + url + '/export?format=html" target="_blank">.html</a>' +
+        '<a class="lien" href="/tests/cahiers/' + url + '/export?format=docx">.docx</a>' +
+        '<a class="lien" href="/tests/cahiers/' + url + '/export?format=pdf">.pdf</a>' +
+        '<button onclick="conserver(' + jsArg + ', ' + (!c.conserve) + ')">' + (c.conserve ? 'libérer' : 'conserver') + '</button> ' +
+        '<button class="danger" onclick="supprimer(' + jsArg + ')">supprimer</button>' +
       '</td>';
     corps.appendChild(tr);
   });
@@ -139,7 +142,7 @@ function basculerSelection(dossier, coche) {
 
 function comparerSelection() {
   if (SELECTION.length !== 2) { alert('Cochez exactement deux cahiers à comparer.'); return; }
-  fetch('/tests/cahiers/' + SELECTION[0] + '/comparer?avec=' + SELECTION[1]).then(function (r) { return r.json(); }).then(function (j) {
+  fetch('/tests/cahiers/' + encodeURIComponent(SELECTION[0]) + '/comparer?avec=' + encodeURIComponent(SELECTION[1])).then(function (r) { return r.json(); }).then(function (j) {
     var d = document.getElementById('comparaison');
     d.style.display = 'block';
     if (!j.ok) { d.textContent = 'Comparaison impossible : ' + j.motif; return; }
@@ -153,12 +156,12 @@ function comparerSelection() {
 }
 
 function conserver(dossier, valeur) {
-  fetch('/tests/cahiers/' + dossier + '/conserver', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valeur: valeur }) })
+  fetch('/tests/cahiers/' + encodeURIComponent(dossier) + '/conserver', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ valeur: valeur }) })
     .then(function () { charger(); });
 }
 function supprimer(dossier) {
   if (!confirm('Supprimer le cahier ' + dossier + ' ?')) return;
-  fetch('/tests/cahiers/' + dossier, { method: 'DELETE' }).then(function (r) { return r.json(); }).then(function (j) {
+  fetch('/tests/cahiers/' + encodeURIComponent(dossier), { method: 'DELETE' }).then(function (r) { return r.json(); }).then(function (j) {
     if (!j.ok) alert('Suppression refusée : ' + j.motif);
     charger();
   });

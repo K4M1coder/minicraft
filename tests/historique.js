@@ -500,6 +500,10 @@
     etat.filtresColonnes = {};
     if (o.cle) {
       etat.filtresColonnes.cle = o.cle;
+      // la colonne du filtre est TOUJOURS visible (SPEC-BANC-122, revue) :
+      // un filtre invisible bloquait la vue sur un seul test sans moyen de
+      // le voir ni de l'effacer
+      if (etat.colonnes.indexOf('cle') < 0) etat.colonnes = ['cle'].concat(etat.colonnes);
       if (etat.colonnes.indexOf('nom') < 0) etat.colonnes = ['nom'].concat(etat.colonnes);
     } else if (o.test) {
       etat.filtresColonnes.test = o.test;
@@ -507,6 +511,7 @@
     }
     etat.rapide = 'tous';
     etat.page = 1;
+    etat.filtreTest = true;  // vue « un test » : levée par « Tous les runs » ou une réouverture simple
     etat.cleFiltres = null; // la ligne de filtres doit refléter le nouveau filtre
     var cb = document.getElementById('hist-rapide-inscrits');
     if (cb) cb.checked = false;
@@ -520,9 +525,18 @@
   // panneau du test ouvert. `ouvrir({ test: id })` reste accepté (filtre
   // « contient » sur l'id catalogue, partagé par les tests d'une même SPEC).
   // ══════════════════════════════════════════════════════════════════════
+  // lève la vue « un test » posée par filtrerSurTest (filtre cle/test seul)
+  function leverFiltreTest() {
+    if (!etat.filtreTest) return;
+    delete etat.filtresColonnes.cle;
+    delete etat.filtresColonnes.test;
+    etat.filtreTest = false;
+    etat.cleFiltres = null;
+  }
   function ouvrir(opts) {
     var o = opts || {};
     racine().hidden = false;
+    if (!(o.cle || o.test)) leverFiltreTest();
     if (o.cle || o.test) filtrerSurTest(o);
     document.getElementById('hist-rapide-inscrits').checked = etat.rapide === 'inscrits';
     rendreMenuColonnes();
@@ -543,6 +557,7 @@
     Array.prototype.forEach.call(t.querySelectorAll('[data-rapide]'), function (btn) {
       btn.addEventListener('click', function () {
         etat.rapide = btn.getAttribute('data-rapide');
+        if (etat.rapide === 'tous') leverFiltreTest();
         document.getElementById('hist-rapide-inscrits').checked = etat.rapide === 'inscrits';
         etat.page = 1; rafraichir();
       });
@@ -559,5 +574,5 @@
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', initialiser);
   else initialiser();
 
-  G.MC_HISTORIQUE = { ouvrir: ouvrir, fermer: fermer, ouvrirTest: ouvrirPanneauTest, etat: etat };
+  G.MC_HISTORIQUE = { ouvrir: ouvrir, fermer: fermer, ouvrirTest: ouvrirPanneauTest, etat: etat, _urlImage: urlImage };
 })(typeof window !== 'undefined' ? window : this);

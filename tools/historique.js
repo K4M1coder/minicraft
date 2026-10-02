@@ -42,6 +42,8 @@ const TYPES_COLONNES = {
 // Colonnes-liste comptées « à part » (SPEC-BANC-063) et énumérations avec
 // effectifs (SPEC-BANC-034/036) — dérivées de TYPES_COLONNES pour ne pas
 // dupliquer la liste à la main.
+/* une colonne CONNUE, jamais une propriété héritée (« constructor », « __proto__ »… — SPEC-BANC-122) */
+function estColonne(c) { return typeof c === 'string' && Object.prototype.hasOwnProperty.call(TYPES_COLONNES, c); }
 const COLONNES_ENUM = Object.keys(TYPES_COLONNES).filter(c => TYPES_COLONNES[c] === 'enum');
 const COLONNES_LISTE = Object.keys(TYPES_COLONNES).filter(c => TYPES_COLONNES[c] === 'liste');
 
@@ -178,7 +180,7 @@ function valeurCorrespond(ligne, champ, type, spec) {
 }
 function filtrerLignes(lignes, filtre) {
   const f = filtre || {};
-  const champs = Object.keys(f).filter(c => TYPES_COLONNES[c]);
+  const champs = Object.keys(f).filter(estColonne);
   if (!champs.length) return lignes.slice();
   return lignes.filter(l => champs.every(c => valeurCorrespond(l, c, TYPES_COLONNES[c], f[c])));
 }
@@ -205,7 +207,8 @@ function comparerValeurs(a, b) {
   return String(a).localeCompare(String(b));
 }
 function trierLignes(lignes, tris) {
-  const liste = Array.isArray(tris) ? tris.filter(Boolean) : (tris ? [tris] : []);
+  // champ inconnu (ou hérité : « constructor »…) ignoré, jamais trié (SPEC-BANC-122)
+  const liste = (Array.isArray(tris) ? tris : (tris ? [tris] : [])).filter(t => t && estColonne(t.champ));
   if (!liste.length) return lignes.slice();
   const copie = lignes.slice();
   copie.sort((a, b) => {
@@ -376,9 +379,15 @@ function valeurExport(ligne, champ) {
   if (typeof v === 'boolean') return v ? 'oui' : 'non';
   return v === undefined || v === null ? '' : String(v);
 }
+/* Neutralisation des formules (SPEC-BANC-122) : un tableur ouvrant le CSV
+   exécuterait une cellule commençant par = + - @ (ou tabulation / retour
+   chariot) — un message d'erreur de test est un texte libre, il peut en
+   contenir. Préfixée d'une apostrophe, elle reste lisible et inerte ; un
+   nombre (« -12.5 ») n'est jamais touché. */
 function celluleCsv(v) {
-  const s = String(v);
-  return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  let s = String(v);
+  if (/^[=+\-@\t\r]/.test(s) && !/^-?\d+(\.\d+)?(e[+-]?\d+)?$/i.test(s)) s = "'" + s;
+  return /[",\n\r;']/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
 }
 function echapperHtml(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
@@ -392,25 +401,40 @@ const LIBELLES_COLONNES = {
   etat: 'État', erreur: 'Erreur', raison: 'Raison', nb_captures: 'Captures', motif: 'Motif',
   arbre_modifie: 'Arbre modifié', interrompu: 'Interrompu',
 };
-function libelle(c) { return LIBELLES_COLONNES[c] || c; }
+function libelle(c) { return Object.prototype.hasOwnProperty.call(LIBELLES_COLONNES, c) ? LIBELLES_COLONNES[c] : String(c); }
 function colonnesExport(colonnes) {
-  const c = (colonnes || []).filter(x => TYPES_COLONNES[x]);
+  const c = (Array.isArray(colonnes) ? colonnes : []).filter(estColonne);
   return c.length ? c : ['debut_run', 'commit_court', 'preset', 'nom', 'type', 'duree_ms', 'etat', 'erreur'];
 }
-function exporterCSV(lignes, colonnes) {
+/* Export en MORCEAUX (SPEC-BANC-122) : en-tête, une fonction par ligne, pied —
+   server.js les écrit par paquets en rendant la main à la boucle
+   d'évènements, au lieu de construire d'un bloc une chaîne de dizaines de Mo. */
+const EXPORT_LIGNES_MAX = 100000;
+function morceauxExport(colonnes, format, total) {
   const cols = colonnesExport(colonnes);
-  return '﻿' + cols.map(c => celluleCsv(libelle(c))).join(',') + '\n' + lignes.map(l => cols.map(c => celluleCsv(valeurExport(l, c))).join(',')).join('\n') + '\n';
+  if (format === 'html') {
+    return {
+      entete: '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Historique global</title>' +
+        '<style>body{font:13px ui-monospace,Menlo,Consolas,monospace;background:#0b0e13;color:#e8eaed;padding:16px;}' +
+        'table{border-collapse:collapse;width:100%;} th,td{border:1px solid #333;padding:4px 8px;text-align:left;vertical-align:top;}</style>' +
+        '</head><body><h1>Historique global — ' + (total | 0) + ' ligne(s)</h1><table><thead><tr>' +
+        cols.map(c => '<th>' + echapperHtml(libelle(c)) + '</th>').join('') + '</tr></thead><tbody>',
+      ligne: l => '<tr>' + cols.map(c => '<td>' + echapperHtml(valeurExport(l, c)) + '</td>').join('') + '</tr>',
+      pied: '</tbody></table></body></html>',
+    };
+  }
+  return {
+    entete: '﻿' + cols.map(c => celluleCsv(libelle(c))).join(',') + '\n',
+    ligne: l => cols.map(c => celluleCsv(valeurExport(l, c))).join(',') + '\n',
+    pied: '',
+  };
 }
-function exporterHTMLVue(lignes, colonnes) {
-  const cols = colonnesExport(colonnes);
-  return '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Historique global</title>' +
-    '<style>body{font:13px ui-monospace,Menlo,Consolas,monospace;background:#0b0e13;color:#e8eaed;padding:16px;}' +
-    'table{border-collapse:collapse;width:100%;} th,td{border:1px solid #333;padding:4px 8px;text-align:left;vertical-align:top;}</style>' +
-    '</head><body><h1>Historique global — ' + lignes.length + ' ligne(s)</h1><table><thead><tr>' +
-    cols.map(c => '<th>' + echapperHtml(libelle(c)) + '</th>').join('') + '</tr></thead><tbody>' +
-    lignes.map(l => '<tr>' + cols.map(c => '<td>' + echapperHtml(valeurExport(l, c)) + '</td>').join('') + '</tr>').join('') +
-    '</tbody></table></body></html>';
+function exporter(lignes, colonnes, format) {
+  const m = morceauxExport(colonnes, format, lignes.length);
+  return m.entete + lignes.map(m.ligne).join('') + m.pied;
 }
+function exporterCSV(lignes, colonnes) { return exporter(lignes, colonnes, 'csv'); }
+function exporterHTMLVue(lignes, colonnes) { return exporter(lignes, colonnes, 'html'); }
 
 // ══════════════════════════════════════════════════════════════════════════
 // Index en mémoire (SPEC-BANC-040) : reconstruit runsUnifies() + les lignes
@@ -486,6 +510,6 @@ module.exports = {
   TYPES_COLONNES, COLONNES_ENUM, COLONNES_LISTE,
   construireLignes, filtrerLignes, filtreRapide, trierLignes, paginer, TAILLE_PAGE_MAX,
   effectifsEnum, effectifsToutesEnum, serieAgregee, imagesDeTest,
-  testsConnus, exporterCSV, exporterHTMLVue, cleTest,
+  testsConnus, exporterCSV, exporterHTMLVue, morceauxExport, EXPORT_LIGNES_MAX, celluleCsv, estColonne, cleTest,
   creerIndex, calculerInfoCommit,
 };

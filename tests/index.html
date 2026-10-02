@@ -132,6 +132,13 @@ document.write(['../src/core.js', '../src/formes.js', '../src/noise.js', '../src
    ligne de commande : c'est ce dont tests/catalogue.js a besoin pour déduire
    le type d'un test de son fichier d'origine (SPEC-BANC-001). */
 var fichiersTests = (window.MC_FICHIERS_TESTS || []).filter(function (e) { return !e.node; }).map(function (e) { return e.f; });
+// sans la liste, le banc n'aurait AUCUN test Node : on le dit, en clair,
+// au lieu d'afficher un catalogue silencieusement réduit aux e2e
+if (!window.MC_FICHIERS_TESTS) {
+  document.write('<div id="erreur-catalogue" role="alert" style="position:fixed;top:0;left:0;right:0;z-index:99;padding:10px 16px;background:#5a1d1b;color:#ffd7d4;font:13px ui-monospace,Menlo,Consolas,monospace">' +
+    'tests/fichiers-tests.js n\'a pas pu être chargé : aucun test unitaire, fonctionnel ni spec n\'est disponible dans ce banc (seuls les e2e le sont). Vérifiez le serveur et rechargez la page.</div>');
+  if (window.console) console.error('banc : tests/fichiers-tests.js absent — catalogue Node vide');
+}
 
 document.write(fichiersTests.map(function (f) {
   return '<scr' + 'ipt>T.fichierCourant="tests/' + f + '.js";</scr' + 'ipt>' + balise(f + '.js');

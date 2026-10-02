@@ -21,7 +21,8 @@ Granularité : **une ligne = un test dans un run**.
 | rang_commit | entier | `git rev-list --topo-order` sur la branche principale (-1 si hors branche ou réécrit) |
 | branche, preset, origine | énumérations | run |
 | inscrit | booléen | run |
-| test, nom | texte | test |
+| test, nom | texte | test (`test` = id catalogue, PARTAGÉ par tous les tests d'une même SPEC) |
+| cle | texte | identité du test, unique et stable : `groupe › nom` (`e2e › nom` pour un e2e), recalculée à la lecture (SPEC-BANC-119) |
 | categorie | énumération : `type` du catalogue (unitaire, fonctionnel, spec, e2e, perf…) et `groupe` | catalogue |
 | domaines | liste (SYNC, RENDU, ECO…) | catalogue (`domainesDe`) |
 | specs | liste d'ids SPEC-* | catalogue |
@@ -35,12 +36,31 @@ Granularité : **une ligne = un test dans un run**.
 | nb_captures | nombre | test |
 | captures | liste de {role, libelle, image, t_ms} | test |
 
+**Identité d'un test et renommage (SPEC-BANC-119).** L'historique d'un test,
+c'est l'ensemble des lignes de même `cle` = `groupe › nom` (le titre du
+`describe()` et celui du `it()` ; pour un e2e, son seul nom). Aucun identifiant
+caché ne survit à un renommage : **renommer un test, ou le `describe()` qui le
+contient, ou déplacer le test dans un autre `describe()`, lui donne une
+NOUVELLE identité** — son historique repart de zéro sous le nouveau nom, et
+l'ancien reste consultable sous l'ancien nom (le banc le montre « hors de ce
+banc », puisqu'il n'est plus au catalogue courant). C'est un choix : `id`
+(1re SPEC citée) ne peut pas servir d'identité (partagé par tous les tests
+d'une spec), et un rang `N-<index>` bouge dès qu'un test est ajouté avant lui.
+Pour garder la continuité, ne renommer un test que si ce qu'il vérifie change ;
+pour une simple correction de libellé, accepter la coupure (l'ancien
+historique reste lisible) — un futur alias `ancienNom` dans la fiche pourra
+recoller les deux si le besoin se confirme.
+
 ## 2. Serveur (`server.js`, section banc)
 
 - `GET /tests/historique/lignes?tri=<prop>&ordre=asc|desc&filtre=<json>&page=&taille=` : filtrage, tri et pagination **côté serveur**. Environ 1 250 lignes par run complet : au bout de cent runs, on dépasse 100 000 lignes, trop pour tout envoyer au navigateur. Il renvoie aussi `total` et, pour chaque énumération, les valeurs distinctes avec leur effectif (pour remplir les filtres).
 - `GET /tests/historique/series?x=debut_run|rang_commit&props=etat,duree_ms&filtre=<json>` : données agrégées pour les graphiques.
 - `GET /tests/historique/images?test=<id>&filtre=<json>&tri=<x>` : pour un test, la suite ordonnée des runs avec leurs captures, groupées par rôle.
 - `GET /tests/registre/images/<sha1>.<ext>` : sert les images, adressées par contenu, avec un cache long (immuables).
+- `GET /tests/historique/tests` : un test connu par identité (`cle`), avec son nombre de passages et son dernier état (SPEC-BANC-118).
+- `GET /tests/historique/export?format=csv|html&colonnes=…` : export de la vue filtrée, produit par le serveur, écrit par paquets, un seul à la fois (429 sinon), au plus 100 000 lignes (413 au-delà : filtrer) — SPEC-BANC-120/122.
+- `GET /tests/catalogue` : le catalogue Node complet (`node tests/run.js --catalogue-json`, processus à part, mis en cache), pour montrer dans le banc les tests qu'il ne peut pas charger (SPEC-BANC-118).
+- Toutes ces routes, comme `/tests/cahiers*`, n'acceptent que le banc lui-même (`refusRequeteLocale` : ni mandataire, ni `Origin`/`Host` étrangers, ni requête intersites — SPEC-BANC-122).
 - Index en mémoire reconstruit quand le dossier change (mtime), pas à chaque requête.
 
 ## 3. Interface

@@ -303,6 +303,23 @@ const specsIndex = ctx.MC_TESTS.indexSpecs(specsTexte);
 const e2eListe = e2eListeDepuisTexte().concat(integrationListeDepuisFichiers());
 const catalogue = ctx.MC_TESTS.construire(ctx.T, e2eListe, specsIndex);
 
+/* --catalogue-json (SPEC-BANC-118) : publie le catalogue NODE complet sur la
+   sortie standard et s'arrête, sans rien exécuter ni écrire. C'est ce que sert
+   GET /tests/catalogue au banc navigateur : les tests qu'il ne peut pas
+   charger (fichiers Node seulement, intégration, charge) y sont visibles même
+   s'ils n'ont encore aucun passage dans l'historique. */
+if (drapeau('--catalogue-json')) {
+  process.stdout.write(JSON.stringify({
+    genere: new Date().toISOString(),
+    tests: catalogue.map(t => ({
+      id: t.id, cle: t.cle, nom: t.nom, type: t.type, groupe: t.groupe, fichier: t.fichier,
+      domaines: t.domaines, specs: t.specs, etiquettes: t.etiquettes,
+      fiche: t.fiche ? { teste: t.fiche.teste || null, attendu: t.fiche.attendu || null } : null,
+    })),
+  }));
+  process.exit(0);
+}
+
 // ── construction des critères à partir des options de la ligne de commande ──
 function virgule(v) { return v ? v.split(',').map(s => s.trim()).filter(Boolean) : []; }
 function ajouter(criteres, cle, valeurs) {

@@ -231,6 +231,7 @@
     // identifiant de spec FICTIF, assemblé à l'exécution : écrit en clair, la
     // porte G2 le prendrait pour une spec citée absente de SPECS.md
     var SPEC_FICTIVE = 'SPEC-' + 'FICTIF-' + '001';
+    var URLSearchParams = require('url').URLSearchParams;
     function lire(rel) { return fs.readFileSync(path.join(RACINE, rel), 'utf8'); }
     function contexteNu() {
       var ctx = vm.createContext({ console: console, Math: Math, JSON: JSON, Date: Date, Promise: Promise, setTimeout: setTimeout, clearTimeout: clearTimeout, performance: { now: function () { return Date.now(); } } });
@@ -388,6 +389,151 @@
       A.ok(csv.indexOf('X, Y') >= 0, 'liste jointe');
       var html = H.exporterHTMLVue(H.construireLignes([run({ tests: [test({ nom: '<script>x</script>' })] })]), ['nom']);
       A.ok(html.indexOf('<script>x') < 0 && html.indexOf('&lt;script&gt;x') >= 0, 'HTML échappé');
+    });
+
+    it('SPEC-BANC-122 : une colonne demandée qui est une propriété héritée (constructor, __proto__…) est ignorée partout', function () {
+      var lignes = H.construireLignes([run({ tests: [test({ nom: 'a' }), test({ nom: 'b' })] })]);
+      var csv = H.exporterCSV(lignes, ['__proto__', 'constructor', 'toString', 'hasOwnProperty']);
+      A.equal(csv.replace(/^﻿/, '').split('\n')[0], 'Début run,Commit,Préréglage,Nom du test,Type,Durée (ms),État,Erreur', 'colonnes inconnues → colonnes par défaut, jamais une fonction en en-tête');
+      A.ok(csv.indexOf('function') < 0, 'aucun code source de fonction exporté');
+      A.equal(H.estColonne('constructor'), false, 'constructor n\'est pas une colonne');
+      A.equal(H.estColonne('nom'), true, 'nom en est une');
+      A.equal(H.filtrerLignes(lignes, JSON.parse('{"constructor":"x","__proto__":{"a":1},"toString":"y"}')).length, 2, 'filtre sur propriétés héritées : ignoré');
+      A.deep(H.trierLignes(lignes, [{ champ: 'constructor', ordre: 'desc' }]).map(function (l) { return l.nom; }), ['a', 'b'], 'tri sur propriété héritée : ignoré');
+    });
+
+    it('SPEC-BANC-122 : l\'export CSV neutralise les formules de tableur (= + - @), jamais les nombres', function () {
+      A.equal(H.celluleCsv('=HYPERLINK("http://x")'), '"\'=HYPERLINK(""http://x"")"', '= préfixé et cellule citée');
+      A.equal(H.celluleCsv('+1+1'), '"\'+1+1"', '+ préfixé');
+      A.equal(H.celluleCsv('@SUM(A1)'), '"\'@SUM(A1)"', '@ préfixé');
+      A.equal(H.celluleCsv('-cmd|calc'), '"\'-cmd|calc"', '- suivi de texte préfixé');
+      A.equal(H.celluleCsv('\tx'), '"\'\tx"', 'tabulation de tête préfixée');
+      A.equal(H.celluleCsv('-12.5'), '-12.5', 'nombre négatif intact');
+      A.equal(H.celluleCsv('12'), '12', 'nombre intact');
+      A.equal(H.celluleCsv('texte'), 'texte', 'texte ordinaire intact');
+      var m = H.morceauxExport(['nom'], 'csv', 1);
+      A.equal(m.ligne({ nom: '=1+1' }), '"\'=1+1"\n', 'les morceaux d\'export (serveur) passent par la même neutralisation');
+    });
+
+    // ── faux DOM minimal, SYNCHRONE, pour exécuter tests/historique.js sous Node ──
+    function fauxDom(reponses) {
+      function SyncP(ok, v) { this.ok = ok; this.v = v; }
+      SyncP.prototype.then = function (f, r) {
+        try {
+          var x = this.ok ? (f ? f(this.v) : this.v) : (r ? r(this.v) : (function (v) { throw v; })(this.v));
+          return x instanceof SyncP ? x : new SyncP(true, x);
+        } catch (e) { return new SyncP(false, e); }
+      };
+      SyncP.prototype.catch = function (r) { return this.then(null, r); };
+      var parId = {};
+      function noeud(tag) {
+        var n = { tagName: String(tag).toUpperCase(), children: [], attrs: {}, ecoute: {}, style: {}, hidden: false, className: '', value: '', checked: false, disabled: false, parent: null };
+        Object.defineProperty(n, 'textContent', {
+          get: function () { return n._texte !== undefined ? n._texte : n.children.map(function (c) { return c.textContent; }).join(' '); },
+          set: function (v) { n.children = []; n._texte = String(v); },
+        });
+        Object.defineProperty(n, 'innerHTML', { set: function () { n.children = []; n._texte = undefined; }, get: function () { return ''; } });
+        Object.defineProperty(n, 'firstChild', { get: function () { return n.children[0] || null; } });
+        Object.defineProperty(n, 'selectedOptions', { get: function () { return n.children.filter(function (c) { return c.selected; }); } });
+        n.appendChild = function (c) { c.parent = n; n._texte = undefined; n.children.push(c); return c; };
+        n.removeChild = function (c) { n.children = n.children.filter(function (x) { return x !== c; }); };
+        n.replaceChild = function (nv, ancien) { var i = n.children.indexOf(ancien); if (i >= 0) { n.children[i] = nv; nv.parent = n; } };
+        n.replaceWith = function (nv) { if (n.parent) n.parent.replaceChild(nv, n); };
+        n.setAttribute = function (k, v) { n.attrs[k] = String(v); if (k === 'id') parId[v] = n; };
+        n.getAttribute = function (k) { return n.attrs.hasOwnProperty(k) ? n.attrs[k] : null; };
+        n.addEventListener = function (t, f) { (n.ecoute[t] = n.ecoute[t] || []).push(f); };
+        n.declencher = function (t, ev) { (n.ecoute[t] || []).forEach(function (f) { f(ev || { target: n, preventDefault: function () {}, stopPropagation: function () {} }); }); };
+        n.click = function () { n.declencher('click'); };
+        n.scrollIntoView = function () {};
+        n.tous = function (pred) { var out = []; (function v(x) { x.children.forEach(function (c) { if (c.children) { if (pred(c)) out.push(c); v(c); } }); })(n); return out; };
+        n.querySelector = function (sel) { return n.querySelectorAll(sel)[0] || null; };
+        n.querySelectorAll = function (sel) {
+          if (sel === '#hist-table tbody') return [parId['__tbody']];
+          if (sel === '#hist-table thead') return [parId['__thead']];
+          if (sel.charAt(0) === '#') return [obtenir(sel.slice(1))];
+          if (sel === '[data-rapide]') return ['tous', 'echecs', 'lents'].map(function (r) { return obtenir('__rapide-' + r); });
+          if (sel === 'tr.hist-filtres') return n.tous(function (c) { return c.tagName === 'TR' && /hist-filtres/.test(c.className); });
+          if (sel === 'select[data-col]') return n.tous(function (c) { return c.tagName === 'SELECT' && c.attrs['data-col']; });
+          return [];
+        };
+        return n;
+      }
+      function obtenir(id) {
+        if (!parId[id]) {
+          var n = noeud('div'); parId[id] = n;
+          if (id.indexOf('__rapide-') === 0) n.attrs['data-rapide'] = id.slice(9);
+        }
+        return parId[id];
+      }
+      obtenir('__thead'); obtenir('__tbody');
+      obtenir('zone-historique').hidden = true;
+      obtenir('hist-panneau-test').hidden = true;
+      var appels = [];
+      var document = {
+        readyState: 'complete', body: noeud('body'),
+        getElementById: obtenir,
+        createElement: noeud,
+        createTextNode: function (t) { return { textContent: String(t) }; },
+        addEventListener: function () {}, dispatchEvent: function () {},
+      };
+      var ctx = vm.createContext({
+        document: document, console: console, JSON: JSON, Math: Math, Date: Date, Object: Object, Array: Array, String: String,
+        Number: Number, Error: Error, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat, encodeURIComponent: encodeURIComponent,
+        URLSearchParams: URLSearchParams, setTimeout: function () { return 0; }, clearTimeout: function () {},
+        CustomEvent: function (t, o) { this.type = t; this.detail = o && o.detail; },
+        localStorage: { getItem: function () { return null; }, setItem: function () {} },
+        fetch: function (url) {
+          appels.push(url);
+          var corps = reponses(url);
+          return new SyncP(true, { ok: true, status: 200, text: function () { return new SyncP(true, JSON.stringify(corps)); } });
+        },
+      });
+      ctx.window = ctx;
+      vm.runInContext(lire('tests/historique.js'), ctx, { filename: 'historique.js' });
+      return { H: ctx.MC_HISTORIQUE, obtenir: obtenir, appels: appels };
+    }
+    function filtreDeLUrl(url) { return JSON.parse(new URLSearchParams(url.split('?')[1]).get('filtre') || '{}'); }
+
+    it('SPEC-BANC-122 : après « historique (N) », « Tous les runs » et une réouverture simple lèvent le filtre du test, qui reste visible', function () {
+      var d = fauxDom(function () { return { lignes: [], total: 0, page: 1, taille: 50, effectifs: {}, images: [] }; });
+      d.H.ouvrir({ cle: 'G › un test', nom: 'un test' });
+      A.equal(d.H.etat.filtresColonnes.cle, 'G › un test', 'vue filtrée sur ce test');
+      A.ok(d.H.etat.colonnes.indexOf('cle') >= 0, 'la colonne du filtre (Identité) est visible — on voit et on peut effacer ce qui filtre');
+      d.obtenir('__rapide-tous').click();
+      A.equal(d.H.etat.filtresColonnes.cle, undefined, '« Tous les runs » lève le filtre du test');
+      A.deep(filtreDeLUrl(d.appels[d.appels.length - 1]), {}, 'la requête envoyée n\'est plus filtrée');
+      d.H.ouvrir({ cle: 'G › un test' });
+      d.H.fermer();
+      d.H.ouvrir();
+      A.equal(d.H.etat.filtresColonnes.cle, undefined, 'rouvrir l\'historique sans test lève aussi le filtre');
+      A.deep(filtreDeLUrl(d.appels[d.appels.length - 1]), {}, 'requête de réouverture non filtrée');
+    });
+
+    it('SPEC-BANC-121 : le panneau du test montre tous ses passages (récent d\'abord), messages complets et captures du registre ou du cahier', function () {
+      var images = [
+        { run: 'r1', debut_run: '2026-01-01T00:00:00.000Z', etat: 'reussi', duree_ms: 10, inscrit: true, preset: 'pr', commit_court: 'aaa', dossierCahier: 'c1', cle: 'G › t', nom: 't', captures: [{ role: 'debut', libelle: 'début', image: 'a'.repeat(40) + '.jpg' }] },
+        { run: 'r2', debut_run: '2026-01-02T00:00:00.000Z', etat: 'echec', duree_ms: 20, inscrit: false, preset: 'commit', commit_court: 'bbb', dossierCahier: 'c2', erreur: 'x'.repeat(5000), cle: 'G › t', nom: 't', captures: [{ role: 'fin', libelle: 'fin', image: '0002-fin.jpg' }, { role: 'triplet', libelle: 'z', image: null }] },
+      ];
+      var d = fauxDom(function (url) { return /\/images\?/.test(url) ? { images: images } : { lignes: [], total: 0, effectifs: {} }; });
+      d.H.ouvrirTest({ cle: 'G › t', nom: 't', run: 'r1' });
+      var p = d.obtenir('hist-panneau-test');
+      A.equal(p.hidden, false, 'panneau ouvert');
+      A.ok(d.appels.some(function (u) { return u.indexOf('/tests/historique/images?test=G+%E2%80%BA+t') === 0; }), 'demande les passages de CETTE identité : ' + d.appels.join(' | '));
+      var passages = p.tous(function (n) { return n.tagName === 'LI'; });
+      A.equal(passages.length, 2, 'deux passages');
+      A.ok(/2026-01-02/.test(passages[0].textContent) && /echec/.test(passages[0].textContent), 'le plus récent d\'abord');
+      A.ok(/hist-pt-courant/.test(passages[1].className), 'le passage cliqué (r1) est mis en avant');
+      var imgs = p.tous(function (n) { return n.tagName === 'IMG'; }).map(function (n) { return n.attrs.src; });
+      A.deep(imgs, ['/tests/resultats/c2/captures/0002-fin.jpg', '/tests/registre/images/' + 'a'.repeat(40) + '.jpg'], 'capture locale sous le cahier, capture inscrite sous le registre');
+      A.ok(/1000 caractères de plus/.test(p.textContent) && p.tous(function (n) { return n.tagName === 'BUTTON' && /tout afficher/.test(n.textContent); }).length === 1, 'long message tronqué avec « tout afficher »');
+      A.ok(/1 image\(s\) de triplet non conservée/.test(p.textContent), 'image de triplet absente du registre signalée, pas « manquante »');
+      var liens = p.tous(function (n) { return n.tagName === 'A'; }).map(function (n) { return n.attrs.href; });
+      A.ok(liens.indexOf('/tests/resultats/c1/rapport.html') >= 0, 'lien vers le cahier du passage');
+    });
+
+    it('SPEC-BANC-117 : tests/index.html signale une liste de fichiers de tests absente au lieu d\'un catalogue vide', function () {
+      var page = lire('tests/index.html');
+      A.ok(/if \(!window\.MC_FICHIERS_TESTS\)/.test(page) && /id="erreur-catalogue"/.test(page) && /role="alert"/.test(page), 'bandeau d\'erreur visible prévu');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

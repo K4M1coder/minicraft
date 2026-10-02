@@ -332,6 +332,23 @@ stabilisé par toutes les étapes précédentes.
 | **9** | Diagnostics d'échec et de lenteur, profil CPU et GPU, sur le journal | 092 à 103 | 8 |
 | **10** | En dernier, moteur stabilisé : campagnes sur l'historique des merges, PR et releases | 111 à 116 | 1 à 9 (toutes les étapes précédentes) |
 
+**À traiter** (relevés par la revue adversariale du lot « tout consulter depuis
+le banc », SPEC-BANC-117 à 122, hors de son périmètre) :
+
+- `cheminSur` sert en statique tout `tests/` — dont `tests/resultats/<cahier>/`
+  (rapports, captures) — sans le contrôle `refusRequeteLocale` des routes du
+  banc : en réseau ouvert, un cahier local se lit depuis une autre machine.
+  À restreindre aux requêtes locales (ou à servir par une route du banc).
+- `?groupe=` (banc) et `--groupe` (`tests/run.js`) découpent la valeur sur les
+  virgules : un groupe dont le nom en contient (« Specs — historique global :
+  source, tableau, tri, filtres ») ne se sélectionne pas. Accepter d'abord la
+  valeur entière si elle désigne un groupe existant.
+- `src/workers.js` `disponible()` sonde avec `new Worker('data:…')`, que la CSP
+  du serveur bloque : erreur console au chargement (jeu et banc) ET Web Workers
+  jamais utilisés quand le jeu est servi par le serveur (SPEC-PERF-006). Sonder
+  avec le vrai script (même origine) — change le chemin de génération en jeu,
+  à valider par les e2e de performance.
+
 ---
 
 ## 4. Risques identifiés et parades
