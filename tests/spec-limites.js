@@ -13,7 +13,11 @@
   'use strict';
   var MC = G.MC, T = G.T, L = G.MC_LIMITES;
   var describe = T.describe, it = T.it, A = T.assert;
-  var afficher = typeof console !== 'undefined' && console.error ? function (t) { console.error(t); } : function () {};
+  // sous Node : stderr (le rapport ne se mêle pas à la sortie de la campagne) ;
+  // dans le banc navigateur : console.info — un rapport d'exploration n'est
+  // pas une erreur, et y apparaissait comme quatre « erreurs console »
+  var afficher = typeof console === 'undefined' ? function () {}
+    : (typeof window !== 'undefined' && console.info ? function (t) { console.info(t); } : function (t) { console.error(t); });
   var maintenant = function () { return typeof performance !== 'undefined' ? performance.now() : Date.now(); };
   var resultat = null;
 

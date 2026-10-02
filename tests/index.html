@@ -84,6 +84,8 @@
     <div class="hist-table-wrap">
       <table id="hist-table"><thead><tr></tr></thead><tbody></tbody></table>
     </div>
+    <!-- panneau « test » (SPEC-BANC-039/121) : tous les passages d'un test -->
+    <div id="hist-panneau-test" hidden></div>
     <div class="hist-pagination">
       <span id="hist-page-info"></span>
       <button type="button" id="hist-page-prec">◀ précédent</button>
@@ -109,7 +111,7 @@ function balise(f) { return '<scr' + 'ipt src="' + f + '?v=' + v + '"></scr' + '
 // harness.js d'abord (il pose G.T), puis presets.js et catalogue.js (dans cet
 // ordre : catalogue.js relit G.MC_PRESETS), puis rapport.js (repli local du
 // cahier de test si le serveur ne répond pas) — même ordre que tests/run.js.
-document.write(['harness.js', 'presets.js', 'catalogue.js', 'rapport.js'].map(balise).join(''));
+document.write(['harness.js', 'presets.js', 'catalogue.js', 'rapport.js', 'fichiers-tests.js'].map(balise).join(''));
 </script>
 <script>
 document.write(['../src/core.js', '../src/formes.js', '../src/noise.js', '../src/biomes.js', '../src/densite.js', '../src/zones.js', '../src/volcanisme.js', '../src/caravanes.js', '../src/souterrain.js', '../src/recifs.js', '../src/donjons.js', '../src/habitats.js', '../src/routes.js', '../src/histoire.js', '../src/recits.js', '../src/recit-serveur.js', '../src/carte.js', '../src/eau.js', '../src/feu.js', '../src/meteo.js', '../src/lointain.js', '../src/world.js', '../src/circuits.js', '../src/lumiere.js', '../src/ombres.js', '../src/succes.js', '../src/mesher.js', '../src/physics.js', '../src/file-chunks.js', '../src/taches-chunks.js', '../src/faune.js', '../src/factions.js', '../src/inventory.js', '../src/conteneurs.js', '../src/vehicules.js', '../src/entities.js', '../src/metiers.js', '../src/economie.js',
@@ -120,22 +122,16 @@ document.write(['../src/core.js', '../src/formes.js', '../src/noise.js', '../src
   .map(balise).join(''));
 </script>
 <script>
-/* Fichiers de tests Node purs (unit/functional/spec-*) — même liste et même
-   ordre que la constante TESTS de tests/run.js (hors spec-banc.js, Node-only :
-   il utilise require/process/__dirname, voir son en-tête ; les trois derniers,
-   'spec-perf'/'limites-sondes'/'spec-limites', sont l'exploration de limites
-   du lot perf — voir tests/run.js — purs eux aussi, donc inclus ici pour que
-   le banc navigateur voie le même catalogue que `node tests/run.js`).
+/* Fichiers de tests Node purs (unit/functional/spec-*) — LA MÊME liste et le
+   même ordre que `node tests/run.js` : tests/fichiers-tests.js, partagé
+   (SPEC-BANC-117 — deux copies à la main avaient divergé, laissant une partie
+   des tests invisible dans cette page). Les fichiers marqués `node` lisent le
+   disque dès leur chargement : ils ne sont pas évalués ici (leurs tests restent
+   visibles comme « Node seulement », via l'historique — SPEC-BANC-118).
    `T.fichierCourant` est posé avant chacun, comme le fait tests/run.js côté
    ligne de commande : c'est ce dont tests/catalogue.js a besoin pour déduire
    le type d'un test de son fichier d'origine (SPEC-BANC-001). */
-var fichiersTests = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-secu', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-routes', 'spec-histoire', 'spec-succes', 'spec-ombres', 'spec-population', 'spec-hud', 'spec-couverture', 'spec-recits', 'spec-recit-serveur', 'spec-commandes', 'spec-portes', 'spec-eau', 'spec-vent', 'spec-loin', 'spec-donjons', 'spec-audio', 'spec-options', 'spec-souterrain', 'spec-apparence', 'spec-saisons', 'spec-parametres', 'spec-admin', 'spec-densite', 'spec-volcans', 'spec-caravanes', 'spec-zones', 'spec-blocs16', 'spec-politique', 'spec-guildes', 'spec-materiaux', 'spec-circuits', 'spec-objets', 'spec-formes', 'spec-recifs', 'spec-interieur', 'spec-batiments',
-  // exploration (lot perf) : sondes non bloquantes — voir tests/run.js
-  'spec-perf', 'limites-sondes', 'spec-limites', 'spec-rendu', 'spec-maillage',
-  // vague 2
-  'spec-contrats-vague2', 'spec-contrats-archi', 'spec-parties-fichier', 'spec-poste', 'spec-workers', 'spec-economie', 'spec-metiers', 'spec-conteneurs', 'spec-pvp',
-  // SPEC-BANC-010 : crochets git, hors spec-banc.js
-  'spec-crochets'];
+var fichiersTests = (window.MC_FICHIERS_TESTS || []).filter(function (e) { return !e.node; }).map(function (e) { return e.f; });
 
 document.write(fichiersTests.map(function (f) {
   return '<scr' + 'ipt>T.fichierCourant="tests/' + f + '.js";</scr' + 'ipt>' + balise(f + '.js');

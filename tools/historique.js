@@ -32,7 +32,7 @@ const TYPES_COLONNES = {
   run: 'texte', debut_run: 'horodatage',
   commit: 'texte', commit_court: 'texte', sujet_commit: 'texte', rang_commit: 'commit',
   branche: 'enum', preset: 'enum', origine: 'enum', inscrit: 'enum',
-  test: 'texte', nom: 'texte',
+  test: 'texte', cle: 'exact', nom: 'texte',
   type: 'enum', groupe: 'enum',
   domaines: 'liste', specs: 'liste', fonctions: 'liste', etiquettes: 'liste',
   debut_test: 'horodatage', duree_ms: 'nombre', etat: 'enum', erreur: 'texte', raison: 'texte',
@@ -53,14 +53,46 @@ const COLONNES_LISTE = Object.keys(TYPES_COLONNES).filter(c => TYPES_COLONNES[c]
    que cette fonction reste pure et rapide sur un grand nombre de lignes.
    Sans lui : `rang_commit` vaut -1, `commit_court` est dérivé du sha (10
    premiers caractères), `sujet_commit` est `null` — utile pour les tests. */
+/* Données venues du disque (registre versionné, cahiers locaux écrits par
+   n'importe quelle version du banc) : JAMAIS supposées bien formées
+   (SPEC-BANC-120). Un run ou un test qui n'est pas un objet est ignoré, une
+   liste qui n'est pas un tableau devient [], un texte devient une chaîne
+   sans séquences d'échappement ANSI (messages de terminal recopiés tels
+   quels) — une seule donnée inattendue faisait sinon lever TOUTE la
+   reconstruction de l'index, donc toutes les requêtes de l'historique. */
+const RE_ANSI = /\u001b\[[0-9;?]*[ -\/]*[@-~]/g;
+function liste(v) {
+  return Array.isArray(v) ? v.filter(x => x !== null && x !== undefined).map(x => (typeof x === 'object' ? JSON.stringify(x) : x)) : [];
+}
+function texte(v) {
+  if (v === undefined || v === null) return null;
+  const s = typeof v === 'string' ? v : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+  return s.replace(RE_ANSI, '');
+}
+function nombre(v) { return typeof v === 'number' && isFinite(v) ? v : null; }
+function estObjet(v) { return v !== null && typeof v === 'object' && !Array.isArray(v); }
+/* Identité d'un test dans l'historique (SPEC-BANC-119) : même calcul que
+   tests/catalogue.js cleTest() — groupe + nom, unique et stable, là où `id`
+   est partagé par tous les tests d'une même SPEC (SPEC-NET-007 : 6 tests)
+   ou dépend d'un rang qui bouge d'une campagne à l'autre. */
+function cleTest(type, groupe, nom) {
+  // e2e : le groupe n'est PAS stable (section de tests/e2e.js côté Node,
+  // « end-to-end » côté banc navigateur) — le nom y est unique à lui seul
+  const g = type === 'e2e' ? 'e2e' : groupe;
+  return String(g === undefined || g === null ? '' : g) + ' › ' + String(nom === undefined || nom === null ? '' : nom);
+}
 function construireLignes(runs, opts) {
   const o = opts || {};
   const infoCommit = o.infoCommit || {};
   const lignes = [];
-  (runs || []).forEach((run) => {
+  (Array.isArray(runs) ? runs : []).forEach((run) => {
+    if (!estObjet(run)) return;
     const info = (run.commit && infoCommit[run.commit]) || null;
-    (run.tests || []).forEach((t) => {
-      const cat = t.categorie || {};
+    (Array.isArray(run.tests) ? run.tests : []).forEach((t) => {
+      if (!estObjet(t)) return;
+      const cat = estObjet(t.categorie) ? t.categorie : {};
+      const nomTest = texte(t.nom) || texte(t.id) || '(sans nom)';
+      const captures = (Array.isArray(t.captures) ? t.captures : []).filter(estObjet);
       lignes.push({
         run: run.id, debut_run: run.date || null,
         commit: run.commit || null,
@@ -71,14 +103,15 @@ function construireLignes(runs, opts) {
         inscrit: !!run.inscrit, statut: run.statut || null,
         motif: run.motif || null, arbre_modifie: !!run.arbre_modifie, interrompu: !!run.interrompu,
         moteurRendu: run.moteurRendu || null,
-        test: t.id || t.nom, nom: t.nom || null,
-        type: cat.type || null, groupe: cat.groupe || null,
-        domaines: t.domaines || [], specs: t.specs || [], fonctions: t.fonctions || [], etiquettes: t.etiquettes || [],
-        fiche: t.fiche || null,
-        debut_test: t.debut || null, duree_ms: t.duree_ms === undefined ? null : t.duree_ms,
-        etat: t.etat || null, erreur: t.erreur || null, raison: t.raison || null,
-        nb_captures: (t.captures || []).length,
-        captures: t.captures || [],
+        dossierCahier: run.dossierCahier || null,
+        test: texte(t.id) || nomTest, cle: cleTest(texte(cat.type), texte(cat.groupe), nomTest), nom: nomTest,
+        type: texte(cat.type), groupe: texte(cat.groupe),
+        domaines: liste(t.domaines), specs: liste(t.specs), fonctions: liste(t.fonctions), etiquettes: liste(t.etiquettes),
+        fiche: estObjet(t.fiche) ? t.fiche : null,
+        debut_test: texte(t.debut), duree_ms: nombre(t.duree_ms),
+        etat: texte(t.etat), erreur: texte(t.erreur), raison: texte(t.raison),
+        nb_captures: captures.length,
+        captures: captures,
       });
     });
   });
@@ -103,6 +136,13 @@ function valeurCorrespond(ligne, champ, type, spec) {
   if (type === 'texte') {
     if (!spec) return true;
     return String(v === undefined || v === null ? '' : v).toLowerCase().indexOf(String(spec).toLowerCase()) >= 0;
+  }
+  if (type === 'exact') {
+    // égalité stricte sur une valeur ou une liste de valeurs (identité d'un
+    // test, SPEC-BANC-119) — jamais « contient » : « G › a » ne doit pas
+    // ramener « G › a (variante) ».
+    if (spec === undefined || spec === null || spec === '' || (Array.isArray(spec) && !spec.length)) return true;
+    return Array.isArray(spec) ? spec.indexOf(v) >= 0 : v === spec;
   }
   if (type === 'enum') {
     if (!Array.isArray(spec) || !spec.length) return true;
@@ -183,12 +223,21 @@ function trierLignes(lignes, tris) {
 // ══════════════════════════════════════════════════════════════════════════
 // Pagination serveur (SPEC-BANC-038)
 // ══════════════════════════════════════════════════════════════════════════
+/* Taille de page BORNÉE (SPEC-BANC-120) : l'export du navigateur demandait
+   une page de 1 000 000 lignes et recevait tout l'historique en un seul JSON
+   (64 Mo pour 45 runs, captures et fiches comprises — davantage à chaque
+   run). L'export complet passe désormais par /tests/historique/export
+   (colonnes demandées seulement), jamais par cette route. */
+const TAILLE_PAGE_MAX = 500;
 function paginer(lignes, page, taille) {
-  const t = Math.max(1, parseInt(taille, 10) || 50);
+  const t = Math.min(TAILLE_PAGE_MAX, Math.max(1, parseInt(taille, 10) || 50));
   const p = Math.max(1, parseInt(page, 10) || 1);
   const total = lignes.length;
-  const debut = (p - 1) * t;
-  return { lignes: lignes.slice(debut, debut + t), total: total, page: p, taille: t };
+  // une page au-delà de la dernière (filtre resserré alors qu'on était page
+  // 40, par exemple) ramène à la dernière page plutôt qu'à une page vide
+  const pp = Math.min(p, Math.max(1, Math.ceil(total / t)));
+  const debut = (pp - 1) * t;
+  return { lignes: lignes.slice(debut, debut + t), total: total, page: pp, taille: t };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -271,14 +320,96 @@ function serieAgregee(lignes, opts) {
 // ══════════════════════════════════════════════════════════════════════════
 function imagesDeTest(lignes, testId, opts) {
   const o = opts || {};
-  const deTest = filtrerLignes(lignes.filter(l => l.test === testId), o.filtre);
+  // `testId` : l'identité (cle, SPEC-BANC-119) ; à défaut l'ancien `test`
+  // (id catalogue) des appelants d'avant — SEULEMENT si aucune clé ne
+  // correspond, pour ne jamais mêler les tests d'une même SPEC.
+  let retenues = lignes.filter(l => l.cle === testId);
+  if (!retenues.length) retenues = lignes.filter(l => l.test === testId);
+  const deTest = filtrerLignes(retenues, o.filtre);
   const tri = o.tri === 'commit' ? { champ: 'rang_commit', ordre: 'asc' } : { champ: 'debut_run', ordre: 'asc' };
   const triees = trierLignes(deTest, tri);
   return triees.map(l => ({
     run: l.run, commit: l.commit, commit_court: l.commit_court, sujet_commit: l.sujet_commit,
     debut_run: l.debut_run, etat: l.etat, duree_ms: l.duree_ms, inscrit: l.inscrit,
+    preset: l.preset, dossierCahier: l.dossierCahier, erreur: l.erreur, raison: l.raison,
+    cle: l.cle, test: l.test, nom: l.nom, type: l.type, groupe: l.groupe, fiche: l.fiche,
     captures: l.captures && l.captures.length ? l.captures : [],
   }));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Tests connus de l'historique (SPEC-BANC-118) : UNE entrée par identité
+// (cle), avec son dernier passage — c'est ce qui permet au banc navigateur de
+// montrer, et d'ouvrir dans l'historique, les tests qu'il ne peut pas
+// charger lui-même (intégration, fichiers Node seulement, tests disparus du
+// catalogue courant), au lieu de les rendre introuvables.
+// ══════════════════════════════════════════════════════════════════════════
+function ficheCourte(f) { return f ? { teste: f.teste || null, attendu: f.attendu || null } : null; }
+function testsConnus(lignes) {
+  const parCle = new Map();
+  (lignes || []).forEach((l) => {
+    let e = parCle.get(l.cle);
+    if (!e) {
+      e = { cle: l.cle, test: l.test, nom: l.nom, type: l.type, groupe: l.groupe, domaines: l.domaines, specs: l.specs,
+            fiche: ficheCourte(l.fiche), runs: 0, echecs: 0, dernier: null };
+      parCle.set(l.cle, e);
+    }
+    e.runs++;
+    if (l.etat === 'echec') e.echecs++;
+    if (!e.dernier || comparerValeurs(l.debut_run, e.dernier.debut_run) > 0) {
+      e.dernier = { run: l.run, debut_run: l.debut_run, etat: l.etat, duree_ms: l.duree_ms, preset: l.preset };
+      // l'identité la plus récente fait foi (type/domaines/fiche ont pu évoluer)
+      e.test = l.test; e.type = l.type; e.domaines = l.domaines; e.specs = l.specs; e.fiche = ficheCourte(l.fiche);
+    }
+  });
+  return Array.from(parCle.values()).sort((a, b) => comparerValeurs(a.cle, b.cle));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Export de la vue filtrée (SPEC-BANC-038, révisé par SPEC-BANC-120) —
+// calculé ICI, colonnes demandées seulement : le navigateur ne reçoit plus
+// l'historique complet en JSON pour le remettre en forme lui-même.
+// ══════════════════════════════════════════════════════════════════════════
+function valeurExport(ligne, champ) {
+  const v = ligne[champ];
+  if (Array.isArray(v)) return v.join(', ');
+  if (typeof v === 'boolean') return v ? 'oui' : 'non';
+  return v === undefined || v === null ? '' : String(v);
+}
+function celluleCsv(v) {
+  const s = String(v);
+  return /[",\n\r;]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+}
+function echapperHtml(s) {
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+// libellés d'en-tête : les MÊMES que ceux affichés par tests/historique.js
+const LIBELLES_COLONNES = {
+  run: 'Run', debut_run: 'Début run', commit: 'Commit (sha)', commit_court: 'Commit', sujet_commit: 'Sujet du commit',
+  rang_commit: 'Rang commit', branche: 'Branche', preset: 'Préréglage', origine: 'Origine', inscrit: 'Inscrit',
+  test: 'Id test', cle: 'Identité', nom: 'Nom du test', type: 'Type', groupe: 'Groupe', domaines: 'Domaines',
+  specs: 'Specs', fonctions: 'Fonctions', etiquettes: 'Étiquettes', debut_test: 'Début test', duree_ms: 'Durée (ms)',
+  etat: 'État', erreur: 'Erreur', raison: 'Raison', nb_captures: 'Captures', motif: 'Motif',
+  arbre_modifie: 'Arbre modifié', interrompu: 'Interrompu',
+};
+function libelle(c) { return LIBELLES_COLONNES[c] || c; }
+function colonnesExport(colonnes) {
+  const c = (colonnes || []).filter(x => TYPES_COLONNES[x]);
+  return c.length ? c : ['debut_run', 'commit_court', 'preset', 'nom', 'type', 'duree_ms', 'etat', 'erreur'];
+}
+function exporterCSV(lignes, colonnes) {
+  const cols = colonnesExport(colonnes);
+  return '﻿' + cols.map(c => celluleCsv(libelle(c))).join(',') + '\n' + lignes.map(l => cols.map(c => celluleCsv(valeurExport(l, c))).join(',')).join('\n') + '\n';
+}
+function exporterHTMLVue(lignes, colonnes) {
+  const cols = colonnesExport(colonnes);
+  return '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Historique global</title>' +
+    '<style>body{font:13px ui-monospace,Menlo,Consolas,monospace;background:#0b0e13;color:#e8eaed;padding:16px;}' +
+    'table{border-collapse:collapse;width:100%;} th,td{border:1px solid #333;padding:4px 8px;text-align:left;vertical-align:top;}</style>' +
+    '</head><body><h1>Historique global — ' + lignes.length + ' ligne(s)</h1><table><thead><tr>' +
+    cols.map(c => '<th>' + echapperHtml(libelle(c)) + '</th>').join('') + '</tr></thead><tbody>' +
+    lignes.map(l => '<tr>' + cols.map(c => '<td>' + echapperHtml(valeurExport(l, c)) + '</td>').join('') + '</tr>').join('') +
+    '</tbody></table></body></html>';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -353,7 +484,8 @@ function creerIndex(opts) {
 
 module.exports = {
   TYPES_COLONNES, COLONNES_ENUM, COLONNES_LISTE,
-  construireLignes, filtrerLignes, filtreRapide, trierLignes, paginer,
+  construireLignes, filtrerLignes, filtreRapide, trierLignes, paginer, TAILLE_PAGE_MAX,
   effectifsEnum, effectifsToutesEnum, serieAgregee, imagesDeTest,
+  testsConnus, exporterCSV, exporterHTMLVue, cleTest,
   creerIndex, calculerInfoCommit,
 };

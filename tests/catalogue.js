@@ -7,7 +7,7 @@
 
    API :
      MC_TESTS.construire(T, e2eListe, specsIndex) → [entrée, ...]
-       Une entrée : { id, nom, type, fichier, groupe, domaines, specs,
+       Une entrée : { id, cle, nom, type, fichier, groupe, domaines, specs,
                        etiquettes, fiche: { teste, pourquoi, attendu, source } }
        - `T` est l'objet du harnais (tests/harness.js) APRÈS avoir chargé et
          évalué tous les fichiers tests/*.js : T.suites contient describe/it,
@@ -199,6 +199,7 @@
         var fiche = ficheDe(ids, specsIndex, t.fiche, suite.fiche);
         out.push({
           id: idDeSpecOuGenere(ids, 'N', t.name, index),
+          cle: cleTest(type, suite.name, t.name),
           nom: t.name,
           type: type,
           fichier: suite.fichier,
@@ -228,6 +229,7 @@
       var fiche = ficheDe(ids, specsIndex, e.fiche, e.ficheGroupe || null);
       out.push({
         id: idDeSpecOuGenere(ids, 'E', nom, index),
+        cle: cleTest(e.type || 'e2e', e.groupe || 'e2e', nom),
         nom: nom,
         // `e.type` : par défaut 'e2e' (banc navigateur) ; run.js s'en sert
         // aussi pour cataloguer les scripts d'intégration/de charge, qui ne
@@ -243,6 +245,20 @@
       });
     });
     return out;
+  }
+  /* SPEC-BANC-119 : l'IDENTITÉ d'un test (unique ET stable d'une campagne à
+     l'autre), distincte de son `id` : `id` vaut la 1re SPEC citée, PARTAGÉE
+     par tous les tests d'une même spec (SPEC-NET-007 : 6 tests), ou un rang
+     `N-<index>-…` qui bouge dès qu'un test est ajouté avant lui ou qu'une
+     campagne n'en charge qu'une partie. Groupe + nom est unique (vérifié sur
+     tout le registre) et ne dépend que de ce que le test déclare lui-même ;
+     pour un e2e, le groupe n'est pas stable (section de tests/e2e.js côté
+     Node, « end-to-end » côté banc navigateur) : le nom seul, unique, fait
+     foi. tools/historique.js la recalcule à l'identique depuis les entrées
+     déjà inscrites (categorie.type/groupe + nom), sans migration. */
+  function cleTest(type, groupe, nom) {
+    var g = type === 'e2e' ? 'e2e' : groupe;
+    return String(g === undefined || g === null ? '' : g) + ' › ' + String(nom === undefined || nom === null ? '' : nom);
   }
   function idDeSpecOuGenere(ids, prefixe, nom, index) {
     return ids.length ? ids[0] : idUnique(prefixe, nom, index);
@@ -309,6 +325,7 @@
   MC_TESTS.selection = selection;
   MC_TESTS.preset = preset;
   MC_TESTS.indexSpecs = indexSpecs;
+  MC_TESTS.cleTest = cleTest;
   Object.defineProperty(MC_TESTS, 'PRESETS', {
     get: function () { return (G.MC_PRESETS || []); }, configurable: true,
   });

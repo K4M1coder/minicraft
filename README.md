@@ -192,9 +192,15 @@ node tests/integration-e2e-headless.js  # une vraie petite campagne e2e sans fen
 node tests/run.js --preset e2e-fumee    # quelques e2e représentatifs (< 2 min), sans fenêtre — greffé sur pre-push
 ```
 
-`tests/index.html` rejoue les mêmes tests dans le navigateur **plus** ~144 tests
-end-to-end qui pilotent une vraie partie ; `window.runE2E(ensureGame(), null, 'SPEC-XXX')`
-n'en lance qu'une partie, filtrée par nom.
+`tests/index.html` (servi aussi sous `/tests/`) rejoue les mêmes tests dans le
+navigateur **plus** ~150 tests end-to-end qui pilotent une vraie partie ;
+`window.runE2E(ensureGame(), null, 'SPEC-XXX')` n'en lance qu'une partie, filtrée
+par nom. La liste des fichiers de tests est UNE seule, `tests/fichiers-tests.js`,
+partagée avec `node tests/run.js` (un fichier ajouté ailleurs n'apparaîtrait pas
+dans la page). Les tests que la page ne peut pas exécuter (intégration, fichiers
+Node seulement) figurent quand même dans l'arbre de sélection, « hors de ce
+banc », et chaque test a un lien « historique » vers tous ses passages
+(registre et cahiers locaux) — SPEC-BANC-117 à 121.
 
 **e2e sans fenêtre, en ligne de commande** (SPEC-BANC-023/024/025) : `node
 tests/run.js --type e2e` (et tout préréglage qui en contient, dont `e2e` et

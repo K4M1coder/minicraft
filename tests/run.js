@@ -97,19 +97,10 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
 }
 const SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'metiers', 'economie',
              'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'pvp-enjeux', 'livre', 'livres', 'ambiance', 'audio', 'qualite'];
-const TESTS = ['unit', 'functional', 'spec-modes', 'spec-saves', 'spec-audit', 'spec-armes', 'spec-chat', 'spec-split', 'spec-net', 'spec-secu', 'spec-ia-coll', 'spec-livre', 'spec-monde', 'spec-mer', 'spec-vehicules', 'spec-transport', 'spec-horizon', 'spec-climat', 'spec-habitats', 'spec-routes', 'spec-histoire', 'spec-succes', 'spec-ombres', 'spec-population', 'spec-hud', 'spec-couverture', 'spec-recits', 'spec-recit-serveur', 'spec-commandes', 'spec-portes', 'spec-eau', 'spec-vent', 'spec-loin', 'spec-donjons', 'spec-audio', 'spec-options', 'spec-souterrain', 'spec-apparence', 'spec-saisons', 'spec-parametres', 'spec-admin', 'spec-densite', 'spec-volcans', 'spec-caravanes', 'spec-economie', 'spec-metiers', 'spec-zones', 'spec-blocs16', 'spec-politique', 'spec-environnement', 'spec-guildes', 'spec-materiaux', 'spec-circuits', 'spec-objets', 'spec-formes', 'spec-recifs', 'spec-interieur', 'spec-batiments', 'spec-banc', 'spec-banc-headless',
-             // exploration (lot perf) : sondes non bloquantes, @exploration — voir tests/catalogue.js
-             'spec-perf', 'limites-sondes', 'spec-limites', 'spec-rendu', 'spec-maillage',
-             // vague 2 : contrats figés partagés par B1 à B4 (docs/vague-2/)
-             'spec-contrats-vague2', 'spec-contrats-archi', 'spec-archi-vehicules', 'spec-parties-fichier', 'spec-poste', 'spec-archi-env', 'spec-archi-reseau', 'spec-workers',
-             // vague 2 : B1 — inventaire et conteneurs serveur (SPEC-SYNC-007 à 017)
-             'spec-conteneurs',
-             // vague 2 : B4 — PvP, enjeux et sanctions (SPEC-PVP-001 à 006)
-             'spec-pvp',
-             // SPEC-BANC-010 (filet anti-blocage unifié) : crochets git, hors spec-banc.js
-             'spec-crochets',
-             // historique global (SPEC-BANC-033 à 040) : logique pure de tools/historique.js
-             'spec-historique'];
+/* Liste PARTAGÉE avec le banc navigateur (tests/index.html) : un seul fichier,
+   tests/fichiers-tests.js — deux copies à la main avaient divergé (SPEC-BANC-117). */
+require('./fichiers-tests.js');
+const TESTS = globalThis.MC_FICHIERS_TESTS.map(e => e.f);
 
 /* `require`, `process`, `__dirname` : exposés UNIQUEMENT pour que
    tests/spec-banc.js (Node-only, voir son en-tête) puisse vérifier

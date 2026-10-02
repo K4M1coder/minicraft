@@ -43,9 +43,13 @@
       // le banc sort en erreur dès que son p95 dépasse SON budget (porte G12,
       // pas ce test) : seule la moyenne compte ici, quel que soit le code de sortie
       var sortie;
+      // hors du try : dans le banc navigateur, « require is not defined »
+      // doit remonter tel quel (le banc marque alors le test `ignore`, Node
+      // seulement — SPEC-BANC-117) au lieu d'être pris pour une sortie vide
+      var cp = require('child_process'), chemin = require('path');
       try {
-        sortie = require('child_process').execFileSync(process.execPath,
-          [require('path').join(__dirname, 'bench-generation.js'), '80'],
+        sortie = cp.execFileSync(process.execPath,
+          [chemin.join(__dirname, 'bench-generation.js'), '80'],
           { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: 240000 }).toString();
       } catch (e) { sortie = String(e.stdout || ''); }
       var m = /moyenne = ([0-9.]+) ms\/chunk/.exec(sortie);

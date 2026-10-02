@@ -1202,6 +1202,7 @@ function cheminSur(urlPath) {
   catch (e) { return null; }
   if (brut.indexOf('\0') >= 0) return null;                 // octet nul
   if (brut === '/' || brut === '') brut = '/index.html';
+  else if (brut === '/tests/') brut = '/tests/index.html';   // page du banc (SPEC-BANC-120)
   const resolu = path.resolve(RACINE, '.' + brut);
   const racine = path.resolve(RACINE);
   // le séparateur final évite que /racine-bis passe pour /racine
@@ -1333,6 +1334,17 @@ function traiterResultatsTest(req, res) {
    jamais un chemin construit directement depuis l'URL, ce qui élimine la
    traversée de répertoire par construction plutôt que par filtrage. */
 const RE_CAHIER_DOSSIER = /^\/tests\/cahiers\/([^\/?]+)(?:\/(export|comparer|conserver))?\/?$/;
+/* Filet des routes du banc (SPEC-BANC-120) : une exception synchrone dans un
+   traitement (cahier illisible, donnée inattendue) laissait la requête sans
+   réponse — la page attendait indéfiniment. */
+function filetErreurTests(traiter, req, res) {
+  try { return traiter(req, res); }
+  catch (e) {
+    journal('banc de test : ' + ((e && e.stack) || e));
+    if (!res.headersSent) repondreJSON(res, 500, { ok: false, motif: 'erreur interne : ' + ((e && e.message) || e) });
+    return true;
+  }
+}
 function traiterCahiers(req, res) {
   const url = req.url.split('?')[0];
   if (!(url === '/tests/cahiers' || url === '/tests/cahiers/' || url === '/tests/cahiers/api' || RE_CAHIER_DOSSIER.test(url))) return false;
@@ -1427,9 +1439,22 @@ function parametresRequete(req) {
   new URL(req.url, 'http://localhost').searchParams.forEach((v, k) => { q[k] = v; });
   return q;
 }
+const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/export'];
 function traiterHistorique(req, res) {
   const url = req.url.split('?')[0];
-  if (url !== '/tests/historique/lignes' && url !== '/tests/historique/series' && url !== '/tests/historique/images') return false;
+  if (ROUTES_HISTORIQUE.indexOf(url) < 0) return false;
+  /* SPEC-BANC-120 : une exception ici (donnée inattendue du registre, bogue)
+     n'atteignait que process.on('uncaughtException') — le serveur survivait
+     mais la requête restait SANS RÉPONSE, et la page de l'historique attendait
+     indéfiniment. Elle reçoit désormais une erreur lisible. */
+  try { return traiterHistoriqueSur(req, res, url); }
+  catch (e) {
+    journal('historique : ' + ((e && e.stack) || e));
+    if (!res.headersSent) repondreJSON(res, 500, { ok: false, motif: 'erreur interne de l\'historique : ' + ((e && e.message) || e) });
+    return true;
+  }
+}
+function traiterHistoriqueSur(req, res, url) {
   const RT = require('./tools/resultats-tests.js');
   const HIST = require('./tools/historique.js');
   if (!RT.estAdresseLocale(req.socket.remoteAddress)) { repondreJSON(res, 403, { ok: false, motif: 'adresse non locale' }); return true; }
@@ -1438,9 +1463,30 @@ function traiterHistorique(req, res) {
   let filtre;
   try { filtre = q.filtre ? JSON.parse(q.filtre) : {}; }
   catch (e) { repondreJSON(res, 400, { ok: false, motif: 'filtre JSON invalide' }); return true; }
+  if (!filtre || typeof filtre !== 'object' || Array.isArray(filtre)) { repondreJSON(res, 400, { ok: false, motif: 'filtre : un objet JSON est attendu' }); return true; }
   if (q.rapide) filtre = Object.assign({}, HIST.filtreRapide(q.rapide), filtre);
 
   const toutes = obtenirIndiceHistorique().lignes();
+
+  if (url === '/tests/historique/tests') {
+    repondreJSON(res, 200, { tests: HIST.testsConnus(HIST.filtrerLignes(toutes, filtre)) });
+    return true;
+  }
+  if (url === '/tests/historique/export') {
+    const champs = (q.tri || '').split(',').filter(Boolean);
+    const ordres = (q.ordre || '').split(',');
+    const triees = HIST.trierLignes(HIST.filtrerLignes(toutes, filtre), champs.map((champ, i) => ({ champ, ordre: ordres[i] === 'desc' ? 'desc' : 'asc' })));
+    const colonnes = (q.colonnes || '').split(',').filter(Boolean);
+    const html = q.format === 'html';
+    const corps = Buffer.from(html ? HIST.exporterHTMLVue(triees, colonnes) : HIST.exporterCSV(triees, colonnes), 'utf8');
+    res.writeHead(200, {
+      'Content-Type': html ? 'text/html; charset=utf-8' : 'text/csv; charset=utf-8',
+      'Content-Disposition': 'attachment; filename="historique.' + (html ? 'html' : 'csv') + '"',
+      'Content-Length': corps.length,
+    });
+    res.end(corps);
+    return true;
+  }
 
   if (url === '/tests/historique/lignes') {
     const filtrees = HIST.filtrerLignes(toutes, filtre);
@@ -1742,7 +1788,11 @@ function servir(req, res) {
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
   if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
   if (req.url.split('?')[0] === '/tests/serveur-histoire' && traiterServeurHistoireTest(req, res)) return;
-  if (req.url.indexOf('/tests/cahiers') === 0 && traiterCahiers(req, res)) return;
+  if (req.url.indexOf('/tests/cahiers') === 0 && filetErreurTests(traiterCahiers, req, res)) return;
+  // /tests et /tests/ : la page du banc (SPEC-BANC-120) — /tests sans barre
+  // finale est redirigé, sinon ses chemins relatifs (banc.css, ../src/…)
+  // se résoudraient depuis la racine
+  if (req.url.split('?')[0] === '/tests') { res.writeHead(301, { Location: '/tests/' }); res.end(); return; }
   if (req.url.indexOf('/tests/historique/') === 0 && traiterHistorique(req, res)) return;
   if (req.url.indexOf('/tests/registre/images/') === 0 && traiterImageRegistre(req, res)) return;
   const chemin = cheminSur(req.url);

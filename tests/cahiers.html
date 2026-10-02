@@ -67,10 +67,26 @@ function echapper(s) {
     .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+/* SPEC-BANC-120 : une route en erreur (cahier illisible, serveur arrêté)
+   affiche son motif au lieu de laisser la page vide sans explication. */
 function charger() {
-  fetch('/tests/cahiers/api').then(function (r) { return r.json(); }).then(function (j) {
-    TOUS = j.cahiers || [];
+  var vide = document.getElementById('vide');
+  fetch('/tests/cahiers/api').then(function (r) {
+    return r.text().then(function (txt) {
+      var j = null;
+      try { j = JSON.parse(txt); } catch (e) { throw new Error('réponse illisible du serveur (HTTP ' + r.status + ')'); }
+      if (!r.ok) throw new Error((j && j.motif) || ('HTTP ' + r.status));
+      return j;
+    });
+  }).then(function (j) {
+    TOUS = (j && Array.isArray(j.cahiers) ? j.cahiers : []).filter(function (c) { return c && typeof c.dossier === 'string'; });
+    vide.textContent = 'aucun cahier enregistré';
     rafraichir();
+  }).catch(function (e) {
+    TOUS = [];
+    rafraichir();
+    vide.textContent = 'Impossible de lister les cahiers : ' + ((e && e.message) || e);
+    vide.style.display = 'block';
   });
 }
 
@@ -91,7 +107,7 @@ function rafraichir() {
   liste.forEach(function (c) {
     var tr = document.createElement('tr');
     if (SELECTION.indexOf(c.dossier) >= 0) tr.className = 'selectionne';
-    var totaux = c.totaux ? (c.totaux.passes + '/' + c.totaux.total) : '?';
+    var totaux = c.totaux ? echapper(c.totaux.passes + '/' + c.totaux.total) : '?';
     tr.innerHTML =
       '<td><input type="checkbox" ' + (SELECTION.indexOf(c.dossier) >= 0 ? 'checked' : '') + ' onchange="basculerSelection(\'' + c.dossier + '\', this.checked)"></td>' +
       '<td>' + (c.debut ? echapper(new Date(c.debut).toLocaleString('fr-FR')) : '—') + '</td>' +
