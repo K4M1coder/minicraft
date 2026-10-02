@@ -24,6 +24,17 @@ function ok(cond, nom, info) {
 }
 function eq(a, b, nom) { ok(a === b, nom, `attendu ${JSON.stringify(b)}, obtenu ${JSON.stringify(a)}`); }
 
+const DELAI_REQUETE_MS = 60000;
+// cahiers malformés fabriqués plus bas : préfixe réservé, nettoyé au début
+// ET à la fin (un test interrompu ne les laisse jamais dans le vrai dossier)
+const PREFIXE_MALFORMES = '2000-01-01_';
+function nettoyerMalformes() {
+  const racine = path.join(RACINE, 'tests', 'resultats');
+  try {
+    fs.readdirSync(racine).filter((d) => d.indexOf(PREFIXE_MALFORMES) === 0 && d.indexOf('integration-cahiers') >= 0)
+      .forEach((d) => fs.rmSync(path.join(racine, d), { recursive: true, force: true }));
+  } catch (e) { /* dossier absent : rien à nettoyer */ }
+}
 function requete(port, method, chemin, corps, headers) {
   return new Promise((resolve) => {
     const data = corps ? (Buffer.isBuffer(corps) ? corps : Buffer.from(JSON.stringify(corps))) : null;
@@ -33,6 +44,9 @@ function requete(port, method, chemin, corps, headers) {
       res.on('end', () => resolve({ code: res.statusCode, corps: Buffer.concat(morceaux), headers: res.headers }));
     });
     req.on('error', () => resolve({ code: 0, corps: null, headers: {} }));
+    // délai BORNÉ : une route qui ne répond jamais (le défaut même que ce
+    // fichier vérifie) doit faire échouer l'assertion, pas pendre le test
+    req.setTimeout(DELAI_REQUETE_MS, () => req.destroy(new Error('délai dépassé')));
     if (data) req.write(data);
     req.end();
   });
@@ -53,6 +67,7 @@ async function attendrePret(port) {
 }
 
 (async function () {
+  nettoyerMalformes();
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-cahiers-'));
   const s = demarrer(['--port', String(PORT), '--serveur', '--tests']);
   let sortieServeur = '';
@@ -178,7 +193,8 @@ async function attendrePret(port) {
     const scriptMatch = fs.readFileSync(path.join(RACINE, 'tests', 'cahiers.html'), 'utf8').match(/<script>([\s\S]*?)<\/script>/);
     const vm = require('vm');
     const ctxCahiers = vm.createContext({
-      document: JSDOMMinimal.document, fetch: () => Promise.resolve({ json: () => Promise.resolve({ cahiers: [] }) }),
+      document: JSDOMMinimal.document,
+      fetch: () => Promise.resolve({ ok: true, status: 200, text: () => Promise.resolve('{"cahiers":[]}'), json: () => Promise.resolve({ cahiers: [] }) }),
       alert: () => {}, confirm: () => true, console,
     });
     vm.runInContext(scriptMatch[1], ctxCahiers, { filename: 'cahiers.html-script' });
@@ -197,7 +213,98 @@ async function attendrePret(port) {
       const racine = path.join(RACINE, 'tests', 'resultats');
       if (dossierHostile) fs.rmSync(path.join(racine, dossierHostile), { recursive: true, force: true });
     } catch (e) { /* rien */ }
+
+    // ── SPEC-BANC-117/118/120 : page du banc, historique, données malformées ──
+    const rBanc = await requete(PORT, 'GET', '/tests/', null);
+    ok(rBanc.code === 200 && rBanc.corps.toString().indexOf('banc de test') >= 0, 'SPEC-BANC-120 : /tests/ sert la page du banc (404 avant)', 'code ' + rBanc.code);
+    const rBancSans = await requete(PORT, 'GET', '/tests', null);
+    ok(rBancSans.code === 301 && rBancSans.headers.location === '/tests/', 'SPEC-BANC-120 : /tests est redirigé vers /tests/ (chemins relatifs de la page)', 'code ' + rBancSans.code + ' ' + rBancSans.headers.location);
+
+    // deux cahiers locaux malformés (JSON valide mais inattendu) : ni la
+    // bibliothèque des cahiers ni l'historique ne doivent tomber — avant, une
+    // exception laissait la requête SANS réponse (page figée)
+    const racineRes = path.join(RACINE, 'tests', 'resultats');
+    const malformes = ['2000-01-01_00-00-01_integration-cahiers-null', '2000-01-01_00-00-02_integration-cahiers-bizarre'];
+    fs.mkdirSync(path.join(racineRes, malformes[0]), { recursive: true });
+    fs.writeFileSync(path.join(racineRes, malformes[0], 'resultats.json'), 'null');
+    fs.mkdirSync(path.join(racineRes, malformes[1]), { recursive: true });
+    fs.writeFileSync(path.join(racineRes, malformes[1], 'resultats.json'), JSON.stringify({
+      campagne: 'pas un objet',
+      tests: [null, 3, 'texte', { nom: 'test bizarre integration-cahiers', groupe: 'G-bizarre', domaines: 'PAS-UNE-LISTE', captures: [null, 4],
+        message: '\u001b[31mrouge\u001b[0m ' + 'x'.repeat(20000), assertions: { ok: 1, ko: 0 }, etapes: [], etat: 'echec' }],
+    }));
+    const rApiMal = await requete(PORT, 'GET', '/tests/cahiers/api', null);
+    ok(rApiMal.code === 200 && Array.isArray(JSON.parse(rApiMal.corps.toString()).cahiers), 'SPEC-BANC-120 : /tests/cahiers/api répond malgré un resultats.json « null »', 'code ' + rApiMal.code + ' ' + String(rApiMal.corps).slice(0, 200));
+    const rLignesMal = await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&filtre=' + encodeURIComponent(JSON.stringify({ nom: 'test bizarre integration-cahiers' })), null);
+    let jMal = null; try { jMal = JSON.parse(rLignesMal.corps.toString()); } catch (e) { /* jMal reste null */ }
+    ok(rLignesMal.code === 200 && jMal && jMal.total === 1, 'SPEC-BANC-120 : l\'historique répond et garde le seul test exploitable du cahier malformé', 'code ' + rLignesMal.code + ' ' + String(rLignesMal.corps).slice(0, 300));
+    if (jMal && jMal.lignes && jMal.lignes[0]) {
+      const l = jMal.lignes[0];
+      ok(Array.isArray(l.domaines) && l.domaines.length === 0 && l.nb_captures === 0, 'SPEC-BANC-120 : liste non-tableau → [] ; captures non-objets ignorées', JSON.stringify({ d: l.domaines, n: l.nb_captures }));
+      ok(l.erreur.indexOf('\u001b') < 0 && l.erreur.indexOf('rouge') === 0, 'SPEC-BANC-120 : séquences ANSI retirées du message', l.erreur.slice(0, 40));
+      eq(l.cle, 'G-bizarre › test bizarre integration-cahiers', 'SPEC-BANC-119 : identité groupe › nom');
+    }
+    const rTests = await requete(PORT, 'GET', '/tests/historique/tests?rapide=tous', null);
+    let jTests = null; try { jTests = JSON.parse(rTests.corps.toString()); } catch (e) { /* null */ }
+    ok(rTests.code === 200 && jTests && Array.isArray(jTests.tests) && jTests.tests.some(t => t.cle === 'G-bizarre › test bizarre integration-cahiers'),
+      'SPEC-BANC-118 : /tests/historique/tests liste les tests connus, y compris ceux d\'aucun catalogue', 'code ' + rTests.code);
+    const rFiltreTab = await requete(PORT, 'GET', '/tests/historique/lignes?filtre=%5B1%5D', null);
+    eq(rFiltreTab.code, 400, 'SPEC-BANC-120 : un filtre JSON qui n\'est pas un objet est refusé (400), jamais une exception');
+    const rGrosse = await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&taille=1000000', null);
+    let jGrosse = null; try { jGrosse = JSON.parse(rGrosse.corps.toString()); } catch (e) { /* null */ }
+    ok(rGrosse.code === 200 && jGrosse && jGrosse.taille <= 500 && jGrosse.lignes.length <= 500, 'SPEC-BANC-120 : la taille de page est bornée (500) — plus d\'historique entier en un JSON', 'taille ' + (jGrosse && jGrosse.taille));
+    const rExport = await requete(PORT, 'GET', '/tests/historique/export?format=csv&rapide=tous&colonnes=nom,etat&filtre=' + encodeURIComponent(JSON.stringify({ nom: 'test bizarre integration-cahiers' })), null);
+    const csv = rExport.corps ? rExport.corps.toString('utf8') : '';
+    ok(rExport.code === 200 && /text\/csv/.test(rExport.headers['content-type'] || '') && csv.split('\n')[0].indexOf('Nom du test,État') >= 0 && csv.split('\n').length === 3,
+      'SPEC-BANC-038/120 : export CSV produit par le serveur, colonnes demandées seulement', 'code ' + rExport.code + ' ' + csv.slice(0, 120));
+    malformes.forEach((d) => { try { fs.rmSync(path.join(racineRes, d), { recursive: true, force: true }); } catch (e) { /* rien */ } });
+
+    // ── SPEC-BANC-122 : seul le banc lui-même interroge ces routes ──────────
+    const etrangeres = [
+      ['Origin étrangère', { Origin: 'http://evil.example' }],
+      ['mandataire (X-Forwarded-For)', { 'X-Forwarded-For': '203.0.113.9' }],
+      ['requête intersites (Sec-Fetch-Site)', { 'Sec-Fetch-Site': 'cross-site' }],
+      ['Host étranger', { Host: 'evil.example' }],
+    ];
+    const routesBanc = ['/tests/historique/lignes?rapide=tous', '/tests/historique/export?format=html&rapide=tous', '/tests/historique/tests', '/tests/cahiers/api', '/tests/catalogue'];
+    for (const [quoi, ent] of etrangeres) {
+      for (const r of routesBanc) {
+        const rep = await requete(PORT, 'GET', r, null, ent);
+        eq(rep.code, 403, 'SPEC-BANC-122 : ' + quoi + ' refusée sur ' + r.split('?')[0]);
+      }
+    }
+    const rMemeOrigine = await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&taille=1', null, { Origin: 'http://127.0.0.1:' + PORT, 'Sec-Fetch-Site': 'same-origin' });
+    eq(rMemeOrigine.code, 200, 'SPEC-BANC-122 : la page du banc elle-même (même origine) reste servie');
+
+    // export borné et découpé : un seul à la fois, et la boucle d'évènements
+    // reste disponible pendant qu'il s'écrit
+    await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&taille=1', null); // index déjà construit
+    const toutesColonnes = 'run,debut_run,commit,commit_court,sujet_commit,rang_commit,branche,preset,origine,inscrit,test,cle,nom,type,groupe,domaines,specs,fonctions,etiquettes,debut_test,duree_ms,etat,erreur,raison,nb_captures,motif,arbre_modifie,interrompu';
+    const exports = [0, 1, 2, 3, 4].map(() => requete(PORT, 'GET', '/tests/historique/export?format=html&rapide=tous&colonnes=' + toutesColonnes, null));
+    await dodo(30);
+    const t0Sonde = Date.now();
+    const rSonde = await requete(PORT, 'GET', '/tests/version', null);
+    const latenceSonde = Date.now() - t0Sonde;
+    const rExports = await Promise.all(exports);
+    const codes = rExports.map(r => r.code);
+    // avant : cinq exports de plusieurs dizaines de Mo construits d'un bloc,
+    // tous acceptés (200 ×5), la boucle d'évènements bloquée le temps de chacun
+    ok(codes.filter(c => c === 200).length >= 1 && codes.filter(c => c === 429).length >= 1 && codes.every(c => c === 200 || c === 429),
+      'SPEC-BANC-122 : exports simultanés : un seul à la fois, les autres refusés (429)', JSON.stringify(codes));
+    ok(rSonde.code === 200 && latenceSonde < 1500, 'SPEC-BANC-122 : le serveur répond pendant un export (' + latenceSonde + ' ms)', 'code ' + rSonde.code);
+    const rFin = rExports.find(r => r.code === 200);
+    ok(rFin && /<\/html>$/.test(rFin.corps.toString('utf8')), 'SPEC-BANC-122 : l\'export découpé arrive complet (page HTML fermée)');
+
+    // L1 : le catalogue NODE est publié pour le banc (tests Node seulement et
+    // d'intégration visibles sans passage dans l'historique)
+    const rCat = await requete(PORT, 'GET', '/tests/catalogue', null);
+    let jCat = null; try { jCat = JSON.parse(rCat.corps.toString()); } catch (e) { /* null */ }
+    const typesCat = jCat && Array.isArray(jCat.tests) ? new Set(jCat.tests.map(t => t.type)) : new Set();
+    ok(rCat.code === 200 && typesCat.has('integration') && jCat.tests.some(t => t.fichier === 'tests/spec-crochets.js'),
+      'SPEC-BANC-118 : GET /tests/catalogue publie le catalogue Node (intégration, fichiers Node seulement)', 'code ' + rCat.code);
+    ok(jCat && new Set(jCat.tests.map(t => t.cle)).size === jCat.tests.length, 'SPEC-BANC-119 : identités du catalogue Node toutes distinctes');
   } finally {
+    nettoyerMalformes();
     try { s.kill(); } catch (e) { /* rien */ }
     try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) { /* rien */ }
     // le cahier factice créé par ce test ne doit pas s'accumuler dans le vrai dossier

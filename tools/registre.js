@@ -506,7 +506,14 @@ function historiqueTest(testId, opts) {
    (false ⇒ résoudre sous tests/resultats/<dossierCahier>/captures/, true
    ⇒ sous tests/registre/images/), voir tests/registre/README.md. */
 function construireTestsLocaux(tests, seuilLentMs) {
-  return (tests || []).map((t) => {
+  // un cahier local peut venir de n'importe quelle version du banc (ou d'un
+  // envoi navigateur interrompu, sendBeacon) : un élément qui n'est pas un
+  // objet est ignoré plutôt que de faire lever toute la vue unifiée
+  // (SPEC-BANC-120)
+  const estObjet = v => v !== null && typeof v === 'object' && !Array.isArray(v);
+  return (Array.isArray(tests) ? tests : []).filter(estObjet).map((t) => {
+    if (!Array.isArray(t.captures)) t = Object.assign({}, t, { captures: [] });
+    else if (!t.captures.every(estObjet)) t = Object.assign({}, t, { captures: t.captures.filter(estObjet) });
     const n = (t.captures || []).length;
     const etat = etatRegistre(t, seuilLentMs);
     return Object.assign(identiteTest(t), {
@@ -560,8 +567,9 @@ function runsUnifies(opts) {
       let resultats;
       try { resultats = JSON.parse(fs.readFileSync(path.join(racineResultats, d.name, 'resultats.json'), 'utf8')); }
       catch (e) { return; }
-      const campagne = resultats.campagne || {};
-      const env = campagne.environnement || {};
+      if (!resultats || typeof resultats !== 'object') return;   // « null », un nombre… : pas un cahier
+      const campagne = (resultats.campagne && typeof resultats.campagne === 'object') ? resultats.campagne : {};
+      const env = (campagne.environnement && typeof campagne.environnement === 'object') ? campagne.environnement : {};
       runsLocaux.push({
         id: idDeRun(env.commit || 'inconnu', campagne.preset || '', campagne.debut || d.name),
         dossierCahier: d.name,

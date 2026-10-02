@@ -147,7 +147,9 @@
 
     var etat = {
       catalogue: [],
-      cochees: Object.create(null),   // id -> true
+      connusParCle: Object.create(null), // tests connus de l'historique (SPEC-BANC-118)
+      connusParNom: Object.create(null),
+      cochees: Object.create(null),   // cle -> true (SPEC-BANC-119)
       lignesParId: Object.create(null),
       resultats: [],                   // résultats accumulés de la campagne en cours
       enCours: false,
@@ -244,11 +246,27 @@
             var ulTests = el('ul', { class: 'niveau-test' });
             tests.forEach(function (t) {
               var cb = el('input', { type: 'checkbox' });
-              cb.checked = !!etat.cochees[t.id];
-              cb.addEventListener('change', function () { basculerTest(t, cb.checked); });
-              casesGroupe.push(cb); casesDom.push(cb); casesType.push(cb);
-              var li = el('li', { class: 't-feuille', title: (t.fiche && t.fiche.teste) || '' },
-                [cb, el('span', {}, [' ' + t.nom])]);
+              var enfants = [cb, el('span', {}, [' ' + t.nom])];
+              if (t.horsNavigateur) {
+                // SPEC-BANC-118 : connu de l'historique mais pas lançable ici
+                // (intégration, fichier Node seulement, test disparu du
+                // catalogue courant) — visible, consultable, jamais coché
+                cb.disabled = true;
+                enfants.push(el('span', { class: 't-hors' }, [' — hors de ce banc (node tests/run.js)']));
+              } else {
+                cb.checked = !!etat.cochees[cleDe(t)];
+                cb.addEventListener('change', function () { basculerTest(t, cb.checked); });
+                casesGroupe.push(cb); casesDom.push(cb); casesType.push(cb);
+              }
+              var connu = etat.connusParCle[cleHistorique(t)];
+              if (connu) {
+                var d = connu.dernier || {};
+                enfants.push(el('button', { type: 'button', class: 't-hist' + (d.etat === 'echec' ? ' t-etat-echec' : ''),
+                  title: 'Historique de ce test : ' + connu.runs + ' passage(s), dernier ' + (d.etat || '?') + ' le ' + String(d.debut_run || '').slice(0, 10),
+                  onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); ouvrirHistoriqueTest(t); } },
+                  ['historique (' + connu.runs + ')']));
+              }
+              var li = el('li', { class: 't-feuille', title: (t.fiche && t.fiche.teste) || '' }, enfants);
               ulTests.appendChild(li);
             });
             var liGroupe = el('li', {}, [
@@ -278,8 +296,26 @@
       cases.forEach(function (cb) { if (cb.checked !== coche) { cb.checked = coche; cb.dispatchEvent(new Event('change')); } });
     }
     function basculerTest(t, coche) {
-      if (coche) etat.cochees[t.id] = true; else delete etat.cochees[t.id];
+      if (coche) etat.cochees[cleDe(t)] = true; else delete etat.cochees[cleDe(t)];
       majCompteur();
+    }
+    /* SPEC-BANC-119 : tout ce qui désigne UN test dans cette page (case
+       cochée, ligne de résultat, lents/erreurs) passe par son identité
+       unique `cle`, jamais par `id` — partagé par tous les tests d'une même
+       SPEC : cocher l'un cochait ses voisins, et leurs résultats
+       s'écrasaient dans une seule ligne de la liste (un test « disparu »). */
+    function cleDe(t) { return (t && (t.cle || t.id)) || ''; }
+    // identité sous laquelle l'historique connaît ce test (même calcul, mais
+    // un e2e lancé par le banc navigateur a pu être inscrit sous un autre
+    // groupe : on retombe alors sur le nom, unique)
+    function cleHistorique(t) {
+      if (etat.connusParCle[t.cle]) return t.cle;
+      var parNom = etat.connusParNom[t.type + '\u0000' + t.nom];
+      return parNom ? parNom.cle : t.cle;
+    }
+    function ouvrirHistoriqueTest(t) {
+      refermerSelection();
+      if (G.MC_HISTORIQUE) G.MC_HISTORIQUE.ouvrir({ cle: cleHistorique(t), nom: t.nom });
     }
     /* L'adresse reflète le préréglage ou le critère choisi (SPEC-BANC-007),
        pas chaque case cochée à la main — décocher un test individuel dans un
@@ -290,7 +326,9 @@
 
     function cocherSelon(criteres) {
       etat.cochees = Object.create(null);
-      (G.MC_TESTS.selection(etat.catalogue, criteres) || []).forEach(function (t) { etat.cochees[t.id] = true; });
+      (G.MC_TESTS.selection(etat.catalogue, criteres) || []).forEach(function (t) {
+        if (!t.horsNavigateur) etat.cochees[cleDe(t)] = true;
+      });
       construireArbre();
       majCompteur();
     }
@@ -312,7 +350,17 @@
 
     refs.btnMenu.addEventListener('click', function () {
       refs.panneauSel.hidden = !refs.panneauSel.hidden;
+      if (!refs.panneauSel.hidden) completerUneFois();
     });
+    /* Compléments de l'arbre (catalogue Node, historique — SPEC-BANC-118)
+       chargés à la PREMIÈRE ouverture de la sélection, jamais au chargement :
+       une campagne e2e sans fenêtre ouvre cette page sans jamais regarder
+       l'arbre, et ne doit pas payer le calcul du catalogue Node (un
+       processus à part, quelques secondes de CPU) pendant ses mesures. */
+    function completerUneFois() {
+      if (!etat.complement) etat.complement = completerCatalogue().then(construireArbre, function () { /* arbre du navigateur seul */ });
+      return etat.complement;
+    }
 
     G.MC_TESTS.PRESETS.forEach(function (p) {
       refs.presets.appendChild(el('option', { value: p.nom }, [p.nom + ' — ' + p.description]));
@@ -339,7 +387,7 @@
 
     // ── liste des tests exécutés + résumé (SPEC-BANC-008/009) ──────────────
     function ligneVide(t) {
-      var li = el('li', { class: 'ligne-test', id: 'ligne-' + cssId(t.id) });
+      var li = el('li', { class: 'ligne-test', id: 'ligne-' + cssId(cleDe(t)) });
       var tete = el('div', { class: 'tete' }, [
         el('span', { class: 'etat etat-attente' }, ['…']),
         el('span', { class: 'nom' }, [t.nom]),
@@ -357,8 +405,8 @@
     function cssId(id) { return String(id).replace(/[^a-zA-Z0-9_-]/g, '_'); }
 
     function afficherEnCours(t, libelleEtape) {
-      var li = etat.lignesParId[t.id];
-      if (!li) { li = ligneVide(t); etat.lignesParId[t.id] = li; refs.liste.appendChild(li); suivreScroll(); }
+      var li = etat.lignesParId[cleDe(t)];
+      if (!li) { li = ligneVide(t); etat.lignesParId[cleDe(t)] = li; refs.liste.appendChild(li); suivreScroll(); }
       li._tete.querySelector('.etat').className = 'etat etat-cours';
       li._tete.querySelector('.etat').textContent = '▶';
       li._tete.querySelector('.meta').textContent = libelleEtape ? ('— ' + libelleEtape) : '— en cours…';
@@ -366,10 +414,11 @@
     function marqueEtat(etatTest) {
       if (etatTest === 'reussi') return { c: 'etat-ok', s: '✓' };
       if (etatTest === 'delai') return { c: 'etat-delai', s: '⏱' };
+      if (etatTest === 'ignore') return { c: 'etat-attente', s: '–' };
       return { c: 'etat-ko', s: '✗' };
     }
     function afficherFini(t, r) {
-      var li = etat.lignesParId[t.id] || (etat.lignesParId[t.id] = ligneVide(t), refs.liste.appendChild(etat.lignesParId[t.id]), etat.lignesParId[t.id]);
+      var li = etat.lignesParId[cleDe(t)] || (etat.lignesParId[cleDe(t)] = ligneVide(t), refs.liste.appendChild(etat.lignesParId[cleDe(t)]), etat.lignesParId[cleDe(t)]);
       var m = marqueEtat(r.etat);
       li._tete.querySelector('.etat').className = 'etat ' + m.c;
       li._tete.querySelector('.etat').textContent = m.s;
@@ -377,7 +426,7 @@
       li._corps.innerHTML = '';
       li._corps.appendChild(detailTest(t, r));
       if (r.duree_ms > etat.seuilLentMs) ajouterLent(t, r);
-      if (r.etat !== 'reussi') ajouterErreur(t, r, li);
+      if (r.etat !== 'reussi' && r.etat !== 'ignore') ajouterErreur(t, r, li);
       suivreScroll();
     }
     /* SPEC-BANC-013 : le retour textuel d'un test déplié — fiche
@@ -437,11 +486,11 @@
     });
 
     function ajouterLent(t, r) {
-      var li = el('li', { onclick: function () { allerA(t.id); } }, [t.nom + ' — ' + duree(r.duree_ms)]);
+      var li = el('li', { onclick: function () { allerA(cleDe(t)); } }, [t.nom + ' — ' + duree(r.duree_ms)]);
       refs.lents.appendChild(li);
     }
     function ajouterErreur(t, r) {
-      var li = el('li', { onclick: function () { allerA(t.id); } }, [t.nom + ' — ' + (r.message || r.etat)]);
+      var li = el('li', { onclick: function () { allerA(cleDe(t)); } }, [t.nom + ' — ' + (r.message || r.etat)]);
       refs.erreurs.appendChild(li);
     }
     function allerA(id) {
@@ -452,9 +501,9 @@
       li._corps.style.display = 'block';
     }
     function signalerLentEnDirect(t) {
-      var deja = refs.lents.querySelector('[data-encours="' + cssId(t.id) + '"]');
+      var deja = refs.lents.querySelector('[data-encours="' + cssId(cleDe(t)) + '"]');
       if (deja) return;
-      var li = el('li', { 'data-encours': cssId(t.id) }, [t.nom + ' — en cours (dépasse le seuil)']);
+      var li = el('li', { 'data-encours': cssId(cleDe(t)) }, [t.nom + ' — en cours (dépasse le seuil)']);
       refs.lents.appendChild(li);
     }
 
@@ -463,7 +512,8 @@
       var total = Object.keys(etat.cochees).length;
       var faits = etat.resultats.length;
       var passes = etat.resultats.filter(function (r) { return r.etat === 'reussi'; }).length;
-      var echoues = faits - passes;
+      var ignores = etat.resultats.filter(function (r) { return r.etat === 'ignore'; }).length;
+      var echoues = faits - passes - ignores;
       var restants = Math.max(0, total - faits);
       var ecoule = etat.debutCampagne ? (performance.now() - etat.debutCampagne) : 0;
       var estimFin = '';
@@ -475,7 +525,7 @@
       refs.resume.innerHTML = '';
       refs.resume.className = 'resume ' + (echoues ? 'ko' : (tout ? 'ok' : ''));
       refs.resume.appendChild(el('div', {}, [
-        passes + ' passé(s) · ' + echoues + ' échoué(s) · ' + restants + ' restant(s) · ' + duree(ecoule) + estimFin,
+        passes + ' passé(s) · ' + echoues + ' échoué(s) · ' + (ignores ? ignores + ' ignoré(s) · ' : '') + restants + ' restant(s) · ' + duree(ecoule) + estimFin,
       ]));
       if (enCoursTexte) refs.resume.appendChild(el('div', { class: 'en-cours' }, [enCoursTexte]));
       if (tout && total > 0) refs.resume.appendChild(el('div', { class: 'fin' }, ['Campagne terminée.']));
@@ -503,7 +553,14 @@
           var r = { etat: ok ? 'reussi' : 'echec', duree_ms: ms, etapes: (detail && detail.etapes) || [],
                     assertions: (detail && detail.assertions) || { ok: 0, ko: 0 },
                     message: (detail && detail.message) || null, pile: (detail && detail.pile) || null, captures: [] };
-          etat.resultats.push(Object.assign({ id: t.id, nom: t.nom, type: t.type, groupe: t.groupe,
+          // un test qui a besoin de Node (require/process/__dirname dans son
+          // corps — spec-perf, spec-workers…) n'a rien prouvé ici, mais n'a pas
+          // échoué non plus : ignoré, avec sa raison (SPEC-BANC-089)
+          if (!ok && /\b(require|process|__dirname) is not defined\b/.test(r.message || '')) {
+            r.etat = 'ignore';
+            r.raison = 'Node seulement : ce test lit le disque ou lance un processus — node tests/run.js';
+          }
+          etat.resultats.push(Object.assign({ id: t.id, cle: t.cle, nom: t.nom, type: t.type, groupe: t.groupe,
                                                domaines: t.domaines, specs: t.specs, fiche: t.fiche }, r));
           afficherFini(t, r);
           majResume();
@@ -527,7 +584,7 @@
       var tests = liste.map(function (t) {
         var e = parNom[t.nom];
         if (!e) return null;
-        return Object.assign({}, e, { id: t.id, nom: t.nom, domaines: t.domaines, specs: t.specs, fiche: t.fiche });
+        return Object.assign({}, e, { id: t.id, cle: t.cle, nom: t.nom, domaines: t.domaines, specs: t.specs, fiche: t.fiche });
       }).filter(function (t) { return t; });
       var testActif = null, t0Actif = 0, minuteurLent = null;
       await G.runCampagneE2E(game, tests, {
@@ -543,7 +600,7 @@
         },
         finTest: function (t, r) {
           clearInterval(minuteurLent);
-          var marque = refs.lents.querySelector('[data-encours="' + cssId(t.id) + '"]');
+          var marque = refs.lents.querySelector('[data-encours="' + cssId(cleDe(t)) + '"]');
           if (marque) marque.remove();
           testActif = null;
           etat.resultats.push(r);
@@ -561,7 +618,7 @@
     // ── lancement complet ───────────────────────────────────────────────────
     async function lancer() {
       if (etat.enCours) return;
-      var choisis = etat.catalogue.filter(function (t) { return etat.cochees[t.id]; });
+      var choisis = etat.catalogue.filter(function (t) { return etat.cochees[cleDe(t)] && !t.horsNavigateur; });
       if (!choisis.length) { alert('Aucun test sélectionné.'); return; }
       etat.resultats = [];
       etat.lignesParId = Object.create(null);
@@ -580,7 +637,11 @@
 
       var minuteurResume = setInterval(function () { if (etat.enCours) majResume(); }, 500);
 
-      var unitaires = choisis.filter(function (t) { return t.type === 'unitaire'; });
+      // tout ce qui n'est pas e2e vient de T.suites (unit, functional,
+      // spec-*) et s'exécute par le harnais — pas seulement le type
+      // « unitaire » : les tests fonctionnels et spec cochés n'étaient
+      // jamais lancés, ni affichés dans la liste (SPEC-BANC-117)
+      var unitaires = choisis.filter(function (t) { return t.type !== 'e2e'; });
       var e2eTests = choisis.filter(function (t) { return t.type === 'e2e'; });
       await executerUnitaires(unitaires);
       if (!etat.arretDemande) await executerE2E(e2eTests);
@@ -591,7 +652,9 @@
       refs.btnArreter.disabled = true;
       majResume();
 
-      var echecsIds = etat.resultats.filter(function (r) { return r.etat !== 'reussi'; }).map(function (r) { return r.id; });
+      // par NOM (unique), pas par id (partagé par les tests d'une même SPEC :
+      // « relancer les échecs » relançait aussi leurs voisins réussis)
+      var echecsIds = etat.resultats.filter(function (r) { return r.etat !== 'reussi' && r.etat !== 'ignore'; }).map(function (r) { return r.nom || r.id; });
       G.MC_TESTS.memoriserEchecs(echecsIds);
 
       await envoyerCahier({
@@ -612,7 +675,8 @@
     async function envoyerCahier(meta) {
       var fin = new Date();
       var passes = etat.resultats.filter(function (r) { return r.etat === 'reussi'; }).length;
-      var echecs = etat.resultats.filter(function (r) { return r.etat !== 'reussi'; }).length;
+      var echecs = etat.resultats.filter(function (r) { return r.etat !== 'reussi' && r.etat !== 'ignore'; }).length;
+      var ignores = etat.resultats.filter(function (r) { return r.etat === 'ignore'; }).length;
       var lents = etat.resultats.filter(function (r) { return r.duree_ms > etat.seuilLentMs; })
         .sort(function (a, b) { return b.duree_ms - a.duree_ms; }).slice(0, 10)
         .map(function (r) { return { nom: r.nom, duree_ms: r.duree_ms }; });
@@ -668,7 +732,7 @@
             resolution: window.innerWidth + 'x' + window.innerHeight,
             versionJeu: MC.Core.VERSION_JEU, commit: commit, graine: game.world && game.world.seed,
           },
-          totaux: { total: etat.resultats.length, passes: passes, echecs: echecs, ignores: 0,
+          totaux: { total: etat.resultats.length, passes: passes, echecs: echecs, ignores: ignores,
                     parType: totauxPar(etat.resultats, 'parType'), parDomaine: totauxPar(etat.resultats, 'parDomaine') },
           lents: lents, fps_moyen: fpsMoyen,
         },
@@ -743,6 +807,53 @@
     });
 
     // ── initialisation du catalogue ──────────────────────────────────────────
+    /* SPEC-BANC-118 : les tests que cette page ne peut pas charger restent
+       CONSULTABLES, de deux sources fusionnées :
+         1. le catalogue NODE complet (GET /tests/catalogue, publié par
+            `node tests/run.js --catalogue-json`) : fichiers Node seulement,
+            intégration, charge — visibles même sans aucun passage ;
+         2. l'historique (GET /tests/historique/tests) : nombre de passages et
+            dernier état de chaque test, et les tests disparus du catalogue
+            courant (renommés, supprimés) qui ont encore un historique.
+       Ils s'ajoutent à l'arbre, non cochables, « hors de ce banc ». Sans
+       serveur (fichier ouvert hors serveur, route en erreur), l'arbre reste
+       celui du catalogue du navigateur — jamais une page blanche. */
+    async function lireJSONSur(url) {
+      try {
+        var rep = await fetch(url);
+        if (!rep.ok) return null;
+        return await rep.json();
+      } catch (e) { return null; }
+    }
+    async function completerCatalogue() {
+      var reponses = await Promise.all([lireJSONSur('/tests/catalogue'), lireJSONSur('/tests/historique/tests?rapide=tous')]);
+      var nodeTests = reponses[0] && Array.isArray(reponses[0].tests) ? reponses[0].tests : [];
+      var connus = reponses[1] && Array.isArray(reponses[1].tests) ? reponses[1].tests : [];
+      etat.connusParCle = Object.create(null);
+      etat.connusParNom = Object.create(null);
+      connus.forEach(function (c) {
+        if (!c || !c.cle) return;
+        etat.connusParCle[c.cle] = c;
+        etat.connusParNom[(c.type || '') + '\u0000' + (c.nom || '')] = c;
+      });
+      var presents = Object.create(null);
+      function marquer(t) { presents[t.cle] = true; presents[(t.type || '') + '\u0000' + (t.nom || '')] = true; }
+      function present(c) { return presents[c.cle] || presents[(c.type || '') + '\u0000' + (c.nom || '')]; }
+      etat.catalogue = etat.catalogue.filter(function (t) { return !t.horsNavigateur; });
+      etat.catalogue.forEach(marquer);
+      function ajouter(c, fichier) {
+        if (!c || !c.cle || present(c)) return;
+        var t = {
+          id: c.id || c.test || c.cle, cle: c.cle, nom: c.nom || c.cle, type: c.type || 'inconnu', groupe: c.groupe || '—',
+          fichier: fichier, domaines: Array.isArray(c.domaines) ? c.domaines : [], specs: Array.isArray(c.specs) ? c.specs : [],
+          etiquettes: Array.isArray(c.etiquettes) ? c.etiquettes : [], fonctions: [], fiche: c.fiche || null, horsNavigateur: true,
+        };
+        etat.catalogue.push(t);
+        marquer(t);
+      }
+      nodeTests.forEach(function (c) { ajouter(c, c && c.fichier || null); });
+      connus.forEach(function (c) { ajouter(c, null); });
+    }
     async function init() {
       var specsIndex = {};
       try {
@@ -750,7 +861,10 @@
         if (rep.ok) specsIndex = G.MC_TESTS.indexSpecs(await rep.text());
       } catch (e) { /* SPECS.md indisponible : fiches par défaut minimales */ }
       // laisse la suite T se peupler (tous les fichiers spec-*.js/unit.js/functional.js sont déjà chargés)
-      etat.catalogue = G.MC_TESTS.construire(T, G.E2E_LISTE, specsIndex);
+      // G.T (harnais) explicitement, jamais le `T` global nu : tests/e2e.js
+      // le remplaçait par son propre objet, et le catalogue perdait alors
+      // TOUS les tests Node (SPEC-BANC-117)
+      etat.catalogue = G.MC_TESTS.construire(G.T, G.E2E_LISTE, specsIndex);
       construireArbre();
 
       var depuisURL = critereDepuisURL();
@@ -771,7 +885,7 @@
        le menu de sélection doit se refermer dès qu'on clique « Lancer », pas
        seulement à l'ouverture d'un test — vérifiable sans dépendre de la
        structure interne au-delà de ces quelques références. */
-    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon };
+    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer);

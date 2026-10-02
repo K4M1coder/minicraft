@@ -4558,5 +4558,22 @@
   G.E2E_LISTE = tests;
   G.etape = etape;
   G.capture = capture;
-  G.T = T;
+  /* NE JAMAIS remplacer le harnais : dans tests/index.html, tests/harness.js
+     a déjà posé G.T (describe/it/run, et les suites de tous les fichiers
+     unit/functional/spec-* chargés avant ce fichier). L'écraser par ce petit
+     objet { etape } vidait le catalogue du banc navigateur de TOUS ses tests
+     Node (150 tests e2e visibles sur ~1 440) — banc-ui.js lit `T.suites`.
+     On greffe donc l'API e2e sur le harnais : pendant un e2e, `T.etape(nom)`
+     est celle de ce fichier (SPEC-BANC-077) ; sinon, celle du harnais
+     (`etape(libellé, n, total)`, tests/harness.js). Sans harnais (page qui
+     ne charge que e2e.js), l'objet e2e reste exposé tel quel. */
+  if (G.T && typeof G.T.run === 'function' && G.T !== T) {
+    var etapeHarnais = G.T.etape;
+    G.T.etape = function () {
+      if (enCours || typeof etapeHarnais !== 'function') return T.etape.apply(T, arguments);
+      return etapeHarnais.apply(G.T, arguments);
+    };
+  } else {
+    G.T = T;
+  }
 })(typeof globalThis !== 'undefined' ? globalThis : this);

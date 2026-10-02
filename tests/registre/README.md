@@ -50,7 +50,7 @@ diffs git minimaux, lisible ligne à ligne).
 
 | Champ | Type | Notes |
 |---|---|---|
-| `id`, `nom` | texte | identifiant catalogue (ou `null`), nom affiché |
+| `id`, `nom` | texte | identifiant catalogue (ou `null`), nom affiché — `id` n'est PAS unique (1re SPEC citée, partagée par tous les tests de cette spec) ; l'identité d'un test dans l'historique est `cle` = `categorie.groupe › nom` (`e2e › nom` pour un e2e), recalculée à la lecture (SPEC-BANC-119), jamais stockée |
 | `categorie` | `{ type, groupe }` | instantané du catalogue au moment du run |
 | `domaines`, `specs`, `etiquettes` | liste de texte | idem |
 | `fonctions` | liste | **vide pour l'instant** — l'observation automatique des fonctions réellement appelées est un lot séparé (voir `docs/banc/historique-global.md` §3.5) ; le champ existe déjà pour que ce format n'ait pas besoin de migration |

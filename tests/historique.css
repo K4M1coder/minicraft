@@ -56,6 +56,33 @@
 .hist-pagination #hist-page-info { opacity: .75; }
 .hist-pagination label { margin-left: auto; display: flex; align-items: center; gap: 6px; }
 
+#hist-table tbody tr { cursor: pointer; }
+#hist-table tbody tr.hist-erreur td, .hist-erreur { color: #ff8f89; white-space: normal; }
+
+/* panneau « test » (SPEC-BANC-039/121) : moitié basse de la zone, défile seul */
+#hist-panneau-test {
+  flex: 0 0 45%; min-height: 0; display: flex; flex-direction: column;
+  border-top: 2px solid rgba(126,178,255,.35); background: #0d1219;
+}
+#hist-panneau-test[hidden] { display: none; }
+.hist-pt-barre { flex: 0 0 auto; display: flex; align-items: center; gap: 8px; padding: 6px 12px; background: #10151d; }
+.hist-pt-corps { flex: 1 1 auto; min-height: 0; overflow: auto; padding: 8px 12px; font-size: 12px; }
+.hist-pt-identite { opacity: .85; margin-bottom: 8px; }
+.hist-pt-passages { margin: 0; padding-left: 22px; }
+.hist-pt-passages > li { padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,.06); }
+.hist-pt-passages > li.etat-echec .hist-pt-tete { color: #ff8f89; }
+.hist-pt-passages > li.etat-avertissement .hist-pt-tete { color: #f0c419; }
+.hist-pt-passages > li.hist-pt-courant { background: rgba(126,178,255,.08); }
+.hist-pt-lien { color: #7fb2ff; margin-left: 8px; }
+.hist-message { white-space: pre-wrap; word-break: break-word; max-height: 240px; overflow: auto; margin: 4px 0; padding: 6px; background: rgba(255,255,255,.03); border-radius: 4px; }
+.hist-pt-sans-image { opacity: .6; font-style: italic; margin-right: 6px; }
+
+/* lien « historique » d'un test dans l'arbre de sélection (SPEC-BANC-118) */
+.t-hist { margin-left: 6px; padding: 0 5px; font-size: 10.5px; line-height: 16px; opacity: .7; cursor: pointer; }
+.t-hist:hover { opacity: 1; }
+.t-hors { opacity: .6; font-style: italic; }
+.t-etat-echec { color: #ff8f89; }
+
 @media (max-width: 900px) {
   .hist-barre h2 { display: none; }
 }

@@ -56,7 +56,10 @@ function listerCahiers(racine) {
       if (!fs.existsSync(p)) return null;
       let j;
       try { j = JSON.parse(fs.readFileSync(p, 'utf8')); } catch (e) { return null; }
-      const c = j.campagne || {};
+      // « null » ou un nombre est du JSON valide mais pas un cahier : il
+      // faisait lever TOUTE la liste (page des cahiers vide) — SPEC-BANC-120
+      if (!j || typeof j !== 'object') return null;
+      const c = (j.campagne && typeof j.campagne === 'object') ? j.campagne : {};
       return {
         dossier: d.name, preset: c.preset || null,
         source: (c.environnement && c.environnement.source) || 'node',
