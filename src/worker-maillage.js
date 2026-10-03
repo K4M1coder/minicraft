@@ -8,7 +8,7 @@
     var m = /[?&]v=([^&]+)/.exec(self.location.search);
     return m ? '?v=' + m[1] : '';
   })();
-  var MODULES = ['core', 'formes', 'eau', 'lumiere', 'mesher', 'contrats-vague2', 'taches-chunks'];
+  var MODULES = ['journal', 'core', 'formes', 'eau', 'lumiere', 'mesher', 'contrats-vague2', 'taches-chunks'];
   importScripts.apply(self, MODULES.map(function (m) { return m + '.js' + suffixe; }));
 
   var MC = self.MC;

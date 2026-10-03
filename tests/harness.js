@@ -30,6 +30,10 @@
     suites: [], current: null, passed: 0, failed: 0, failures: [], only: null,
     fichierCourant: null,
   };
+  /* Journal (SPEC-BANC-105/106) : chargé APRÈS ce fichier, src/journal.js lit
+     ce mode — console muette, niveau trace produit (enregistreur de vol). */
+  G.MC_JOURNAL_MODE = 'test';
+  function journalDuTest() { return G.MC && typeof G.MC.Journal === 'function' ? G.MC.Journal : null; }
 
   function normaliserFiche(f) {
     if (!f || typeof f !== 'object') return null;
@@ -234,6 +238,15 @@
         var contexte = { groupe: s.name, nom: t.name, debut: t0, etapes: [], suivi: suivi, limiteMs: opts.delaiMs || 0, assertions: { ok: 0, ko: 0 } };
         pileAssertions.push(contexte.assertions);
         enCours = contexte;
+        /* SPEC-BANC-105 : le test en cours entre dans le contexte de chaque
+           entrée du journal ; SPEC-BANC-106 : sortie « rapport de test » —
+           les entrées warn et plus de CE test, jointes à son résultat. */
+        var J = journalDuTest(), collecte = null;
+        if (J) {
+          J.contexte({ test: idDe(t.name) || t.name });
+          collecte = J.sortieCollecte('rapport', 'warn');
+          J.ajouterSortie(collecte);
+        }
         try {
           var retour = t.fn();
           /* Garde anti-faux-positif (SPEC-BANC-013) : `T.run` est SYNCHRONE —
@@ -260,7 +273,9 @@
         } finally {
           enCours = null;
           pileAssertions.pop();
+          if (J) { J.retirerSortie('rapport'); J.contexte({ test: null }); }
         }
+        var journalTest = collecte && collecte.entrees.length ? collecte.lignes() : null;
         /* `detail`, toujours fourni (succès compris) : c'est ce dont
            tests/run.js a besoin pour construire une entrée resultats.json
            complète au fil de l'eau (SPEC-BANC-014), sans devoir attendre la
@@ -268,7 +283,7 @@
         if (suivi && suivi.finTest) {
           var detail = { etapes: contexte.etapes, assertions: contexte.assertions,
             message: info && info.message, attendu: info && info.attendu, obtenu: info && info.obtenu,
-            pile: info && info.pile, delai: !!(info && info.delai), debut: debutISO };
+            pile: info && info.pile, delai: !!(info && info.delai), debut: debutISO, journal: journalTest };
           suivi.finTest(s.name, t.name, ok, maintenant() - t0, detail);
         }
       }

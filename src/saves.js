@@ -10,6 +10,9 @@
   var VERSION = 2;
 
   function slotKey(id) { return SLOT_PREFIX + id; }
+  /* Journal (SPEC-BANC-107/108) : lu à l'appel, jamais au chargement — un
+     chargeur réduit (bancs, intégrations) peut omettre src/journal.js. */
+  function log() { return MC.Journal ? MC.Journal('SAVE') : null; }
 
   function lireJSON(storage, k, defaut) {
     try {
@@ -17,7 +20,12 @@
       if (!raw) return defaut;
       var v = JSON.parse(raw);
       return v === null || v === undefined ? defaut : v;
-    } catch (e) { return defaut; }
+    } catch (e) {
+      // comportement inchangé (valeur par défaut) ; le détail va au journal
+      var l = log();
+      if (l) l.error('E-SAVE-001 stockage illisible', { cle: k }, e);
+      return defaut;
+    }
   }
   function ecrireJSON(storage, k, v) {
     try { storage.setItem(k, JSON.stringify(v)); return true; } catch (e) { return false; }
@@ -128,8 +136,17 @@
     if (!meta) return null;
     var data = lireJSON(storage, slotKey(id), null);
     if (!data) return { meta: meta, vierge: true };     // partie créée mais jamais sauvegardée
-    if (data.slotV !== VERSION) return null;           // version de l'enveloppe
-    if (!MC.Save.apply(data, state)) return null;      // version du contenu
+    /* SPEC-BANC-107 : une seule voie journalise le détail ET prévient le
+       joueur (toast branché par game.js) — game.js ne l'affiche plus lui-même. */
+    var l = log();
+    if (data.slotV !== VERSION) {                      // version de l'enveloppe
+      if (l) l.error('E-SAVE-002 version de sauvegarde inconnue', { id: id, version: data.slotV, attendue: VERSION }, null, { joueur: 'Sauvegarde illisible' });
+      return null;
+    }
+    if (!MC.Save.apply(data, state)) {                 // version du contenu
+      if (l) l.error('E-SAVE-003 contenu de sauvegarde incompatible', { id: id, version: data.v }, null, { joueur: 'Sauvegarde illisible' });
+      return null;
+    }
     return { meta: meta, vierge: false };
   }
 

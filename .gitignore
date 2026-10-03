@@ -9,6 +9,10 @@ node_modules/
 # (tools/resultats-tests.js), sauf un cahier marqué « conservé »
 tests/resultats/
 
+# journal du serveur (SPEC-BANC-106) : logs/serveur-<date>.log, un fichier par
+# jour, les 14 plus récents gardés par server.js lui-même
+logs/
+
 # paquets construits (SPEC-PACK-001/004, tools/paquet.js) : archives
 # binaires reconstruisibles à volonté (node tools/paquet.js), jamais dans
 # git — un paquet par publication vit dans dist/releases/, gardé localement

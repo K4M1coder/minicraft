@@ -341,6 +341,9 @@
     // (MC.Guildes, sans candidatures ni invitations) ; envoyé juste après
     // BIENVENUE puis à chaque changement. Jamais accepté d'un client.
     POLITIQUE: 'politique',
+    // SPEC-BANC-106 (c→s) : erreur error/fatal du journal d'un client, remontée
+    // au journal du serveur avec un débit limité (MC.Journal.REMONTEE)
+    JOURNAL_CLIENT: 'journal_client',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
@@ -455,6 +458,10 @@
         if (!estEntier(msg.cx) || !estEntier(msg.cz) ||
             Math.abs(msg.cx) > COORD_MAX || Math.abs(msg.cz) > COORD_MAX) return null;
         return { t: msg.t, cx: msg.cx | 0, cz: msg.cz | 0 };
+
+      // SPEC-BANC-106 : niveau, domaine, longueurs bornés par le journal lui-même
+      case MSG.JOURNAL_CLIENT:
+        return MC.Journal ? MC.Journal.validerRemontee(msg) : null;
 
       default:
         if (MC.ContratsArchi && MC.ContratsArchi.SENS[msg.t] === 'c>s') return MC.ContratsArchi.valider(msg);

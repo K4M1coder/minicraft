@@ -120,7 +120,15 @@
       return src.toDataURL('image/jpeg', 0.85);
     }
 
+    /* SPEC-BANC-109 : réglage à chaud du journal depuis la console,
+       `MC_DEBUG.journal.niveau('SYNC', 'trace')`, et lecture du tampon. */
+    var journal = MC.Journal ? {
+      niveau: MC.Journal.niveau, regler: MC.Journal.regler, configuration: MC.Journal.configuration,
+      tampon: MC.Journal.tampon, vider: MC.Journal.viderTampon,
+    } : null;
+
     return {
+      journal: journal,
       teleporter: teleporter, heure: heure, saison: saison, meteo: meteo,
       distanceVue: distanceVue, agrandir: agrandir, reduire: reduire, capture: capture,
       get estAgrandi() { return !!agrandi; },

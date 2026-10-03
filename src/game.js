@@ -623,6 +623,15 @@
       onOptionsDefaut: function () { g.options = MC.Options.defauts(); MC.Options.sauver(hudStockage, g.options); appliquerOptions(); },
     }, hud);
 
+    /* Journal (SPEC-BANC-105 à 107) : contexte (joueur local, mode de jeu),
+       une seule voie pour les messages d'erreur au joueur (toast), et les
+       erreurs error/fatal remontées au serveur, à débit limité (net.envoyer
+       ne fait rien sans connexion ouverte). */
+    var logSave = MC.Journal('SAVE');
+    MC.Journal.fournirContexte(function () { return { joueur: g.nomJoueur || null, mode: regles && regles.mode ? regles.mode.id : null }; });
+    MC.Journal.configurer({ afficherJoueur: function (texte) { ui.toast(texte, 'warn'); } });
+    MC.Journal.ajouterSortie(MC.Journal.sortieRemontee(function (msg) { return net.envoyer(msg); }));
+
     // SPEC-RENDU-011 : avertissement d'accélération matérielle absente, une
     // seule fois au démarrage — il peut être ignoré, il ne réapparaît jamais
     if (render.materiel && render.materiel.renduLogiciel) ui.avertirRenduLogiciel(render.materiel.nom);
@@ -1038,7 +1047,7 @@
       appliquerPartie(meta);
       remplacerMonde(meta.graine);
       var r = MC.Saves.charger(st, id, g);
-      if (!r) { ui.toast('Sauvegarde illisible', 'warn'); return; }
+      if (!r) return;     // MC.Saves.charger a journalisé et prévenu le joueur (SPEC-BANC-107)
       composerEquipe(1, regles);
       if (!r.vierge) {
         // la position sauvegardee prime sur le point d apparition
@@ -2624,12 +2633,15 @@
       }
       return poste.sauvegarder().then(function (r) {
         if (notify) {
-          ui.toast(r.ok ? 'Partie sauvegardée par le serveur' : 'Sauvegarde refusée' + (r.motif ? ' (' + r.motif + ')' : ''), r.ok ? '' : 'warn');
-          if (r.ok) audio.play('sauver');
+          if (r.ok) { ui.toast('Partie sauvegardée par le serveur', ''); audio.play('sauver'); }
+          // SPEC-BANC-107 : le détail au journal, le texte lisible au joueur, par la même voie
+          else logSave.error('E-SAVE-004 sauvegarde refusée par le serveur', { motif: r.motif || null }, null,
+                             { joueur: 'Sauvegarde refusée' + (r.motif ? ' (' + r.motif + ')' : '') });
         }
         return r;
-      }, function () {
-        if (notify) ui.toast('Serveur injoignable : sauvegarde impossible', 'warn');
+      }, function (e) {
+        if (notify) logSave.error('E-SAVE-005 serveur injoignable pendant une demande de sauvegarde', null, e,
+                                  { joueur: 'Serveur injoignable : sauvegarde impossible' });
         return { ok: false, ecrite: false, motif: 'injoignable' };
       });
     }

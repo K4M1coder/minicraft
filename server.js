@@ -27,7 +27,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
+const MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'daycycle', 'succes', 'save', 'saves', 'parties-fichier', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres', 'recit-serveur'];
 
@@ -45,14 +45,76 @@ const NP = MC.NetProtocol;
 const SY = MC.Synchro;
 const C = MC.Core;
 
+// ── journal (SPEC-BANC-104 à 110) ────────────────────────────────────────────
+/* MC.Journal : le MÊME module que le client, chargé en premier dans le contexte
+   vm. Tout message du serveur passe par lui (porte G16 : aucun console.*
+   direct ici). Sa console garde EXACTEMENT le format historique — une ligne
+   `[HH:MM:SS] texte` sur la sortie standard — que les tests d'intégration et
+   les lanceurs lisent (« écoute : », MC_PORT=…) ; les autres domaines et
+   niveaux y ajoutent leur nom (`[HH:MM:SS] CLIENT ERROR …`). Les lignes de
+   protocole (`brut`) sortent telles quelles. */
+const J = MC.Journal;
+function formatConsoleServeur(e) {
+  if (e.brut) return e.message;
+  const h = new Date(e.t).toTimeString().slice(0, 8);
+  const prefixe = (e.domaine === 'SERVEUR' ? '' : e.domaine + ' ') + (e.niveau === 'info' ? '' : e.niveau.toUpperCase() + ' ');
+  const code = e.code && e.message.indexOf(e.code) < 0 ? e.code + ' ' : '';
+  return `[${h}] ${prefixe}${code}${e.message}`;
+}
+J.configurer({ mode: 'serveur', console: { methode: 'log', format: formatConsoleServeur } });
+const logServeur = J('SERVEUR');
+const logLanceur = J('LANCEUR');       // lignes lues par un programme (aide, MC_PORT=) : un domaine à part, jamais coupé par SERVEUR:warn
+const logReseau = J('RESEAU');
+const logClient = J('CLIENT');         // erreurs remontées par les clients (SPEC-BANC-106)
+
+/* Sortie « fichier du serveur » (SPEC-BANC-106) : `logs/serveur-<date>.log`
+   (dossier réglable par MC_JOURNAL_DOSSIER), un fichier par jour, les
+   JOURNAUX_GARDES plus récents seulement. Écriture synchrone sur un
+   descripteur ouvert : une ligne `fatal` juste avant process.exit() n'est
+   jamais perdue. Une panne d'écriture coupe la sortie, jamais le serveur. */
+const JOURNAUX_GARDES = 14;
+function sortieFichierJournal(dossier) {
+  let fd = null, jour = null, enPanne = false;
+  const deux = (n) => String(n).padStart(2, '0');
+  const jourDe = (t) => { const d = new Date(t); return d.getFullYear() + '-' + deux(d.getMonth() + 1) + '-' + deux(d.getDate()); };
+  function ouvrir(j) {
+    if (fd !== null) { try { fs.closeSync(fd); } catch (e) { /* déjà fermé */ } fd = null; }
+    fs.mkdirSync(dossier, { recursive: true });
+    fd = fs.openSync(path.join(dossier, 'serveur-' + j + '.log'), 'a');
+    jour = j;
+    try {
+      fs.readdirSync(dossier).filter(f => /^serveur-\d{4}-\d\d-\d\d\.log$/.test(f)).sort().slice(0, -JOURNAUX_GARDES)
+        .forEach(f => { try { fs.unlinkSync(path.join(dossier, f)); } catch (e) { /* tant pis */ } });
+    } catch (e) { /* rotation au prochain jour */ }
+  }
+  return {
+    nom: 'fichier', seuil: 'info',
+    ecrire(e) {
+      if (enPanne) return;
+      try {
+        const j = jourDe(e.t);
+        if (j !== jour) ouvrir(j);
+        fs.writeSync(fd, process.pid + ' ' + J.formater(e) + '\n');
+      } catch (err) { enPanne = true; }
+    },
+  };
+}
+J.ajouterSortie(sortieFichierJournal(path.resolve(RACINE, process.env.MC_JOURNAL_DOSSIER || 'logs')));
+
 /* L'analyse elle-même est pure et testée sous Node (tests/spec-parametres.js) ;
    c'est ICI, et seulement ici, qu'une erreur ou --aide arrête le programme. */
 const analyse = MC.Parametres.analyser(argvBrut);
 if (!analyse.ok) {
-  console.log(analyse.message);
+  if (analyse.code === 'aide') logLanceur.info(analyse.message, null, null, { brut: true });
+  else logLanceur.error(analyse.message, null, null, { brut: true, code: 'E-SERV-003' });
   process.exit(analyse.code === 'aide' ? 0 : 1);
 }
 const PARAMS = analyse.config;
+// SPEC-BANC-109 : --journal SYNC:trace,SERVEUR:debug — niveaux par domaine dès le lancement
+if (PARAMS.journal) {
+  const r = J.regler(PARAMS.journal);
+  if (!r.ok) logServeur.warn(`réglage --journal ignoré en partie : ${r.erreurs.join(', ')}`);
+}
 
 /* Commit courant (SPEC-BANC-012) : calculé UNE FOIS au démarrage, jamais par
    requête — `git rev-parse` par appel serait un coût inutile pour une valeur
@@ -126,7 +188,7 @@ let partieActive = null;                              // fiche d'index de la par
 if (PARAMS.partie) {
   const meta = MC.PartiesFichier.idValide(PARAMS.partie) ? MC.Saves.trouver(stockageParties, PARAMS.partie) : null;
   if (!meta) {
-    console.log(`partie inconnue : ${PARAMS.partie} (dossier ${DOSSIER_PARTIES})`);
+    logLanceur.error(`partie inconnue : ${PARAMS.partie} (dossier ${DOSSIER_PARTIES})`, null, null, { brut: true, code: 'E-SERV-002' });
     process.exit(1);
   }
   partieActive = meta;
@@ -1227,10 +1289,9 @@ function sauvegarderAuDepart() {
     if (!arretEnCours) sauvegarderMondeAsync('départ d\'un joueur', true);
   }, delai);
 }
-function journal(txt) {
-  const h = new Date().toTimeString().slice(0, 8);
-  console.log(`[${h}] ${txt}`);
-}
+/* Le journal historique du serveur : une ligne `[HH:MM:SS] texte` — désormais
+   MC.Journal, domaine SERVEUR, niveau info (même sortie, plus le fichier). */
+function journal(txt) { logServeur.info(txt); }
 
 // ── fichiers statiques ───────────────────────────────────────────────────────
 const TYPES = {
@@ -2057,6 +2118,8 @@ function surUpgrade(req, socket) {
     role: null, sessionId: null,             // rôle d'administration (SPEC-ADMIN-006/008)
   };
   clients.set(c.id, c);
+  // visible avec --journal RESEAU:debug (SPEC-BANC-109) ; toujours dans le tampon
+  logReseau.debug(`poignée de main WebSocket acceptée (#${c.id}, ${c.ip})`);
 
   /* TCP ne respecte aucune frontière de message : une lecture peut contenir
      une demi-trame, ou trois. On accumule et on décode tant qu'une trame
@@ -2996,6 +3059,16 @@ function traiter(c, m) {
       if (!cont) { cont = MC.Conteneurs.creerConteneur('distributeur'); conteneursPoses.set(kd, cont); }
       MC.Conteneurs.declarer(js.joueur.state.inv, cont, m.slots);
       envoyerInvMaj(c, m.j, {});
+      break;
+    }
+
+    /* SPEC-BANC-106 : erreur error/fatal d'un client, rassemblée dans le journal
+       du serveur — au plus MC.Journal.REMONTEE.max par fenêtre et par
+       connexion, au-delà ignorée (le client applique déjà la même limite). */
+    case NP.MSG.JOURNAL_CLIENT: {
+      if (!c.limiteJournal) c.limiteJournal = J.limiteur(J.REMONTEE.max, J.REMONTEE.fenetreMs);
+      if (!c.limiteJournal()) break;
+      logClient[m.niveau](`${c.nom} (#${c.id}) [${m.domaine}] ${m.message}`, { client: c.id, domaine: m.domaine }, m.pile || null, m.code ? { code: m.code } : null);
       break;
     }
 
@@ -4943,7 +5016,7 @@ demarrerEcoute().then(() => {
   journal(`écoute : ${reseauOuvert ? 'toutes les interfaces' : adressesActives.join(' et ')} · port ${portActuel}`);
   journal(`graine ${CONF.graine} · mode ${CONF.mode} · difficulté ${CONF.difficulte}` + (partieActive ? ` · partie « ${partieActive.nom} » (${partieActive.id})` : ''));
   journal(`simulation ${CONF.tickHz} Hz · diffusion d'état ${CONF.etatHz} Hz`);
-  console.log(`MC_PORT=${portActuel}`);                       // lisible par un lanceur (SPEC-ARCHI-004)
+  logLanceur.info(`MC_PORT=${portActuel}`, null, null, { brut: true });   // lisible par un lanceur (SPEC-ARCHI-004)
   if (SANS_PARAMETRE && !CONF.serveurSeul) {
     journal('ouverture du navigateur…');
     ouvrirNavigateur(`http://localhost:${portActuel}`);
@@ -4958,7 +5031,7 @@ demarrerEcoute().then(() => {
   const motif = e && e.code === 'EADDRINUSE'
     ? (PARAMS.portFixe ? `le port ${PARAMS.port} est déjà utilisé` : `aucun port libre entre ${PARAMS.port} et ${CA.BORNES.PORT_REPLI_MAX}`)
     : ((e && e.message) || String(e));
-  console.log(`impossible de démarrer le serveur : ${motif}. Libérez le port ou lancez avec un autre --port.`);
+  logLanceur.fatal(`impossible de démarrer le serveur : ${motif}. Libérez le port ou lancez avec un autre --port.`, { motif }, e, { brut: true, code: 'E-SERV-001' });
   process.exit(1);
 });
 

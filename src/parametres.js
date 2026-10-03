@@ -39,6 +39,8 @@
       aide: 'origines WebSocket autorisées, séparées par des virgules (ex. http://localhost:8080) ; défaut : aucune restriction' },
     // SPEC-BANC-015 : un serveur --serveur (dédié) refuse les résultats de test SAUF avec --tests
     { nom: 'tests', cle: 'tests', valeur: false, aide: 'autorise la réception de résultats de test (POST /tests/resultats) même en --serveur dédié' },
+    // SPEC-BANC-109 : réglage du journal par domaine, comme le paramètre d'URL ?journal= du jeu
+    { nom: 'journal', cle: 'journal', attend: 'texte', defaut: null, aide: 'niveaux du journal par domaine, ex. SYNC:trace,SERVEUR:debug (trace, debug, info, warn, error, fatal)' },
     { nom: 'aide', cle: 'aide', valeur: false, aide: 'affiche cette liste et s\'arrête' },
   ];
 
