@@ -251,6 +251,14 @@ croissance des cultures et feu ; le client ne simule plus rien de tout cela
 `tests/integration-archi-env.js`, `tests/spec-archi-env.js` et l'espion
 `world.tick` de `tests/e2e.js`.
 
+Mise à jour (2026-10-03) : P-HIST, P-SUCC et P-VEH sont fusionnés (SPEC-ARCHI-021,
+041 et 042 ✅) ; la version 0.5.0 est publiée (étiquette `v0.5.0`, archive zip par
+release). Restent ⏳ : SPEC-ARCHI-001 et 020 (audits finaux), 043 et 044 (reportés,
+voir `docs/feuille-de-route.md`), SPEC-SYNC-020 et 024, et le bug des circuits.
+Deux correctifs de synchronisation sont fusionnés après la 0.5.0 : vol prédit comme
+le serveur le simule et horloge du monde sans recul (SPEC-ARCHI-045 et 046), et les
+créatures cèdent au joueur au lieu de le pousser (SPEC-ARCHI-047).
+
 Avancement global (2026-09-30) : A0, B-INV, B-ENV, B-VIE et B-RESEAU sont FUSIONNÉS
 sur master après revue adversariale (un tour de corrections chacun). Fiches encore
 ⏳ : SPEC-ARCHI-001 et 020 (audits finaux, à refermer une fois les portages faits),
@@ -379,6 +387,12 @@ Une fonctionnalité est terminée quand :
 ---
 
 ## 6. Suite proposée (à valider)
+
+> Mise à jour (2026-10-03) : les lots L23, L24, L25 et L29 sont validés et repris dans la
+> table du §3 ; L30 est repris par L36, L27 recoupe L45, L33 correspond à L47 (fait).
+> Sans lot correspondant dans le §3 : **L26** (agriculture et élevage), **L28** (faune
+> sociale), **L31** (accessibilité), **L32** (serveur persistant) et **L34** (commandes
+> pures) — à décider avec l'utilisateur : lot à planifier, déjà couvert ou abandonné.
 
 Ces lots ne sont **pas encore spécifiés** : une fois validés, chacun devient une
 série de specs ⏳ dans `SPECS.md`, puis suit le cycle S1→S7.
