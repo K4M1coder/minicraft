@@ -995,10 +995,13 @@
     });
 
     it('SPEC-BANC-028/031 : les crochets référencent bien le registre (inscription depuis pre-push, intégration depuis pre-commit)', function () {
+      // depuis SPEC-BANC-072/073, l'inscription est faite par la suite complète
+      // commune (tools/hooks/suite-complete.js) que pre-push appelle avec son origine
       var prePush = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'pre-push.js'), 'utf8');
+      var suite = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'suite-complete.js'), 'utf8');
       var preCommit = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'pre-commit.js'), 'utf8');
-      A.ok(/require\(['"]\.\.\/registre\.js['"]\)/.test(prePush), 'pre-push.js charge tools/registre.js');
-      A.ok(/origine:\s*['"]pre-push['"]/.test(prePush) && /statut:\s*['"]en_attente['"]/.test(prePush),
+      A.ok(/require\(['"]\.\/suite-complete\.js['"]\)/.test(prePush) && /require\(['"]\.\.\/registre\.js['"]\)/.test(suite), 'pre-push.js inscrit au registre via tools/hooks/suite-complete.js');
+      A.ok(/origine:\s*['"]pre-push['"]/.test(prePush) && /statut:\s*['"]en_attente['"]/.test(suite),
         'pre-push.js inscrit avec origine pre-push et statut en_attente');
       A.ok(/require\(['"]\.\.\/registre\.js['"]\)/.test(preCommit), 'pre-commit.js charge tools/registre.js');
       A.ok(/marquerEnAttenteCommitees/.test(preCommit) && /git add[^\n]*DOSSIER_REGISTRE_REL/.test(preCommit),

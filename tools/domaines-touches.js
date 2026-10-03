@@ -15,14 +15,22 @@
 const fs = require('fs');
 const path = require('path');
 
+/* Domaines d'UN fichier, par ressemblance de nom (peut être vide) — l'étape 3
+   du calcul de périmètre (tools/perimetre.js, SPEC-BANC-068/071) s'en sert
+   fichier par fichier, sans le « tout ou rien » de domainesTouches(). */
+function domainesDuFichier(fichier, domainesConnus) {
+  const b = path.basename(fichier, '.js').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!b) return [];
+  return domainesConnus.filter((d) => b.indexOf(d) >= 0 || d.indexOf(b) >= 0);
+}
+
 function domainesTouches(fichiers, racine) {
   if (!fichiers || !fichiers.length || fichiers.some((f) => !/^src\//.test(f))) return null;
   let specsTexte;
   try { specsTexte = fs.readFileSync(path.join(racine, 'SPECS.md'), 'utf8'); } catch (e) { return null; }
   const domainesConnus = Array.from(new Set((specsTexte.match(/SPEC-([A-Z0-9]+)-\d+/g) || [])
     .map((id) => id.replace(/^SPEC-/, '').replace(/-\d+$/, ''))));
-  const bases = fichiers.map((f) => path.basename(f, '.js').toUpperCase().replace(/[^A-Z0-9]/g, ''));
-  const parFichier = bases.map((b) => domainesConnus.filter((d) => b.indexOf(d) >= 0 || d.indexOf(b) >= 0));
+  const parFichier = fichiers.map((f) => domainesDuFichier(f, domainesConnus));
   // un seul fichier sans domaine reconnu suffit à retomber sur la suite complète
   if (parFichier.some((l) => l.length === 0)) return null;
   const set = new Set();
@@ -30,4 +38,4 @@ function domainesTouches(fichiers, racine) {
   return set.size ? Array.from(set) : null;
 }
 
-module.exports = { domainesTouches };
+module.exports = { domainesTouches, domainesDuFichier };

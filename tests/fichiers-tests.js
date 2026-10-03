@@ -33,9 +33,11 @@
     // SPEC-BANC-010 (filet anti-blocage unifié) : crochets git, hors spec-banc.js
     'spec-crochets',
     // historique global (SPEC-BANC-033 à 040) : logique pure de tools/historique.js
-    'spec-historique'];
+    'spec-historique',
+    // périmètre d'exécution des tests (SPEC-BANC-067 à 076) : carte d'impact, calcul, repli, crochets
+    'spec-perimetre'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

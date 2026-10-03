@@ -370,6 +370,92 @@
       var preset = G.MC_TESTS.PRESETS.filter(function (p) { return p.nom === refs.presets.value; })[0];
       if (preset) { cocherSelon(preset.criteres); urlDepuisCriteres({ preset: preset.nom }); }
     });
+    // ── périmètre d'exécution (SPEC-BANC-074) ──────────────────────────────
+    /* « Périmètre du commit » (fichiers indexés), « Périmètre depuis… » (une
+       référence) et « Tout ». L'aperçu (GET /tests/perimetre, calculé par
+       tools/perimetre.js) liste les tests retenus et leur raison AVANT tout
+       lancement ; « Retenir ces tests » ne fait que cocher — seul « Lancer »
+       exécute. Les tests Node seulement (intégration, outillage) restent
+       visibles dans l'aperçu avec la commande qui les lance. */
+    var perim = {
+      mode: document.getElementById('perimetre-mode'),
+      ref: document.getElementById('perimetre-ref'),
+      bouton: document.getElementById('btn-perimetre'),
+      apercu: document.getElementById('perimetre-apercu'),
+      dernier: null,
+    };
+    function majModePerimetre() {
+      perim.ref.hidden = perim.mode.value !== 'depuis';
+      perim.bouton.disabled = !perim.mode.value;
+      perim.apercu.hidden = true;
+      perim.dernier = null;
+      if (perim.mode.value === 'tout') {
+        perim.apercu.hidden = false;
+        perim.apercu.innerHTML = '';
+        perim.apercu.appendChild(el('p', {}, ['Tout le catalogue : ' + etat.catalogue.filter(function (t) { return !t.horsNavigateur; }).length + ' test(s) lançable(s) dans ce banc.']));
+        perim.apercu.appendChild(el('button', { type: 'button', onclick: function () { cocherSelon({ tout: true }); urlDepuisCriteres({}); } }, ['Retenir tout']));
+      }
+    }
+    perim.mode.addEventListener('change', majModePerimetre);
+    function afficherApercuPerimetre(p) {
+      perim.apercu.innerHTML = '';
+      perim.apercu.hidden = false;
+      var titre = p.mode === 'depuis' ? 'Périmètre depuis ' + p.depuis : 'Périmètre du commit (fichiers indexés)';
+      perim.apercu.appendChild(el('h4', {}, [titre]));
+      perim.apercu.appendChild(el('p', { class: 'perimetre-fichiers' }, ['Fichiers touchés : ' + ((p.fichiers || []).join(', ') || 'aucun')]));
+      if (p.repli) {
+        perim.apercu.appendChild(el('p', { class: 'perimetre-repli' }, ['Repli sur la suite complète : ' + p.repli]));
+      } else if ((p.fonctions || []).length) {
+        perim.apercu.appendChild(el('p', { class: 'perimetre-fonctions' }, ['Fonctions touchées : ' + p.fonctions.join(', ')]));
+      }
+      var lancables = 0, horsBanc = 0;
+      var connus = Object.create(null);
+      etat.catalogue.forEach(function (t) { connus[cleDe(t)] = t; });
+      var ul = el('ul', { class: 'perimetre-liste' });
+      (p.selection || []).forEach(function (t, i) {
+        var local = connus[t.cle];
+        var lancable = !!(local && !local.horsNavigateur);
+        if (lancable) lancables++; else horsBanc++;
+        if (i < 400) {
+          ul.appendChild(el('li', { class: lancable ? '' : 't-hors' }, [
+            el('span', { class: 'perimetre-test' }, ['[' + t.type + '] ' + t.nom]),
+            el('span', { class: 'perimetre-raison' }, [' ← ' + (t.raisons || []).join(', ')]),
+          ].concat(lancable ? [] : [el('span', {}, [' — hors de ce banc'])])));
+        }
+      });
+      if ((p.selection || []).length > 400) ul.appendChild(el('li', {}, ['… et ' + (p.selection.length - 400) + ' autre(s)']));
+      perim.apercu.appendChild(el('p', { class: 'perimetre-compte' }, [
+        (p.selection || []).length + ' test(s) retenu(s), ' + (p.exclus || 0) + ' exclu(s) — ' + lancables + ' lançable(s) ici' +
+        (horsBanc ? ', ' + horsBanc + ' hors de ce banc (node tests/run.js ' + (p.mode === 'depuis' ? '--depuis ' + p.depuis : '--perimetre commit') + ')' : '')]));
+      perim.apercu.appendChild(ul);
+      perim.apercu.appendChild(el('button', { type: 'button', class: 'primary', onclick: function () {
+        etat.cochees = Object.create(null);
+        if (p.repli) { cocherSelon({ tout: true }); return; }
+        (p.selection || []).forEach(function (t) { var local = connus[t.cle]; if (local && !local.horsNavigateur) etat.cochees[t.cle] = true; });
+        construireArbre(); majCompteur();
+      } }, ['Retenir ces tests (sans lancer)']));
+    }
+    perim.bouton.addEventListener('click', async function () {
+      var mode = perim.mode.value;
+      if (mode !== 'commit' && mode !== 'depuis') return;
+      perim.apercu.hidden = false;
+      perim.apercu.innerHTML = '';
+      perim.apercu.appendChild(el('p', {}, ['calcul du périmètre…']));
+      var url = '/tests/perimetre' + (mode === 'depuis' ? '?depuis=' + encodeURIComponent(perim.ref.value.trim() || 'master') : '');
+      try {
+        await completerUneFois();
+        var rep = await fetch(url);
+        var p = await rep.json();
+        if (!rep.ok || !p.ok) throw new Error(p.motif || ('HTTP ' + rep.status));
+        perim.dernier = p;
+        afficherApercuPerimetre(p);
+      } catch (e) {
+        perim.apercu.innerHTML = '';
+        perim.apercu.appendChild(el('p', { class: 'perimetre-repli' }, ['Périmètre indisponible : ' + (e && e.message || e) + ' (le banc doit être servi par le serveur du jeu)']));
+      }
+    });
+    majModePerimetre();
+
     refs.btnTout.addEventListener('click', function () { cocherSelon({ tout: true }); urlDepuisCriteres({}); refermerSelection(); });
     refs.btnEchecs.addEventListener('click', function () {
       // `MC_TESTS.selection` attend, pour la clé `echecs`, la LISTE des ids/noms

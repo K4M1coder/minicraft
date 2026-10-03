@@ -7,28 +7,26 @@
    - aucun marqueur de conflit de fusion oublié dans les fichiers indexés ;
    - le préréglage `commit` du catalogue de tests (SPEC-BANC-004/006) :
      specs, unitaires et fonctionnels, sans navigateur ni intégration, sans
-     les tests étiquetés @lent.
-
-   Mesuré sur ce dépôt (~950 tests même hors @lent), le préréglage `commit`
-   complet dépasse largement les 60 s visées par SPEC-BANC-004 — la suite a
-   grossi bien au-delà de ce qu'un crochet peut se permettre à chaque commit.
-   Faute de temps pour optimiser la suite elle-même (lot performance,
-   L47/G12), ce crochet applique le repli que documente la consigne du lot :
-   quand les fichiers indexés touchent clairement UN OU PLUSIEURS domaines de
-   src/ (et rien de plus large — pas tools/, server.js, ou un fichier de
-   tests lui-même, qui peuvent affecter n'importe quel domaine), il restreint
-   `--preset commit` à `--domaine <ces domaines>` — quelques secondes plutôt
-   que plusieurs minutes. Dès qu'il ne peut pas conclure avec confiance
-   (aucun fichier src/ touché, ou un fichier hors src/ modifié), il retombe
-   sur le préréglage `commit` complet, plus lent mais complet. `--delai 900`
-   (le filet commun de 15 min, SPEC-BANC-010 révisée — tools/hooks/delai-filet.js)
-   reste un filet de sécurité dans les deux cas : un crochet qui ne finit
-   jamais serait pire qu'un crochet lent. */
+     les tests étiquetés @lent — RESTREINT AU PÉRIMÈTRE DU COMMIT
+     (SPEC-BANC-071) : `node tests/run.js --preset commit --perimetre commit`.
+     Le moteur (tools/perimetre.js) ne garde que les tests touchés par les
+     fichiers indexés (fichiers de test modifiés, fonctions touchées selon la
+     carte d'impact, domaines, fumée) et retombe sur le préréglage `commit`
+     ENTIER dès qu'il ne peut pas conclure (outillage, serveur, page,
+     module absent de la carte, carte absente ou trop ancienne…) : dans le
+     doute il élargit, jamais il ne réduit. Le préréglage complet dure
+     plusieurs minutes ; un commit qui ne touche qu'une fonction, quelques
+     secondes.
+   - un commit de MERGE avec conflits résolus (MERGE_HEAD présent) lance la
+     SUITE COMPLÈTE au lieu du périmètre (SPEC-BANC-073) : `--preset pr` en
+     entier puis `--preset e2e-fumee`, inscription au registre et carte
+     d'impact (tools/hooks/suite-complete.js), comme pre-merge-commit.
+   `--delai 900` (le filet commun de 15 min, SPEC-BANC-010 révisée —
+   tools/hooks/delai-filet.js) reste un filet anti-blocage, jamais un couperet. */
 'use strict';
 const { execSync, spawnSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
-const { domainesTouches } = require('../domaines-touches.js');
 const { DELAI_FILET_S } = require('./delai-filet.js');
 
 const erreurs = [];
@@ -76,16 +74,33 @@ try {
   v.erreurs.forEach(e => erreurs.push('version : ' + e));
 } catch (e) { erreurs.push('version : ' + e.message); }
 
-// SPEC-BANC-004/006 : le préréglage `commit`, limité aux domaines touchés quand c'est sûr
-try {
-  const path = require('path'), racine = path.join(__dirname, '..', '..');
-  const args = ['--preset', 'commit'];
-  const domaines = domainesTouches(indexes, racine);
-  if (domaines) { args.push('--domaine', domaines.join(',')); }
-  args.push('--delai', String(DELAI_FILET_S));
-  const r = spawnSync(process.execPath, [path.join(racine, 'tests', 'run.js'), ...args], { encoding: 'utf8', cwd: racine });
-  if (r.status !== 0) erreurs.push('préréglage `commit` en échec (node tests/run.js ' + args.join(' ') + ') :\n' + (r.stdout || '').split('\n').slice(-25).join('\n'));
-} catch (e) { erreurs.push('préréglage `commit` : ' + e.message); }
+// SPEC-BANC-073 : merge avec conflits résolus → suite complète, pas de périmètre
+const racineDepot = path.join(__dirname, '..', '..');
+const enMerge = require('./suite-complete.js').estEnMerge(racineDepot); // MERGE_HEAD présent ?
+
+if (enMerge) {
+  if (!erreurs.length) {
+    console.error('(pre-commit : MERGE_HEAD présent — merge avec conflits résolus, suite complète : --preset pr puis --preset e2e-fumee)');
+    const r = require('./suite-complete.js').lancerSuiteComplete({
+      origine: 'merge',
+      etapes: [
+        { args: ['--preset', 'pr'], carte: true },
+        { args: ['--preset', 'e2e-fumee'] },
+      ],
+    });
+    if (!r.ok) erreurs.push('suite complète du merge en échec (' + r.etape + ')');
+  }
+} else {
+  // SPEC-BANC-071 : le préréglage `commit` restreint au périmètre du commit
+  try {
+    const args = ['--preset', 'commit', '--perimetre', 'commit', '--delai', String(DELAI_FILET_S)];
+    const r = spawnSync(process.execPath, [path.join(racineDepot, 'tests', 'run.js'), ...args], { encoding: 'utf8', cwd: racineDepot, maxBuffer: 256 * 1024 * 1024 });
+    // la ligne de périmètre (retenus/exclus ou motif du repli) est sur stderr
+    const lignePerimetre = (r.stderr || '').split('\n').find(l => /^\(périmètre/.test(l));
+    if (lignePerimetre) console.error(lignePerimetre);
+    if (r.status !== 0) erreurs.push('préréglage `commit` en échec (node tests/run.js ' + args.join(' ') + ') :\n' + (r.stdout || '').split('\n').slice(-25).join('\n'));
+  } catch (e) { erreurs.push('préréglage `commit` : ' + e.message); }
+}
 
 if (erreurs.length) {
   console.error('\n✗ commit refusé (tools/hooks/pre-commit.js) :');

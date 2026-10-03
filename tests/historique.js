@@ -74,6 +74,10 @@
     { id: 'motif', label: 'Motif', type: 'texte', defaut: false },
     { id: 'arbre_modifie', label: 'Arbre modifié', type: 'enum', defaut: false },
     { id: 'interrompu', label: 'Interrompu', type: 'enum', defaut: false },
+    // périmètre d'exécution (SPEC-BANC-070/076)
+    { id: 'perimetre', label: 'Périmètre', type: 'enum', defaut: true },
+    { id: 'raison_selection', label: 'Raison de sélection', type: 'liste', defaut: false },
+    { id: 'trou_perimetre', label: 'Trou de périmètre', type: 'enum', defaut: false },
   ];
   var PAR_ID = {}; COLONNES.forEach(function (c) { PAR_ID[c.id] = c; });
 
@@ -277,6 +281,7 @@
     var v = ligne[col.id];
     if (col.type === 'liste') return Array.isArray(v) ? v.join(', ') : (v === null || v === undefined ? '' : String(v));
     if (col.id === 'inscrit' || col.id === 'arbre_modifie' || col.id === 'interrompu') return v ? 'oui' : 'non';
+    if (col.id === 'trou_perimetre') return v ? 'oui ⚠' : 'non';
     if (col.id === 'debut_run' || col.id === 'debut_test') return v ? String(v).replace('T', ' ').replace(/\.\d+Z$/, '') : '';
     if (v === null || v === undefined) return '';
     var s = typeof v === 'object' ? JSON.stringify(v) : String(v);
@@ -325,6 +330,8 @@
         var col = PAR_ID[id]; if (!col) return;
         var texte = formaterValeur(col, ligne);
         if (id === 'branche' && ligne.arbre_modifie) texte += ' ⚠';
+        // SPEC-BANC-076 : un échec que le périmètre du commit n'aurait pas retenu
+        if (id === 'etat' && ligne.trou_perimetre) texte += ' ⚠ trou de périmètre';
         tr.appendChild(el('td', { title: texte }, [texte]));
       });
       // SPEC-BANC-039 : un clic sur une ligne ouvre le panneau du test, ce

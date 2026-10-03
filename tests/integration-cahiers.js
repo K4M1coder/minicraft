@@ -303,6 +303,20 @@ async function attendrePret(port) {
     ok(rCat.code === 200 && typesCat.has('integration') && jCat.tests.some(t => t.fichier === 'tests/spec-crochets.js'),
       'SPEC-BANC-118 : GET /tests/catalogue publie le catalogue Node (intégration, fichiers Node seulement)', 'code ' + rCat.code);
     ok(jCat && new Set(jCat.tests.map(t => t.cle)).size === jCat.tests.length, 'SPEC-BANC-119 : identités du catalogue Node toutes distinctes');
+
+    // SPEC-BANC-074 : aperçu du périmètre (tests retenus et raisons) sans rien
+    // exécuter ; référence validée ; route réservée au banc
+    const dossiersAvant = fs.readdirSync(path.join(RACINE, 'tests', 'resultats')).length;
+    const rPerim = await requete(PORT, 'GET', '/tests/perimetre?depuis=HEAD', null);
+    let jPerim = null; try { jPerim = JSON.parse(rPerim.corps.toString()); } catch (e) { /* null */ }
+    ok(rPerim.code === 200 && jPerim && jPerim.ok && Array.isArray(jPerim.selection) && jPerim.mode === 'depuis' && jPerim.depuis === 'HEAD',
+      'SPEC-BANC-074 : GET /tests/perimetre?depuis=HEAD rend l\'aperçu du périmètre', 'code ' + rPerim.code + ' ' + rPerim.corps.toString().slice(0, 200));
+    ok(jPerim && jPerim.selection.every(t => t.cle && Array.isArray(t.raisons)), 'SPEC-BANC-074 : chaque test de l\'aperçu porte sa raison de sélection');
+    eq(fs.readdirSync(path.join(RACINE, 'tests', 'resultats')).length, dossiersAvant, 'SPEC-BANC-074 : l\'aperçu n\'exécute aucun test (aucun cahier écrit)');
+    const rPerimMal = await requete(PORT, 'GET', '/tests/perimetre?depuis=' + encodeURIComponent('--output=x'), null);
+    eq(rPerimMal.code, 400, 'SPEC-BANC-074 : une référence invalide est refusée');
+    const rPerimEtr = await requete(PORT, 'GET', '/tests/perimetre', null, { Origin: 'http://evil.example' });
+    eq(rPerimEtr.code, 403, 'SPEC-BANC-074 : route du périmètre réservée au banc');
   } finally {
     nettoyerMalformes();
     try { s.kill(); } catch (e) { /* rien */ }

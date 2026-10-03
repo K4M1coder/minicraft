@@ -1494,6 +1494,34 @@ function traiterCatalogue(req, res) {
     });
   return true;
 }
+/* GET /tests/perimetre[?depuis=<ref>] (SPEC-BANC-074) : APERÇU du périmètre
+   d'exécution — les tests que retiendrait « Périmètre du commit » (fichiers
+   indexés) ou « Périmètre depuis <ref> », avec leur raison de sélection, ou
+   le motif d'un repli. Calculé par `node tools/perimetre.js --json` dans un
+   processus à part (il charge tout le catalogue) ; N'EXÉCUTE AUCUN TEST : le
+   banc ne lance qu'après confirmation. La référence est validée (lettres,
+   chiffres, . / ~ ^ @ - _) et passée en argument, jamais dans un shell. */
+function traiterPerimetre(req, res) {
+  if (req.url.split('?')[0] !== '/tests/perimetre') return false;
+  if (refuserHorsBancLocal(req, res)) return true;
+  if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  const q = parametresRequete(req);
+  const args = [path.join(RACINE, 'tools', 'perimetre.js'), '--json'];
+  if (q.depuis) {
+    if (!/^[\w./~^@-]{1,100}$/.test(q.depuis) || /^-/.test(q.depuis)) { repondreJSON(res, 400, { ok: false, motif: 'référence invalide' }); return true; }
+    args.push('--depuis', q.depuis);
+  }
+  require('child_process').execFile(process.execPath, args,
+    { cwd: RACINE, timeout: 120000, maxBuffer: 64 * 1024 * 1024, windowsHide: true },
+    (err, stdout) => {
+      if (res.headersSent) return;
+      if (err) { repondreJSON(res, 503, { ok: false, motif: 'périmètre indisponible : ' + err.message.split('\n')[0] }); return; }
+      let p;
+      try { p = JSON.parse(stdout); } catch (e) { repondreJSON(res, 503, { ok: false, motif: 'sortie illisible' }); return; }
+      repondreJSON(res, 200, Object.assign({ ok: true }, p));
+    });
+  return true;
+}
 let exportHistoriqueEnCours = false;
 const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/export'];
 function traiterHistorique(req, res) {
@@ -1884,6 +1912,7 @@ function servir(req, res) {
   if (req.url.split('?')[0] === '/tests') { res.writeHead(301, { Location: '/tests/' }); res.end(); return; }
   if (req.url.indexOf('/tests/historique/') === 0 && traiterHistorique(req, res)) return;
   if (req.url.split('?')[0] === '/tests/catalogue' && filetErreurTests(traiterCatalogue, req, res)) return;
+  if (req.url.split('?')[0] === '/tests/perimetre' && filetErreurTests(traiterPerimetre, req, res)) return;
   if (req.url.indexOf('/tests/registre/images/') === 0 && traiterImageRegistre(req, res)) return;
   const chemin = cheminSur(req.url);
   if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
