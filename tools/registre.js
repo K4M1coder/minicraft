@@ -50,6 +50,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { envGitPour } = require('./git-propre.js'); // jamais les GIT_* d'un crochet sur un autre dépôt
 
 const RACINE = path.join(__dirname, '..');
 const DOSSIER_REGISTRE = path.join(RACINE, 'tests', 'registre');
@@ -132,7 +133,7 @@ function lireEntrees(dossierRegistre) { return listerFichiersEntrees(dossierRegi
 
 // ── accès git (best-effort : hors dépôt, ou dépôt superficiel, rend null) ──
 function git(dossierRepo, args) {
-  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8' }).trim(); }
+  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8', env: envGitPour(dossierRepo || RACINE) }).trim(); }
   catch (e) { return null; }
 }
 function commitPlein(dossierRepo, refOuCourt) { return git(dossierRepo, ['rev-parse', refOuCourt || 'HEAD']); }
@@ -397,6 +398,9 @@ function inscrire(dossierCahier, opts) {
       debut: t.debut || null, duree_ms: t.duree_ms,
       etat: etat, raison: raisonRegistre(t, etat, seuilLentMs), erreur: erreur,
       captures: r.captures,
+      // SPEC-BANC-070/076 : pourquoi ce test a été retenu, et s'il est un trou de périmètre
+      raison_selection: Array.isArray(t.raison_selection) ? t.raison_selection : null,
+      trou_perimetre: !!t.trou_perimetre,
     });
   });
 
@@ -420,6 +424,11 @@ function inscrire(dossierCahier, opts) {
     // d'un test), tel que tools/e2e-headless.js/tests/run.js l'a observé —
     // absent (null) pour un run purement Node sans e2e (aucun WebGL sollicité).
     moteurRendu: moteurRenduDe(env),
+    // SPEC-BANC-070/076 : nature du run (complet | commit | manuel), détail du
+    // périmètre d'un run restreint, trous de périmètre d'un run complet
+    perimetre: campagne.perimetre || null,
+    perimetre_detail: campagne.perimetreDetail || null,
+    trous_perimetre: campagne.trousPerimetre || null,
     tests: tests,
   };
   const fichier = ecrireEntreeFichier(dossierRegistre, entree);
@@ -459,13 +468,17 @@ function marquerEnAttenteCommitees(dossierRegistre) {
    (défaut sans inclureManuels — ordre topologique git réel) ou 'lancement'
    (défaut avec inclureManuels — `date`, un ordre de commit n'ayant pas de
    sens dès que plusieurs runs manuels partagent un commit). */
+/* Origines « officielles » (historique par défaut, témoin par défaut) : la
+   validation avant push et, depuis SPEC-BANC-073, la suite complète d'un
+   merge (pre-merge-commit, ou pre-commit avec MERGE_HEAD). */
+const ORIGINES_OFFICIELLES = new Set(['pre-push', 'merge']);
 function historiqueTest(testId, opts) {
   const o = opts || {};
   const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
   const inclureManuels = !!o.inclureManuels;
   const tri = o.tri || (inclureManuels ? 'lancement' : 'commit');
   const entrees = lireEntrees(dossierRegistre)
-    .filter(e => inclureManuels || e.origine === 'pre-push');
+    .filter(e => inclureManuels || ORIGINES_OFFICIELLES.has(e.origine));
 
   const resultat = [];
   entrees.forEach((e) => {
@@ -519,6 +532,8 @@ function construireTestsLocaux(tests, seuilLentMs) {
     return Object.assign(identiteTest(t), {
       debut: t.debut || null, duree_ms: t.duree_ms,
       etat: etat, raison: raisonRegistre(t, etat, seuilLentMs), erreur: t.message || null,
+      raison_selection: Array.isArray(t.raison_selection) ? t.raison_selection : null,
+      trou_perimetre: !!t.trou_perimetre,
       // un cahier LOCAL n'est jamais dédupliqué/élagué (SPEC-BANC-083 ne
       // s'applique qu'au registre versionné) : chaque capture, triplet
       // compris, est reprise TELLE QUELLE, nombres et image ensemble.
@@ -582,6 +597,7 @@ function runsUnifies(opts) {
         arbre_modifie: !!campagne.arbreModifie,
         interrompu: !!campagne.interrompue,
         moteurRendu: moteurRenduDe(env),
+        perimetre: campagne.perimetre || null,
         tests: construireTestsLocaux(resultats.tests, seuilLentMs),
       });
     });
@@ -633,7 +649,7 @@ function temoinDe(testId, historique, opts) {
       return Object.assign({ epingle: true }, epingle);
     }
   }
-  const dernier = historique.find(e => e.origine === 'pre-push' && (e.captures || []).length && memeMoteurQue(e, moteurCible, o.entreesParCommit));
+  const dernier = historique.find(e => ORIGINES_OFFICIELLES.has(e.origine) && (e.captures || []).length && memeMoteurQue(e, moteurCible, o.entreesParCommit));
   if (dernier) return { epingle: false, commit: dernier.commit, image: dernier.captures[dernier.captures.length - 1].image };
   // SPEC-BANC-086 : un moteur ciblé sans AUCUN run correspondant dans
   // l'historique ne doit jamais retomber sur un moteur différent en
@@ -698,7 +714,7 @@ function commiterRegistre(dossierRepo) {
   if (!diff) return { ok: false, motif: 'rien à committer' };
   git(rd, ['add', '--', DOSSIER_REGISTRE_REL]);
   try {
-    execFileSync('git', ['commit', '-m', 'test(registre): mise à jour de l\'historique visuel par test'], { cwd: rd, encoding: 'utf8' });
+    execFileSync('git', ['commit', '-m', 'test(registre): mise à jour de l\'historique visuel par test'], { cwd: rd, encoding: 'utf8', env: envGitPour(rd) });
   } catch (e) { return { ok: false, motif: 'échec du commit : ' + e.message }; }
   return { ok: true };
 }

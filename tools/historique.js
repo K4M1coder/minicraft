@@ -38,6 +38,8 @@ const TYPES_COLONNES = {
   debut_test: 'horodatage', duree_ms: 'nombre', etat: 'enum', erreur: 'texte', raison: 'texte',
   nb_captures: 'nombre',
   motif: 'texte', arbre_modifie: 'enum', interrompu: 'enum',
+  // périmètre d'exécution (SPEC-BANC-070/076)
+  perimetre: 'enum', raison_selection: 'liste', trou_perimetre: 'enum',
 };
 // Colonnes-liste comptées « à part » (SPEC-BANC-063) et énumérations avec
 // effectifs (SPEC-BANC-034/036) — dérivées de TYPES_COLONNES pour ne pas
@@ -83,6 +85,15 @@ function cleTest(type, groupe, nom) {
   const g = type === 'e2e' ? 'e2e' : groupe;
   return String(g === undefined || g === null ? '' : g) + ' › ' + String(nom === undefined || nom === null ? '' : nom);
 }
+/* SPEC-BANC-070 : nature du run vis-à-vis du périmètre — portée par le run
+   depuis ce lot ; un run plus ancien (sans le champ) n'a jamais été
+   restreint par un périmètre : 'complet' pour un préréglage nommé, 'manuel'
+   pour une sélection choisie à la main. */
+const PRESETS_CONNUS = new Set(['commit', 'pr', 'regression', 'bugs', 'en-cours', 'e2e', 'e2e-fumee', 'integration', 'rapide', 'visuel', 'limites', 'tout']);
+function perimetreDuRun(run) {
+  if (run.perimetre === 'complet' || run.perimetre === 'commit' || run.perimetre === 'manuel') return run.perimetre;
+  return PRESETS_CONNUS.has(run.preset) ? 'complet' : 'manuel';
+}
 function construireLignes(runs, opts) {
   const o = opts || {};
   const infoCommit = o.infoCommit || {};
@@ -90,6 +101,7 @@ function construireLignes(runs, opts) {
   (Array.isArray(runs) ? runs : []).forEach((run) => {
     if (!estObjet(run)) return;
     const info = (run.commit && infoCommit[run.commit]) || null;
+    const perimetre = perimetreDuRun(run);
     (Array.isArray(run.tests) ? run.tests : []).forEach((t) => {
       if (!estObjet(t)) return;
       const cat = estObjet(t.categorie) ? t.categorie : {};
@@ -114,6 +126,7 @@ function construireLignes(runs, opts) {
         etat: texte(t.etat), erreur: texte(t.erreur), raison: texte(t.raison),
         nb_captures: captures.length,
         captures: captures,
+        perimetre, raison_selection: liste(t.raison_selection), trou_perimetre: !!t.trou_perimetre,
       });
     });
   });

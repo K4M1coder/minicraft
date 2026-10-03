@@ -25,6 +25,19 @@
         <input id="recherche" placeholder="rechercher un test ou sa fiche…">
         <select id="presets"><option value="">— préréglage —</option></select>
       </div>
+      <!-- SPEC-BANC-074 : périmètre d'exécution — aperçu des tests retenus et
+           de leur raison AVANT tout lancement (rien ne s'exécute avant « Lancer ») -->
+      <div class="sel-ligne" id="perimetre-ligne">
+        <select id="perimetre-mode" aria-label="périmètre d'exécution">
+          <option value="">— périmètre —</option>
+          <option value="commit">Périmètre du commit</option>
+          <option value="depuis">Périmètre depuis…</option>
+          <option value="tout">Tout</option>
+        </select>
+        <input id="perimetre-ref" placeholder="référence, ex. master" value="master" hidden>
+        <button id="btn-perimetre" type="button">Aperçu</button>
+      </div>
+      <div id="perimetre-apercu" class="perimetre-apercu" hidden></div>
       <div id="arbre" class="arbre"></div>
       <div class="sel-bar">
         <span id="compteur">0 test(s) retenu(s)</span>

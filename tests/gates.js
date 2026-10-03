@@ -278,7 +278,7 @@ porte('G12', 'La génération et le maillage restent sous le budget de tests/bud
    catalogue de tests (tests/presets.js), et ce préréglage sélectionne au
    moins un test — un préréglage renommé ou vidé ferait un crochet muet sans
    que rien ne le signale. */
-porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BANC-006)', () => {
+porte('G13', 'Les crochets citent un préréglage existant et non vide, pre-commit au périmètre, pre-push et pre-merge-commit en suite complète (SPEC-BANC-006, 075)', () => {
   const CROCHETS = { 'pre-commit': 'commit', 'pre-push': 'pr' };
   const manquants = [];
   Object.keys(CROCHETS).forEach((h) => {
@@ -297,7 +297,33 @@ porte('G13', 'Les crochets citent un préréglage existant et non vide (SPEC-BAN
       if (!m || Number(m[1]) === 0) vides.push('préréglage ' + nom + ' vide');
     } catch (e) { vides.push('préréglage ' + nom + ' introuvable ou --lister en erreur : ' + e.message); }
   });
-  return vides.length ? { ok: false, detail: vides.join(' · ') } : { ok: true, detail: 'pre-commit→commit, pre-push→pr, tous deux non vides' };
+  if (vides.length) return { ok: false, detail: vides.join(' · ') };
+  /* SPEC-BANC-075 (G13 étendue) : pre-commit → PÉRIMÈTRE du commit ;
+     pre-push et pre-merge-commit → SUITE COMPLÈTE (préréglage pr en entier,
+     jamais restreint). Le périmètre doit se calculer, non vide, sur un cas
+     connu : src/mesher.js touché en entier (module de la carte d'impact). */
+  const preset = (nom) => new RegExp('--preset[\'"]?\\s*,?\\s*[\'"]?' + nom + '\\b');
+  const erreursPerim = [];
+  const pc = lire('tools/hooks/pre-commit.js');
+  if (!/--perimetre['"]?\s*,\s*['"]commit['"]/.test(pc)) erreursPerim.push('pre-commit.js ne passe pas --perimetre commit');
+  if (!/MERGE_HEAD/.test(pc)) erreursPerim.push('pre-commit.js ne détecte pas MERGE_HEAD');
+  ['pre-push', 'pre-merge-commit'].forEach((h) => {
+    if (!existe('tools/hooks/' + h + '.js')) { erreursPerim.push(h + '.js absent'); return; }
+    const txt = lire('tools/hooks/' + h + '.js');
+    if (!preset('pr').test(txt)) erreursPerim.push(h + '.js ne cite pas le préréglage pr');
+    if (/--perimetre|--depuis/.test(txt.replace(/\/\*[\s\S]*?\*\//g, ''))) erreursPerim.push(h + '.js restreint la suite (--perimetre/--depuis)');
+  });
+  if (!existe('.githooks/pre-merge-commit') || !/pre-merge-commit\.js/.test(lire('.githooks/pre-merge-commit'))) erreursPerim.push('.githooks/pre-merge-commit absent ou ne lance pas tools/hooks/pre-merge-commit.js');
+  let detailPerim = '';
+  try {
+    const out = execFileSync(process.execPath, [path.join(root, 'tests', 'run.js'), '--preset', 'commit', '--perimetre', 'commit', '--fichiers', 'src/mesher.js', '--perimetre-json'],
+      { encoding: 'utf8', maxBuffer: TAMPON_SORTIE });
+    const p = JSON.parse(out);
+    if (!p.selection || !p.selection.length) erreursPerim.push('périmètre vide pour src/mesher.js');
+    detailPerim = 'périmètre de src/mesher.js : ' + p.selection.length + ' test(s)' + (p.repli ? ' (repli : ' + p.repli + ')' : ', ' + p.exclus + ' exclu(s)');
+  } catch (e) { erreursPerim.push('calcul du périmètre en erreur : ' + e.message.split('\n')[0]); }
+  return erreursPerim.length ? { ok: false, detail: erreursPerim.join(' · ') }
+    : { ok: true, detail: 'pre-commit→commit au périmètre, pre-push et pre-merge-commit→pr en entier ; ' + detailPerim };
 });
 
 // ── G14 : fiches à 100 % (SPEC-BANC-002) ────────────────────────────────────

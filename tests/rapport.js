@@ -91,6 +91,11 @@
     if (t.specs && t.specs.length) champs.push('specs : ' + t.specs.join(', '));
     if (t.fonctions && t.fonctions.length) champs.push('fonctions : ' + t.fonctions.join(', '));
     if (t.etiquettes && t.etiquettes.length) champs.push('étiquettes : ' + t.etiquettes.join(', '));
+    // SPEC-BANC-070 : pourquoi le périmètre a retenu ce test (run restreint)
+    if (t.raison_selection && t.raison_selection.length && !(t.raison_selection.length === 1 && t.raison_selection[0] === 'complet')) {
+      champs.push('raison de sélection : ' + t.raison_selection.join(', '));
+    }
+    if (t.trou_perimetre) champs.push('⚠ trou de périmètre : échec que le périmètre du commit n\'aurait pas retenu');
     return champs.length ? { type: 'paragraphe', texte: champs.join('\n'), meta: { classe: 'identite' } } : null;
   }
 
@@ -183,6 +188,34 @@
         .filter(function (p) { return p[1] !== undefined && p[1] !== null && p[1] !== ''; })
         .map(function (p) { return { cellules: [p[0], String(p[1])] }; });
       if (lignesEnv.length) { blocs.push({ type: 'titre', niveau: 2, texte: 'Environnement' }); blocs.push({ type: 'tableau', entetes: ['champ', 'valeur'], lignes: lignesEnv }); }
+    }
+
+    /* SPEC-BANC-070 : journal du périmètre d'un run restreint (fichiers et
+       fonctions touchés, nombre de tests exclus, motif d'un repli) ;
+       SPEC-BANC-076 : trous de périmètre d'un run complet. */
+    if (c.perimetreDetail) {
+      var p = c.perimetreDetail;
+      var lignesP = [['nature du run', c.perimetre || ''],
+        ['mode', p.mode === 'depuis' ? 'depuis ' + (p.depuis || '') : 'commit (fichiers indexés)'],
+        ['repli sur la sélection complète', p.repli || 'non'],
+        ['fichiers touchés', (p.fichiers || []).join(', ') || 'aucun'],
+        ['fichiers changés depuis la carte', (p.fichiersImpact || p.fichiers || []).join(', ') || 'aucun'],
+        ['fonctions touchées', (p.fonctions || []).join(', ') || 'aucune'],
+        ['tests retenus', String(p.retenus === undefined ? '' : p.retenus)],
+        ['tests exclus', String(p.exclus === undefined ? '' : p.exclus)],
+        ['carte d\'impact', p.carte ? String(p.carte.commit || '').slice(0, 10) + (p.ecart !== null && p.ecart !== undefined ? ' (' + p.ecart + ' commit(s) d\'écart)' : '') : 'absente']]
+        .map(function (l) { return { cellules: [l[0], l[1]] }; });
+      blocs.push({ type: 'titre', niveau: 2, texte: 'Périmètre d\'exécution' });
+      blocs.push({ type: 'tableau', entetes: ['champ', 'valeur'], lignes: lignesP });
+      if (p.details && p.details.length) blocs.push({ type: 'liste', items: p.details });
+    } else if (c.perimetre) {
+      blocs.push({ type: 'paragraphe', texte: 'périmètre : ' + c.perimetre, meta: { classe: 'sub' } });
+    }
+    if (c.trousPerimetre && c.trousPerimetre.trous && c.trousPerimetre.trous.length) {
+      blocs.push({ type: 'titre', niveau: 2, texte: '⚠ Trous de périmètre (' + c.trousPerimetre.trous.length + ')' });
+      blocs.push({ type: 'paragraphe', texte: 'Ces échecs n\'auraient PAS été retenus par le périmètre du commit pour les fichiers changés depuis la carte d\'impact ' +
+        String(c.trousPerimetre.carte || '').slice(0, 10) + ' : la carte n\'est pas digne de confiance pour eux.', meta: { classe: 'msg' } });
+      blocs.push({ type: 'liste', items: c.trousPerimetre.trous.map(function (x) { return x.nom; }) });
     }
 
     if (totaux.parType || totaux.parDomaine) {

@@ -95,8 +95,9 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
   });
   return;
 }
-const SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'metiers', 'economie',
-             'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'pvp-enjeux', 'livre', 'livres', 'ambiance', 'audio', 'qualite'];
+/* Liste partagée avec tools/perimetre.js (carte d'impact, SPEC-BANC-067) :
+   tests/sources-node.js. */
+const SRC = require('./sources-node.js');
 /* Liste PARTAGÉE avec le banc navigateur (tests/index.html) : un seul fichier,
    tests/fichiers-tests.js — deux copies à la main avaient divergé (SPEC-BANC-117). */
 require('./fichiers-tests.js');
@@ -384,7 +385,8 @@ function dernierResultatsNode() {
 }
 
 const nomPreset = option('--preset');
-let criteres = critereDepuisArgs();
+const criteresArgs = critereDepuisArgs();
+let criteres = JSON.parse(JSON.stringify(criteresArgs));
 // étiquette de campagne (sert de nom de dossier, SPEC-BANC-014) : le
 // préréglage s'il y en a un, sinon la première option de sélection nommée,
 // sinon 'tout'
@@ -400,7 +402,17 @@ function etiquetteDepuisCriteres(c) {
    intégration/charge (de vrais processus, dont charge.js qui peut tourner
    plusieurs minutes) — ce qu'aucun appel nu à `node tests/run.js` n'attend. */
 const AUCUN_CRITERE_EXPLICITE = !nomPreset && !Object.keys(criteres).some(k => k !== 'sauf' && criteres[k] && criteres[k].length);
-if (AUCUN_CRITERE_EXPLICITE) criteres = { types: ['unitaire', 'fonctionnel', 'spec'] };
+/* Périmètre d'exécution (SPEC-BANC-068 à 071, tools/perimetre.js) :
+   `--perimetre commit` (fichiers indexés) ou `--depuis <ref>` restreint la
+   sélection (préréglage compris) aux tests que le moteur retient ; sans
+   autre critère, la base est alors TOUT le catalogue (le périmètre décide). */
+const MODE_PERIMETRE = option('--perimetre') ? 'commit' : (option('--depuis') ? 'depuis' : null);
+if (option('--perimetre') && option('--perimetre') !== 'commit') {
+  console.error('--perimetre : seule la valeur « commit » est reconnue (ou --depuis <ref>)');
+  process.exit(2);
+}
+if (AUCUN_CRITERE_EXPLICITE && MODE_PERIMETRE) criteres = { tout: true };
+else if (AUCUN_CRITERE_EXPLICITE) criteres = { types: ['unitaire', 'fonctionnel', 'spec'] };
 let etiquetteCampagne = nomPreset || etiquetteDepuisCriteres(criteres) || 'tout';
 if (nomPreset) {
   const presetDef = (ctx.MC_TESTS.PRESETS || []).find(p => p.nom === nomPreset);
@@ -424,6 +436,54 @@ let selection = ctx.MC_TESTS.selection(catalogue, criteres);
 if (filtrePositionnel) {
   selection = selection.filter(t => t.groupe.indexOf(filtrePositionnel) >= 0 || t.nom.indexOf(filtrePositionnel) >= 0);
   if (!nomPreset) etiquetteCampagne = filtrePositionnel;
+}
+
+// ── périmètre d'exécution (SPEC-BANC-068 à 070) ─────────────────────────────
+/* Calculé ICI (et pas dans tools/perimetre.js seul) : le moteur a besoin du
+   catalogue et du corps de chaque test, déjà chargés. `--fichiers a,b`
+   simule des fichiers touchés EN ENTIER (portes, tests), sans git. */
+const P = require('../tools/perimetre.js');
+function fumeeDuCatalogue() {
+  const f = (ctx.MC_TESTS.PRESETS || []).find(p => p.nom === 'e2e-fumee');
+  return f ? ctx.MC_TESTS.selection(catalogue, f.criteres).map(t => t.nom) : [];
+}
+function calculerPerimetreIci(mode, depuis) {
+  return P.perimetreDepuisGit({
+    racine: root, mode, depuis, catalogue, suites: ctx.T.suites,
+    fichiersSimules: virgule(option('--fichiers')), cheminCarte: option('--carte') || undefined,
+    ecartMax: option('--ecart-max') || process.env.MC_PERIMETRE_ECART_MAX || undefined,
+    fumee: fumeeDuCatalogue(), domainesConnus: Array.from(new Set(catalogue.reduce((a, t) => a.concat(t.domaines || []), []))),
+  });
+}
+let perimetreCalcule = null;
+if (MODE_PERIMETRE || drapeau('--perimetre-json')) {
+  perimetreCalcule = calculerPerimetreIci(MODE_PERIMETRE || 'commit', option('--depuis'));
+  const avant = selection.length;
+  if (!perimetreCalcule.repli) selection = selection.filter(t => perimetreCalcule.tests[t.cle]);
+  perimetreCalcule.exclus = avant - selection.length;
+  if (drapeau('--perimetre-json')) {
+    const sortie = Object.assign({}, perimetreCalcule, {
+      selection: selection.map(t => ({ cle: t.cle, id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, fichier: t.fichier,
+        raisons: perimetreCalcule.repli ? ['repli'] : perimetreCalcule.tests[t.cle] })),
+    });
+    delete sortie.tests;
+    process.stdout.write(JSON.stringify(sortie));
+    process.exit(0);
+  }
+  if (perimetreCalcule.repli) fs.writeSync(2, '(périmètre : REPLI sur la sélection complète — ' + perimetreCalcule.repli + ')\n');
+  else fs.writeSync(2, '(périmètre ' + (MODE_PERIMETRE === 'depuis' ? 'depuis ' + option('--depuis') : 'du commit') + ' : ' + selection.length +
+    ' test(s) retenu(s), ' + perimetreCalcule.exclus + ' exclu(s) ; fichiers : ' + (perimetreCalcule.fichiers.join(', ') || 'aucun') +
+    ' ; fonctions : ' + (perimetreCalcule.fonctions.slice(0, 8).join(', ') || 'aucune') + (perimetreCalcule.fonctions.length > 8 ? '…' : '') + ')\n');
+}
+/* Colonne `perimetre` de l'historique (SPEC-BANC-070) : 'commit' quand le
+   périmètre a réellement restreint la sélection, 'manuel' pour une sélection
+   choisie à la main, 'complet' sinon (préréglage entier, ou repli). */
+const SELECTION_MANUELLE = !!filtrePositionnel || ['domaines', 'types', 'groupes', 'tests', 'liste', 'echecs'].some(k => criteresArgs[k] && criteresArgs[k].length) ||
+  !!(criteresArgs.sauf && Object.keys(criteresArgs.sauf).some(k => (criteresArgs.sauf[k] || []).length)); // --sauf retire des tests : sélection manuelle (revue M4)
+const NATURE_PERIMETRE = (perimetreCalcule && !perimetreCalcule.repli) ? 'commit' : (SELECTION_MANUELLE ? 'manuel' : 'complet');
+function raisonSelectionDe(cle) {
+  if (NATURE_PERIMETRE === 'commit') return (perimetreCalcule.tests[cle] || []).slice();
+  return [NATURE_PERIMETRE];
 }
 
 // ── --lister : affiche la sélection et les fiches, n'exécute rien ──────────
@@ -806,6 +866,24 @@ if (environnementE2E) {
   environnementFinal.os = environnementE2E.os;
   environnementFinal.avecFenetre = environnementE2E.avecFenetre;
 }
+// SPEC-BANC-070 : raison de sélection de chaque test retenu
+testsResultats.forEach((t) => { if (!t.raison_selection) t.raison_selection = raisonSelectionDe(P.cleTest(t.type, t.groupe, t.nom)); });
+/* SPEC-BANC-076 : trous de périmètre. Sur un run COMPLET (pr, regression)
+   qui a des échecs : le périmètre calculé, avec la carte d'impact actuelle
+   (celle d'avant la reconstruction que fera le crochet), pour les fichiers
+   changés depuis le commit de cette carte, aurait-il retenu chaque test en
+   échec ? Un « non » est un trou — la carte n'est alors pas digne de
+   confiance pour ce test. Avertissement seulement, jamais un échec de plus. */
+let trousPerimetre = null;
+if (NATURE_PERIMETRE === 'complet' && !MODE_PERIMETRE && (nomPreset === 'pr' || nomPreset === 'regression' || drapeau('--controle-perimetre'))) {
+  try {
+    trousPerimetre = P.controlerTrous(testsResultats, P.lireCarte(option('--carte') || undefined), ref => calculerPerimetreIci('depuis', ref));
+    const parCle = new Set(trousPerimetre.trous.map(x => x.cle));
+    testsResultats.forEach((t) => { if (parCle.has(P.cleTest(t.type, t.groupe, t.nom))) t.trou_perimetre = true; });
+    if (trousPerimetre.trous.length) fs.writeSync(2, '\n⚠ trou de périmètre : ' + trousPerimetre.trous.length + ' échec(s) que le périmètre du commit n\'aurait PAS retenu(s) — ' +
+      trousPerimetre.trous.slice(0, 5).map(x => x.nom).join(' ; ') + (trousPerimetre.trous.length > 5 ? '…' : '') + '\n');
+  } catch (e) { trousPerimetre = { verifie: false, motif: 'calcul impossible : ' + e.message, trous: [] }; }
+}
 const resultatsFinaux = {
   schema: 1,
   campagne: {
@@ -813,6 +891,13 @@ const resultatsFinaux = {
     interrompue: false, arbreModifie: arbreModifieAuDebut, environnement: environnementFinal,
     totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E, parType, parDomaine },
     lents, observationFonctions: surcoutFonctions,
+    perimetre: NATURE_PERIMETRE,
+    perimetreDetail: perimetreCalcule ? {
+      mode: perimetreCalcule.mode, depuis: perimetreCalcule.depuis, repli: perimetreCalcule.repli || null,
+      fichiers: perimetreCalcule.fichiers, fichiersImpact: perimetreCalcule.fichiersImpact, base: perimetreCalcule.base || null, fonctions: perimetreCalcule.fonctions, details: perimetreCalcule.details,
+      exclus: perimetreCalcule.exclus, retenus: testsResultats.length, carte: perimetreCalcule.carte, ecart: perimetreCalcule.ecart,
+    } : null,
+    trousPerimetre,
   },
   tests: testsResultats,
 };

@@ -43,6 +43,16 @@ input, select { font: inherit; background: #10151d; color: #e8eaed; border: 1px 
 #panneau-selection[hidden] { display: none; }
 .sel-ligne { display: flex; gap: 8px; }
 .sel-ligne input { flex: 1 1 auto; }
+/* périmètre d'exécution (SPEC-BANC-074) : aperçu avant lancement */
+.perimetre-apercu { max-height: 30vh; overflow-y: auto; border: 1px solid rgba(255,255,255,.1); border-radius: 6px; padding: 6px 8px; font-size: 12px; }
+.perimetre-apercu[hidden] { display: none; }
+.perimetre-apercu h4 { margin: 0 0 4px; font-size: 12.5px; }
+.perimetre-apercu p { margin: 2px 0; overflow-wrap: anywhere; }
+.perimetre-liste { list-style: none; margin: 4px 0; padding: 0; }
+.perimetre-liste li { padding: 1px 0; overflow-wrap: anywhere; }
+.perimetre-raison { opacity: .6; }
+.perimetre-repli { color: #f2c46d; }
+.perimetre-apercu .t-hors { opacity: .55; }
 .arbre { overflow-y: auto; min-height: 80px; flex: 1 1 auto; border-top: 1px solid rgba(255,255,255,.08); padding-top: 6px; }
 .arbre ul { list-style: none; margin: 0; padding-left: 16px; }
 .arbre .niveau-domaine, .arbre .niveau-groupe, .arbre .niveau-test { padding-left: 14px; }
