@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.6.0] - 2026-10-03
 ### Ajouté
 - SPEC-SYNC-024 — un joueur qui rejoint reçoit, aussitôt après `BIENVENUE`, l'état complet des relations de faction dans un nouveau message `POLITIQUE` (s→c) : factions PNJ et leurs relations (jour politique compris), factions de joueurs avec leurs membres et leurs relations (ni candidatures ni invitations). Le serveur le rediffuse à tous dès que cet état change (jour simulé, faction découverte, commande `/faction`) : un client déjà connecté et un nouveau venu ont exactement le même état, sans rien déduire du chat. Le panneau des factions (J) affiche désormais les royaumes et factions du monde et la faction du joueur, tels que le serveur les tient.
 - SPEC-SYNC-020 — un joueur qui se déconnecte puis revient sous le même nom (même serveur, sans redémarrage) retrouve aussi son regard et son point de réapparition : `BIENVENUE.toi[]` porte `yaw`, `pitch` et `spawn`, que le client reprend. Position, vie, faim, air, inventaire et équipement étaient déjà rendus ; le tout est vérifié de bout en bout.
@@ -1438,6 +1440,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.6.0]: #
 [0.5.0]: #
 [0.4.0]: #
 [0.3.0]: #
