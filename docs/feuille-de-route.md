@@ -56,8 +56,8 @@ Légende : ☐ à faire · ◐ en cours · ☑ fait. Les numéros renvoient à `
 
 | # | Lot | Contenu | Fiches | État | Reprise |
 |---|---|---|---|---|---|
-| 0.1 | Banc : tout consulter | correctif banc/historique/cahiers + corrections de revue | BANC-117 à 121 | ◐ | branche `worktree-agent-a20a065f32fd6f1ec`, revue faite, corrections en cours ; fusionner puis pousser |
-| 0.2 | L50 : fiches restantes | audits ARCHI-001 et 020 ; SYNC-020 (état du joueur après reconnexion, vérifier), SYNC-024 (factions au join) ; bug des circuits qui referment les portes ouvertes à la main | ARCHI-001, 020 ; SYNC-020, 024 | ☐ | |
+| 0.1 | Banc : tout consulter | correctif banc/historique/cahiers + corrections de revue | BANC-117 à 121 | ☑ | fusionné (8996df2) et poussé (1d1e728), revue adversariale appliquée |
+| 0.2 | L50 : fiches restantes | audits ARCHI-001 et 020 ; SYNC-020 (état du joueur après reconnexion, vérifier), SYNC-024 (factions au join) ; bug des circuits qui referment les portes ouvertes à la main | ARCHI-001, 020 ; SYNC-020, 024 | ◐ | agent Opus en worktree isolé (lancé le 2026-10-03) ; à reprendre : `git worktree list`, branche `worktree-agent-*` non fusionnée |
 | 0.3 | L50 : lot reporté | SYNC-027 (présentoirs/socles tenus par le serveur) → ARCHI-043 ; coffres piégés côté serveur → ARCHI-044 (suit L25 « coffres piégés ») | SYNC-027, ARCHI-043, 044 | ☐ | 044 attend L25 |
 | 0.4 | Release | `v0.5.1` : vol/horloge/créatures + banc ; zip de release | — | ☐ | `node tools/version.js --publier` |
 
@@ -65,7 +65,7 @@ Légende : ☐ à faire · ◐ en cours · ☑ fait. Les numéros renvoient à `
 
 | # | Lot | Contenu | Fiches | État | Reprise |
 |---|---|---|---|---|---|
-| 1.1 | BANC périmètre | carte d'impact, `tools/perimetre.js`, crochets au périmètre, repli sur la suite complète, G13 étendue | BANC-067 à 076 | ☐ | priorité : gain de temps sur tout le reste |
+| 1.1 | BANC périmètre | carte d'impact, `tools/perimetre.js`, crochets au périmètre, repli sur la suite complète, G13 étendue | BANC-067 à 076 | ◐ | agent Opus en worktree isolé (lancé le 2026-10-03) ; priorité : gain de temps sur tout le reste ; à reprendre : `git worktree list` |
 | 1.2 | BANC journal | `MC.Journal` (G16 existe), sorties, erreurs joueur, enregistreur de vol | BANC-092 à 107 | ☐ | seulement le journal d'abord (104 à 107) |
 | 1.3 | BANC rétention | compaction du registre à la publication | BANC-090, 091 | ☐ | le registre pèse déjà 41 Mo |
 | 1.4 | L44 | découpage de `server.js` en modules purs, rattrapage d'exceptions, tampons bornés, jetons admin, sauvegarde atomique asynchrone, SECU-012 | SERVEUR-008, SECU-0xx | ☐ | découper AVANT d'ajouter des messages (lots suivants) |
