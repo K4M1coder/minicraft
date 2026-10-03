@@ -57,6 +57,16 @@ function essayer(M) {
   (M.setup || []).forEach((lot, i) => { lot.forEach(editer); gitIci(['add', '-A']); gitIci(['commit', '-q', '-m', 'mutation : préalable ' + i]); });
   (M.edits || []).forEach(editer);
   gitIci(['add', '-A']);
+  /* --carte-a-la-base : la carte versionnée a pu être construite quelques
+     commits avant la base ; on la date de la base (sans l'indexer) pour
+     mesurer le périmètre tel qu'il sera juste après un push — le cas le plus
+     ÉTROIT, donc le plus exigeant (valable si aucun src/ n'a changé entre). */
+  if (args.includes('--carte-a-la-base')) {
+    const f = path.join(clone, 'tests', 'registre', 'impact.json');
+    const c = JSON.parse(fs.readFileSync(f, 'utf8'));
+    c.commit = base;
+    fs.writeFileSync(f, JSON.stringify(c));
+  }
   const rp = lancer(['--preset', 'commit', '--perimetre', 'commit', '--perimetre-json']);
   let p;
   try { p = JSON.parse(rp.stdout); } catch (e) { return { nom: M.nom, erreur: 'périmètre illisible : ' + String(rp.stderr).slice(-400) }; }
