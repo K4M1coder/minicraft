@@ -425,6 +425,14 @@
        si l'appelant ne les fournit pas. */
     function panneauFactions(rep, politique, guilde) {
       var F = MC.Factions;
+      /* SPEC-SYNC-024 : `donnees` = l'état reçu du serveur (message POLITIQUE),
+         relu ici plutôt qu'un état tenu par le client. */
+      if (politique && politique.donnees && !politique.etat && MC.Politique) {
+        politique = { etat: MC.Politique.charger(Object.assign({ annonces: [] }, politique.donnees)), rep: politique.rep };
+      }
+      if (guilde && guilde.donnees && !guilde.etat && MC.Guildes) {
+        guilde = { etat: MC.Guildes.charger(guilde.donnees), joueur: guilde.joueur };
+      }
       var html = '<div class="carte-tete"><b>Factions</b><span class="carte-aide">J pour fermer</span></div>' +
         F.ORDRE.map(function (id) {
           var f = F.FACTIONS[id], v = rep ? rep.get(id) : f.depart, st = F.statut(id, rep);

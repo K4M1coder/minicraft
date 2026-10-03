@@ -242,6 +242,16 @@
            un serveur créatif (ou l'inverse) prédirait le vol autrement que lui. */
         if (!!m.histoire !== !!regles.histoire || (m.mode && m.mode !== regles.mode.id)) adopterRegles(m.mode, m.difficulte, m.histoire);
         g.time = horloge.fixer(m.heure || 0);
+        /* SPEC-SYNC-020 : le serveur rend à chaque joueur local le regard et le
+           point de réapparition laissés à sa dernière déconnexion (la position
+           et les statistiques, elles, arrivent par onToi). */
+        (m.toi || []).forEach(function (t, i) {
+          var jl = equipe[i];
+          if (!jl || !t || typeof t.yaw !== 'number' || !isFinite(t.yaw)) return;
+          jl.player.state.yaw = t.yaw;
+          if (typeof t.pitch === 'number' && isFinite(t.pitch)) jl.player.state.pitch = t.pitch;
+          if (i === 0 && t.spawn) g.spawnPoint = { x: t.spawn.x, y: t.spawn.y, z: t.spawn.z };
+        });
         (m.blocs || []).forEach(function (b) {
           var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
           world.getChunk(cx, cz, true);
@@ -252,6 +262,15 @@
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
         // SPEC-ARCHI-029 : l'appartenance de faction est celle du serveur (jamais un état local)
         if (m.guilde) chat.systeme('Faction : ' + m.guilde.nom + (m.guilde.rang ? ' (' + m.guilde.rang + ')' : ''));
+      },
+      /* SPEC-SYNC-024 : les relations de faction (PNJ entre elles, factions de
+         joueurs envers les PNJ et entre elles) sont celles du SERVEUR, reçues
+         complètes à la connexion puis à chaque changement — jamais reconstruites
+         d'après le chat. Le panneau des factions (J) les affiche ; le client
+         n'en tient aucun état propre (SPEC-ARCHI-029) : il garde les données
+         reçues telles quelles, relues par ui.panneauFactions. */
+      onPolitique: function (m) {
+        g.etatPolitique = { politique: m.politique || null, guildes: m.guildes || null };
       },
       onHistoireEtat: function (m) { surHistoireEtat(m); },
       onHistoireNotif: function (m) { surHistoireNotif(m); },
@@ -2150,26 +2169,10 @@
     }
     g.spillContainer = spillContainer;
 
-    /* SPEC-MECA-001 : un distributeur éjecte le premier objet de sa première
-       pile non vide — au sol, sauf une munition (flèche, galet…) qui part en
-       projectile vers le haut (aucune orientation stockée sur ce bloc). */
-    function ejecterDistributeur(x, y, z) {
-      var k = x + ',' + y + ',' + z;
-      var di = distributeurs[k];
-      if (!di) return;
-      var i = MC.Circuits.distributeurChoix(di.slots);
-      if (i < 0) return;
-      var st = di.slots[i];
-      var idef = C.def(st.id);
-      di.consumeAt(i, 1);
-      if (idef && idef.ammo) {
-        entities.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
-                        14, idef.damage || 5, null, idef.ammoType || 'fleche');
-      } else {
-        entities.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
-      }
-    }
-    g.ejecterDistributeur = ejecterDistributeur;
+    /* SPEC-MECA-001 / SPEC-ARCHI-001 : l'éjection d'un distributeur sur signal
+       est faite par le SERVEUR (tickCircuits → onDistribuer, server.js) ; le
+       client n'a plus de chemin qui éjecte un objet ou tire un projectile de
+       lui-même. */
 
     function selectSlot(i) {
       if (i < 0 || i >= Inv.HOTBAR_SIZE) return;
@@ -2444,7 +2447,9 @@
         if (g.histoire) { ui.journalHistoire(g.histoire, g.finHistoire); input.setState('ui'); }
         else ui.toast('Le journal n\'existe qu\'en mode histoire', 'warn');
       } else if (act === 'factions') {
-        ui.panneauFactions(world.reputation);
+        var ep = g.etatPolitique;      // SPEC-SYNC-024 : l'état du serveur, s'il est arrivé
+        ui.panneauFactions(world.reputation, ep ? { donnees: ep.politique } : null,
+                           ep ? { donnees: ep.guildes, joueur: g.nomJoueur || 'Joueur' } : null);
         input.setState('ui');
       } else if (act === 'succes') {
         ui.panneauSucces(g.succes);

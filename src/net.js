@@ -64,6 +64,8 @@
       onSuccesDebloque: opts.onSuccesDebloque || function () {},
       onSuccesEtat: opts.onSuccesEtat || function () {},
       onFoudroye: opts.onFoudroye || function () {},
+      // SPEC-SYNC-024 : état complet des relations de faction (PNJ et joueurs)
+      onPolitique: opts.onPolitique || function () {},
     };
 
     function statut(e, info) {
@@ -154,6 +156,11 @@
 
         case NP.MSG.DONNE:
           hooks.onDonne(m);
+          break;
+
+        // SPEC-SYNC-024 : relations de faction, juste après BIENVENUE puis à chaque changement
+        case NP.MSG.POLITIQUE:
+          hooks.onPolitique(m);
           break;
 
         // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille

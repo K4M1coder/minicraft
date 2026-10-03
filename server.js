@@ -754,6 +754,35 @@ function avancerPolitique() {
     if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   });
 }
+/* SPEC-SYNC-024 : l'état complet des relations de faction, tel qu'un client le
+   reçoit — factions PNJ et leurs relations (sans les annonces, déjà parues au
+   chat), factions de joueurs avec leurs membres et leurs relations (sans
+   candidatures ni invitations, qui ne regardent que leurs destinataires). Le
+   client le relit avec MC.Politique.charger et MC.Guildes.charger. */
+function messagePolitique() {
+  const p = MC.Politique.serialiser(politique), g = MC.Guildes.serialiser(guildes);
+  return {
+    t: NP.MSG.POLITIQUE,
+    politique: { v: p.v, seed: p.seed, jour: p.jour, factions: p.factions, relations: p.relations },
+    guildes: {
+      v: g.v, prochainId: g.prochainId, joueurs: g.joueurs,
+      factions: g.factions.map(([id, f]) => [id, { nom: f.nom, couleur: f.couleur, emblem: f.emblem, devise: f.devise,
+        creeLe: f.creeLe, membres: f.membres, relations: f.relations }]),
+    },
+  };
+}
+/* Diffusé à tous dès que cet état a changé (jour simulé, faction découverte,
+   relation déclarée…) : un client déjà connecté reste ainsi identique à un
+   client qui vient d'arriver. Comparé sur sa forme sérialisée, une fois par
+   seconde et après chaque commande /faction. */
+let dernierePolitique = null;
+function diffuserPolitiqueSiChangee() {
+  const m = messagePolitique();
+  const sig = JSON.stringify([m.politique, m.guildes]);
+  if (sig === dernierePolitique) return;
+  dernierePolitique = sig;
+  diffuser(m);
+}
 // ── catastrophes environnementales (SPEC-ENV-001/002/004, SPEC-QUETE-003) ──
 // clé "lieuId:evenementId" déjà appliquée — un cyclone/une tornade dure
 // plusieurs minutes/heures : sans ce registre, chaque tick le réappliquerait.
@@ -2551,8 +2580,12 @@ function traiter(c, m) {
         histoire: PARAMS_HISTOIRE ? { interactions: PARAMS_HISTOIRE.interactions || null, commerce: PARAMS_HISTOIRE.commerce } : null,
         zone: monde.zonesEtat ? monde.zonesEtat.politique : 'generee',
         heure, blocs,
-        // la position qui fait foi, pour chaque joueur local du poste
-        toi: c.joueurs.map(js => SY.etatJoueur(js.joueur, 0)),
+        // la position qui fait foi, pour chaque joueur local du poste ; à la
+        // connexion s'y ajoutent le regard et le point de réapparition laissés
+        // (SPEC-SYNC-020 : un joueur qui revient retrouve l'état exact laissé)
+        toi: c.joueurs.map(js => Object.assign(SY.etatJoueur(js.joueur, 0), {
+          yaw: js.joueur.state.yaw, pitch: js.joueur.state.pitch, spawn: js.spawn || null,
+        })),
         tickHz: CONF.tickHz, etatHz: CONF.etatHz,
         // ARCHI : état du poste — pause (SPEC-ARCHI-011), réseau (SPEC-ARCHI-005), partie chargée
         pause: enPause, pauseRev, reseau: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME,
@@ -2563,6 +2596,9 @@ function traiter(c, m) {
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),
       });
+      // SPEC-SYNC-024 : aussitôt après, l'état complet des relations de faction
+      // (PNJ et joueurs) — jamais déduit de l'historique du chat
+      envoyer(c, messagePolitique());
       // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
       // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
       c.joueurs.forEach((js, j) => envoyerInvMaj(c, j, {}));
@@ -2938,13 +2974,15 @@ function traiter(c, m) {
         const actions = (r.actions || []).filter(a => a.type === 'faction');
         if (!actions.length) (r.messages || []).forEach(t => envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: t, type: 'systeme' }));
         actions.forEach(a => {
-          const res = MC.Guildes.appliquerAction(guildes, c.nom, a);
+          // l'état politique permet à une faction de joueurs de se déclarer envers une faction PNJ (SPEC-FACTION-017)
+          const res = MC.Guildes.appliquerAction(guildes, c.nom, a, politique);
           if (res.canal) {
             const membres = new Set(res.canal.membres);
             clients.forEach(cl => { if (cl.rejoint && membres.has(cl.nom)) envoyer(cl, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'faction' }); });
           } else envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'systeme' });
           MC.Admin.journaliser(admin, { auteur: c.nom, action: 'faction', cible: a.action, details: res.ok, heure });
         });
+        diffuserPolitiqueSiChangee();     // SPEC-SYNC-024 : appartenances et relations diffusées sans attendre le tic
         break;
       }
       const msg = chat.envoyer(c.nom, m.texte);
@@ -4351,6 +4389,7 @@ setInterval(() => {
     monde.unloadLoin(centres, 5);
     peuplerLieux();
     avancerPolitique();
+    diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
     avancerEconomie();
     avancerCaravanes();
     avancerCatastrophes();

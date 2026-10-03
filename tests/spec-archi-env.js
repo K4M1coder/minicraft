@@ -153,6 +153,45 @@
       A.deep(stades[0].slice(0, 3), [n.x, n.y, n.z], 'à la bonne position');
     });
 
+    /* Audit final du chantier (SPEC-ARCHI-001, second volet ; le premier — le
+       point d'entrée par défaut ouvre un serveur qui sert index.html et
+       répond BIENVENUE — est prouvé par tests/integration-archi-serveur.js) :
+       plus aucune simulation du monde dans game.js, tous lots confondus. */
+    it('SPEC-ARCHI-001 : audit statique — game.js ne contient plus aucune simulation du monde (eau, circuits, feu, cultures, créatures, apparitions, politique)', function () {
+      [
+        'entities.update(', 'entities.damage(', 'entities.tirer(', 'invoquerGardien', 'trySpawn', 'peuplerLieux',
+        '.coulerEau(', '.coulerFeu(', 'tickCircuits(', 'Circuits.tick(', 'ejecterDistributeur',
+        '.updateSurvival(', '.subirClimat(', 'avancerJourApresDormir', 'Politique.tourDuMonde', 'Politique.decouvrir',
+      ].forEach(function (interdit) {
+        A.equal(CODE.indexOf(interdit), -1, 'game.js n\'appelle plus « ' + interdit + ' »');
+      });
+      // le seul tic du monde côté client coupe tout ce que simule le serveur
+      var appels = CODE.match(/world\.tick\(/g) || [];
+      A.ok(appels.length > 0, 'le client garde un tic du monde (neige et glace saisonnières, déterministes par l\'heure)');
+      A.equal((CODE.match(/world\.tick\(dt, 14, null, optionsTickClient\(\)\)/g) || []).length, appels.length,
+        'chaque world.tick du client passe par optionsTickClient()');
+      var opts = corps('optionsTickClient');
+      ['eau: false', 'circuits: false', 'feu: false', 'cultures: false'].forEach(function (o) {
+        A.ok(opts.indexOf(o) >= 0, 'optionsTickClient() coupe « ' + o + ' »');
+      });
+      A.equal(opts.indexOf('surBloc'), -1, 'le client ne diffuse aucun bloc changé par son tic');
+      // la boucle d'images, découpée par thème : aucune ne décide sur net.enLigne(), aucune ne modifie le monde
+      ['frameJoueurs', 'frameEntites', 'frameTemps', 'frameMonde', 'frameConteneurs', 'frameFinDePartie', 'frameMondeInterface', 'frameReseau'].forEach(function (nom) {
+        var c = corps(nom).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+        A.equal(c.indexOf('net.enLigne()'), -1, nom + ' ne décide pas sur net.enLigne()');
+        ['setBlock', 'setEtat', 'entities.spawn', 'entities.dropItem', '.hurt('].forEach(function (interdit) {
+          A.equal(c.indexOf(interdit), -1, nom + ' ne contient pas « ' + interdit + ' »');
+        });
+      });
+      // météo, volcans et caravanes : purement visuels (aucun bloc, aucune entité, aucun dégât)
+      ['majMeteo', 'volcans', 'convois'].forEach(function (nom) {
+        var c = corps(nom);
+        ['setBlock', 'entities.', '.hurt('].forEach(function (interdit) {
+          A.equal(c.indexOf(interdit), -1, nom + ' ne contient pas « ' + interdit + ' »');
+        });
+      });
+    });
+
     it('SPEC-ARCHI-035 : le README ne dit plus que l\'inventaire, la fabrication, les fourneaux et les cultures restent côté client', function () {
       var readme = fs.readFileSync(path.join(RACINE, 'README.md'), 'utf8');
       A.ok(!/restent côté client/.test(readme), 'la phrase obsolète n\'existe plus');

@@ -336,6 +336,11 @@
     // même rythme qu'il charge son terrain (voir game.js streamChunks) ;
     // le serveur répond avec les seuls overrides de CE chunk.
     OVERRIDES_DEMANDE: 'overrides_demande', OVERRIDES_CHUNK: 'overrides_chunk',
+    // SPEC-SYNC-024 (s→c) : état complet des relations de faction — factions PNJ
+    // et leurs relations (MC.Politique), factions de joueurs et leurs relations
+    // (MC.Guildes, sans candidatures ni invitations) ; envoyé juste après
+    // BIENVENUE puis à chaque changement. Jamais accepté d'un client.
+    POLITIQUE: 'politique',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });

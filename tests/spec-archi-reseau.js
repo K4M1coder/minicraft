@@ -114,6 +114,49 @@
       A.ok(/'daycycle', 'succes'/.test(serveur), 'server.js charge le module des succès');
     });
 
+    it('SPEC-SYNC-024 : POLITIQUE atteint son hook et se relit avec MC.Politique.charger / MC.Guildes.charger ; le panneau des factions l\'affiche', function () {
+      var vus = [];
+      var recevoir = clientAvecFauxSocket({ onPolitique: function (m) { vus.push(m); } });
+      // un état réel, sérialisé comme le fait server.js (messagePolitique)
+      var pol = MC.Politique.creer(7);
+      MC.Politique.decouvrir(pol, [{ id: 'v1', kind: 'megapole', x: 0, z: 0, nom: 'Alpha' }, { id: 'v2', kind: 'megapole', x: 300, z: 0, nom: 'Beta' }]);
+      var gu = MC.Guildes.creerEtat();
+      MC.Guildes.appliquerAction(gu, 'Ana', { type: 'faction', action: 'creer', args: { nom: 'Lions' } });
+      var fid = MC.Guildes.factionsDe(gu, 'Ana').principale;
+      var rel = MC.Guildes.appliquerAction(gu, 'Ana', { type: 'faction', action: 'relation', args: { faction: fid, cible: 'royaume:v1', relation: 'ennemie' } }, pol);
+      A.ok(rel.ok, 'une faction de joueurs peut se déclarer envers une faction PNJ quand l\'état politique est fourni');
+      var p = MC.Politique.serialiser(pol), g = MC.Guildes.serialiser(gu);
+      recevoir({ t: 'politique', politique: { v: p.v, seed: p.seed, jour: p.jour, factions: p.factions, relations: p.relations },
+                 guildes: { v: g.v, prochainId: g.prochainId, joueurs: g.joueurs, factions: g.factions } });
+      A.equal(vus.length, 1, 'le message atteint onPolitique');
+      var etat = MC.Politique.charger(Object.assign({ annonces: [] }, vus[0].politique));
+      A.equal(etat.factions.size, pol.factions.size, 'toutes les factions PNJ sont relues');
+      A.equal(MC.Politique.relationEntre(etat, 'royaume:v1', 'royaume:v2'), MC.Politique.relationEntre(pol, 'royaume:v1', 'royaume:v2'), 'la relation PNJ↔PNJ est relue à l\'identique');
+      A.equal(MC.Politique.relationEntre(etat, fid, 'royaume:v1'), 'guerre', 'la relation joueurs → PNJ est relue côté PNJ');
+      var ge = MC.Guildes.charger(vus[0].guildes);
+      A.equal(MC.Guildes.relationEnvers(ge, fid, 'royaume:v1'), 'ennemie', 'la relation de la faction de joueurs est relue');
+      A.ok(MC.NetProtocol.valider({ t: 'politique', politique: {}, guildes: {} }) === null, 'un client ne peut pas envoyer POLITIQUE au serveur');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      A.ok(/onPolitique:\s*function/.test(jeu) && /g\.etatPolitique\s*=/.test(jeu), 'game.js garde l\'état politique reçu du serveur');
+      A.ok(/ui\.panneauFactions\(world\.reputation, ep \?/.test(jeu), 'le panneau des factions (J) affiche cet état');
+    });
+
+    it('SPEC-SYNC-020 : BIENVENUE.toi porte le regard et la réapparition laissés, et game.js les reprend', function () {
+      var vus = [];
+      var recevoir = clientAvecFauxSocket({ onBienvenue: function (m) { vus.push(m); } });
+      recevoir({ t: 'bienvenue', id: 1, graine: 1, heure: 60, toi: [{ x: 1, y: 2, z: 3, pv: 13, faim: 9, air: 10, yaw: 1.234, pitch: -0.456, spawn: { x: 4.5, y: 33.05, z: 6.5 } }] });
+      A.equal(vus.length, 1);
+      A.deep([vus[0].toi[0].yaw, vus[0].toi[0].pitch, vus[0].toi[0].spawn], [1.234, -0.456, { x: 4.5, y: 33.05, z: 6.5 }], 'regard et réapparition parviennent au jeu');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      var i = jeu.indexOf('onBienvenue: function'), j = jeu.indexOf('onPolitique: function');
+      var corps = jeu.slice(i, j);
+      A.ok(i >= 0 && j > i, 'onBienvenue existe');
+      A.ok(/state\.yaw = t\.yaw/.test(corps) && /state\.pitch = t\.pitch/.test(corps), 'onBienvenue reprend le regard de chaque joueur local');
+      A.ok(/g\.spawnPoint = \{ x: t\.spawn\.x/.test(corps), 'et le point de réapparition du joueur 1');
+      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(/yaw: js\.joueur\.state\.yaw, pitch: js\.joueur\.state\.pitch, spawn: js\.spawn \|\| null/.test(serveur), 'server.js met regard et réapparition dans BIENVENUE.toi');
+    });
+
     it('SPEC-ARCHI-040 : avec un joueur distant, interpoler rapproche sa position de sa cible', function () {
       if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
       var net = MC.createNetClient({});
