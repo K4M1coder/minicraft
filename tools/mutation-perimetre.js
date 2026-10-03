@@ -34,8 +34,9 @@ const env = envSansGit();
 const gitIci = (a, cwd) => cp.execFileSync('git', ['-c', 'user.name=mutation', '-c', 'user.email=mutation@local', '-c', 'commit.gpgsign=false',
   '-c', 'core.hooksPath=' + path.join(clone, '.aucun-crochet')].concat(a), { cwd: cwd || clone, env, encoding: 'utf8', maxBuffer: 64 * 1024 * 1024 });
 if (!fs.existsSync(path.join(clone, '.git'))) gitIci(['clone', '-q', RACINE, clone], path.dirname(clone));
-const base = option('--base') || cp.execFileSync('git', ['rev-parse', 'HEAD'], { cwd: RACINE, env: process.env, encoding: 'utf8' }).trim();
-gitIci(['fetch', '-q', RACINE, base]);
+const base = cp.execFileSync('git', ['rev-parse', option('--base') || 'HEAD'], { cwd: RACINE, env: process.env, encoding: 'utf8' }).trim();
+// la base doit exister dans le clone : on y rapatrie la branche courante de ce dépôt
+gitIci(['fetch', '-q', RACINE, cp.execFileSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: RACINE, env: process.env, encoding: 'utf8' }).trim()]);
 
 function editer(e) {
   const f = path.join(clone, e.file);

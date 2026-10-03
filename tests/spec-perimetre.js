@@ -420,6 +420,12 @@
         idsFichierTest: { 'tests/spec-a.js': new Set(['fabrique']), 'tests/spec-b.js': new Set(['autreChose']), 'tests/spec-demo.js': new Set(['fabrique']) } });
       A.deep(p.tests['G › t-feuille'], ['fixture:fabrique'], 'un test d\'un autre fichier qui nomme la fixture est retenu');
       A.ok(!p.tests['G › t-autre'], 'un fichier qui ne la nomme pas ne l\'est pas');
+      // un script d'intégration tourne dans son PROPRE processus : il ne partage
+      // aucune globale avec les fichiers describe/it (ni dans un sens ni dans l'autre)
+      d.catalogue.push({ cle: 'I › script', nom: 'script', type: 'integration', fichier: 'tests/integration-x.js', domaines: [], fonctions: [], etiquettes: [] });
+      var pI = calculer(d, { fichiers: [{ chemin: 'tests/spec-demo.js', statut: 'M' }], symbolesTest: { 'tests/spec-demo.js': ['fabrique'] },
+        idsFichierTest: { 'tests/integration-x.js': new Set(['fabrique']) } });
+      A.ok(!pI.tests['I › script'], 'un script d\'intégration qui nomme le même symbole n\'est pas concerné');
       var p2 = calculer(d, { fichiers: [{ chemin: 'tests/spec-demo.js', statut: 'M' }], symbolesTest: { 'tests/spec-demo.js': null } });
       A.ok(p2.tests['G › t-autre'] && p2.tests['G › t-feuille'], 'symboles illisibles : tous les fichiers de tests sont retenus (élargir)');
     });

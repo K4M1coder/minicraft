@@ -584,6 +584,13 @@ const { domainesDuFichier } = require('./domaines-touches.js');
      `var x`) — ils deviennent globaux dans le contexte partagé.
    Un fichier illisible rend null (l'appelant élargit). */
 const GLOBAUX = new Set(['G', 'globalThis', 'window', 'self', 'global']);
+/* Un fichier de tests chargé dans le contexte PARTAGÉ (describe/it de
+   tests/run.js et du banc, e2e du banc) — pas un script d'intégration ou de
+   charge, lancé dans son propre processus. */
+const TYPES_CONTEXTE_PARTAGE = new Set(['unitaire', 'fonctionnel', 'spec', 'e2e']);
+function fichierPartage(catalogue, fichier) {
+  return catalogue.some(t => t.fichier === fichier && TYPES_CONTEXTE_PARTAGE.has(t.type));
+}
 function symbolesExportesTest(texte) {
   let toks;
   try { toks = jetons(texte).filter(t => t.type !== 'com'); } catch (e) { return null; }
@@ -678,7 +685,7 @@ function calculerPerimetre(entree) {
     }
     (syms || []).forEach((s) => {
       Object.keys(e.idsFichierTest || {}).forEach((ft) => {
-        if (ft === x.f.chemin || !e.idsFichierTest[ft].has(s)) return;
+        if (ft === x.f.chemin || !e.idsFichierTest[ft].has(s) || !fichierPartage(e.catalogue, ft)) return;
         (parFichierTest[ft] || []).forEach(t => ajouter(t.cle, 'fixture:' + s));
       });
     });
@@ -997,7 +1004,9 @@ function perimetreDepuisGit(o) {
   // symboles exportés par les fichiers de tests modifiés (revue C2) : version
   // courante ET précédente (un symbole retiré casse aussi ses utilisateurs)
   const symbolesTest = {};
-  fichiersImpact.filter(f => fichiersCat.indexOf(f.chemin) >= 0).forEach((f) => {
+  // seuls les fichiers chargés dans le CONTEXTE PARTAGÉ (describe/it, e2e) exportent : un script
+  // d'intégration tourne dans son propre processus, ses globales ne sortent pas
+  fichiersImpact.filter(f => fichiersCat.indexOf(f.chemin) >= 0 && fichierPartage(o.catalogue, f.chemin)).forEach((f) => {
     const now = symbolesExportesTest(texteFichierTest[f.chemin] || '');
     const avant = f.statut === 'A' ? [] : (lireAncien(f.chemin) === null ? [] : symbolesExportesTest(lireAncien(f.chemin)));
     symbolesTest[f.chemin] = (now === null || avant === null) ? null : Array.from(new Set(now.concat(avant)));
