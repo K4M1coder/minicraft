@@ -40,6 +40,8 @@ const TYPES_COLONNES = {
   motif: 'texte', arbre_modifie: 'enum', interrompu: 'enum',
   // périmètre d'exécution (SPEC-BANC-070/076)
   perimetre: 'enum', raison_selection: 'liste', trou_perimetre: 'enum',
+  // score d'instabilité (SPEC-BANC-088) : alternances réussite/échec sans changement des fonctions touchées
+  instabilite: 'nombre',
 };
 // Colonnes-liste comptées « à part » (SPEC-BANC-063) et énumérations avec
 // effectifs (SPEC-BANC-034/036) — dérivées de TYPES_COLONNES pour ne pas
@@ -97,6 +99,7 @@ function perimetreDuRun(run) {
 function construireLignes(runs, opts) {
   const o = opts || {};
   const infoCommit = o.infoCommit || {};
+  const instabilites = o.instabilites || {};   // SPEC-BANC-088 : { cle: { score, instable } }, calculé par REG.calculerInstabilites()
   const lignes = [];
   (Array.isArray(runs) ? runs : []).forEach((run) => {
     if (!estObjet(run)) return;
@@ -107,6 +110,10 @@ function construireLignes(runs, opts) {
       const cat = estObjet(t.categorie) ? t.categorie : {};
       const nomTest = texte(t.nom) || texte(t.id) || '(sans nom)';
       const captures = (Array.isArray(t.captures) ? t.captures : []).filter(estObjet);
+      const cleLigne = cleTest(texte(cat.type), texte(cat.groupe), nomTest);
+      const inst = Object.prototype.hasOwnProperty.call(instabilites, cleLigne) ? instabilites[cleLigne] : null;
+      const etiquettes = liste(t.etiquettes);
+      if (inst && inst.instable && etiquettes.indexOf('instable') < 0) etiquettes.push('instable');
       lignes.push({
         run: run.id, debut_run: run.date || null,
         commit: run.commit || null,
@@ -120,7 +127,8 @@ function construireLignes(runs, opts) {
         dossierCahier: run.dossierCahier || null,
         test: texte(t.id) || nomTest, cle: cleTest(texte(cat.type), texte(cat.groupe), nomTest), nom: nomTest,
         type: texte(cat.type), groupe: texte(cat.groupe),
-        domaines: liste(t.domaines), specs: liste(t.specs), fonctions: liste(t.fonctions), etiquettes: liste(t.etiquettes),
+        domaines: liste(t.domaines), specs: liste(t.specs), fonctions: liste(t.fonctions), etiquettes: etiquettes,
+        instabilite: inst ? inst.score : null,
         fiche: estObjet(t.fiche) ? t.fiche : null,
         debut_test: texte(t.debut), duree_ms: nombre(t.duree_ms),
         etat: texte(t.etat), erreur: texte(t.erreur), raison: texte(t.raison),
@@ -504,7 +512,10 @@ function creerIndex(opts) {
   function construire() {
     const runs = REG.runsUnifies({ dossierRegistre, racineResultats, dossierRepo });
     const infoCommit = calculerInfoCommit(dossierRepo, runs.map(r => r.commit));
-    const lignes = construireLignes(runs, { infoCommit });
+    // SPEC-BANC-088 : best-effort — sans carte d'impact ou sans git, pas d'étiquette, jamais d'erreur
+    let instabilites = {};
+    try { instabilites = REG.calculerInstabilites({ dossierRegistre, dossierRepo, entrees: runs.filter(r => r.inscrit) }); } catch (e) { instabilites = {}; }
+    const lignes = construireLignes(runs, { infoCommit, instabilites });
     cache = { signature: signature(), lignes };
     reconstructions++;
   }

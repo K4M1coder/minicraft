@@ -35,9 +35,11 @@
     // historique global (SPEC-BANC-033 à 040) : logique pure de tools/historique.js
     'spec-historique',
     // périmètre d'exécution des tests (SPEC-BANC-067 à 076) : carte d'impact, calcul, repli, crochets
-    'spec-perimetre'];
+    'spec-perimetre',
+    // rétention du registre et score d'instabilité (SPEC-BANC-088, 090, 091)
+    'spec-retention'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

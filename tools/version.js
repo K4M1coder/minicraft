@@ -5,7 +5,8 @@
    node tools/version.js --prevoir     quelle publication donneraient les commits
                                        depuis la dernière étiquette (sans rien écrire)
    node tools/version.js --publier     publie : calcule le cran, monte VERSION_JEU,
-                                       date la section « Non publié », commite
+                                       date la section « Non publié », compacte le
+                                       registre du cycle (SPEC-BANC-091), commite
                                        « chore(release): vX.Y.Z » et pose l'étiquette
    node tools/version.js --publier y   impose le cran (x, y ou z) au lieu de le calculer
    node tools/version.js --verifier    contrôle seulement (porte G10, crochet pre-commit)
@@ -23,7 +24,7 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const { execSync, execFileSync } = require('child_process');
 const RACINE = path.join(__dirname, '..');
 const CORE = path.join(RACINE, 'src', 'core.js');
 const JOURNAL = path.join(RACINE, 'CHANGELOG.md');
@@ -120,6 +121,19 @@ if (require.main === module) {
     const apres = monter(avant, cran);
     ecrire(avant, apres);
     git('add src/core.js CHANGELOG.md');
+    // SPEC-BANC-091 : rétention du registre. AVANT le commit, pour que la
+    // compaction entre dans le commit de release (l'étiquette en porte l'état) ;
+    // `--version` : l'étiquette n'existe pas encore, le run validé de ce cycle
+    // est marqué `release: vX.Y.Z`. Jamais bloquant : un registre qui ne se
+    // compacte pas ne remet pas en cause la publication.
+    try {
+      const sortie = execFileSync(process.execPath, [path.join(__dirname, 'registre.js'), 'compacter', '--jusqu-a', 'HEAD', '--version', 'v' + apres],
+        { cwd: RACINE, encoding: 'utf8' }).trim();
+      if (sortie) console.log('  ' + sortie.split('\n').join('\n  '));
+      git('add -A -- tests/registre');
+    } catch (e) {
+      console.log('  ⚠ registre non compacté : ' + String(e.stdout || e.message).trim().split('\n')[0] + ' — la publication continue ; à rejouer : node tools/registre.js compacter');
+    }
     git('commit -q -m "chore(release): v' + apres + '"');
     git('tag -a v' + apres + ' -m "v' + apres + '"');
     console.log(avant + ' → ' + apres + ' (cran ' + cran + ', ' + commits.length + ' commit(s)) — étiquette v' + apres);
