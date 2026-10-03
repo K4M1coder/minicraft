@@ -326,11 +326,18 @@
       var bruts = entrees.map(function (f) { return f > 0; });
       var nouvelEtat = b.etat, allume = null;
       if (t === 'porte' || t === 'trappe') {
-        // motorisées par un signal voisin (SPEC-MECA-006) : ouverte tant
-        // qu'alimentée, refermée dès que le signal retombe.
-        var veutOuverte = bruts.some(Boolean);
+        /* Motorisées par un signal voisin (SPEC-MECA-006), mais seulement à
+           ses FRONTS : le signal monte, elle s'ouvre ; il retombe, elle se
+           ferme. Entre deux fronts, la main du joueur (ou d'un habitant) fait
+           foi : imposer l'état du signal à CHAQUE tic refermait au tic suivant
+           toute porte ouverte à la main sans signal. Le dernier signal vu est
+           mémorisé dans le bit 0 de l'état du bloc (inutilisé par les portes
+           et trappes, effacé quand le bloc est cassé). */
+        var signal = bruts.some(Boolean);
+        if (signal === !!(b.etat & 1)) return;
         var estOuverte = t === 'porte' ? d.porte.ouverte : d.trappe.ouverte;
-        if (veutOuverte !== estOuverte) ecrits.push({ x: b.x, y: b.y, z: b.z, setBlock: C.bascule(b.id) });
+        if (signal !== estOuverte) ecrits.push({ x: b.x, y: b.y, z: b.z, setBlock: C.bascule(b.id) });
+        ecrits.push({ x: b.x, y: b.y, z: b.z, setEtat: signal ? (b.etat | 1) : (b.etat & ~1) });
         return;
       }
       if (t === 'fil') {

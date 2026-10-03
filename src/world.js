@@ -877,8 +877,13 @@
       c.blocks[idx(lx, wy, lz)] = id;
       c.dirty = true;
       c.version = prochaineVersion(cx, cz);
-      // un bloc qui disparaît perd son état (orientation, moitié, forme d'angle…)
-      if (id === 0 && avant !== 0) setEtat(wx, wy, wz, 0);
+      /* Un bloc qui disparaît ou est REMPLACÉ par un autre perd son état
+         (orientation, moitié, forme d'angle, signal vu…) : l'état résiduel d'un
+         levier ne doit pas devenir celui d'une porte posée à sa place. Seule
+         la bascule d'une porte ou d'une trappe (même bloc, autre état ouvert)
+         le garde ; qui pose un bloc à état l'écrit juste après. */
+      if (avant !== id && C.bascule(avant) !== id && c.etats && c.etats !== ETATS_VIDE &&
+          c.etats[idx(lx, wy, lz)]) setEtat(wx, wy, wz, 0);
       /* Lumière : les sources du chunk ont peut-être changé, et les chunks à
          portée d'une source concernée doivent recalculer leur éclairage. */
       c.emetteurs = null;

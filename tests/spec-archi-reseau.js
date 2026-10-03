@@ -114,6 +114,108 @@
       A.ok(/'daycycle', 'succes'/.test(serveur), 'server.js charge le module des succès');
     });
 
+    /* Un monde politique « à 300 lieux » (≈ 290 factions, ≈ 41 000 paires) :
+       l'échelle où l'ancien message complet pesait 1,6 Mo et coûtait 6 ms de
+       JSON à chaque seconde. */
+    function monde300() {
+      var P = MC.Politique, pol = P.creer(20260921), kinds = ['ville', 'megapole', 'ville', 'volcan', 'vierge'], sites = [];
+      for (var i = 0; i < 300; i++) sites.push({ id: 'l' + i, kind: kinds[i % 5], x: (i % 20) * 300, z: Math.floor(i / 20) * 300, nom: 'Lieu' + i });
+      P.decouvrir(pol, sites);
+      P.tourDuMonde(pol, 10);
+      return pol;
+    }
+    function nonNeutres(etat) {
+      var out = [];
+      etat.relations.forEach(function (r, k) { if (r !== 'neutre') out.push(k + '=' + r); });
+      return out.sort();
+    }
+
+    it('SPEC-SYNC-024 : à 300 lieux, l\'état complet du join est borné et se relit à l\'identique ; ensuite seules les différences partent', function () {
+      var P = MC.Politique, pol = monde300();
+      A.gt(pol.relations.size, 30000, 'préparation : des dizaines de milliers de relations');
+      var suivi = P.suivreReseau(pol);
+      var complet = P.instantaneReseau(pol);
+      var taille = JSON.stringify(complet).length;
+      A.ok(taille < 120000, 'le message complet tient sous 120 Ko (' + taille + ' octets ; l\'ancien format en pesait 1,6 Mo)');
+      var client = P.appliquerReseau(null, JSON.parse(JSON.stringify(complet)));
+      A.deep(Array.from(client.factions.keys()), Array.from(pol.factions.keys()), 'mêmes factions, même ordre');
+      A.deep(nonNeutres(client), nonNeutres(pol), 'mêmes relations non neutres que le serveur');
+      A.equal(client.jour, pol.jour, 'même jour politique');
+      A.equal(suivi.prendre(), null, 'rien de neuf : rien à envoyer (et rien de sérialisé)');
+      // une journée simulée : seules les relations changées partent, en indices
+      P.tourDuMonde(pol, pol.jour + 1);
+      var d = suivi.prendre();
+      var td = JSON.stringify(d).length;
+      A.ok(d && !d.complet && td < 40000, 'la journée suivante part en différence bornée (' + td + ' octets)');
+      P.appliquerReseau(client, JSON.parse(JSON.stringify(d)));
+      A.deep(nonNeutres(client), nonNeutres(pol), 'la différence appliquée redonne l\'état du serveur');
+      A.equal(client.jour, pol.jour);
+      // une faction qui naît, une relation externe (faction de joueurs ↔ PNJ)
+      P.decouvrir(pol, [{ id: 'neuf', kind: 'megapole', x: 9000, z: 9000, nom: 'Neuve' }]);
+      pol.relations.set('f1~royaume:neuf', 'guerre');
+      var d2 = suivi.prendre();
+      A.ok(d2.f.length >= 1 && d2.ext.length === 1, 'la naissance et la relation externe sont dans la différence');
+      P.appliquerReseau(client, JSON.parse(JSON.stringify(d2)));
+      A.ok(client.factions.has('royaume:neuf'), 'la nouvelle faction est connue du client');
+      A.deep(nonNeutres(client), nonNeutres(pol), 'toujours identique au serveur');
+      A.equal(P.appliquerReseau(null, d2), null, 'une différence sans état de départ est ignorée');
+      // un rechargement (Maps remplacées) redemande l'envoi complet
+      var recharge = P.charger(P.serialiser(pol));
+      pol.factions = recharge.factions; pol.relations = recharge.relations;
+      A.deep(suivi.prendre(), { complet: 1 }, 'Maps remplacées : l\'appelant renvoie l\'état complet');
+      // résumé pour le panneau
+      var r = P.resumeRelations(client).get('royaume:neuf');
+      A.ok(r && r.guerre.indexOf('f1') >= 0, 'resumeRelations rend les relations non neutres de chaque faction');
+    });
+
+    it('SPEC-SYNC-024 : POLITIQUE atteint son hook ; le client ne peut pas l\'envoyer ; game.js l\'applique et le panneau l\'affiche', function () {
+      var vus = [];
+      var recevoir = clientAvecFauxSocket({ onPolitique: function (m) { vus.push(m); } });
+      var pol = MC.Politique.creer(7);
+      MC.Politique.decouvrir(pol, [{ id: 'v1', kind: 'megapole', x: 0, z: 0, nom: 'Alpha' }, { id: 'v2', kind: 'megapole', x: 300, z: 0, nom: 'Beta' }]);
+      var gu = MC.Guildes.creerEtat();
+      MC.Guildes.appliquerAction(gu, 'Ana', { type: 'faction', action: 'creer', args: { nom: 'Lions' } });
+      var fid = MC.Guildes.factionsDe(gu, 'Ana').principale;
+      var rel = MC.Guildes.appliquerAction(gu, 'Ana', { type: 'faction', action: 'relation', args: { faction: fid, cible: 'royaume:v1', relation: 'ennemie' } }, pol);
+      A.ok(rel.ok, 'une faction de joueurs peut se déclarer envers une faction PNJ quand l\'état politique est fourni');
+      recevoir({ t: 'politique', pol: MC.Politique.instantaneReseau(pol), guildes: MC.Guildes.serialiser(gu), moi: 'Ana' });
+      A.equal(vus.length, 1, 'le message atteint onPolitique');
+      var etat = MC.Politique.appliquerReseau(null, vus[0].pol);
+      A.equal(MC.Politique.relationEntre(etat, fid, 'royaume:v1'), 'guerre', 'la relation joueurs → PNJ est relue côté PNJ');
+      A.equal(MC.Guildes.relationEnvers(MC.Guildes.charger(vus[0].guildes), fid, 'royaume:v1'), 'ennemie', 'la relation de la faction de joueurs est relue');
+      A.ok(MC.NetProtocol.valider({ t: 'politique', pol: {}, guildes: {} }) === null, 'un client ne peut pas envoyer POLITIQUE au serveur');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      A.ok(/MC\.Politique\.appliquerReseau\(ep\.etat, m\.pol\)/.test(jeu), 'game.js applique l\'état reçu (complet ou différence)');
+      A.ok(/joueur: ep\.moi \|\|/.test(jeu), 'le joueur est identifié par le nom que le serveur lui connaît');
+    });
+
+    it('SPEC-SYNC-020 : le client reprend regard et réapparition de chaque joueur local (exécution de MC.Synchro.reprendreRetour) ; une réapparition invalide est refusée', function () {
+      var vus = [];
+      var recevoir = clientAvecFauxSocket({ onBienvenue: function (m) { vus.push(m); } });
+      recevoir({ t: 'bienvenue', id: 1, graine: 1, heure: 60, toi: [
+        { x: 1, y: 2, z: 3, pv: 13, faim: 9, air: 10, yaw: 1.234, pitch: -0.456, spawn: { x: 4.5, y: 33.05, z: 6.5 } },
+        { x: 2, y: 2, z: 3, pv: 20, faim: 20, air: 10, yaw: -2, pitch: 9, spawn: { x: 1e9, y: 33, z: 0 } },
+      ] });
+      A.equal(vus.length, 1, 'BIENVENUE atteint le jeu');
+      var j1 = joueur().state, j2 = joueur().state;
+      var sp1 = MC.Synchro.reprendreRetour(j1, vus[0].toi[0]);
+      var sp2 = MC.Synchro.reprendreRetour(j2, vus[0].toi[1]);
+      A.deep([j1.yaw, j1.pitch], [1.234, -0.456], 'joueur 1 : regard repris');
+      A.deep(sp1, { x: 4.5, y: 33.05, z: 6.5 }, 'joueur 1 : réapparition reprise');
+      A.deep([j2.yaw, j2.pitch], [-2, 1.6], 'joueur 2 de l\'écran partagé : regard repris (inclinaison bornée)');
+      A.equal(sp2, null, 'une réapparition hors des bornes du monde est refusée');
+      ['x', { x: NaN, y: 1, z: 1 }, { x: 1, y: 1 }, { x: 1, y: 500, z: 1 }, null].forEach(function (sp) {
+        A.equal(MC.Synchro.spawnValide(sp), null, 'refusé : ' + JSON.stringify(sp));
+      });
+      var avant = { yaw: 0.5, pitch: 0.1 };
+      MC.Synchro.reprendreRetour(avant, { yaw: 'x', pitch: Infinity });
+      A.deep([avant.yaw, avant.pitch], [0.5, 0.1], 'un regard non fini ne remplace rien');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      A.ok(/MC\.Synchro\.reprendreRetour\(jl\.player\.state, t\)/.test(jeu), 'onBienvenue l\'applique à chaque joueur local');
+      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(/js\.spawn = SY\.spawnValide\(etat\.spawn\)/.test(serveur), 'le serveur valide aussi la réapparition relue');
+    });
+
     it('SPEC-ARCHI-040 : avec un joueur distant, interpoler rapproche sa position de sa cible', function () {
       if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
       var net = MC.createNetClient({});

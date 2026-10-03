@@ -1154,10 +1154,10 @@
     g.world.lights.forEach(function (t) { g.world.setBlock(t.x, t.y, t.z, 0); });
   });
 
-  e2e('un coffre stocke des objets et les rend quand on le casse', {
-        "teste": "qu'un coffre affiche son contenu dans son interface, et que le casser fait tomber son contenu au sol",
-        "pourquoi": "un coffre ne doit jamais faire perdre les objets qu'il contient",
-        "attendu": "le contenu (42) apparaît dans l'interface, puis des entités tombent au sol quand le coffre est cassé (spillContainer) et le coffre est oublié"
+  e2e('un coffre affiche son contenu dans son interface', {
+        "teste": "qu'un coffre demande son interface et y affiche son contenu ; le contenu rendu au sol à la casse est l'affaire du serveur (SPEC-SYNC-012, tests/integration-archi-inv.js), le client ne lâche plus rien lui-même (SPEC-ARCHI-001)",
+        "pourquoi": "un coffre ne doit jamais faire perdre les objets qu'il contient : le joueur doit les voir",
+        "attendu": "le contenu (42) apparaît dans l'interface du coffre"
   }, async function (g) {
     var s = await reset(g);
     var bx = Math.floor(s.pos.x) + 3, bz = Math.floor(s.pos.z) + 1;
@@ -1175,13 +1175,9 @@
     A.ok(document.querySelector('.inv-screen').textContent.indexOf('42') >= 0,
       'le contenu du coffre est affiche');
     key('Escape'); fakeLock(g, true); await frames(3);
-
-    // on casse le coffre : le contenu doit retomber au sol
-    var avant = g.entities.list.length;
-    g.spillContainer(bx, by, bz);
-    A.gt(g.entities.list.length, avant, 'des objets sont tombes');
-    A.notOk(g.chests[k], 'le coffre est oublie');
-    g.entities.list.length = 0;
+    A.equal(typeof g.spillContainer, 'undefined', 'le client ne fait plus tomber lui-même le contenu d un coffre cassé');
+    delete g.chests[k];
+    g.world.setBlock(bx, by, bz, 0);
   });
 
   e2e('la jauge d usure apparait sur un outil entame', {
@@ -2677,12 +2673,9 @@
     await frames(3);
     A.equal(g.entities.list.filter(function (e) { return e.donjon === d.id && MC.EntitySpecs[e.type] &&
       MC.EntitySpecs[e.type].boss; }).length, 0, 'pas de second gardien');
-    // le coffre donne son butin, une seule fois
-    var inv = g.coffreDe(d.coffre.x, d.coffre.y, d.coffre.z);
-    A.ok(inv && inv.slots.some(function (x) { return x; }), 'le coffre est garni');
-    A.equal(g.coffreDe(d.coffre.x, d.coffre.y, d.coffre.z), inv, 'et reste le même coffre');
+    // le butin du coffre de donjon est tiré par le SERVEUR (SPEC-ARCHI-030) : le client n'en tire plus rien
+    A.equal(typeof g.coffreDe, 'undefined', 'le client ne tire plus le butin d un coffre lui-même');
     g.entities.list.length = 0;
-    delete g.chests[d.coffre.x + ',' + d.coffre.y + ',' + d.coffre.z];
     g.world.coffresPilles.clear();
     g.world.donjonsVaincus.clear();
     await reset(g);
@@ -2843,6 +2836,32 @@
     A.ok(g.render.eau.sousLEau, 'sous l eau : tout le champ passe par le calque qui ondule');
     s.flying = false;
     await reset(g);
+  });
+
+  e2e('SPEC-SYNC-024 : J affiche les relations de faction reçues du serveur, sans casser sur un type inconnu',
+      async function (g) {
+    await reset(g);
+    var P = MC.Politique, pol = P.creer(7);
+    P.decouvrir(pol, [{ id: 'v1', kind: 'megapole', x: 0, z: 0, nom: 'Alpha' }, { id: 'v2', kind: 'megapole', x: 300, z: 0, nom: 'Beta' }]);
+    pol.relations.set('royaume:v1~royaume:v2', 'guerre');
+    pol.factions.set('mystere:x', { id: 'mystere:x', type: 'mystere', nom: 'Inconnue', caractere: '?', objectif: '?' });
+    var gu = MC.Guildes.creerEtat();
+    MC.Guildes.appliquerAction(gu, 'Pseudo-du-serveur', { type: 'faction', action: 'creer', args: { nom: 'Lions' } });
+    var fid = MC.Guildes.factionsDe(gu, 'Pseudo-du-serveur').principale;
+    MC.Guildes.appliquerAction(gu, 'Pseudo-du-serveur', { type: 'faction', action: 'relation', args: { faction: fid, cible: 'royaume:v1', relation: 'ennemie' } }, pol);
+    // ce que game.js garde après un POLITIQUE complet ; le pseudo local diffère du nom connu du serveur
+    g.etatPolitique = { etat: P.appliquerReseau(null, P.instantaneReseau(pol)), guildes: MC.Guildes.serialiser(gu), moi: 'Pseudo-du-serveur' };
+    var nomAvant = g.nomJoueur; g.nomJoueur = 'Pseudo-du-serveur-mais-tronque';
+    key('KeyJ');
+    await frames(2);
+    var panneau = document.querySelector('.factions-panneau');
+    A.ok(panneau && panneau.style.display !== 'none', 'J ouvre le panneau des factions');
+    A.ok(/Alpha/.test(panneau.textContent) && /En guerre avec[^·]*Beta/.test(panneau.textContent), 'les relations PNJ↔PNJ sont affichées');
+    A.ok(/Inconnue/.test(panneau.textContent), 'une faction de type inconnu s\'affiche sans casser le panneau');
+    A.ok(/Lions/.test(panneau.textContent) && /Ennemie de [^·]*Alpha/.test(panneau.textContent), 'la faction du joueur (nom connu du serveur) et sa relation envers un PNJ');
+    key('KeyJ');
+    await frames(2);
+    g.nomJoueur = nomAvant; g.etatPolitique = null;
   });
 
   e2e('SPEC-SUCCES-001 : casser un bloc débloque « Premier bloc » (décidé par le serveur, toast) et K ouvre le panneau des succès',

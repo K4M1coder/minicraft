@@ -189,6 +189,9 @@
     var manettes = [];
 
     function joueurPrincipal() { return equipe[0].player; }
+    /* Format de partie (MC.Save : `state.chests`, lu par MC.Saves.charger et
+       l'export) : le client n'y simule plus rien, les coffres posés vivent dans
+       le serveur (SPEC-ARCHI-030). */
     var chests = Object.create(null);
     // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles, par
     // position (« x,y,z » -> pile { id, n, data } ou undefined si vide).
@@ -242,6 +245,16 @@
            un serveur créatif (ou l'inverse) prédirait le vol autrement que lui. */
         if (!!m.histoire !== !!regles.histoire || (m.mode && m.mode !== regles.mode.id)) adopterRegles(m.mode, m.difficulte, m.histoire);
         g.time = horloge.fixer(m.heure || 0);
+        /* SPEC-SYNC-020 : le serveur rend à chaque joueur local le regard et le
+           point de réapparition laissés à sa dernière déconnexion (la position
+           et les statistiques, elles, arrivent par onToi). */
+        (m.toi || []).forEach(function (t, i) {
+          var jl = equipe[i];
+          if (!jl) return;
+          // chaque joueur local de l'écran partagé (1 à 4) reprend son regard ; réapparition validée
+          var sp = MC.Synchro.reprendreRetour(jl.player.state, t);
+          if (sp) { jl.spawnPoint = sp; if (i === 0) g.spawnPoint = sp; }
+        });
         (m.blocs || []).forEach(function (b) {
           var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
           world.getChunk(cx, cz, true);
@@ -252,6 +265,19 @@
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
         // SPEC-ARCHI-029 : l'appartenance de faction est celle du serveur (jamais un état local)
         if (m.guilde) chat.systeme('Faction : ' + m.guilde.nom + (m.guilde.rang ? ' (' + m.guilde.rang + ')' : ''));
+      },
+      /* SPEC-SYNC-024 : les relations de faction (PNJ entre elles, factions de
+         joueurs envers les PNJ et entre elles) sont celles du SERVEUR, reçues
+         complètes à la connexion puis à chaque changement — jamais reconstruites
+         d'après le chat. Le panneau des factions (J) les affiche. Les factions
+         PNJ arrivent complètes puis par différences (MC.Politique.appliquerReseau) ;
+         les guildes, le client n'en tient aucun état propre (SPEC-ARCHI-029) :
+         il garde les données reçues telles quelles, relues par ui.panneauFactions. */
+      onPolitique: function (m) {
+        var ep = g.etatPolitique || (g.etatPolitique = { etat: null, guildes: null, moi: null });
+        if (m.pol) ep.etat = MC.Politique.appliquerReseau(ep.etat, m.pol);     // complet au join, différences ensuite
+        if (m.guildes) ep.guildes = m.guildes;
+        if (typeof m.moi === 'string') ep.moi = m.moi;                         // le nom que le serveur nous connaît
       },
       onHistoireEtat: function (m) { surHistoireEtat(m); },
       onHistoireNotif: function (m) { surHistoireNotif(m); },
@@ -2001,21 +2027,9 @@
       return best;
     }
 
-    /* Un coffre de donjon se remplit de son butin la première fois qu'on
-       l'ouvre — ou qu'on le casse. Ensuite il vit comme n'importe quel coffre. */
-    function coffreDe(x, y, z) {
-      var k = x + ',' + y + ',' + z;
-      if (chests[k]) return chests[k];
-      if (world.coffresPilles.has(k)) return null;
-      var butin = world.butinCoffre(x, y, z);
-      if (!butin) return null;
-      world.coffresPilles.add(k);
-      var inv = Inv.create(27);
-      butin.forEach(function (st) { inv.add(st.id, st.n); });
-      chests[k] = inv;
-      return inv;
-    }
-    g.coffreDe = coffreDe;
+    /* SPEC-ARCHI-030 / SPEC-ARCHI-001 : le butin des coffres de donjon (tiré à la
+       première ouverture ou à la casse) est l'affaire du SERVEUR
+       (remplirConteneurNeuf) ; le client n'en tire plus rien lui-même. */
 
     // ─── mobilier : lit, présentoir, socle (SPEC-INTERIEUR-002) ────────────
     /* SPEC-ARCHI-025 : dormir dans un lit fixe la réapparition dessus (côté
@@ -2126,50 +2140,13 @@
     g.monterDans = function (e) { return interagirVehicule(equipe[0], e, false); };
 
     // ─── actions ─────────────────────────────────────────────────────────────
-    /* Casser un fourneau ou un coffre doit rendre son contenu : sinon les
-       objets disparaissent silencieusement, ce qui est la pire des pertes. */
-    function spillContainer(x, y, z) {
-      var k = x + ',' + y + ',' + z;
-      var lache = 0;
-      var ch = coffreDe(x, y, z);
-      if (ch) {
-        ch.slots.forEach(function (st) {
-          if (st) { entities.dropItem(x + 0.5, y + 0.5, z + 0.5, st.id, st.n); lache += st.n; }
-        });
-        delete chests[k];
-      }
-      var di = distributeurs[k];
-      if (di) {
-        di.slots.forEach(function (st) {
-          if (st) { entities.dropItem(x + 0.5, y + 0.5, z + 0.5, st.id, st.n, null, st.data); lache += st.n; }
-        });
-        delete distributeurs[k];
-      }
-      if (lache) ui.toast(lache + ' objet(s) récupéré(s) du conteneur');
-      return lache;
-    }
-    g.spillContainer = spillContainer;
+    /* Casser un conteneur posé rend son contenu au sol : c'est le SERVEUR qui le
+       fait, une seule fois (B1, SPEC-SYNC-012) — le client ne lâche rien. */
 
-    /* SPEC-MECA-001 : un distributeur éjecte le premier objet de sa première
-       pile non vide — au sol, sauf une munition (flèche, galet…) qui part en
-       projectile vers le haut (aucune orientation stockée sur ce bloc). */
-    function ejecterDistributeur(x, y, z) {
-      var k = x + ',' + y + ',' + z;
-      var di = distributeurs[k];
-      if (!di) return;
-      var i = MC.Circuits.distributeurChoix(di.slots);
-      if (i < 0) return;
-      var st = di.slots[i];
-      var idef = C.def(st.id);
-      di.consumeAt(i, 1);
-      if (idef && idef.ammo) {
-        entities.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
-                        14, idef.damage || 5, null, idef.ammoType || 'fleche');
-      } else {
-        entities.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
-      }
-    }
-    g.ejecterDistributeur = ejecterDistributeur;
+    /* SPEC-MECA-001 / SPEC-ARCHI-001 : l'éjection d'un distributeur sur signal
+       est faite par le SERVEUR (tickCircuits → onDistribuer, server.js) ; le
+       client n'a plus de chemin qui éjecte un objet ou tire un projectile de
+       lui-même. */
 
     function selectSlot(i) {
       if (i < 0 || i >= Inv.HOTBAR_SIZE) return;
@@ -2444,7 +2421,9 @@
         if (g.histoire) { ui.journalHistoire(g.histoire, g.finHistoire); input.setState('ui'); }
         else ui.toast('Le journal n\'existe qu\'en mode histoire', 'warn');
       } else if (act === 'factions') {
-        ui.panneauFactions(world.reputation);
+        var ep = g.etatPolitique;      // SPEC-SYNC-024 : l'état du serveur, s'il est arrivé
+        ui.panneauFactions(world.reputation, ep && ep.etat ? { etat: ep.etat } : null,
+                           ep && ep.guildes ? { donnees: ep.guildes, joueur: ep.moi || g.nomJoueur || 'Joueur' } : null);
         input.setState('ui');
       } else if (act === 'succes') {
         ui.panneauSucces(g.succes);
@@ -2505,12 +2484,11 @@
       var rendus = ui.closeContainer();
       dropLeftovers(rendus);
     }
+    /* Ce que la grille n'a pas pu rendre à l'inventaire tombe au sol PAR LE
+       SERVEUR (CONTENEUR_FERMER « grille ») : le client n'en fait apparaître
+       aucun objet lui-même, il prévient seulement. */
     function dropLeftovers(rendus) {
       if (!rendus || !rendus.length) return;
-      var s = player.state;
-      rendus.forEach(function (r) {
-        entities.dropItem(s.pos.x, s.pos.y + 1, s.pos.z, r.id, r.n);
-      });
       ui.toast('Inventaire plein : objets lâchés au sol', 'warn');
     }
     function closeUI() {
@@ -2728,11 +2706,9 @@
           if (!(g.interditT > g.time)) { g.interditT = g.time + 3; ui.toast('Cette histoire ne vous permet pas de casser ce bloc', 'warn'); }
         }
         if (res) {
-          if (net.enLigne()) {
-            // le serveur calcule le butin et nous le donne : pas de double compte
-            entities.list.splice(nAvant);
-            net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
-          }
+          // le serveur calcule le butin et nous le donne (DONNE) : pas de double compte
+          entities.list.splice(nAvant);
+          net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
           audio.play(res.toolBroke ? 'brise' : 'casser');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
             ui.toast('Il faut un outil adapte pour recuperer ce bloc', 'warn');
@@ -2831,7 +2807,7 @@
       }
       input.setState('ui');
     }
-    // exposé pour les tests (comme g.coffreDe, g.parlerA…) : ouvre un
+    // exposé pour les tests (comme g.parlerA…) : ouvre un
     // conteneur (posé) au même chemin que le clic droit dessus, en ligne
     // comme hors ligne — évite d'avoir à simuler visée + clic en e2e.
     g.ouvrirConteneur = ouvrirConteneur;

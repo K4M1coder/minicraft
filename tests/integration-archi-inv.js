@@ -308,9 +308,9 @@ async function scenarioMultiBlocs() {
     // le monde sauvegardé garde les deux moitiés (ouvertes) et le lit entier
     const sauve = JSON.parse(fs.readFileSync(f, 'utf8'));
     const bl = (x, y, z) => { const o = sauve.overrides.find(e => e[0] === x && e[1] === y && e[2] === z); return o ? o[3] : null; };
-    // (le mécanisme des circuits referme une porte sans signal au tic suivant : on vérifie donc les DEUX moitiés, fermées)
-    eq(bl(pp.x, pp.y, pp.z), idPorte, 'SPEC-ARCHI-031 : la porte (case basse) survit à la sauvegarde');
-    eq(bl(pp.x, pp.y + 1, pp.z), idPorte, 'SPEC-ARCHI-031 : la porte (case haute) survit à la sauvegarde');
+    // (les circuits ne referment plus une porte ouverte à la main, SPEC-MECA-006 : les DEUX moitiés restent ouvertes)
+    eq(bl(pp.x, pp.y, pp.z), ouverte, 'SPEC-ARCHI-031 : la porte (case basse) survit à la sauvegarde, ouverte');
+    eq(bl(pp.x, pp.y + 1, pp.z), ouverte, 'SPEC-ARCHI-031 : la porte (case haute) survit à la sauvegarde, ouverte');
     eq(bl(pl.x, pl.y, pl.z - 1), B.LIT, 'SPEC-ARCHI-031 : la tête du lit survit à la sauvegarde');
   } finally { A.supprimerDossier(d); }
 }

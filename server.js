@@ -440,7 +440,7 @@ function appliquerEtatPersonnage(js, etat) {
     if (Number.isInteger(etat.selected) && etat.selected >= 0 && etat.selected < 9) st.selected = etat.selected;
     st.flying = !!etat.flying && !!regles.vole;
   }
-  js.spawn = etat.spawn || null;
+  js.spawn = SY.spawnValide(etat.spawn);         // fini et dans les bornes, sinon le point d'apparition du monde
 }
 /* Fusionne le registre (déjà à jour pour les joueurs déconnectés) avec
    l'état courant de chaque joueur local ENCORE connecté et nommé — sans
@@ -753,6 +753,52 @@ function avancerPolitique() {
     const m = chat.systeme(a.texte);
     if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
   });
+}
+/* SPEC-SYNC-024 : l'état des relations de faction tel qu'un client le reçoit.
+   `pol` : factions PNJ et leurs relations, complet au join puis par
+   différences (MC.Politique.instantaneReseau / suivreReseau — taille et coût
+   bornés, rien n'est sérialisé quand rien ne change) ; `guildes` : factions de
+   joueurs avec membres et relations (sans candidatures ni invitations), petites
+   (bornées par les joueurs), renvoyées entières quand une commande /faction a
+   réussi. Le client les relit (MC.Politique.appliquerReseau, MC.Guildes.charger). */
+function guildesReseau() {
+  const g = MC.Guildes.serialiser(guildes);
+  return {
+    v: g.v, prochainId: g.prochainId, joueurs: g.joueurs,
+    factions: g.factions.map(([id, f]) => [id, { nom: f.nom, couleur: f.couleur, emblem: f.emblem, devise: f.devise,
+      creeLe: f.creeLe, membres: f.membres, relations: f.relations }]),
+  };
+}
+let suiviPolitique = null;
+let guildesSales = false;
+/* À tous les joueurs AYANT REJOINT (jamais une socket qui n'a pas dit qui elle
+   est) : une trame encodée une fois. */
+function diffuserAuxJoueurs(msg, saufId) {
+  const trame = NP.encoder(JSON.stringify(msg), NP.OP.TEXTE, Buffer.alloc);
+  clients.forEach(c => {
+    if (c.id === saufId || !c.vivant || !c.rejoint) return;
+    try { c.socket.write(trame); } catch (e) { fermer(c, 'ecriture impossible'); }
+  });
+}
+/* Une fois par seconde, après chaque commande /faction et avant chaque envoi
+   complet à un nouveau venu : les seuls changements depuis le dernier envoi. */
+function diffuserPolitiqueSiChangee(saufId) {
+  if (!suiviPolitique) suiviPolitique = MC.Politique.suivreReseau(politique);
+  const d = suiviPolitique.prendre();
+  const g = guildesSales;
+  guildesSales = false;
+  if (!d && !g) return;
+  const m = { t: NP.MSG.POLITIQUE };
+  if (d) m.pol = d.complet ? MC.Politique.instantaneReseau(politique) : d;
+  if (g) m.guildes = guildesReseau();
+  diffuserAuxJoueurs(m, saufId);
+}
+/* L'état complet, pour un nouveau venu : les différences en attente partent
+   d'abord aux autres (sinon le nouveau venu les recevrait deux fois). `moi` :
+   son nom tel que le serveur le connaît (membres des guildes). */
+function envoyerPolitiqueComplete(c) {
+  diffuserPolitiqueSiChangee(c.id);
+  envoyer(c, { t: NP.MSG.POLITIQUE, pol: MC.Politique.instantaneReseau(politique), guildes: guildesReseau(), moi: c.nom });
 }
 // ── catastrophes environnementales (SPEC-ENV-001/002/004, SPEC-QUETE-003) ──
 // clé "lieuId:evenementId" déjà appliquée — un cyclone/une tornade dure
@@ -2551,8 +2597,12 @@ function traiter(c, m) {
         histoire: PARAMS_HISTOIRE ? { interactions: PARAMS_HISTOIRE.interactions || null, commerce: PARAMS_HISTOIRE.commerce } : null,
         zone: monde.zonesEtat ? monde.zonesEtat.politique : 'generee',
         heure, blocs,
-        // la position qui fait foi, pour chaque joueur local du poste
-        toi: c.joueurs.map(js => SY.etatJoueur(js.joueur, 0)),
+        // la position qui fait foi, pour chaque joueur local du poste ; à la
+        // connexion s'y ajoutent le regard et le point de réapparition laissés
+        // (SPEC-SYNC-020 : un joueur qui revient retrouve l'état exact laissé)
+        toi: c.joueurs.map(js => Object.assign(SY.etatJoueur(js.joueur, 0), {
+          yaw: js.joueur.state.yaw, pitch: js.joueur.state.pitch, spawn: js.spawn || null,
+        })),
         tickHz: CONF.tickHz, etatHz: CONF.etatHz,
         // ARCHI : état du poste — pause (SPEC-ARCHI-011), réseau (SPEC-ARCHI-005), partie chargée
         pause: enPause, pauseRev, reseau: reseauOuvert ? CA.ETAT_RESEAU.OUVERT : CA.ETAT_RESEAU.FERME,
@@ -2563,6 +2613,9 @@ function traiter(c, m) {
           .map(x => ({ id: x.id, nom: x.nom, x: x.pos.x, y: x.pos.y, z: x.pos.z, yaw: x.yaw })),
         chat: chat.recents(20).map(x => ({ auteur: x.auteur, texte: x.texte, type: x.type, ts: x.t })),
       });
+      // SPEC-SYNC-024 : aussitôt après, l'état complet des relations de faction
+      // (PNJ et joueurs) — jamais déduit de l'historique du chat
+      envoyerPolitiqueComplete(c);
       // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
       // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
       c.joueurs.forEach((js, j) => envoyerInvMaj(c, j, {}));
@@ -2787,6 +2840,11 @@ function traiter(c, m) {
         MC.Admin.journaliser(admin, { auteur: c.nom, action: 'bloc_bascule', cible: `${m.x},${m.y},${m.z}`, details: m.id, heure });
         break;
       }
+      /* L'état d'une porte ou d'une trappe ne sert qu'au serveur (bit 0 : dernier
+         signal vu par les circuits, SPEC-MECA-006) : il n'est JAMAIS repris du
+         client — une porte posée part de 0, ses deux moitiés comprises, et le
+         tic suivant l'ouvre si un signal la touche déjà. */
+      if (m.id && (C.estPorte(m.id) || C.estTrappe(m.id))) m.etat = 0;
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
@@ -2938,13 +2996,16 @@ function traiter(c, m) {
         const actions = (r.actions || []).filter(a => a.type === 'faction');
         if (!actions.length) (r.messages || []).forEach(t => envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: t, type: 'systeme' }));
         actions.forEach(a => {
-          const res = MC.Guildes.appliquerAction(guildes, c.nom, a);
+          // l'état politique permet à une faction de joueurs de se déclarer envers une faction PNJ (SPEC-FACTION-017)
+          const res = MC.Guildes.appliquerAction(guildes, c.nom, a, politique);
           if (res.canal) {
             const membres = new Set(res.canal.membres);
             clients.forEach(cl => { if (cl.rejoint && membres.has(cl.nom)) envoyer(cl, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'faction' }); });
           } else envoyer(c, { t: NP.MSG.CHAT, auteur: null, texte: res.message, type: 'systeme' });
           MC.Admin.journaliser(admin, { auteur: c.nom, action: 'faction', cible: a.action, details: res.ok, heure });
+          if (res.ok && !res.canal) guildesSales = true;
         });
+        diffuserPolitiqueSiChangee();     // SPEC-SYNC-024 : appartenances et relations diffusées sans attendre le tic
         break;
       }
       const msg = chat.envoyer(c.nom, m.texte);
@@ -4351,6 +4412,7 @@ setInterval(() => {
     monde.unloadLoin(centres, 5);
     peuplerLieux();
     avancerPolitique();
+    diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
     avancerEconomie();
     avancerCaravanes();
     avancerCatastrophes();

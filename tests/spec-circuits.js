@@ -242,6 +242,64 @@
       K.tick([[2, 40, 2, B.BOUTON_CIRCUIT], [3, 40, 2, w.getBlock(3, 40, 2)]], api, {});
       A.equal(w.getBlock(3, 40, 2), B.PORTE_FERMEE_N, 'le signal retombé : elle se referme');
     });
+
+    /* Bogue ancien : une porte (ou une trappe) du registre des mécanismes était
+       ramenée à chaque tic à l'état de son signal — sans aucun signal voisin,
+       elle était donc REFERMÉE au tic suivant après qu'un joueur (ou un
+       habitant) l'avait ouverte à la main. Le signal ne commande la porte
+       qu'à ses FRONTS (il monte : elle s'ouvre ; il retombe : elle se ferme) ;
+       entre deux fronts, la main du joueur fait foi. */
+    it('SPEC-MECA-006 : une porte ou une trappe ouverte à la main, sans signal, reste ouverte aux tics suivants', function () {
+      var w = MC.createWorld(81);
+      w.getChunk(0, 0, true);
+      var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+      w.setBlock(3, 40, 2, B.PORTE_FERMEE_N);
+      w.setBlock(6, 40, 6, B.TRAPPE_FERMEE);
+      w.setBlock(3, 40, 2, C.bascule(w.getBlock(3, 40, 2)));      // ouvertes à la main (clic droit)
+      w.setBlock(6, 40, 6, C.bascule(w.getBlock(6, 40, 6)));
+      for (var t = 0; t < 5; t++) K.tick([[3, 40, 2, w.getBlock(3, 40, 2)], [6, 40, 6, w.getBlock(6, 40, 6)]], api, {});
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_OUVERTE_N, 'la porte ouverte à la main reste ouverte');
+      A.equal(w.getBlock(6, 40, 6), B.TRAPPE_OUVERTE, 'la trappe ouverte à la main reste ouverte');
+    });
+
+    it('SPEC-MECA-006 : un bloc remplacé perd son état résiduel ; seule la bascule d\'une porte ou d\'une trappe le garde', function () {
+      var w = MC.createWorld(83);
+      w.getChunk(0, 0, true);
+      w.setBlock(4, 40, 4, B.LEVIER_CIRCUIT); w.setEtat(4, 40, 4, 1);
+      w.setBlock(4, 40, 4, B.PORTE_FERMEE_N);                       // remplacé sans passer par l'air
+      A.equal(w.getEtat(4, 40, 4), 0, 'l\'état du levier ne devient pas celui de la porte');
+      w.setEtat(4, 40, 4, 1);                                      // la porte a vu un signal
+      w.setBlock(4, 40, 4, C.bascule(w.getBlock(4, 40, 4)));
+      A.equal(w.getEtat(4, 40, 4), 1, 'ouverte à la main : la porte garde le signal vu');
+      w.setBlock(4, 40, 4, B.STONE);
+      A.equal(w.getEtat(4, 40, 4), 0, 'remplacée par de la pierre : plus d\'état');
+    });
+
+    it('SPEC-MECA-006 : le signal commande la porte à ses fronts ; entre deux fronts, la main du joueur fait foi', function () {
+      var w = MC.createWorld(82);
+      w.getChunk(0, 0, true);
+      var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+      w.setBlock(2, 40, 2, B.LEVIER_CIRCUIT); w.setEtat(2, 40, 2, 0);
+      w.setBlock(3, 40, 2, B.PORTE_FERMEE_N);
+      function tic() { K.tick([[2, 40, 2, B.LEVIER_CIRCUIT], [3, 40, 2, w.getBlock(3, 40, 2)]], api, {}); }
+      tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_FERMEE_N, 'sans signal, la porte fermée le reste');
+      w.setEtat(2, 40, 2, 1); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_OUVERTE_N, 'front montant : la porte s\'ouvre');
+      w.setBlock(3, 40, 2, C.bascule(w.getBlock(3, 40, 2)));     // refermée à la main, levier toujours actionné
+      tic(); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_FERMEE_N, 'signal maintenu : la porte refermée à la main le reste');
+      w.setBlock(3, 40, 2, C.bascule(w.getBlock(3, 40, 2)));     // rouverte à la main
+      w.setEtat(2, 40, 2, 0); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_FERMEE_N, 'front descendant : la porte se referme');
+      tic(); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_FERMEE_N, 'et reste fermée sans signal');
+      // une porte cassée puis reposée oublie le signal qu'elle avait vu
+      w.setEtat(2, 40, 2, 1); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_OUVERTE_N, 'nouveau front montant : ouverte');
+      w.setBlock(3, 40, 2, 0); w.setBlock(3, 40, 2, B.PORTE_FERMEE_N); tic();
+      A.equal(w.getBlock(3, 40, 2), B.PORTE_OUVERTE_N, 'reposée contre un levier actionné : le signal l\'ouvre (front vu par la nouvelle porte)');
+    });
   });
 
   describe('SPEC-MECA-001 : distributeurs et pistons', function () {

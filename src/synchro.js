@@ -226,7 +226,26 @@
     st.dead = !!e.mort;
   }
 
-  MC.Synchro = { TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
+  /* SPEC-SYNC-020 : un point de réapparition reçu ou relu (fichier de monde,
+     BIENVENUE) n'est accepté que fini et dans les bornes du monde — sinon
+     null (le point d'apparition du monde s'applique). */
+  function spawnValide(sp) {
+    if (!sp || typeof sp !== 'object') return null;
+    var fini = function (v) { return typeof v === 'number' && isFinite(v); };
+    if (!fini(sp.x) || !fini(sp.y) || !fini(sp.z)) return null;
+    if (Math.abs(sp.x) >= 1e7 || Math.abs(sp.z) >= 1e7 || sp.y <= -64 || sp.y >= 400) return null;
+    return { x: sp.x, y: sp.y, z: sp.z };
+  }
+  /* À la connexion, le client reprend le regard laissé par le joueur local
+     (BIENVENUE.toi[i]) ; rend le point de réapparition validé, ou null. */
+  function reprendreRetour(st, t) {
+    if (!st || !t) return null;
+    if (typeof t.yaw === 'number' && isFinite(t.yaw)) st.yaw = t.yaw;
+    if (typeof t.pitch === 'number' && isFinite(t.pitch)) st.pitch = Math.max(-1.6, Math.min(1.6, t.pitch));
+    return spawnValide(t.spawn);
+  }
+
+  MC.Synchro = { spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
                  peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
                  creerBudget: creerBudget, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
