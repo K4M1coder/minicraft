@@ -153,42 +153,138 @@
       A.deep(stades[0].slice(0, 3), [n.x, n.y, n.z], 'à la bonne position');
     });
 
+    /* Le code de game.js SANS commentaires NI contenu de chaînes : un analyseur
+       minimal (chaînes '…' "…" `…`, commentaires, expressions régulières
+       littérales) — un mot interdit cité dans un commentaire ou un texte affiché
+       ne compte pas, un appel déguisé (alias, crochets) si. */
+    function codeSeul(src) {
+      var out = '', i = 0, n = src.length, prec = '';
+      while (i < n) {
+        var c = src[i], d = src[i + 1];
+        if (c === '/' && d === '*') { var f = src.indexOf('*/', i + 2); i = f < 0 ? n : f + 2; out += ' '; continue; }
+        if (c === '/' && d === '/') { while (i < n && src[i] !== '\n') i++; continue; }
+        if (c === '\'' || c === '"' || c === '`') {
+          i++;
+          while (i < n && src[i] !== c) { if (src[i] === '\\') i++; i++; }
+          i++; out += c + c; prec = c; continue;
+        }
+        if (c === '/' && /[(,=:[!&|?{};+\-*%<>~^]|^$|return$/.test(prec)) {
+          i++;
+          var classe = false;
+          while (i < n && (src[i] !== '/' || classe)) { if (src[i] === '\\') i++; else if (src[i] === '[') classe = true; else if (src[i] === ']') classe = false; i++; }
+          i++;
+          while (i < n && /[a-z]/.test(src[i])) i++;
+          out += '/r/'; prec = '/'; continue;
+        }
+        out += c;
+        if (!/\s/.test(c)) prec = /\w/.test(c) ? (/\w/.test(prec) ? prec + c : c) : c;
+        i++;
+      }
+      return out;
+    }
+
     /* Audit final du chantier (SPEC-ARCHI-001, second volet ; le premier — le
        point d'entrée par défaut ouvre un serveur qui sert index.html et
        répond BIENVENUE — est prouvé par tests/integration-archi-serveur.js) :
        plus aucune simulation du monde dans game.js, tous lots confondus. */
-    it('SPEC-ARCHI-001 : audit statique — game.js ne contient plus aucune simulation du monde (eau, circuits, feu, cultures, créatures, apparitions, politique)', function () {
-      [
-        'entities.update(', 'entities.damage(', 'entities.tirer(', 'invoquerGardien', 'trySpawn', 'peuplerLieux',
-        '.coulerEau(', '.coulerFeu(', 'tickCircuits(', 'Circuits.tick(', 'ejecterDistributeur',
-        '.updateSurvival(', '.subirClimat(', 'avancerJourApresDormir', 'Politique.tourDuMonde', 'Politique.decouvrir',
-      ].forEach(function (interdit) {
-        A.equal(CODE.indexOf(interdit), -1, 'game.js n\'appelle plus « ' + interdit + ' »');
+    function auditer(src) {
+      var code = codeSeul(src), fautes = [];
+      /* Objets surveillés : seuls les membres de leur liste blanche sont
+         permis, sous leur nom, sous un alias (var x = …), ou par g.<nom>. */
+      var SURVEILLES = {
+        'entities': ['list', 'aimedAt', 'mergeItems', 'rayBox', 'evenements', 'SPECS'],      // lecture, visée, fusion d'affichage
+        'MC.Politique': ['appliquerReseau'],                                                    // état reçu du serveur (SPEC-SYNC-024)
+        'MC.Caravanes': ['enRoute', 'trajetsDe', 'voieEau'],                                    // figurants : positions déduites de l'heure, affichage seul
+        'MC.Volcanisme': ['activite'],                                                          // panache et grondement, affichage seul
+        'MC.Feu': [], 'MC.Economie': [], 'MC.Circuits': [], 'MC.Guildes': [],
+      };
+      var INTERDITS_MONDE = ['coulerEau', 'coulerFeu', 'tickCircuits', 'tickSaisonSurface', 'butinCoffre'];
+      // la portée d'un alias : du point où il est déclaré à la fin du bloc qui le contient
+      function portee(p) {
+        var prof = 0;
+        for (var k = p; k < code.length; k++) {
+          if (code[k] === '{') prof++;
+          else if (code[k] === '}') { if (prof === 0) return code.slice(p, k); prof--; }
+        }
+        return code.slice(p);
+      }
+      Object.keys(SURVEILLES).forEach(function (obj) {
+        var cibles = [{ nom: obj.replace('.', '\\.'), zone: code }];
+        if (obj === 'entities') cibles.push({ nom: 'g\\.entities', zone: code });
+        var reAlias = new RegExp('(?:var|let|const)\\s+(\\w+)\\s*=\\s*(?:' + cibles.map(function (x) { return x.nom; }).join('|') + ')\\s*[;,)]', 'g'), m;
+        while ((m = reAlias.exec(code))) cibles.push({ nom: m[1], zone: portee(m.index) });
+        cibles.forEach(function (cb) {
+          var reMembre = new RegExp('(?:^|[^\\w.])' + cb.nom + '\\s*\\.\\s*(\\w+)', 'g'), mm;
+          while ((mm = reMembre.exec(cb.zone))) {
+            if (SURVEILLES[obj].indexOf(mm[1]) < 0) fautes.push(obj + '.' + mm[1] + ' (via « ' + cb.nom.replace(/\\/g, '') + ' »)');
+          }
+          if (new RegExp('(?:^|[^\\w.])' + cb.nom + '\\s*\\[').test(cb.zone)) fautes.push(obj + '[…] (accès par crochets via « ' + cb.nom.replace(/\\/g, '') + ' »)');
+        });
       });
+      var noms2 = ['world', 'g\\.world', 'w'];
+      noms2.forEach(function (nom) {
+        INTERDITS_MONDE.forEach(function (mb) {
+          if (new RegExp('(?:^|[^\\w.])' + nom + '\\s*\\.\\s*' + mb + '\\b').test(code)) fautes.push('world.' + mb);
+        });
+        if (new RegExp('(?:^|[^\\w.])' + nom + "\\s*\\[\\s*''\\s*\\]").test(code)) fautes.push('world[\'…\']');
+      });
+      [/\btrySpawn\w*/, /\bpeuplerLieux\b/, /\binvoquerGard\w*/, /\bejecterDistributeur\b/, /\.updateSurvival\b/, /\.subirClimat\b/,
+       /\bavancerJourApresDormir\b/, /\bavancer[A-Z]\w*/, /\bspillContainer\b/, /\bcoffreDe\b/, /\.etapeFeu\b/].forEach(function (re) {
+        var m = code.match(re);
+        if (m) fautes.push(m[0]);
+      });
+      /* net.enLigne() : plus aucune décision côté client — liste blanche VIDE
+         (le poste est toujours relié à un serveur, ouvert ou non au réseau). */
+      var enLigne = code.match(/\bnet\s*\.\s*enLigne\b/g) || [];
+      if (enLigne.length) fautes.push(enLigne.length + ' × net.enLigne()');
       // le seul tic du monde côté client coupe tout ce que simule le serveur
-      var appels = CODE.match(/world\.tick\(/g) || [];
-      A.ok(appels.length > 0, 'le client garde un tic du monde (neige et glace saisonnières, déterministes par l\'heure)');
-      A.equal((CODE.match(/world\.tick\(dt, 14, null, optionsTickClient\(\)\)/g) || []).length, appels.length,
-        'chaque world.tick du client passe par optionsTickClient()');
+      var ticks = code.match(/\bworld\s*\.\s*tick\s*\(/g) || [];
+      var viaOptions = code.match(/\bworld\.tick\(dt, 14, null, optionsTickClient\(\)\)/g) || [];
+      if (!ticks.length || ticks.length !== viaOptions.length) fautes.push('world.tick hors optionsTickClient() (' + ticks.length + ' / ' + viaOptions.length + ')');
+      return fautes;
+    }
+
+    it('SPEC-ARCHI-001 : audit statique — game.js ne contient plus aucune simulation du monde (eau, circuits, feu, cultures, créatures, apparitions, politique, économie, caravanes)', function () {
+      A.deep(auditer(GAME), [], 'aucune simulation du monde ni décision sur net.enLigne() dans src/game.js');
       var opts = corps('optionsTickClient');
       ['eau: false', 'circuits: false', 'feu: false', 'cultures: false'].forEach(function (o) {
         A.ok(opts.indexOf(o) >= 0, 'optionsTickClient() coupe « ' + o + ' »');
       });
       A.equal(opts.indexOf('surBloc'), -1, 'le client ne diffuse aucun bloc changé par son tic');
-      // la boucle d'images, découpée par thème : aucune ne décide sur net.enLigne(), aucune ne modifie le monde
       ['frameJoueurs', 'frameEntites', 'frameTemps', 'frameMonde', 'frameConteneurs', 'frameFinDePartie', 'frameMondeInterface', 'frameReseau'].forEach(function (nom) {
-        var c = corps(nom).replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
-        A.equal(c.indexOf('net.enLigne()'), -1, nom + ' ne décide pas sur net.enLigne()');
-        ['setBlock', 'setEtat', 'entities.spawn', 'entities.dropItem', '.hurt('].forEach(function (interdit) {
+        var c = codeSeul(corps(nom));
+        ['setBlock', 'setEtat', '.hurt('].forEach(function (interdit) {
           A.equal(c.indexOf(interdit), -1, nom + ' ne contient pas « ' + interdit + ' »');
         });
       });
-      // météo, volcans et caravanes : purement visuels (aucun bloc, aucune entité, aucun dégât)
       ['majMeteo', 'volcans', 'convois'].forEach(function (nom) {
-        var c = corps(nom);
+        var c = codeSeul(corps(nom));
         ['setBlock', 'entities.', '.hurt('].forEach(function (interdit) {
           A.equal(c.indexOf(interdit), -1, nom + ' ne contient pas « ' + interdit + ' »');
         });
+      });
+    });
+
+    it('SPEC-ARCHI-001 : l\'audit lui-même voit à travers commentaires, chaînes, alias et crochets', function () {
+      var tick = 'world.tick(dt, 14, null, optionsTickClient());\n';
+      A.deep(auditer(tick + '/* entities.update(dt) */ var t = "net.enLigne() entities.damage"; // MC.Feu.etapeFeu()\n'), [],
+        'un mot interdit dans un commentaire ou une chaîne ne compte pas');
+      var cas = {
+        'var e = entities; e.update(dt);': 'entities.update',
+        'entities["update"](dt);': 'entities[…]',
+        'g.entities.damage(m, 3);': 'entities.damage',
+        'var F = MC.Feu; F.etapeFeu(w);': 'MC.Feu.etapeFeu',
+        'MC.Economie.avancerJour(e);': 'MC.Economie.avancerJour',
+        'var CV = MC.Caravanes; CV.arriveesJusqua(1);': 'MC.Caravanes.arriveesJusqua',
+        'avancerCatastrophes();': 'avancerCatastrophes',
+        'if (net.enLigne()) x();': 'net.enLigne()',
+        'world.coulerEau(96);': 'world.coulerEau',
+        'world.tick(dt, 14);': 'world.tick hors',
+        'var r = /\'/; entities.tirer(a);': 'entities.tirer',
+      };
+      Object.keys(cas).forEach(function (src) {
+        var f = auditer(tick + src + '\n');
+        A.ok(f.some(function (x) { return x.indexOf(cas[src]) >= 0; }), 'détecté : ' + src + ' → ' + JSON.stringify(f));
       });
     });
 

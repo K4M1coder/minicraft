@@ -4,7 +4,8 @@
      POSTE (déclenchée par le joueur 2, j=1), les deux joueurs et l'heure sont
      gelés, la reprise rend les deux joueurs actifs ; le compteur de dormeurs
      traverse la pause (un couché avant, l'autre après : la nuit passe) ; un
-     joueur mort reste mort pendant la pause et renaît normalement après.
+     joueur mort juste avant la pause (rien ne peut tuer pendant la pause, le monde est gelé)
+     reste mort pendant la pause et renaît normalement après.
    - SPEC-SYNC-020 : un joueur qui se déconnecte puis revient sous le même nom,
      sur le même serveur sans redémarrage, retrouve dans BIENVENUE (et
      l'INV_MAJ qui la suit) l'état exact laissé : position, regard, vie, faim,
@@ -172,7 +173,7 @@ async function scenarioEcranPartageSommeil() {
   } finally { A.supprimerDossier(d); }
 }
 
-// ── SPEC-ARCHI-020 : un joueur local mort pendant la pause renaît après la reprise ─
+// ── SPEC-ARCHI-020 : un joueur local mort JUSTE AVANT la pause (la pause gèle tout, on n'y meurt pas) reste mort pendant la pause et renaît après la reprise ─
 async function scenarioEcranPartageMort() {
   const d = A.dossierTemp('mc-clot-em-');
   try {
@@ -190,7 +191,7 @@ async function scenarioEcranPartageMort() {
     await cl.attendre('pause_etat', 3000, m => m.actif === true);
     const m0 = await etatMonde(s.port);
     const gele = await observer(1500, async () => { const m = await etatMonde(s.port); return m && m.pause === true && Math.abs(m.heure - m0.heure) < 0.02; });
-    ok(gele, 'SPEC-ARCHI-020 : le poste reste gelé avec un joueur local mort');
+    ok(gele, 'SPEC-ARCHI-020 : le poste reste gelé avec un joueur local mort juste avant la pause');
     cl.envoyer({ t: 'pause', actif: false, j: 1 });
     const p2 = await cl.attendre('pause_etat', 3000, m => m.actif === false);
     const apres = await cl.attendre('etat', 3000, m => cl.messages.indexOf(m) > cl.messages.indexOf(p2)).catch(() => null);
@@ -275,6 +276,23 @@ async function scenarioReconnexion() {
 }
 
 // ── SPEC-SYNC-024 : les relations de faction partent au join ─────────────────
+/* L'état qu'un client rebâtit de TOUS les POLITIQUE reçus (complet au join,
+   différences ensuite), comme game.js : MC.Politique.appliquerReseau. */
+function etatPolitique(cl) {
+  let etat = null, guildes = null, moi = null;
+  cl.messages.filter(m => m.t === 'politique').forEach(m => {
+    if (m.pol) etat = MC.Politique.appliquerReseau(etat, m.pol);
+    if (m.guildes) guildes = m.guildes;
+    if (m.moi) moi = m.moi;
+  });
+  return etat && { etat, guildes, moi };
+}
+function signature(e) {
+  if (!e) return null;
+  const rel = [];
+  e.etat.relations.forEach((r, k) => rel.push(k + '=' + r));
+  return JSON.stringify([e.etat.jour, Array.from(e.etat.factions.keys()), rel.sort(), e.guildes]);
+}
 async function scenarioFactions() {
   const d = A.dossierTemp('mc-clot-fa-');
   try {
@@ -287,13 +305,18 @@ async function scenarioFactions() {
     const a = await rejoindre(s.port, 'Ana', 1);
     const iBienvenueA = a.client.messages.indexOf(a.bienvenue);
     const polA0 = await a.client.attendre('politique', 3000).catch(() => null);
-    ok(!!polA0 && a.client.messages.indexOf(polA0) > iBienvenueA, 'SPEC-SYNC-024 : POLITIQUE suit BIENVENUE à la connexion');
+    ok(!!polA0 && a.client.messages.indexOf(polA0) > iBienvenueA && polA0.pol && polA0.pol.complet === 1 && polA0.moi === 'Ana',
+       'SPEC-SYNC-024 : POLITIQUE complet suit BIENVENUE à la connexion, avec le nom que le serveur connaît');
+    // une socket qui n'a pas rejoint ne reçoit rien de la politique
+    const espion = await A.connecter(s.port);
     // plusieurs jours de simulation politique : le serveur rattrape les jours 0 → 4, puis la nuit passe (jour 5)
-    ok(!!(await jusqua(() => { const m = a.client.dernier('politique'); return m && m.politique.jour === 4; }, 5000)),
+    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 4; }, 5000)),
        'SPEC-SYNC-024 : le client connecté apprend les jours de simulation rattrapés (jour 4)');
     a.client.envoyer({ t: 'dormir', j: 0, actif: true });
-    ok(!!(await jusqua(() => { const m = a.client.dernier('politique'); return m && m.politique.jour === 5; }, 6000)),
+    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 5; }, 6000)),
        'SPEC-SYNC-024 : la journée simulée suivante est diffusée au client déjà connecté (jour 5)');
+    const apresJour = a.client.messages.filter(m => m.t === 'politique').slice(1);
+    ok(apresJour.length >= 1 && apresJour.every(m => !m.pol || !m.pol.complet), 'SPEC-SYNC-024 : après le join, seules des différences sont diffusées');
     // une faction de joueurs se déclare ennemie d'une faction PNJ
     const cible = 'royaume:v1';
     a.client.envoyer({ t: 'chat', texte: '/faction creer Lions' });
@@ -301,28 +324,30 @@ async function scenarioFactions() {
     a.client.envoyer({ t: 'chat', texte: '/faction relation Lions ' + cible + ' ennemie' });
     const rep = await a.client.attendre('chat', 3000, m => /ennemie|Faction :/.test(m.texte || '')).catch(() => null);
     ok(rep && /se déclare ennemie/.test(rep.texte), 'préparation : la faction de joueurs se déclare ennemie d\'un royaume PNJ (arbitré par le serveur)', rep && rep.texte);
-    const avecLions = (m) => m && m.guildes && m.guildes.factions.some(([, g]) => g.nom === 'Lions' && g.relations.some(([c, r]) => c === cible && r === 'ennemie'));
-    ok(!!(await jusqua(() => avecLions(a.client.dernier('politique')), 4000)), 'SPEC-SYNC-024 : la relation de la faction de joueurs est diffusée au client déjà connecté');
+    const avecLions = (e) => e && e.guildes && e.guildes.factions.some(([, g]) => g.nom === 'Lions' && g.relations.some(([c, r]) => c === cible && r === 'ennemie'));
+    ok(!!(await jusqua(() => avecLions(etatPolitique(a.client)), 4000)), 'SPEC-SYNC-024 : la relation de la faction de joueurs est diffusée au client déjà connecté');
+    ok(!espion.messages.some(m => m.t === 'politique'), 'SPEC-SYNC-024 : une socket qui n\'a pas rejoint ne reçoit pas POLITIQUE');
+    espion.fermer();
 
     // un second joueur rejoint : il reçoit TOUT l'état, sans rien attendre du chat
     const b = await rejoindre(s.port, 'Bea', 1);
     const iBienvenueB = b.client.messages.indexOf(b.bienvenue);
     const polB = await b.client.attendre('politique', 3000).catch(() => null);
-    ok(!!polB, 'SPEC-SYNC-024 : le nouveau venu reçoit POLITIQUE');
+    ok(!!polB && polB.pol && polB.pol.complet === 1, 'SPEC-SYNC-024 : le nouveau venu reçoit POLITIQUE complet');
     if (polB) {
       const entre = b.client.messages.slice(iBienvenueB + 1, b.client.messages.indexOf(polB)).map(m => m.t);
       ok(entre.indexOf('etat') < 0 && entre.indexOf('chat') < 0, 'SPEC-SYNC-024 : POLITIQUE part aussitôt après BIENVENUE (avant tout ETAT ou CHAT)', JSON.stringify(entre));
-      eq(polB.politique.jour, 5, 'SPEC-SYNC-024 : le nouveau venu connaît le jour politique courant');
-      ok(polB.politique.factions.length >= 4 && polB.politique.relations.length >= 6, 'SPEC-SYNC-024 : toutes les factions PNJ et leurs relations', polB.politique.factions.length + ' factions, ' + polB.politique.relations.length + ' relations');
-      ok(avecLions(polB), 'SPEC-SYNC-024 : la relation de la faction de joueurs envers le PNJ est reçue au join');
-      const lions = polB.guildes.factions.find(([, g]) => g.nom === 'Lions');
-      const cle = lions && [lions[0], cible].sort().join('~');
-      ok(!!cle && polB.politique.relations.some(([c, r]) => c === cle && r === 'guerre'),
-         'SPEC-SYNC-024 : et la relation est aussi posée côté PNJ (guerre), sur la même échelle que les relations PNJ↔PNJ', cle);
+      const eb = etatPolitique(b.client);
+      eq(eb.etat.jour, 5, 'SPEC-SYNC-024 : le nouveau venu connaît le jour politique courant');
+      ok(eb.etat.factions.size >= 4 && eb.etat.relations.size >= 3, 'SPEC-SYNC-024 : toutes les factions PNJ et leurs relations', eb.etat.factions.size + ' factions, ' + eb.etat.relations.size + ' relations non neutres');
+      ok(avecLions(eb), 'SPEC-SYNC-024 : la relation de la faction de joueurs envers le PNJ est reçue au join');
+      const lions = eb.guildes.factions.find(([, g]) => g.nom === 'Lions');
+      ok(!!lions && P.relationEntre(eb.etat, lions[0], cible) === 'guerre',
+         'SPEC-SYNC-024 : et la relation est aussi posée côté PNJ (guerre), sur la même échelle que les relations PNJ↔PNJ');
       // même état que le client déjà connecté (une diffusion arrivée entre-temps est attendue chez les deux)
       const pareil = await jusqua(() => {
-        const ma = a.client.dernier('politique'), mb = b.client.dernier('politique');
-        return ma && mb && JSON.stringify([ma.politique, ma.guildes]) === JSON.stringify([mb.politique, mb.guildes]);
+        const sa = signature(etatPolitique(a.client)), sb = signature(etatPolitique(b.client));
+        return sa && sa === sb;
       }, 4000);
       ok(!!pareil, 'SPEC-SYNC-024 : le nouveau venu a exactement les mêmes relations que le client déjà connecté');
     }
@@ -351,6 +376,13 @@ async function scenarioPortes() {
     ok(!!(await poser(bx + 3, by, bz, B.LEVIER_CIRCUIT, 1)), 'préparation : levier actionné posé à côté');
     const ouverte = await jusqua(() => vu('bloc').find(m => m.x === bx + 2 && m.y === by && m.z === bz && m.id === B.PORTE_OUVERTE_N), 3000);
     ok(!!ouverte, 'SPEC-MECA-006 : témoin — le signal d\'un levier actionné ouvre la porte voisine (circuits du serveur actifs)');
+    // l'état d'une porte posée n'est jamais celui du client : un « signal déjà vu » annoncé (etat 1) est ignoré
+    const vu2 = cl.depuis();
+    cl.envoyer({ t: 'bloc', x: bx + 4, y: by, z: bz, id: B.PORTE_FERMEE_N, j: 0, i: 0, etat: 1 });
+    const echo = await cl.attendre('bloc', 3000, m => m.x === bx + 4 && m.y === by && m.z === bz && m.id === B.PORTE_FERMEE_N).catch(() => null);
+    ok(echo && echo.etat === 0, 'SPEC-MECA-006 : le serveur pose la porte avec SON état (0), pas celui annoncé par le client', echo && JSON.stringify(echo));
+    const ouverte2 = await jusqua(() => vu2('bloc').find(m => m.x === bx + 4 && m.y === by && m.z === bz && m.id === B.PORTE_OUVERTE_N), 3000);
+    ok(!!ouverte2, 'SPEC-MECA-006 : posée contre un levier déjà actionné, la porte s\'ouvre au tic suivant (l\'état annoncé ne masque pas le signal)');
 
     // la porte ouverte à la main, loin de tout signal
     const px = bx - 2;

@@ -425,11 +425,8 @@
        si l'appelant ne les fournit pas. */
     function panneauFactions(rep, politique, guilde) {
       var F = MC.Factions;
-      /* SPEC-SYNC-024 : `donnees` = l'état reçu du serveur (message POLITIQUE),
-         relu ici plutôt qu'un état tenu par le client. */
-      if (politique && politique.donnees && !politique.etat && MC.Politique) {
-        politique = { etat: MC.Politique.charger(Object.assign({ annonces: [] }, politique.donnees)), rep: politique.rep };
-      }
+      /* SPEC-SYNC-024 : `guilde.donnees` = les factions de joueurs reçues du
+         serveur (message POLITIQUE), relues ici : le jeu n'en tient aucun état. */
       if (guilde && guilde.donnees && !guilde.etat && MC.Guildes) {
         guilde = { etat: MC.Guildes.charger(guilde.donnees), joueur: guilde.joueur };
       }
@@ -443,15 +440,30 @@
             '<div class="faction-jauge"><div style="width:' + pct + '%"></div><i style="left:50%"></i></div>' +
             '<small>Réputation ' + (v > 0 ? '+' : '') + v + ' · ennemis : ' + ennemis + '</small></div>';
         }).join('');
+      var nomFaction = function (id) {
+        var f = politique && politique.etat && politique.etat.factions.get(id);
+        return f ? f.nom : id;
+      };
       if (politique && politique.etat && MC.Politique) {
         var P = MC.Politique, pe = politique.etat, prep = politique.rep;
         var ids = Array.from(pe.factions.keys()).sort();
+        // SPEC-SYNC-024 : les relations elles-mêmes (une passe sur toutes les paires)
+        var resume = P.resumeRelations(pe);
+        var LIB_REL = { guerre: 'En guerre avec', rivalite: 'Rivale de', alliance: 'Alliée de' };
+        var ligneRel = function (r) {
+          return ['guerre', 'rivalite', 'alliance'].filter(function (k) { return r && r[k].length; }).map(function (k) {
+            var noms = r[k].slice(0, 3).map(function (x) { return ech(nomFaction(x)); }).join(', ');
+            return LIB_REL[k] + ' ' + noms + (r[k].length > 3 ? ' (+' + (r[k].length - 3) + ')' : '');
+          }).join(' · ') || 'Aucune relation marquée';
+        };
         html += '<h4>Royaumes et factions du monde</h4>' + (ids.length ? ids.map(function (id) {
           var f = pe.factions.get(id);
           var st2 = prep ? prep.statut(id) : 'neutre';
+          var type = P.TYPES[f.type] ? P.TYPES[f.type].nom : (f.type || '?');     // un type inconnu ne casse pas le panneau
           return '<div class="faction"><div class="faction-l"><b>' + ech(f.nom) + '</b>' +
-            '<span class="st ' + (st2 === 'allie' ? 'amical' : st2) + '">' + LIBELLES_POL[st2] + '</span></div>' +
-            '<small>' + ech(P.TYPES[f.type].nom) + ' · ' + ech(f.caractere) + ' · objectif : ' + ech(f.objectif) + '</small></div>';
+            '<span class="st ' + (st2 === 'allie' ? 'amical' : st2) + '">' + (LIBELLES_POL[st2] || st2) + '</span></div>' +
+            '<small>' + ech(type) + ' · ' + ech(f.caractere || '') + ' · objectif : ' + ech(f.objectif || '') + '</small>' +
+            '<small class="relations">' + ligneRel(resume.get(id)) + '</small></div>';
         }).join('') : '<p class="aide">Aucune faction découverte pour l\'instant.</p>');
       }
       if (guilde && guilde.etat && guilde.joueur && MC.Guildes) {
@@ -459,8 +471,13 @@
         html += '<h4>Votre faction</h4>';
         if (fs.principale) {
           var fp = ge.factions.get(fs.principale);
+          var relsG = fp && fp.relations ? Array.from(fp.relations.entries()).filter(function (e) { return e[1] !== 'neutre'; }) : [];
           html += '<div class="faction"><div class="faction-l"><b>' + ech(fp ? fp.nom : fs.principale) + '</b>' +
-            '<span class="st amical">Principale</span></div><small>Rang : ' + ech(GU.rangDe(ge, fs.principale, guilde.joueur) || '?') + '</small></div>';
+            '<span class="st amical">Principale</span></div><small>Rang : ' + ech(GU.rangDe(ge, fs.principale, guilde.joueur) || '?') + '</small>' +
+            '<small class="relations">' + (relsG.length ? relsG.map(function (e) {
+              var cible = ge.factions.get(e[0]);
+              return ech(e[1] === 'ennemie' ? 'Ennemie de ' : 'Alliée de ') + ech(cible ? cible.nom : nomFaction(e[0]));
+            }).join(' · ') : 'Aucune relation déclarée') + '</small></div>';
         } else {
           html += '<p class="aide">Vous n\'appartenez à aucune faction — /faction creer &lt;nom&gt;</p>';
         }

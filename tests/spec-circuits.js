@@ -262,6 +262,19 @@
       A.equal(w.getBlock(6, 40, 6), B.TRAPPE_OUVERTE, 'la trappe ouverte à la main reste ouverte');
     });
 
+    it('SPEC-MECA-006 : un bloc remplacé perd son état résiduel ; seule la bascule d\'une porte ou d\'une trappe le garde', function () {
+      var w = MC.createWorld(83);
+      w.getChunk(0, 0, true);
+      w.setBlock(4, 40, 4, B.LEVIER_CIRCUIT); w.setEtat(4, 40, 4, 1);
+      w.setBlock(4, 40, 4, B.PORTE_FERMEE_N);                       // remplacé sans passer par l'air
+      A.equal(w.getEtat(4, 40, 4), 0, 'l\'état du levier ne devient pas celui de la porte');
+      w.setEtat(4, 40, 4, 1);                                      // la porte a vu un signal
+      w.setBlock(4, 40, 4, C.bascule(w.getBlock(4, 40, 4)));
+      A.equal(w.getEtat(4, 40, 4), 1, 'ouverte à la main : la porte garde le signal vu');
+      w.setBlock(4, 40, 4, B.STONE);
+      A.equal(w.getEtat(4, 40, 4), 0, 'remplacée par de la pierre : plus d\'état');
+    });
+
     it('SPEC-MECA-006 : le signal commande la porte à ses fronts ; entre deux fronts, la main du joueur fait foi', function () {
       var w = MC.createWorld(82);
       w.getChunk(0, 0, true);

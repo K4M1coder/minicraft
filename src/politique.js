@@ -574,7 +574,120 @@
     return etat;
   }
 
+  // ─── état réseau (SPEC-SYNC-024) : complet au join, puis par différences ──
+  /* Le message POLITIQUE doit rester borné : les relations PNJ↔PNJ croissent
+     comme n² (≈ 41 000 paires pour ≈ 290 factions à 300 lieux). Forme
+     COMPLÈTE (au join) : la liste des factions dans leur ordre de naissance
+     (jamais supprimées : un indice est stable) et les relations PNJ↔PNJ en une
+     chaîne dense, un caractère par paire (i < j, i croissant) — '0' guerre,
+     '1' rivalité, '2' neutre, '3' alliance — plus les relations « externes »
+     non neutres (faction de joueurs ↔ PNJ). Forme DIFFÉRENTIELLE (ensuite) :
+     les seules factions nées et relations changées depuis le dernier envoi, en
+     indices. Le client rebâtit un état au format de `creer` (Maps factions et
+     relations, clés de `cleRelation`, la neutralité étant l'absence). */
+  function descReseau(f) { return [f.id, f.type, f.nom, f.caractere, f.objectif]; }
+  function codeRelation(r) { var i = ECHELLE.indexOf(r); return i < 0 ? 2 : i; }
+  function instantaneReseau(etat) {
+    var ids = Array.from(etat.factions.keys()), n = ids.length, index = new Map();
+    ids.forEach(function (id, i) { index.set(id, i); });
+    var codes = new Uint8Array(n * (n - 1) / 2).fill(50);           // '2' : neutre par défaut
+    var ext = [];
+    function rang(i, j) { return i * n - i * (i + 1) / 2 + (j - i - 1); }
+    etat.relations.forEach(function (r, cle) {
+      if (r === 'neutre') return;                                       // déjà le défaut de la chaîne
+      var t = cle.indexOf('~'), i = index.get(cle.slice(0, t)), j = index.get(cle.slice(t + 1));
+      if (i === undefined || j === undefined) { ext.push([cle, r]); return; }
+      if (i === j) return;
+      codes[rang(Math.min(i, j), Math.max(i, j))] = 48 + codeRelation(r);
+    });
+    var rel = '';
+    for (var k = 0; k < codes.length; k += 8192) rel += String.fromCharCode.apply(null, codes.subarray(k, k + 8192));
+    return { complet: 1, jour: etat.jour, f: ids.map(function (id) { return descReseau(etat.factions.get(id)); }), rel: rel, ext: ext };
+  }
+  /* Suivi des changements, sans rien sérialiser quand rien ne change : les
+     écritures dans etat.relations et les naissances dans etat.factions sont
+     notées au fil de l'eau (Maps instrumentées). `prendre()` rend null (rien
+     de neuf, coût constant), une différence, ou { complet: 1 } si les Maps ont
+     été remplacées (rechargement) — l'appelant renvoie alors l'état complet. */
+  function suivreReseau(etat) {
+    var sales = new Set(), nouvelles = [], index = new Map(), ids = [], rels = null, facs = null, jourEnvoye = etat.jour;
+    function installer() {
+      rels = etat.relations; facs = etat.factions;
+      index.clear(); ids.length = 0; sales.clear(); nouvelles.length = 0;
+      facs.forEach(function (f, id) { index.set(id, ids.length); ids.push(id); });
+      rels.set = function (k, v) { if (Map.prototype.get.call(rels, k) !== v) sales.add(k); return Map.prototype.set.call(rels, k, v); };
+      rels.delete = function (k) { if (Map.prototype.has.call(rels, k)) sales.add(k); return Map.prototype.delete.call(rels, k); };
+      facs.set = function (id, f) { if (!Map.prototype.has.call(facs, id)) nouvelles.push(id); return Map.prototype.set.call(facs, id, f); };
+    }
+    installer();
+    return {
+      prendre: function () {
+        if (etat.relations !== rels || etat.factions !== facs) { installer(); jourEnvoye = etat.jour; return { complet: 1 }; }
+        if (!sales.size && !nouvelles.length && etat.jour === jourEnvoye) return null;
+        var d = { jour: etat.jour, f: [], rel: [], ext: [] };
+        nouvelles.forEach(function (id) {
+          if (index.has(id)) return;
+          index.set(id, ids.length); ids.push(id);
+          d.f.push(descReseau(etat.factions.get(id)));
+        });
+        sales.forEach(function (cle) {
+          var p = cle.split('~'), i = index.get(p[0]), j = index.get(p[1]);
+          var r = etat.relations.get(cle) || 'neutre';
+          if (i === undefined || j === undefined) d.ext.push([cle, r]);
+          else if (i !== j) d.rel.push([Math.min(i, j), Math.max(i, j), codeRelation(r)]);
+        });
+        sales.clear(); nouvelles.length = 0; jourEnvoye = etat.jour;
+        return d;
+      },
+    };
+  }
+  /* Côté client : applique un message (complet ou différence) à l'état reçu
+     jusque-là ; une différence sans état de départ est ignorée (null). */
+  function appliquerReseau(etat, m) {
+    if (!m || typeof m !== 'object') return etat || null;
+    function poser(e, cle, r) { if (r === 'neutre') e.relations.delete(cle); else e.relations.set(cle, r); }
+    function naitre(e, d) {
+      if (!Array.isArray(d) || typeof d[0] !== 'string' || e.factions.has(d[0])) return;
+      e.factions.set(d[0], { id: d[0], type: d[1], nom: d[2], caractere: d[3], objectif: d[4] });
+      e.ids.push(d[0]);
+    }
+    var e = etat;
+    if (m.complet) {
+      e = creer(0); e.ids = [];
+      (m.f || []).forEach(function (d) { naitre(e, d); });
+      var n = e.ids.length, rel = typeof m.rel === 'string' ? m.rel : '', k = 0;
+      for (var i = 0; i < n; i++) for (var j = i + 1; j < n; j++, k++) {
+        var c = rel.charCodeAt(k) - 48;
+        if (c >= 0 && c < ECHELLE.length && c !== 2) e.relations.set(cleRelation(e.ids[i], e.ids[j]), ECHELLE[c]);
+      }
+    } else if (!e) return null;
+    else (m.f || []).forEach(function (d) { naitre(e, d); });
+    if (typeof m.jour === 'number') e.jour = m.jour;
+    if (!m.complet) (m.rel || []).forEach(function (t) {
+      var a = e.ids[t[0]], b = e.ids[t[1]];
+      if (a && b && ECHELLE[t[2]]) poser(e, cleRelation(a, b), ECHELLE[t[2]]);
+    });
+    (m.ext || []).forEach(function (t) { if (Array.isArray(t) && typeof t[0] === 'string' && ECHELLE.indexOf(t[1]) >= 0) poser(e, t[0], t[1]); });
+    return e;
+  }
+
+  /* Pour l'affichage (panneau des factions) : les relations non neutres de
+     chaque faction, en une seule passe sur toutes les paires. */
+  function resumeRelations(etat) {
+    var out = new Map();
+    function de(id) { var r = out.get(id); if (!r) out.set(id, r = { guerre: [], rivalite: [], alliance: [] }); return r; }
+    etat.relations.forEach(function (r, cle) {
+      if (r !== 'guerre' && r !== 'rivalite' && r !== 'alliance') return;
+      var p = cle.split('~');
+      de(p[0])[r].push(p[1]); de(p[1])[r].push(p[0]);
+    });
+    return out;
+  }
+
   MC.Politique = {
+    // SPEC-SYNC-024 : état réseau borné (complet au join, différences ensuite)
+    instantaneReseau: instantaneReseau, suivreReseau: suivreReseau, appliquerReseau: appliquerReseau,
+    resumeRelations: resumeRelations,
     TYPES: TYPES, CARACTERES: CARACTERES, ECHELLE: ECHELLE,
     creer: creer, decouvrir: decouvrir, tourDuMonde: tourDuMonde,
     relationEntre: relationEntre, questesDe: questesDe, quetesActives: quetesActives,
