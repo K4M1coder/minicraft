@@ -63,11 +63,12 @@ const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
 const { execFileSync, spawnSync } = require('child_process');
+const { envGitPour } = require('./git-propre.js');
 
 const RACINE = path.join(__dirname, '..');
 const CHEMIN_CARTE = path.join(RACINE, 'tests', 'registre', 'impact.json');
 const ECART_MAX_DEFAUT = 50;
-const VERSION_CARTE = 1;
+const VERSION_CARTE = 2;
 
 // ══════════════════════════════════════════════════════════════════════════
 // 1. Découpage syntaxique léger
@@ -363,7 +364,18 @@ function analyserFichierSource(entree) {
     anc.noms.forEach(n => noms.add(n));
   }
   if (!noms.size) return { toutLeFichier: false, quals: [], noms: [], commentaires: true };
-  // propagation dans le fichier : toute fonction qui nomme une fonction touchée l'est aussi
+  return propager(dn, entree.nouveau, entree.exports, noms);
+}
+
+/* Propagation dans UN fichier à partir de symboles touchés (`noms` : noms de
+   fonctions du fichier, ou symbole venu d'ailleurs — espace `Caravanes`,
+   propriété `gabarits`) : toute fonction nommée qui en nomme un est touchée,
+   par fermeture transitive ; un symbole touché utilisé AU CHARGEMENT (hors
+   de toute fonction nommée) rend tout le fichier touché. Rend les fonctions
+   EXPORTÉES touchées. */
+function propager(dn, texte, exports, nomsInitiaux) {
+  const noms = new Set(nomsInitiaux);
+  const tout = (raison) => ({ toutLeFichier: true, raison, quals: (exports || []).map(e => e.qual), noms: Array.from(noms) });
   const touchees = new Set();
   let change = true;
   while (change) {
@@ -377,10 +389,10 @@ function analyserFichierSource(entree) {
   }
   for (const n of noms) if (dn.idsModule.has(n)) return tout('« ' + n + ' » (touchée) sert au chargement du module');
   const quals = [];
-  (entree.exports || []).forEach((e) => {
+  (exports || []).forEach((e) => {
     const prop = e.qual.split('.').pop();
     if (noms.has(prop)) { quals.push(e.qual); return; }
-    const offs = toutesOccurrences(entree.nouveau, e.texte);
+    const offs = toutesOccurrences(texte, e.texte);
     const regs = dn.regions.filter(r => offs.indexOf(r.debut) >= 0);
     if (regs.length) {
       if (regs.some(r => r.nom && dn.nommees.indexOf(r) >= 0 && touchees.has(dn.nommees.indexOf(r)))) quals.push(e.qual);
@@ -465,33 +477,39 @@ const TYPES_OBSERVES = new Set(['unitaire', 'fonctionnel', 'spec']);
    fonctions active) ; parFichier : chargerModules(...).parFichier. Seuls les
    tests Node réussis comptent comme « observés » : un test en échec a pu
    s'arrêter avant d'appeler ce qu'il appelle d'habitude. */
-function construireCarte(resultats, parFichier, commit, meta) {
+/* Identifiant STABLE d'un test dans la carte (revue M2) : dérivé de sa clé
+   (groupe › nom), jamais un indice — ajouter un test ne renumérote rien,
+   le diff de la carte reste limité aux lignes qui changent vraiment. */
+function idTestCarte(cle) { return require('crypto').createHash('sha1').update(String(cle), 'utf8').digest('hex').slice(0, 10); }
+
+function construireCarte(resultats, parFichier, commit) {
   const c = (resultats && resultats.campagne) || {};
   if (!c.observationFonctions) throw new Error('ce run n\'a pas observé les fonctions (--sans-fonctions ?) : pas de carte possible');
   const observes = (resultats.tests || []).filter(t => TYPES_OBSERVES.has(t.type) && (t.etat === 'ok' || t.etat === 'reussi'));
-  const tests = Array.from(new Set(observes.map(t => cleTest(t.type, t.groupe, t.nom)))).sort();
-  const indice = new Map(tests.map((cle, i) => [cle, i]));
+  const tests = {};
   const fonctions = {};
   observes.forEach((t) => {
-    const i = indice.get(cleTest(t.type, t.groupe, t.nom));
+    const cle = cleTest(t.type, t.groupe, t.nom);
+    const id = idTestCarte(cle);
+    tests[id] = cle;
     const fns = new Set((t.fonctions || []).concat(Object.keys(t.fonctionsAppels || {})));
-    fns.forEach((f) => { (fonctions[f] = fonctions[f] || new Set()).add(i); });
+    fns.forEach((f) => { (fonctions[f] = fonctions[f] || new Set()).add(id); });
   });
+  const testsTries = {};
+  Object.keys(tests).sort().forEach((id) => { testsTries[id] = tests[id]; });
   const fonctionsTriees = {};
-  Object.keys(fonctions).sort().forEach((f) => { fonctionsTriees[f] = Array.from(fonctions[f]).sort((a, b) => a - b); });
+  Object.keys(fonctions).sort().forEach((f) => { fonctionsTriees[f] = Array.from(fonctions[f]).sort(); });
   const fichiers = {};
   Object.keys(parFichier || {}).sort().forEach((f) => { fichiers[f] = parFichier[f].map(e => e.qual).sort(); });
-  return Object.assign({
-    version: VERSION_CARTE, commit, construite: new Date().toISOString(),
-    preset: c.preset || null, cahier: (meta && meta.cahier) || null,
-  }, { fichiers, tests, fonctions: fonctionsTriees });
+  // ni horodatage ni nom de cahier : seul ce qui change vraiment fait un diff
+  return { version: VERSION_CARTE, commit, preset: c.preset || null, fichiers, tests: testsTries, fonctions: fonctionsTriees };
 }
 
-/* Écriture lisible ligne à ligne (diffs git courts) : une fonction ou un
-   fichier par ligne. */
+/* Écriture lisible ligne à ligne (diffs git courts) : une fonction, un
+   fichier ou un test par ligne. */
 function serialiserCarte(carte) {
   const lignes = ['{'];
-  ['version', 'commit', 'construite', 'preset', 'cahier'].forEach(k => lignes.push('  ' + JSON.stringify(k) + ': ' + JSON.stringify(carte[k]) + ','));
+  ['version', 'commit', 'preset'].forEach(k => lignes.push('  ' + JSON.stringify(k) + ': ' + JSON.stringify(carte[k]) + ','));
   const bloc = (nom, obj, dernier) => {
     const cles = Object.keys(obj);
     lignes.push('  ' + JSON.stringify(nom) + ': {');
@@ -499,35 +517,53 @@ function serialiserCarte(carte) {
     lignes.push('  }' + (dernier ? '' : ','));
   };
   bloc('fichiers', carte.fichiers, false);
-  lignes.push('  "tests": [');
-  carte.tests.forEach((t, i) => lignes.push('    ' + JSON.stringify(t) + (i < carte.tests.length - 1 ? ',' : '')));
-  lignes.push('  ],');
+  bloc('tests', carte.tests, false);
   bloc('fonctions', carte.fonctions, true);
   lignes.push('}');
   return lignes.join('\n') + '\n';
 }
+/* N'écrit que si le contenu change (revue M2). Rend le chemin. */
 function ecrireCarte(carte, chemin) {
   const p = chemin || CHEMIN_CARTE;
+  const texte = serialiserCarte(carte);
+  let ancien = null;
+  try { ancien = fs.readFileSync(p, 'utf8'); } catch (e) { /* absente */ }
+  if (ancien === texte) return p;
   fs.mkdirSync(path.dirname(p), { recursive: true });
-  fs.writeFileSync(p, serialiserCarte(carte));
+  fs.writeFileSync(p, texte);
   return p;
 }
+/* Carte lue et VALIDÉE : version connue, commit, au moins un test et une
+   fonction, chaque référence de test résolue. Toute anomalie → null (le
+   calcul se replie alors dès qu'un module source est touché). */
 function lireCarte(chemin) {
   try {
     const c = JSON.parse(fs.readFileSync(chemin || CHEMIN_CARTE, 'utf8'));
-    if (!c || c.version !== VERSION_CARTE || !c.commit || !c.fonctions || !c.fichiers || !Array.isArray(c.tests)) return null;
+    if (!c || c.version !== VERSION_CARTE || typeof c.commit !== 'string' || !/^[0-9a-f]{7,40}$/.test(c.commit)) return null;
+    if (!c.fonctions || typeof c.fonctions !== 'object' || !c.fichiers || typeof c.fichiers !== 'object') return null;
+    if (!c.tests || typeof c.tests !== 'object' || Array.isArray(c.tests) || !Object.keys(c.tests).length || !Object.keys(c.fonctions).length) return null;
+    for (const f of Object.keys(c.fonctions)) {
+      if (!Array.isArray(c.fonctions[f]) || c.fonctions[f].some(id => typeof c.tests[id] !== 'string')) return null;
+    }
     return c;
   } catch (e) { return null; }
 }
+/* Les clés des tests observés par la carte, et celles qui appellent `qual`. */
+function testsDeCarte(carte) { return carte ? Object.keys(carte.tests).map(id => carte.tests[id]) : []; }
+function appelantsDe(carte, qual) { return carte && carte.fonctions[qual] ? carte.fonctions[qual].map(id => carte.tests[id]) : []; }
 
 // ══════════════════════════════════════════════════════════════════════════
 // 4. Classement des fichiers touchés
 // ══════════════════════════════════════════════════════════════════════════
-/* 'neutre' (données du registre) | 'doc' (ne change pas le code : seuls les
-   tests qui le lisent) | 'test' (fichier de tests du catalogue) | 'src'
-   (module src/*.js) | 'autre' (tout le reste : repli). */
+/* 'neutre' (entrées et images du registre : données de runs, jamais lues
+   comme du code) | 'doc' (ne change pas le code : seuls les tests qui le
+   lisent — documents, et les autres fichiers du registre : impact.json,
+   temoins.json, README.md, qu'outillage et tests lisent) | 'test' (fichier de
+   tests du catalogue) | 'src' (module src/*.js) | 'autre' (tout le reste :
+   repli). */
 function classerFichier(f, fichiersDeTests) {
-  if (/^tests\/registre\//.test(f)) return 'neutre';
+  if (/^tests\/registre\/(entrees|images)\//.test(f)) return 'neutre';
+  if (/^tests\/registre\//.test(f)) return 'doc';
   if (fichiersDeTests.has(f)) return 'test';
   if (/\.md$/i.test(f) || /^docs\//.test(f) || f === '.gitignore' || f === '.gitattributes') return 'doc';
   if (/^src\/[^/]+\.js$/.test(f)) return 'src';
@@ -538,37 +574,79 @@ function classerFichier(f, fichiersDeTests) {
    devient l'étape 3 du calcul (SPEC-BANC-071) — peut être vide. */
 const { domainesDuFichier } = require('./domaines-touches.js');
 
+/* Symboles qu'un fichier de TEST met à la disposition des autres (revue C2) :
+   tous les fichiers de tests partagent un même contexte global (tests/run.js,
+   banc navigateur), et certains exportent des fabriques communes
+   (`G.flatWorld = …`, `G.MC_LIMITES = …`). Rend les noms :
+   - assignés à un objet global (`G.x =`, `globalThis.x =`, `window.x =`,
+     `self.x =`, `this.x =` au niveau du fichier) ;
+   - déclarés au niveau du fichier hors de toute fonction (`function x`,
+     `var x`) — ils deviennent globaux dans le contexte partagé.
+   Un fichier illisible rend null (l'appelant élargit). */
+const GLOBAUX = new Set(['G', 'globalThis', 'window', 'self', 'global']);
+function symbolesExportesTest(texte) {
+  let toks;
+  try { toks = jetons(texte).filter(t => t.type !== 'com'); } catch (e) { return null; }
+  const out = new Set();
+  let prof = 0;
+  for (let k = 0; k < toks.length; k++) {
+    const t = toks[k];
+    if (t.type === 'ponct' && (t.v === '{' || t.v === '(' || t.v === '[')) { prof++; continue; }
+    if (t.type === 'ponct' && (t.v === '}' || t.v === ')' || t.v === ']')) { prof--; continue; }
+    if (t.type === 'id' && (GLOBAUX.has(t.v) || (t.v === 'this' && prof === 0)) && toks[k + 1] && toks[k + 1].v === '.' &&
+        toks[k + 2] && toks[k + 2].type === 'id' && toks[k + 3] && toks[k + 3].type === 'ponct' && toks[k + 3].v === '=') {
+      if (!(k > 0 && toks[k - 1].type === 'ponct' && toks[k - 1].v === '.')) out.add(toks[k + 2].v);
+    }
+    if (prof === 0 && t.type === 'id' && (t.v === 'function' || t.v === 'var' || t.v === 'let' || t.v === 'const') && toks[k + 1] && toks[k + 1].type === 'id') {
+      out.add(toks[k + 1].v);
+    }
+  }
+  return Array.from(out);
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // 5. Calcul du périmètre (pur : toutes les entrées sont fournies)
 // ══════════════════════════════════════════════════════════════════════════
 /* entree = {
      catalogue: [{ cle, nom, type, fichier, domaines, fonctions, etiquettes }],
-     carte, ecart (nombre de commits entre la carte et la cible, ou null si
-     inconnu), ecartMax,
-     fichiers: [{ chemin, statut: 'A'|'M'|'D' }],
-     analyses: { 'src/x.js': analyserFichierSource(...) } (fichiers src
-       touchés et chargés),
+     carte, ecart (commits entre la carte et HEAD, ou null si la carte n'est
+       pas dans l'historique), ecartMax,
+     fichiers: [{ chemin, statut: 'A'|'M'|'D' }] — ce que le COMMIT (ou la
+       demande) change : décide du repli sur la suite complète ;
+     fichiersImpact: idem, mais DEPUIS LA CARTE (revue C1) : tout ce qui a
+       changé depuis le commit de construction de la carte jusqu'à la cible —
+       un appel ajouté dans un commit précédent, encore inconnu de la carte,
+       est ainsi pris en compte. Par défaut = fichiers.
+     analyses: { 'src/x.js': analyserFichierSource(...) } (fichiers src de
+       fichiersImpact, diff depuis la carte),
      erreursChargement: { 'src/x.js': message },
-     captures: function (prop) → ['src/y.js'…] (fichiers qui citent `.prop`
-       sans l'appeler), facultatif,
+     captures: function (prop) → ['src/y.js'…] : modules qui CAPTURENT `.prop`
+       (cité sans être appelé, ou appelé au chargement — hors fonction),
+     dependants: function (symbole) → [{ fichier, analyse }] : modules (autres)
+       qui nomment ce symbole (espace d'un module touché en entier), avec la
+       propagation dans chacun (tout le fichier si nommé au chargement),
      exportsParFichier: { 'src/x.js': [qual…] } (version courante),
      mentions: { [cle]: Set(identifiants du test, corps + code commun du
        fichier) }, idsFichierTest: { 'tests/x.js': Set }, texteFichierTest:
-       { 'tests/x.js': texte brut },
+       { 'tests/x.js': texte brut }, symbolesTest: { 'tests/x.js': [noms] |
+       null } (fichiers de tests modifiés : symboles exportés),
      fumee: [noms], domainesConnus: [..] }
    Rend { repli: null | motif, tests: { cle: [raisons] }, fichiers,
-   fonctions, details }. */
+   fichiersImpact, fonctions, details }. */
 function calculerPerimetre(entree) {
   const e = entree;
   const fichiersDeTests = new Set(e.catalogue.map(t => t.fichier).filter(Boolean));
-  const res = { repli: null, tests: {}, fichiers: e.fichiers.map(f => f.chemin), fonctions: [], details: [] };
+  const impact = e.fichiersImpact || e.fichiers;
+  const res = { repli: null, tests: {}, fichiers: e.fichiers.map(f => f.chemin), fichiersImpact: impact.map(f => f.chemin), fonctions: [], details: [] };
   const replier = (motif) => { res.repli = motif; return res; };
   const ajouter = (cle, raison) => { const l = res.tests[cle] = res.tests[cle] || []; if (l.indexOf(raison) < 0) l.push(raison); };
 
   if (!e.fichiers.length) res.details.push('aucun fichier touché');
-  const classes = e.fichiers.map(f => ({ f, classe: classerFichier(f.chemin, fichiersDeTests) }));
-  const autres = classes.filter(x => x.classe === 'autre');
-  if (autres.length) return replier('fichier hors src/ et hors fichiers de test : ' + autres.map(x => x.f.chemin).slice(0, 5).join(', '));
+  // le repli se décide sur ce que CE commit change (l'outillage changé dans un
+  // commit précédent a déjà été vérifié par la suite complète, à son commit)
+  const autres = e.fichiers.filter(f => classerFichier(f.chemin, fichiersDeTests) === 'autre');
+  if (autres.length) return replier('fichier hors src/ et hors fichiers de test : ' + autres.map(f => f.chemin).slice(0, 5).join(', '));
+  const classes = impact.map(f => ({ f, classe: classerFichier(f.chemin, fichiersDeTests) }));
   const srcs = classes.filter(x => x.classe === 'src');
   if (srcs.length) {
     if (!e.carte) return replier('carte d\'impact absente ou illisible (tests/registre/impact.json)');
@@ -581,17 +659,32 @@ function calculerPerimetre(entree) {
       if (!e.analyses[x.f.chemin]) return replier('analyse impossible : ' + x.f.chemin);
     }
   }
+  if (impact.length !== e.fichiers.length) res.details.push(impact.length + ' fichier(s) changé(s) depuis la carte ' + String(e.carte ? e.carte.commit : '').slice(0, 10));
 
-  const testsCarte = new Set(e.carte ? e.carte.tests : []);
+  const testsCarte = new Set(testsDeCarte(e.carte));
   const parFichierTest = {};
   e.catalogue.forEach((t) => { (parFichierTest[t.fichier] = parFichierTest[t.fichier] || []).push(t); });
 
-  // 1) fichier de test modifié → tous ses tests
+  // 1) fichier de test modifié (depuis la carte) → tous ses tests, et tout
+  //    fichier de test qui nomme un symbole qu'il exporte (fixtures partagées)
   classes.filter(x => x.classe === 'test').forEach((x) => {
     (parFichierTest[x.f.chemin] || []).forEach(t => ajouter(t.cle, 'fichier-de-test'));
+    const syms = (e.symbolesTest || {})[x.f.chemin];
+    if (syms === null) {
+      // symboles illisibles : tout fichier de test peut en dépendre
+      e.catalogue.forEach(t => { if (fichiersDeTests.has(t.fichier) && t.type !== 'e2e' && t.type !== 'integration' && t.type !== 'charge') ajouter(t.cle, 'fixture:' + x.f.chemin); });
+      res.details.push(x.f.chemin + ' : symboles exportés illisibles — tous les fichiers de tests');
+      return;
+    }
+    (syms || []).forEach((s) => {
+      Object.keys(e.idsFichierTest || {}).forEach((ft) => {
+        if (ft === x.f.chemin || !e.idsFichierTest[ft].has(s)) return;
+        (parFichierTest[ft] || []).forEach(t => ajouter(t.cle, 'fixture:' + s));
+      });
+    });
   });
 
-  // 2) fonctions touchées → tests de la carte (+ propagation par captures)
+  // 2) fonctions touchées → tests de la carte (+ captures, dépendants)
   const quals = new Set();
   const fichiersEntiers = new Set();
   srcs.forEach((x) => {
@@ -601,28 +694,41 @@ function calculerPerimetre(entree) {
     a.quals.forEach(q => quals.add(q));
   });
   const fonctionsDuFichier = (f) => Array.from(new Set(((e.exportsParFichier || {})[f] || []).concat((e.carte && e.carte.fichiers[f]) || [])));
-  fichiersEntiers.forEach(f => fonctionsDuFichier(f).forEach(q => quals.add(q)));
-  if (e.captures) {
-    // une fonction touchée capturée ailleurs sans être appelée → ce module entier
-    let aTraiter = Array.from(quals);
-    const dejaVu = new Set();
-    while (aTraiter.length) {
-      const q = aTraiter.pop();
-      if (dejaVu.has(q)) continue;
-      dejaVu.add(q);
-      e.captures(q.split('.').pop()).forEach((f) => {
-        if (fichiersEntiers.has(f)) return;
-        fichiersEntiers.add(f);
-        res.details.push(f + ' : tout le fichier (capture de ' + q + ')');
-        fonctionsDuFichier(f).forEach((q2) => { if (!quals.has(q2)) { quals.add(q2); aTraiter.push(q2); } });
+  const espaceDe = (q) => { const p = q.split('.'); return p[1]; };
+  // fermeture : fichiers entiers ⇒ toutes leurs fonctions ; fonctions
+  // capturées ⇒ module capteur entier ; espace d'un fichier entier nommé
+  // ailleurs ⇒ propagation dans ce module (tout le module si au chargement)
+  const qualsVus = new Set(), entiersVus = new Set();
+  let change = true;
+  while (change) {
+    change = false;
+    fichiersEntiers.forEach((f) => {
+      if (entiersVus.has(f)) return;
+      entiersVus.add(f); change = true;
+      fonctionsDuFichier(f).forEach(q => quals.add(q));
+      if (e.dependants) {
+        const espaces = new Set(fonctionsDuFichier(f).map(espaceDe));
+        espaces.forEach((ns) => e.dependants(ns, f).forEach((d) => {
+          if (d.analyse.toutLeFichier) {
+            if (!fichiersEntiers.has(d.fichier)) { fichiersEntiers.add(d.fichier); res.details.push(d.fichier + ' : tout le fichier (nomme MC.' + ns + ' au chargement)'); }
+          } else d.analyse.quals.forEach((q) => { if (!quals.has(q)) { quals.add(q); res.details.push(d.fichier + ' : ' + q + ' nomme MC.' + ns); } });
+        }));
+      }
+    });
+    if (e.captures) {
+      Array.from(quals).forEach((q) => {
+        if (qualsVus.has(q)) return;
+        qualsVus.add(q); change = true;
+        e.captures(q.split('.').pop(), q).forEach((f) => {
+          if (fichiersEntiers.has(f)) return;
+          fichiersEntiers.add(f);
+          res.details.push(f + ' : tout le fichier (capture ou appel au chargement de ' + q + ')');
+        });
       });
     }
   }
   res.fonctions = Array.from(quals).sort();
-  const indexTests = e.carte ? e.carte.tests : [];
-  res.fonctions.forEach((q) => {
-    ((e.carte && e.carte.fonctions[q]) || []).forEach(i => { if (indexTests[i]) ajouter(indexTests[i], 'fonction:' + q); });
-  });
+  res.fonctions.forEach((q) => { appelantsDe(e.carte, q).forEach(cle => ajouter(cle, 'fonction:' + q)); });
   // mentions : un test qui nomme une fonction touchée (fabriques partagées
   // construites hors du test, jamais observées)
   if (e.mentions && res.fonctions.length) {
@@ -638,7 +744,7 @@ function calculerPerimetre(entree) {
   }
   // un fichier entier touché : tout test dont le fichier nomme son espace
   fichiersEntiers.forEach((f) => {
-    const espaces = new Set(fonctionsDuFichier(f).map(q => q.split('.')).map(p => (p.length === 3 ? p[1] : p[1])));
+    const espaces = new Set(fonctionsDuFichier(f).map(espaceDe));
     e.catalogue.forEach((t) => {
       const idsF = (e.idsFichierTest || {})[t.fichier];
       if (!idsF) return;
@@ -684,9 +790,10 @@ function calculerPerimetre(entree) {
 }
 
 /* SPEC-BANC-076 : échecs d'un run complet que le périmètre n'aurait PAS
-   retenus — signal de la fiabilité de la carte. */
+   retenus — signal de la fiabilité de la carte. Un périmètre REPLIÉ n'a rien
+   prouvé sur la carte : null (non vérifiable), jamais « zéro trou » (revue M3). */
 function trousDePerimetre(testsResultats, perimetre) {
-  if (!perimetre || perimetre.repli) return [];
+  if (!perimetre || perimetre.repli) return null;
   return (testsResultats || []).filter(t => t.etat === 'echec' || t.etat === 'delai')
     .map(t => ({ cle: cleTest(t.type, t.groupe, t.nom), nom: t.nom }))
     .filter(t => !perimetre.tests[t.cle]);
@@ -700,7 +807,8 @@ function controlerTrous(testsResultats, carte, calculer) {
   if (!echoues.length) return { verifie: true, carte: carte ? carte.commit : null, trous: [] };
   if (!carte) return { verifie: false, motif: 'pas de carte d\'impact', trous: [] };
   const perim = calculer(carte.commit);
-  return { verifie: true, carte: carte.commit, repli: perim.repli || null, fichiers: perim.fichiers, trous: trousDePerimetre(echoues, perim) };
+  if (perim.repli) return { verifie: false, motif: 'non vérifiable : le périmètre se replie (' + perim.repli + ')', carte: carte.commit, repli: perim.repli, trous: [] };
+  return { verifie: true, carte: carte.commit, repli: null, fichiers: perim.fichiers, trous: trousDePerimetre(echoues, perim) };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -708,7 +816,7 @@ function controlerTrous(testsResultats, carte, calculer) {
 // ══════════════════════════════════════════════════════════════════════════
 function git(racine, args) {
   // chemins jamais entre guillemets (accents) : sinon un fichier serait mal classé
-  return execFileSync('git', ['-c', 'core.quotepath=off'].concat(args), { cwd: racine, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'] });
+  return execFileSync('git', ['-c', 'core.quotepath=off'].concat(args), { cwd: racine, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'], env: envGitPour(racine) });
 }
 function gitOuNull(racine, args) { try { return git(racine, args); } catch (e) { return null; } }
 
@@ -733,53 +841,77 @@ function plagesDuDiff(sortie) {
 /* Rassemble tout ce dont calculerPerimetre a besoin, depuis git.
    o = { racine, mode: 'commit'|'depuis', depuis, catalogue, suites (T.suites,
    pour le corps des tests), fichiersSimules: [chemins] (touchés EN ENTIER,
-   sans git — portes et tests), cheminCarte, ecartMax, fumee, domainesConnus } */
+   sans git — portes et tests), cheminCarte, ecartMax, fumee, domainesConnus }
+
+   Deux diffs (revue C1) :
+   - CIBLE : ce que le commit change (index contre HEAD), ou ce qui a changé
+     depuis la référence (`--depuis`, base = merge-base) — décide du repli ;
+   - IMPACT : tout ce qui a changé DEPUIS LE COMMIT DE LA CARTE jusqu'à la
+     cible (index, ou arbre de travail pour `--depuis`) — la carte n'est
+     reconstruite qu'au push ou au merge : un appel ajouté dans un commit
+     précédent lui est inconnu, il faut donc aussi regarder ces fonctions-là. */
+function nameStatus(sortie) {
+  return (sortie || '').split('\n').filter(Boolean).map(l => { const p = l.split('\t'); return { chemin: p[1], statut: p[0][0] }; });
+}
 function perimetreDepuisGit(o) {
   const racine = o.racine || RACINE;
   const carte = lireCarte(o.cheminCarte);
   const ecartMax = o.ecartMax === undefined || o.ecartMax === null || isNaN(+o.ecartMax) ? ECART_MAX_DEFAUT : +o.ecartMax;
-  const base = { mode: o.mode, depuis: o.depuis || null, carte: carte ? { commit: carte.commit, construite: carte.construite } : null };
-  const echec = (motif) => Object.assign({ repli: motif, tests: {}, fichiers: [], fonctions: [], details: [] }, base);
-  let fichiers = [], plages = {}, refAncienne = null, lireNouveau, lireAncien;
-  try {
-    if (o.fichiersSimules && o.fichiersSimules.length) {
-      fichiers = o.fichiersSimules.map(c => ({ chemin: c.replace(/\\/g, '/'), statut: 'M' }));
-      lireNouveau = (c) => fs.readFileSync(path.join(racine, c), 'utf8');
-      lireAncien = () => null;
-    } else if (o.mode === 'depuis') {
-      if (!o.depuis || !/^[\w./~^@{}-]+$/.test(o.depuis)) return echec('référence invalide : ' + o.depuis);
-      const mb = git(racine, ['merge-base', o.depuis, 'HEAD']).trim();
-      refAncienne = mb;
-      const ns = git(racine, ['diff', '--name-status', '--no-renames', mb]).split('\n').filter(Boolean);
-      fichiers = ns.map(l => { const p = l.split('\t'); return { chemin: p[1], statut: p[0][0] }; });
-      git(racine, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean)
-        .forEach(c => fichiers.push({ chemin: c, statut: 'A' }));
-      plages = plagesDuDiff(git(racine, ['diff', '-U0', '--no-renames', '--no-color', mb]));
-      lireNouveau = (c) => fs.readFileSync(path.join(racine, c), 'utf8');
-    } else {
-      const ns = git(racine, ['diff', '--cached', '--name-status', '--no-renames']).split('\n').filter(Boolean);
-      fichiers = ns.map(l => { const p = l.split('\t'); return { chemin: p[1], statut: p[0][0] }; });
-      plages = plagesDuDiff(git(racine, ['diff', '--cached', '-U0', '--no-renames', '--no-color']));
-      refAncienne = gitOuNull(racine, ['rev-parse', '--verify', '-q', 'HEAD']) ? 'HEAD' : null;
-      const indexes = new Set(fichiers.map(f => f.chemin));
-      lireNouveau = (c) => (indexes.has(c) ? git(racine, ['show', ':' + c]) : fs.readFileSync(path.join(racine, c), 'utf8'));
-    }
-    if (!lireAncien) lireAncien = (c) => (refAncienne ? gitOuNull(racine, ['show', refAncienne + ':' + c]) : null);
-  } catch (err) { return echec('git indisponible : ' + String(err.message || err).split('\n')[0]); }
+  const base = { mode: o.mode, depuis: o.depuis || null, carte: carte ? { commit: carte.commit } : null };
+  const echec = (motif) => Object.assign({ repli: motif, tests: {}, fichiers: [], fichiersImpact: [], fonctions: [], details: [] }, base);
+  const simules = !!(o.fichiersSimules && o.fichiersSimules.length);
 
-  // écart entre la carte et HEAD
+  // écart entre la carte et HEAD (null : carte hors de l'historique)
   let ecart = null;
   if (carte) {
     const anc = gitOuNull(racine, ['merge-base', '--is-ancestor', carte.commit, 'HEAD']) !== null;
     if (anc) { const n = gitOuNull(racine, ['rev-list', '--count', carte.commit + '..HEAD']); ecart = n === null ? null : parseInt(n, 10); }
   }
+  const carteUtilisable = carte && ecart !== null;
 
-  const srcTouches = fichiers.filter(f => /^src\/[^/]+\.js$/.test(f.chemin) && f.statut !== 'D');
+  let fichiers = [], fichiersImpact = [], plages = {}, refAncienne = null, lireNouveau, lireAncien;
+  try {
+    if (simules) {
+      fichiers = o.fichiersSimules.map(c => ({ chemin: c.replace(/\\/g, '/'), statut: 'M' }));
+      fichiersImpact = fichiers;
+      lireNouveau = (c) => fs.readFileSync(path.join(racine, c), 'utf8');
+      lireAncien = () => null;
+    } else if (o.mode === 'depuis') {
+      if (!o.depuis || !/^[\w./~^@{}-]+$/.test(o.depuis) || /^-/.test(o.depuis)) return echec('référence invalide : ' + o.depuis);
+      const mb = git(racine, ['merge-base', o.depuis, 'HEAD']).trim();
+      const nonSuivis = git(racine, ['ls-files', '--others', '--exclude-standard']).split('\n').filter(Boolean).map(c => ({ chemin: c, statut: 'A' }));
+      fichiers = nameStatus(git(racine, ['diff', '--name-status', '--no-renames', mb])).concat(nonSuivis);
+      // base d'impact : la plus ancienne des deux (référence, carte)
+      refAncienne = carteUtilisable ? git(racine, ['merge-base', mb, carte.commit]).trim() : mb;
+      fichiersImpact = nameStatus(git(racine, ['diff', '--name-status', '--no-renames', refAncienne])).concat(nonSuivis);
+      plages = plagesDuDiff(git(racine, ['diff', '-U0', '--no-renames', '--no-color', refAncienne]));
+      lireNouveau = (c) => fs.readFileSync(path.join(racine, c), 'utf8');
+    } else {
+      fichiers = nameStatus(git(racine, ['diff', '--cached', '--name-status', '--no-renames']));
+      refAncienne = carteUtilisable ? carte.commit : (gitOuNull(racine, ['rev-parse', '--verify', '-q', 'HEAD']) ? 'HEAD' : null);
+      if (refAncienne && refAncienne !== 'HEAD') {
+        fichiersImpact = nameStatus(git(racine, ['diff', '--cached', '--name-status', '--no-renames', refAncienne]));
+        plages = plagesDuDiff(git(racine, ['diff', '--cached', '-U0', '--no-renames', '--no-color', refAncienne]));
+      } else {
+        fichiersImpact = fichiers;
+        plages = plagesDuDiff(git(racine, ['diff', '--cached', '-U0', '--no-renames', '--no-color']));
+      }
+      // tout ce qui est suivi se lit dans l'INDEX : c'est le commit en cours
+      const suivis = new Set(git(racine, ['ls-files']).split('\n').filter(Boolean));
+      lireNouveau = (c) => (suivis.has(c) ? git(racine, ['show', ':' + c]) : fs.readFileSync(path.join(racine, c), 'utf8'));
+    }
+    if (!lireAncien) lireAncien = (c) => (refAncienne ? gitOuNull(racine, ['show', refAncienne + ':' + c]) : null);
+  } catch (err) { return echec('git indisponible : ' + String(err.message || err).split('\n')[0]); }
+  // un fichier de la cible est toujours dans l'impact (même si la carte manque)
+  const dansImpact = new Set(fichiersImpact.map(f => f.chemin));
+  fichiers.forEach((f) => { if (!dansImpact.has(f.chemin)) { fichiersImpact.push(f); dansImpact.add(f.chemin); } });
+
+  const srcTouches = fichiersImpact.filter(f => /^src\/[^/]+\.js$/.test(f.chemin) && f.statut !== 'D');
   const analyses = {}, exportsParFichier = {};
   let erreursChargement = {};
   let modules = null;
   if (srcTouches.length) {
-    modules = chargerModules((c) => lireNouveau(c));
+    modules = chargerModules((c) => lireNouveau(c), o.sources);
     erreursChargement = modules.erreurs;
     Object.keys(modules.parFichier).forEach(f => { exportsParFichier[f] = modules.parFichier[f].map(x => x.qual); });
     srcTouches.forEach((f) => {
@@ -787,7 +919,7 @@ function perimetreDepuisGit(o) {
       let nouveau;
       try { nouveau = lireNouveau(f.chemin); } catch (err) { return; }
       const p = plages[f.chemin];
-      if (o.fichiersSimules && o.fichiersSimules.length) {
+      if (simules) {
         analyses[f.chemin] = { toutLeFichier: true, raison: 'fichier désigné en entier (--fichiers)', quals: modules.parFichier[f.chemin].map(x => x.qual), noms: [] };
         return;
       }
@@ -798,25 +930,54 @@ function perimetreDepuisGit(o) {
       });
     });
   }
-  // captures : `.prop` cité sans être appelé dans un AUTRE module chargé
-  const idsSources = {};
-  function captures(prop) {
+  // découpage des autres modules, à la demande (captures, dépendants)
+  const decoupes = {};
+  function decoupeDe(f) {
+    if (!(f in decoupes)) {
+      let d = null;
+      try { d = decouper(lireNouveau(f)); } catch (err) { d = null; }
+      decoupes[f] = d && d.ok ? d : null;
+    }
+    return decoupes[f];
+  }
+  /* captures (revue C4) : un AUTRE module qui cite `.prop` sans l'appeler
+     (référence prise au chargement), ou qui l'APPELLE hors de toute fonction
+     nommée (appel au chargement : `var G = MC.Vehicules.gabarits()`) — ses
+     appels ne passent jamais par l'enveloppe d'observation : module entier.
+     Un module illisible compte comme capteur (prudence). */
+  function captures(prop, qual) {
     if (!modules) return [];
+    const proprio = Object.keys(modules.parFichier).find(f => modules.parFichier[f].some(x => x.qual === qual));
     const out = [];
     Object.keys(modules.parFichier).forEach((f) => {
-      if (!idsSources[f]) {
-        let toks = null;
-        try { toks = jetons(lireNouveau(f)).filter(t => t.type !== 'com'); } catch (err) { toks = null; }
-        idsSources[f] = toks;
-      }
-      const toks = idsSources[f];
-      if (!toks) { out.push(f); return; } // illisible : prudence
+      if (f === proprio) return; // dans son propre module : analyserFichierSource/propager s'en chargent
+      const d = decoupeDe(f);
+      if (!d) { out.push(f); return; }
+      const toks = d.sig;
+      const dansNommee = pos => d.nommees.some(r => pos >= r.declDebut && pos < r.fin);
       for (let k = 1; k < toks.length; k++) {
         if (toks[k].type === 'id' && toks[k].v === prop && toks[k - 1].type === 'ponct' && (toks[k - 1].v === '.' || toks[k - 1].v === '?.')) {
           const suiv = toks[k + 1];
-          if (!(suiv && suiv.type === 'ponct' && suiv.v === '(')) { out.push(f); break; }
+          const appel = suiv && suiv.type === 'ponct' && suiv.v === '(';
+          if (!appel || !dansNommee(toks[k].s)) { out.push(f); break; }
         }
       }
+    });
+    return out;
+  }
+  /* dépendants (revue D) : un module touché EN ENTIER (constante, table,
+     export) peut être lu par un autre à l'exécution (`MC.Caravanes.PERTE`) —
+     une donnée, jamais observée. Chaque AUTRE module qui nomme son espace :
+     propagation depuis ce symbole (tout le module s'il le nomme au chargement). */
+  function dependants(ns, depuis) {
+    if (!modules) return [];
+    const out = [];
+    Object.keys(modules.parFichier).forEach((f) => {
+      if (f === depuis) return;
+      const d = decoupeDe(f);
+      if (!d) { out.push({ fichier: f, analyse: { toutLeFichier: true, raison: 'illisible', quals: modules.parFichier[f].map(x => x.qual) } }); return; }
+      if (!d.sig.some(t => t.type === 'id' && t.v === ns)) return;
+      out.push({ fichier: f, analyse: propager(d, lireNouveau(f), modules.parFichier[f], [ns]) });
     });
     return out;
   }
@@ -830,11 +991,19 @@ function perimetreDepuisGit(o) {
   const texteFichierTest = {}, idsFichierTest = {}, residuel = {};
   const fichiersCat = Array.from(new Set(o.catalogue.map(t => t.fichier).filter(Boolean)));
   fichiersCat.forEach((ft) => {
-    try { texteFichierTest[ft] = fs.readFileSync(path.join(racine, ft), 'utf8'); } catch (err) { texteFichierTest[ft] = ''; }
+    try { texteFichierTest[ft] = lireNouveau(ft); } catch (err) { texteFichierTest[ft] = ''; }
+    idsFichierTest[ft] = identifiants(texteFichierTest[ft]) || new Set();
+  });
+  // symboles exportés par les fichiers de tests modifiés (revue C2) : version
+  // courante ET précédente (un symbole retiré casse aussi ses utilisateurs)
+  const symbolesTest = {};
+  fichiersImpact.filter(f => fichiersCat.indexOf(f.chemin) >= 0).forEach((f) => {
+    const now = symbolesExportesTest(texteFichierTest[f.chemin] || '');
+    const avant = f.statut === 'A' ? [] : (lireAncien(f.chemin) === null ? [] : symbolesExportesTest(lireAncien(f.chemin)));
+    symbolesTest[f.chemin] = (now === null || avant === null) ? null : Array.from(new Set(now.concat(avant)));
   });
   const mentions = {};
   if (srcTouches.length) {
-    fichiersCat.forEach((ft) => { idsFichierTest[ft] = identifiants(texteFichierTest[ft]) || new Set(); });
     const corpsParFichier = {};
     o.catalogue.forEach((t) => {
       const corps = corpsParGroupeNom.get(t.groupe + '\u0000' + t.nom);
@@ -855,14 +1024,25 @@ function perimetreDepuisGit(o) {
     });
   }
   const res = calculerPerimetre({
-    catalogue: o.catalogue, carte, ecart, ecartMax, fichiers, analyses, erreursChargement, exportsParFichier,
-    captures, mentions, idsFichierTest, texteFichierTest, fumee: o.fumee || [], domainesConnus: o.domainesConnus || [],
+    catalogue: o.catalogue, carte, ecart, ecartMax, fichiers, fichiersImpact, analyses, erreursChargement, exportsParFichier,
+    captures, dependants, mentions, idsFichierTest, texteFichierTest, symbolesTest, fumee: o.fumee || [], domainesConnus: o.domainesConnus || [],
   });
-  return Object.assign(res, base, { ecart, ecartMax });
+  return Object.assign(res, base, { ecart, ecartMax, base: refAncienne });
 }
 
 /* Reconstruit la carte depuis un cahier local (tests/resultats/<dossier>).
-   o.racineResultats / o.chemin (tests). Rend { ok, chemin, commit, ... }. */
+   Seul un run COMPLET, terminé et RÉUSSI la nourrit (revue M4) : un test en
+   échec a pu s'arrêter avant d'appeler ce qu'il appelle d'habitude.
+   o.racine (dépôt git et sources), o.racineResultats, o.chemin (tests). */
+function cahierPourCarte(resultats) {
+  const c = (resultats && resultats.campagne) || {};
+  if (c.interrompue) return 'campagne interrompue';
+  if (c.perimetre && c.perimetre !== 'complet') return 'run restreint (' + c.perimetre + ') : seuls les runs complets alimentent la carte';
+  if (c.preset && c.preset !== 'pr' && c.preset !== 'regression') return 'préréglage ' + c.preset + ' : seuls pr et regression couvrent toute la suite Node';
+  const echecs = (resultats.tests || []).filter(t => t.etat === 'echec' || t.etat === 'delai').length;
+  if (echecs || (c.totaux && c.totaux.echecs)) return 'run en échec (' + (echecs || c.totaux.echecs) + ' échec(s))';
+  return null;
+}
 function reconstruireCarte(dossierCahier, o) {
   const opts = o || {};
   const racine = opts.racine || RACINE;
@@ -870,25 +1050,34 @@ function reconstruireCarte(dossierCahier, o) {
   let resultats;
   try { resultats = JSON.parse(fs.readFileSync(path.join(racineResultats, dossierCahier, 'resultats.json'), 'utf8')); }
   catch (e) { return { ok: false, motif: 'cahier illisible : ' + dossierCahier }; }
-  const c = resultats.campagne || {};
-  if (c.interrompue) return { ok: false, motif: 'campagne interrompue : pas de carte' };
-  if (c.perimetre && c.perimetre !== 'complet') return { ok: false, motif: 'run restreint (' + c.perimetre + ') : seuls les runs complets alimentent la carte' };
-  const env = c.environnement || {};
+  const refus = cahierPourCarte(resultats);
+  if (refus) return { ok: false, motif: refus };
+  const env = (resultats.campagne || {}).environnement || {};
   const commit = gitOuNull(racine, ['rev-parse', env.commit || 'HEAD']);
   if (!commit) return { ok: false, motif: 'commit du cahier introuvable' };
   const modules = chargerModules(cheminRel => fs.readFileSync(path.join(racine, cheminRel), 'utf8'));
   let carte;
-  try { carte = construireCarte(resultats, modules.parFichier, commit.trim(), { cahier: dossierCahier }); }
+  try { carte = construireCarte(resultats, modules.parFichier, commit.trim()); }
   catch (e) { return { ok: false, motif: e.message }; }
   const chemin = ecrireCarte(carte, opts.chemin);
-  return { ok: true, chemin, commit: carte.commit, tests: carte.tests.length, fonctions: Object.keys(carte.fonctions).length, fichiers: Object.keys(carte.fichiers).length };
+  return { ok: true, chemin, commit: carte.commit, tests: Object.keys(carte.tests).length, fonctions: Object.keys(carte.fonctions).length, fichiers: Object.keys(carte.fichiers).length };
+}
+/* Le dernier cahier `pr` complet et réussi de tests/resultats/ (CLI `carte`). */
+function dernierCahierPourCarte(racineResultats) {
+  const rr = racineResultats || path.join(RACINE, 'tests', 'resultats');
+  const ds = fs.existsSync(rr) ? fs.readdirSync(rr).filter(d => /_(pr|regression)$/.test(d)).sort().reverse() : [];
+  for (const d of ds) {
+    try { if (!cahierPourCarte(JSON.parse(fs.readFileSync(path.join(rr, d, 'resultats.json'), 'utf8')))) return d; } catch (e) { /* suivant */ }
+  }
+  return null;
 }
 
 module.exports = {
   CHEMIN_CARTE, ECART_MAX_DEFAUT, VERSION_CARTE,
-  jetons, decouper, identifiants, analyserFichierSource, chargerModules,
-  cleTest, construireCarte, serialiserCarte, ecrireCarte, lireCarte, reconstruireCarte,
-  classerFichier, domainesDuFichier, calculerPerimetre, trousDePerimetre, controlerTrous, plagesDuDiff, perimetreDepuisGit,
+  jetons, decouper, identifiants, analyserFichierSource, propager, chargerModules,
+  cleTest, idTestCarte, construireCarte, serialiserCarte, ecrireCarte, lireCarte, testsDeCarte, appelantsDe,
+  reconstruireCarte, cahierPourCarte, dernierCahierPourCarte,
+  classerFichier, symbolesExportesTest, domainesDuFichier, calculerPerimetre, trousDePerimetre, controlerTrous, plagesDuDiff, perimetreDepuisGit,
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -899,17 +1088,13 @@ if (require.main === module) {
   const option = (nom) => { const i = args.indexOf(nom); return i >= 0 ? args[i + 1] : null; };
   const drapeau = (nom) => args.includes(nom);
   if (args[0] === 'carte') {
-    let dossier = args[1] && !args[1].startsWith('--') ? args[1] : null;
-    if (!dossier) {
-      const rr = path.join(RACINE, 'tests', 'resultats');
-      const ds = fs.existsSync(rr) ? fs.readdirSync(rr).filter(d => /_pr$/.test(d)).sort() : [];
-      dossier = ds[ds.length - 1];
-    }
-    if (!dossier) { console.error('aucun cahier de préréglage pr dans tests/resultats/'); process.exit(1); }
+    const dossier = args[1] && !args[1].startsWith('--') ? args[1] : dernierCahierPourCarte();
+    if (!dossier) { console.error('aucun cahier pr complet et réussi dans tests/resultats/'); process.exit(1); }
     const r = reconstruireCarte(dossier);
     console.log(JSON.stringify(r));
     process.exit(r.ok ? 0 : 1);
   }
+
   const transmis = ['--perimetre-json'];
   if (option('--depuis')) transmis.push('--depuis', option('--depuis')); else transmis.push('--perimetre', 'commit');
   ['--fichiers', '--ecart-max', '--preset', '--carte'].forEach((k) => { if (option(k)) transmis.push(k, option(k)); });

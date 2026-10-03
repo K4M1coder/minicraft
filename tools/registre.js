@@ -50,6 +50,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
+const { envGitPour } = require('./git-propre.js'); // jamais les GIT_* d'un crochet sur un autre dépôt
 
 const RACINE = path.join(__dirname, '..');
 const DOSSIER_REGISTRE = path.join(RACINE, 'tests', 'registre');
@@ -132,7 +133,7 @@ function lireEntrees(dossierRegistre) { return listerFichiersEntrees(dossierRegi
 
 // ── accès git (best-effort : hors dépôt, ou dépôt superficiel, rend null) ──
 function git(dossierRepo, args) {
-  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8' }).trim(); }
+  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8', env: envGitPour(dossierRepo || RACINE) }).trim(); }
   catch (e) { return null; }
 }
 function commitPlein(dossierRepo, refOuCourt) { return git(dossierRepo, ['rev-parse', refOuCourt || 'HEAD']); }
@@ -713,7 +714,7 @@ function commiterRegistre(dossierRepo) {
   if (!diff) return { ok: false, motif: 'rien à committer' };
   git(rd, ['add', '--', DOSSIER_REGISTRE_REL]);
   try {
-    execFileSync('git', ['commit', '-m', 'test(registre): mise à jour de l\'historique visuel par test'], { cwd: rd, encoding: 'utf8' });
+    execFileSync('git', ['commit', '-m', 'test(registre): mise à jour de l\'historique visuel par test'], { cwd: rd, encoding: 'utf8', env: envGitPour(rd) });
   } catch (e) { return { ok: false, motif: 'échec du commit : ' + e.message }; }
   return { ok: true };
 }

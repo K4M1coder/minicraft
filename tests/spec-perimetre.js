@@ -16,6 +16,13 @@
   var fs = require('fs'), path = require('path'), os = require('os'), cp = require('child_process'), vm = require('vm');
   var RACINE = path.join(__dirname, '..');
   var P = require(path.join(RACINE, 'tools', 'perimetre.js'));
+  var GP = require(path.join(RACINE, 'tools', 'git-propre.js'));
+  /* Noms de vrais modules ASSEMBLÉS, jamais écrits en toutes lettres : la règle
+     « lecture » du périmètre retient tout fichier de test qui cite le nom d'un
+     fichier source touché — ce fichier serait sinon relancé en entier à chaque
+     changement du mailleur ou du monde (revue). */
+  var MAILLEUR = ['src', 'mesh' + 'er.js'].join('/'), MONDE = ['src', 'wor' + 'ld.js'].join('/');
+  var NOYAU = ['src', 'co' + 're.js'].join('/'), EAU_SRC = ['src', 'e' + 'au.js'].join('/');
 
   function tmp(nom) { return fs.mkdtempSync(path.join(os.tmpdir(), 'mc-perim-' + nom + '-')); }
   function nettoyer(d) { try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* rien */ } }
@@ -72,12 +79,17 @@
       { cle: 'D › t-demo-1', nom: 't-demo-1', type: 'spec', fichier: 'tests/spec-demo.js', domaines: [], fonctions: [], etiquettes: [] },
       { cle: 'D › t-demo-2', nom: 't-demo-2', type: 'spec', fichier: 'tests/spec-demo.js', domaines: [], fonctions: [], etiquettes: [] },
     ];
-    var carte = {
-      version: 1, commit: 'c0ffee', fichiers: { 'src/fixture.js': ['MC.Fixture.autre', 'MC.Fixture.feuille', 'MC.Fixture.utilisatrice'] },
-      tests: ['G › t-feuille', 'G › t-util', 'G › t-autre', 'G › t-toujours', 'D › t-demo-1', 'D › t-demo-2'],
-      fonctions: { 'MC.Fixture.feuille': [0], 'MC.Fixture.utilisatrice': [1], 'MC.Fixture.autre': [2] },
-    };
+    var carte = carteDemo(['G › t-feuille', 'G › t-util', 'G › t-autre', 'G › t-toujours', 'D › t-demo-1', 'D › t-demo-2'],
+      { 'MC.Fixture.feuille': ['G › t-feuille'], 'MC.Fixture.utilisatrice': ['G › t-util'], 'MC.Fixture.autre': ['G › t-autre'] },
+      { 'src/fixture.js': ['MC.Fixture.autre', 'MC.Fixture.feuille', 'MC.Fixture.utilisatrice'] });
     return { catalogue: catalogue, carte: carte };
+  }
+  /* carte au format versionné (identifiants stables de tests) */
+  function carteDemo(cles, appels, fichiers) {
+    var tests = {}, fonctions = {};
+    cles.forEach(function (c) { tests[P.idTestCarte(c)] = c; });
+    Object.keys(appels).forEach(function (q) { fonctions[q] = appels[q].map(P.idTestCarte); });
+    return { version: P.VERSION_CARTE, commit: 'c0ffee0', preset: 'pr', fichiers: fichiers, tests: tests, fonctions: fonctions };
   }
   function calculer(d, extra) {
     return P.calculerPerimetre(Object.assign({
@@ -97,12 +109,13 @@
         { type: 'spec', groupe: 'G', nom: 'c-echoue', etat: 'echec', fonctions: [], fonctionsAppels: { 'MC.Mesher.tileOrigin': 1 } },
         { type: 'integration', groupe: 'x.js', nom: 'x.js (intégration)', etat: 'ok', fonctions: [] },
       ] };
-      var carte = P.construireCarte(resultats, { 'src/mesher.js': [{ qual: 'MC.Mesher.tileOrigin', texte: '' }] }, 'abc123');
-      var appelants = carte.fonctions['MC.Mesher.tileOrigin'].map(function (i) { return carte.tests[i]; });
+      var parFichier = {}; parFichier[MAILLEUR] = [{ qual: 'MC.Mesher.tileOrigin', texte: '' }];
+      var carte = P.construireCarte(resultats, parFichier, 'abc123');
+      var appelants = P.appelantsDe(carte, 'MC.Mesher.tileOrigin');
       A.deep(appelants.sort(), ['G › a', 'G › b'], 'les deux tests réussis qui appellent tileOrigin (un test en échec n\'est pas une observation fiable)');
-      A.deep(carte.fichiers['src/mesher.js'], ['MC.Mesher.tileOrigin'], 'fichier → fonctions qu\'il définit');
+      A.deep(carte.fichiers[MAILLEUR], ['MC.Mesher.tileOrigin'], 'fichier → fonctions qu\'il définit');
       A.equal(carte.commit, 'abc123', 'commit de construction');
-      A.ok(carte.tests.indexOf('x.js (intégration) ') < 0 && carte.tests.every(function (c) { return c.indexOf('intégration') < 0; }), 'un script d\'intégration (non observé) n\'est pas dans la carte');
+      A.ok(P.testsDeCarte(carte).every(function (c) { return c.indexOf('intégration') < 0; }), 'un script d\'intégration (non observé) n\'est pas dans la carte');
       var leve = false;
       try { P.construireCarte({ campagne: { preset: 'pr' }, tests: [] }, {}, 'x'); } catch (e) { leve = true; }
       A.ok(leve, 'un run sans observation des fonctions (--sans-fonctions) ne fait pas de carte');
@@ -113,18 +126,18 @@
     it('SPEC-BANC-067 : en chargeant les modules, chaque MC.X.f est rattachée au fichier src/x.js qui la définit', function () {
       var r = P.chargerModules(function (c) { return fs.readFileSync(path.join(RACINE, c), 'utf8'); });
       A.deep(Object.keys(r.erreurs), [], 'tous les modules Node se chargent : ' + JSON.stringify(r.erreurs));
-      var mesher = r.parFichier['src/mesher.js'].map(function (e) { return e.qual; });
-      A.ok(mesher.indexOf('MC.Mesher.tileOrigin') >= 0, 'src/mesher.js définit MC.Mesher.tileOrigin : ' + mesher.join(', '));
-      A.ok(r.parFichier['src/world.js'].some(function (e) { return e.qual === 'MC.createWorld'; }), 'une fabrique directe (MC.createWorld) est rattachée à src/world.js');
-      A.ok(r.parFichier['src/core.js'].every(function (e) { return e.qual.indexOf('MC.Mesher') < 0; }), 'rien de Mesher n\'est attribué à core.js');
+      var mesher = r.parFichier[MAILLEUR].map(function (e) { return e.qual; });
+      A.ok(mesher.indexOf('MC.Mesher.tileOrigin') >= 0, 'le mailleur définit MC.Mesher.tileOrigin : ' + mesher.join(', '));
+      A.ok(r.parFichier[MONDE].some(function (e) { return e.qual === 'MC.createWorld'; }), 'une fabrique directe (MC.createWorld) est rattachée au fichier du monde');
+      A.ok(r.parFichier[NOYAU].every(function (e) { return e.qual.indexOf('MC.Mesher') < 0; }), 'rien de Mesher n\'est attribué au noyau');
     });
 
-    it('SPEC-BANC-067 : la carte versionnée tests/registre/impact.json cite tileOrigin, src/mesher.js et son commit de construction', function () {
+    it('SPEC-BANC-067 : la carte versionnée tests/registre/impact.json cite tileOrigin, le fichier du mailleur et son commit de construction', function () {
       var carte = P.lireCarte(path.join(RACINE, 'tests', 'registre', 'impact.json'));
       A.ok(carte, 'tests/registre/impact.json existe et se lit');
       A.ok(/^[0-9a-f]{40}$/.test(carte.commit), 'commit de construction en plein : ' + carte.commit);
       A.ok((carte.fonctions['MC.Mesher.tileOrigin'] || []).length >= 1, 'au moins un test appelle MC.Mesher.tileOrigin');
-      A.ok((carte.fichiers['src/mesher.js'] || []).indexOf('MC.Mesher.tileOrigin') >= 0, 'src/mesher.js liste tileOrigin');
+      A.ok((carte.fichiers[MAILLEUR] || []).indexOf('MC.Mesher.tileOrigin') >= 0, 'le mailleur liste tileOrigin');
     });
 
     it('SPEC-BANC-067/070 : reconstruireCarte part d\'un run COMPLET ; un run restreint (périmètre) ou interrompu n\'alimente jamais la carte', function () {
@@ -147,7 +160,7 @@
         A.ok(r.ok, 'run complet accepté : ' + JSON.stringify(r));
         var carte = P.lireCarte(chemin);
         A.equal(carte.commit, git(['rev-parse', 'HEAD']), 'commit du cahier résolu en plein');
-        A.ok(carte.fichiers['src/mesher.js'].indexOf('MC.Mesher.tileOrigin') >= 0, 'fichiers déduits en chargeant les modules');
+        A.ok(carte.fichiers[MAILLEUR].indexOf('MC.Mesher.tileOrigin') >= 0, 'fichiers déduits en chargeant les modules');
       } finally { nettoyer(d); }
     });
 
@@ -232,7 +245,7 @@
     it('SPEC-BANC-068 : une fonction touchée capturée sans être appelée par un autre module rend cet autre module entier', function () {
       var d = demo();
       d.carte.fichiers['src/autre.js'] = ['MC.Autre.g'];
-      d.carte.fonctions['MC.Autre.g'] = [2];
+      d.carte.fonctions['MC.Autre.g'] = [P.idTestCarte('G › t-autre')];
       var a = analyser(remplacerLigne(FIXTURE, 7, '    return a + 2;'), [7]);
       var p = calculer(d, {
         fichiers: [{ chemin: 'src/fixture.js', statut: 'M' }], analyses: { 'src/fixture.js': a },
@@ -275,8 +288,34 @@
       A.ok(/absent de la carte/.test(calculer(d, { fichiers: [{ chemin: 'src/nouveau.js', statut: 'A' }], analyses: { 'src/nouveau.js': a } }).repli), 'nouveau module → repli');
       A.ok(/supprimé/.test(calculer(d, { fichiers: [{ chemin: 'src/fixture.js', statut: 'D' }] }).repli), 'module supprimé → repli');
       A.ok(/illisible/.test(calculer(d, { fichiers: src, analyses: analyses, erreursChargement: { 'src/fixture.js': 'SyntaxError' } }).repli), 'module qui ne se charge pas → repli');
-      A.equal(calculer(d, { fichiers: [{ chemin: 'docs/banc/x.md', statut: 'M' }, { chemin: 'tests/registre/impact.json', statut: 'M' }] }).repli, null,
-        'un document ou les données du registre ne font pas replier');
+      A.equal(calculer(d, { fichiers: [{ chemin: 'docs/banc/x.md', statut: 'M' }, { chemin: 'tests/registre/entrees/x.jsonl', statut: 'A' }] }).repli, null,
+        'un document ou une entrée du registre ne font pas replier');
+    });
+
+    it('SPEC-BANC-069 : seules les entrées et images du registre sont neutres ; impact.json, README.md… retiennent les tests qui les lisent', function () {
+      A.equal(P.classerFichier('tests/registre/entrees/x.jsonl', new Set()), 'neutre', 'entrée : neutre');
+      A.equal(P.classerFichier('tests/registre/images/a.jpg', new Set()), 'neutre', 'image : neutre');
+      A.equal(P.classerFichier('tests/registre/impact.json', new Set()), 'doc', 'carte : lue par des tests');
+      A.equal(P.classerFichier('tests/registre/README.md', new Set()), 'doc', 'README du registre : lu par des tests');
+      var d = demo();
+      var p = calculer(d, { fichiers: [{ chemin: 'tests/registre/impact.json', statut: 'M' }],
+        texteFichierTest: { 'tests/spec-demo.js': 'lireCarte(path.join(RACINE, "tests", "registre", "impact.json"))' } });
+      A.deep(p.tests['D › t-demo-1'], ['lecture:tests/registre/impact.json'], 'un test qui lit la carte est retenu quand elle change');
+    });
+
+    it('SPEC-BANC-069 : une carte corrompue, d\'une autre version ou vide est refusée (le calcul se replie dès qu\'un module change)', function () {
+      var d = tmp('carte-invalide');
+      try {
+        var ok = P.lireCarte(path.join(RACINE, 'tests', 'registre', 'impact.json'));
+        function essai(transformer) { var c = JSON.parse(JSON.stringify(ok)); transformer(c); var f = path.join(d, 'c.json'); fs.writeFileSync(f, JSON.stringify(c)); return P.lireCarte(f); }
+        A.ok(ok, 'la vraie carte se lit');
+        A.equal(essai(function (c) { c.version = c.version + 1; }), null, 'autre version refusée');
+        A.equal(essai(function (c) { c.tests = {}; }), null, 'aucun test refusé');
+        A.equal(essai(function (c) { c.fonctions = {}; }), null, 'aucune fonction refusée');
+        A.equal(essai(function (c) { var q = Object.keys(c.fonctions)[0]; c.fonctions[q] = ['inconnu000']; }), null, 'référence de test inconnue refusée');
+        fs.writeFileSync(path.join(d, 'x.json'), '{ pas du json');
+        A.equal(P.lireCarte(path.join(d, 'x.json')), null, 'JSON illisible refusé');
+      } finally { nettoyer(d); }
     });
 
     it('SPEC-BANC-069 : sur le vrai dépôt, server.js seul, une carte absente ou construite à plus de 50 commits font replier, avec la raison', function () {
@@ -284,20 +323,168 @@
       A.ok(p1.repli && p1.repli.indexOf('server.js') >= 0, 'server.js → repli : ' + p1.repli);
       var d = tmp('vieille');
       try {
-        var p2 = perimetreJSON(['--fichiers', 'src/mesher.js', '--carte', path.join(d, 'inexistante.json')]);
+        var p2 = perimetreJSON(['--fichiers', MAILLEUR, '--carte', path.join(d, 'inexistante.json')]);
         A.ok(/carte d'impact absente/.test(p2.repli || ''), 'carte absente → repli : ' + p2.repli);
         var carte = P.lireCarte(path.join(RACINE, 'tests', 'registre', 'impact.json'));
-        carte.commit = git(['rev-parse', 'HEAD~51']);
+        // dépôt superficiel (clone --depth) : pas de HEAD~51, ce cas ne se vérifie pas ici
+        var ancien = null;
+        try { ancien = git(['rev-parse', '--verify', '-q', 'HEAD~51']); } catch (e) { ancien = null; }
+        if (!ancien) { A.ok(true, 'historique trop court (clone superficiel) : cas de la carte à 51 commits non vérifiable ici'); return; }
+        carte.commit = ancien;
         var chemin = path.join(d, 'vieille.json');
         P.ecrireCarte(carte, chemin);
         // HEAD~51 est à 51 commits au moins (plus si des merges y ramènent des branches)
         var n = parseInt(git(['rev-list', '--count', carte.commit + '..HEAD']), 10);
         A.ok(n >= 51, 'écart réel : ' + n);
-        var p3 = perimetreJSON(['--fichiers', 'src/mesher.js', '--carte', chemin]);
+        var p3 = perimetreJSON(['--fichiers', MAILLEUR, '--carte', chemin]);
         A.ok(new RegExp('trop ancienne : ' + n + ' commits').test(p3.repli || ''), 'carte à ' + n + ' commits → repli : ' + p3.repli);
-        var p4 = perimetreJSON(['--fichiers', 'src/mesher.js', '--carte', chemin, '--ecart-max', String(n)]);
+        var p4 = perimetreJSON(['--fichiers', MAILLEUR, '--carte', chemin, '--ecart-max', String(n)]);
         A.equal(p4.repli, null, 'avec --ecart-max ' + n + ', la même carte sert');
       } finally { nettoyer(d); }
+    });
+
+    // ── revue adversariale : carte périmée, fixtures, appels au chargement ──
+    /* Un VRAI petit dépôt git (jetable, sans les GIT_* d'un crochet) : quatre
+       modules, une carte construite au premier commit, puis un commit qui
+       AJOUTE un appel inconnu de la carte (b.h appelle désormais A.f). */
+    function depotJetable() {
+      var d = tmp('depot');
+      var env = GP.envSansGit();
+      var g = function (args) { return cp.execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=' + path.join(d, 'aucun-crochet')].concat(args), { cwd: d, env: env, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(); };
+      var ecrire = function (f, t) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), t); };
+      var A = ['(function (G) {', '  var MC = G.MC = G.MC || {};', '  var K = 1;', '  function f(x) {', '    return x + 1;', '  }', '  MC.A = { f: f, K: K };', '})(this);', ''].join('\n');
+      ecrire('src/a.js', A);
+      ecrire('src/b.js', ['(function (G) {', '  var MC = G.MC;', '  MC.B = { h: function (x) {', '    return x;', '  } };', '})(this);', ''].join('\n'));
+      // c : appelle A.f AU CHARGEMENT ; d : lit la donnée A.K à l'exécution
+      ecrire('src/c.js', ['(function (G) {', '  var MC = G.MC;', '  var T = MC.A.f(1);', '  MC.C = { t: function () { return T; } };', '})(this);', ''].join('\n'));
+      ecrire('src/d.js', ['(function (G) {', '  var MC = G.MC;', '  MC.D = { lire: function () {', '    return MC.A.K;', '  } };', '})(this);', ''].join('\n'));
+      g(['init', '-q']); g(['add', '-A']); g(['commit', '-q', '-m', 'carte']);
+      var commitCarte = g(['rev-parse', 'HEAD']);
+      ecrire('src/b.js', ['(function (G) {', '  var MC = G.MC;', '  MC.B = { h: function (x) {', '    return MC.A.f(x);', '  } };', '})(this);', ''].join('\n'));
+      g(['add', '-A']); g(['commit', '-q', '-m', 'b.h appelle A.f']);
+      var carte = carteDemo(['T › f', 'T › h', 'T › c', 'T › d'],
+        { 'MC.A.f': ['T › f'], 'MC.B.h': ['T › h'], 'MC.C.t': ['T › c'], 'MC.D.lire': ['T › d'] },
+        { 'src/a.js': ['MC.A.f'], 'src/b.js': ['MC.B.h'], 'src/c.js': ['MC.C.t'], 'src/d.js': ['MC.D.lire'] });
+      carte.commit = commitCarte;
+      P.ecrireCarte(carte, path.join(d, 'impact.json'));
+      var catalogue = ['f', 'h', 'c', 'd'].map(function (n) { return { cle: 'T › ' + n, nom: n, type: 'spec', groupe: 'T', fichier: 'tests/spec-' + n + '.js', domaines: [], fonctions: [], etiquettes: [] }; });
+      return { d: d, g: g, ecrire: ecrire, A: A, calculer: function () {
+        return P.perimetreDepuisGit({ racine: d, mode: 'commit', catalogue: catalogue, suites: [], cheminCarte: path.join(d, 'impact.json'), sources: ['a', 'b', 'c', 'd'], fumee: [], domainesConnus: [] });
+      } };
+    }
+
+    it('SPEC-BANC-068 (revue C1) : la carte périmée ne cache pas un appel ajouté depuis — le diff part du commit de la carte, pas de HEAD', function () {
+      var r = depotJetable();
+      try {
+        r.ecrire('src/a.js', r.A.replace('return x + 1;', 'return x + 2;'));
+        r.g(['add', 'src/a.js']);
+        var p = r.calculer();
+        A.equal(p.repli, null, 'pas de repli : ' + p.repli);
+        A.deep(p.fichiers, ['src/a.js'], 'le commit ne touche que a.js');
+        A.ok(p.fichiersImpact.indexOf('src/b.js') >= 0, 'mais b.js a changé depuis la carte : ' + p.fichiersImpact.join(', '));
+        A.ok(p.tests['T › f'], 'appelant connu de la carte retenu');
+        A.ok(p.tests['T › h'] && p.tests['T › h'].indexOf('fonction:MC.B.h') >= 0, 'b.h, qui appelle A.f depuis un commit postérieur à la carte, est retenu : ' + JSON.stringify(p.tests));
+      } finally { nettoyer(r.d); }
+    });
+
+    it('SPEC-BANC-068 (revue C4) : une fonction appelée AU CHARGEMENT d\'un autre module rend ce module entier', function () {
+      var r = depotJetable();
+      try {
+        r.ecrire('src/a.js', r.A.replace('return x + 1;', 'return x + 2;'));
+        r.g(['add', 'src/a.js']);
+        var p = r.calculer();
+        A.ok(p.tests['T › c'] && p.tests['T › c'].indexOf('fonction:MC.C.t') >= 0, 'c.js appelle A.f au chargement : ses fonctions sont touchées : ' + JSON.stringify(p.tests['T › c']));
+        A.ok(!p.tests['T › d'], 'd.js, qui ne touche pas A.f, n\'est pas retenu');
+      } finally { nettoyer(r.d); }
+    });
+
+    it('SPEC-BANC-068 (revue) : une donnée d\'un module touché en entier, lue par un autre module, retient les fonctions qui la lisent', function () {
+      var r = depotJetable();
+      try {
+        r.ecrire('src/a.js', r.A.replace('var K = 1;', 'var K = 2;'));
+        r.g(['add', 'src/a.js']);
+        var p = r.calculer();
+        A.ok(p.tests['T › d'] && p.tests['T › d'].indexOf('fonction:MC.D.lire') >= 0, 'd.lire lit MC.A.K : retenu : ' + JSON.stringify(p.tests['T › d']) + ' ' + p.details.join(' | '));
+        A.ok(p.tests['T › c'], 'c.js nomme MC.A au chargement : retenu');
+      } finally { nettoyer(r.d); }
+    });
+
+    it('SPEC-BANC-068 (revue C2) : un fichier de test qui exporte une fixture partagée retient tous les fichiers de tests qui la nomment', function () {
+      var syms = P.symbolesExportesTest('(function (G) {\n  G.fabrique = function () {};\n  var locale = 1;\n  function aide() {}\n})(this);\nfunction globale() {}\nvar x = 1;\n');
+      A.deep(syms.sort(), ['fabrique', 'globale', 'x'], 'G.x = …, et déclarations hors de toute fonction (globales du contexte partagé) — pas les locales');
+      var unit = P.symbolesExportesTest(fs.readFileSync(path.join(RACINE, 'tests', 'unit.js'), 'utf8'));
+      ['flatWorld', 'seededRand', 'mockStorage', 'etatMinimal'].forEach(function (s) { A.ok(unit.indexOf(s) >= 0, 'tests/unit.js exporte ' + s + ' : ' + unit.join(', ')); });
+      A.ok(P.symbolesExportesTest(fs.readFileSync(path.join(RACINE, 'tests', 'limites-sondes.js'), 'utf8')).indexOf('MC_LIMITES') >= 0, 'limites-sondes.js exporte MC_LIMITES');
+      var d = demo();
+      var p = calculer(d, { fichiers: [{ chemin: 'tests/spec-demo.js', statut: 'M' }], symbolesTest: { 'tests/spec-demo.js': ['fabrique'] },
+        idsFichierTest: { 'tests/spec-a.js': new Set(['fabrique']), 'tests/spec-b.js': new Set(['autreChose']), 'tests/spec-demo.js': new Set(['fabrique']) } });
+      A.deep(p.tests['G › t-feuille'], ['fixture:fabrique'], 'un test d\'un autre fichier qui nomme la fixture est retenu');
+      A.ok(!p.tests['G › t-autre'], 'un fichier qui ne la nomme pas ne l\'est pas');
+      var p2 = calculer(d, { fichiers: [{ chemin: 'tests/spec-demo.js', statut: 'M' }], symbolesTest: { 'tests/spec-demo.js': null } });
+      A.ok(p2.tests['G › t-autre'] && p2.tests['G › t-feuille'], 'symboles illisibles : tous les fichiers de tests sont retenus (élargir)');
+    });
+
+    it('SPEC-BANC-067 (revue M2) : la carte référence les tests par identifiant stable, sans horodatage, et n\'est pas réécrite si rien ne change', function () {
+      function res(noms) { return { campagne: { preset: 'pr', observationFonctions: {} }, tests: noms.map(function (n) { return { type: 'spec', groupe: 'G', nom: n, etat: 'ok', fonctions: ['MC.X.' + n] }; }) }; }
+      var c1 = P.construireCarte(res(['a', 'b', 'c']), {}, 'abc1234');
+      var c2 = P.construireCarte(res(['a', 'b', 'c']), {}, 'abc1234');
+      A.equal(P.serialiserCarte(c1), P.serialiserCarte(c2), 'deux constructions identiques donnent le même texte (aucun horodatage)');
+      var c3 = P.construireCarte(res(['0-nouveau', 'a', 'b', 'c']), {}, 'abc1234');
+      var l1 = P.serialiserCarte(c1).split('\n'), l3 = P.serialiserCarte(c3).split('\n');
+      var ajoutees = l3.filter(function (l) { return l1.indexOf(l) < 0; });
+      A.ok(ajoutees.length <= 4, 'ajouter un test ne change que ses lignes (et les virgules voisines), pas toute la carte : ' + ajoutees.length);
+      var d = tmp('carte-stable');
+      try {
+        var f = path.join(d, 'impact.json');
+        P.ecrireCarte(c1, f);
+        var avant = fs.statSync(f).mtimeMs;
+        fs.utimesSync(f, new Date(avant - 60000), new Date(avant - 60000));
+        var date = fs.statSync(f).mtimeMs;
+        P.ecrireCarte(c2, f);
+        A.equal(fs.statSync(f).mtimeMs, date, 'contenu identique : fichier non réécrit');
+      } finally { nettoyer(d); }
+    });
+
+    it('SPEC-BANC-067 (revue M4) : seul le dernier cahier pr complet et RÉUSSI nourrit la carte', function () {
+      var ok = { campagne: { preset: 'pr', perimetre: 'complet', totaux: { echecs: 0 } }, tests: [{ etat: 'ok' }] };
+      A.equal(P.cahierPourCarte(ok), null, 'run complet réussi accepté');
+      A.ok(/échec/.test(P.cahierPourCarte({ campagne: { preset: 'pr', totaux: { echecs: 2 } }, tests: [{ etat: 'echec' }] })), 'run en échec refusé');
+      A.ok(/préréglage commit/.test(P.cahierPourCarte({ campagne: { preset: 'commit' }, tests: [] })), 'préréglage partiel refusé');
+      var d = tmp('cahiers');
+      try {
+        function cahier(nom, r) { fs.mkdirSync(path.join(d, nom), { recursive: true }); fs.writeFileSync(path.join(d, nom, 'resultats.json'), JSON.stringify(r)); }
+        cahier('2026-01-01_00-00-00_pr', ok);
+        cahier('2026-01-02_00-00-00_pr', { campagne: { preset: 'pr', totaux: { echecs: 1 } }, tests: [{ etat: 'echec' }] });
+        cahier('2026-01-03_00-00-00_commit', ok);
+        A.equal(P.dernierCahierPourCarte(d), '2026-01-01_00-00-00_pr', 'le plus récent pr RÉUSSI, pas le dernier pr en échec');
+      } finally { nettoyer(d); }
+    });
+
+    it('SPEC-BANC-070 (revue M4) : une sélection restreinte par --sauf est « manuel », jamais « complet »', function () {
+      var d = tmp('sauf');
+      try {
+        var r = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--preset', 'bugs', '--sauf', 'etiquettes=bug'],
+          { cwd: RACINE, encoding: 'utf8', timeout: 120000, env: Object.assign({}, process.env, { MC_TEST_RESULTATS_DIR: d }) });
+        A.ok(!r.error, 'run terminé');
+        var dossier = fs.readdirSync(d).filter(function (x) { return fs.existsSync(path.join(d, x, 'resultats.json')); })[0];
+        A.equal(JSON.parse(fs.readFileSync(path.join(d, dossier, 'resultats.json'), 'utf8')).campagne.perimetre, 'manuel', 'perimetre manuel');
+      } finally { nettoyer(d); }
+    });
+
+    it('SPEC-BANC-073 (revue M1) : git lancé sur un autre dépôt n\'hérite jamais des GIT_* d\'un crochet ; le crochet garde les siens', function () {
+      process.env.GIT_ESSAI_PERIMETRE = 'x';
+      try {
+        A.equal(GP.envGitPour(RACINE).GIT_ESSAI_PERIMETRE, 'x', 'ce dépôt : environnement du crochet conservé (GIT_INDEX_FILE du commit en cours)');
+        A.equal(GP.envGitPour(os.tmpdir()).GIT_ESSAI_PERIMETRE, undefined, 'autre dossier : GIT_* retirées');
+      } finally { delete process.env.GIT_ESSAI_PERIMETRE; }
+      ['tools/registre.js', 'tools/perimetre.js', 'tools/hooks/suite-complete.js'].forEach(function (f) {
+        A.ok(/envGitPour/.test(fs.readFileSync(path.join(RACINE, f), 'utf8')), f + ' passe par tools/git-propre.js');
+      });
+      // aucun fichier de tests ne crée de dépôt (git init) sans nettoyer l'environnement
+      fs.readdirSync(path.join(RACINE, 'tests')).filter(function (f) { return /\.js$/.test(f); }).forEach(function (f) {
+        var t = fs.readFileSync(path.join(RACINE, 'tests', f), 'utf8');
+        if (/\[\s*['"]init['"]/.test(t) && /['"]git['"]/.test(t)) A.ok(/envSansGit\(/.test(t), 'tests/' + f + ' crée un dépôt git : il doit utiliser envSansGit()');
+      });
     });
 
     // ── SPEC-BANC-070 : journal du périmètre ────────────────────────────────
@@ -332,7 +519,7 @@
       A.ok(!/domainesTouches\(/.test(txt), 'l\'ancien repli par domaines est remplacé (il devient l\'étape 3 du périmètre)');
       var P2 = fs.readFileSync(path.join(RACINE, 'tools', 'perimetre.js'), 'utf8');
       A.ok(/require\('\.\/domaines-touches\.js'\)/.test(P2), 'tools/perimetre.js s\'appuie sur tools/domaines-touches.js (étape 3)');
-      A.deep(require(path.join(RACINE, 'tools', 'domaines-touches.js')).domainesDuFichier('src/eau.js', ['EAU', 'MECA']), ['EAU'], 'domaines d\'un fichier');
+      A.deep(require(path.join(RACINE, 'tools', 'domaines-touches.js')).domainesDuFichier(EAU_SRC, ['EAU', 'MECA']), ['EAU'], 'domaines d\'un fichier');
     });
 
     it('SPEC-BANC-072 : la suite complète inscrit son cahier au registre (pre-push, en_attente) et reconstruit la carte avec le commit courant', function () {
@@ -351,7 +538,11 @@
         ].join('\n'));
         var S = require(path.join(RACINE, 'tools', 'hooks', 'suite-complete.js'));
         var r = S.lancerSuiteComplete({ racine: d, dossierRepo: RACINE, origine: 'pre-push', silencieux: true, etapes: [{ args: ['--preset', 'pr'], carte: true }] });
-        A.ok(r.ok, 'suite réussie');
+        A.ok(r.ok, 'suite réussie : ' + JSON.stringify(r.journal).slice(0, 400));
+        // le journal dit ce qui a VRAIMENT été fait, même sans rien afficher
+        A.ok(r.journal.length === 1 && r.journal[0].inscription && r.journal[0].inscription.ok, 'inscription faite : ' + JSON.stringify(r.journal[0].inscription));
+        A.ok(r.journal[0].carte && r.journal[0].carte.ok, 'carte reconstruite : ' + JSON.stringify(r.journal[0].carte));
+        A.equal(typeof r.journal[0].sortie, 'string', 'la sortie du préréglage est capturée, pas jetée');
         var REG = require(path.join(RACINE, 'tools', 'registre.js'));
         var entrees = REG.lireEntrees(path.join(d, 'tests', 'registre'));
         A.equal(entrees.length, 1, 'une entrée inscrite');
@@ -363,6 +554,7 @@
         fs.unlinkSync(path.join(d, 'tests', 'registre', 'impact.json'));
         var r2 = S.lancerSuiteComplete({ racine: d, dossierRepo: RACINE, origine: 'pre-push', silencieux: true, etapes: [{ args: ['--preset', 'pr'], carte: true }] });
         A.equal(r2.ok, false, 'un préréglage en échec fait échouer la suite');
+        A.equal(r2.journal[0].carte, null, 'journal : aucune carte tentée sur un échec');
         A.ok(!fs.existsSync(path.join(d, 'tests', 'registre', 'impact.json')), 'pas de carte reconstruite sur un échec');
       } finally { delete process.env.MC_FAUX_ECHEC; delete process.env.MC_FAUX_N; nettoyer(d); }
       var pp = fs.readFileSync(path.join(RACINE, 'tools', 'hooks', 'pre-push.js'), 'utf8');
@@ -380,12 +572,11 @@
       // estEnMerge sur un vrai dépôt jetable : faux sans MERGE_HEAD, vrai avec
       var d = tmp('merge');
       try {
-        /* Environnement SANS les variables GIT_* : lancé depuis un crochet
-           (pre-commit), git y a posé GIT_DIR/GIT_INDEX_FILE du VRAI dépôt —
-           sans ce nettoyage, `git init`/`git commit` ci-dessous agiraient sur
+        /* Environnement SANS les variables GIT_* (tools/git-propre.js) : lancé
+           depuis un crochet, git y a posé GIT_DIR/GIT_INDEX_FILE du VRAI dépôt
+           — sans ce nettoyage, `git init`/`git commit` ci-dessous agiraient sur
            lui (constaté : un commit « init » dans la branche, core.bare=true). */
-        var envPropre = {};
-        Object.keys(process.env).forEach(function (k) { if (!/^GIT_/i.test(k)) envPropre[k] = process.env[k]; });
+        var envPropre = GP.envSansGit();
         var g = function (args) { return cp.execFileSync('git', args, { cwd: d, env: envPropre, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] }).trim(); };
         g(['init', '-q']);
         fs.writeFileSync(path.join(d, 'a.txt'), 'a');
@@ -418,8 +609,8 @@
     });
 
     // ── SPEC-BANC-075 : G13 étendue ─────────────────────────────────────────
-    it('SPEC-BANC-075 : le périmètre se calcule, non vide, pour un cas connu (src/mesher.js), comme le vérifie G13', function () {
-      var r = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--preset', 'commit', '--perimetre', 'commit', '--fichiers', 'src/mesher.js', '--perimetre-json'],
+    it('SPEC-BANC-075 : le périmètre se calcule, non vide, pour un cas connu (le mailleur), comme le vérifie G13', function () {
+      var r = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--preset', 'commit', '--perimetre', 'commit', '--fichiers', MAILLEUR, '--perimetre-json'],
         { cwd: RACINE, encoding: 'utf8', timeout: 120000, maxBuffer: 256 * 1024 * 1024 });
       A.ok(!r.error && r.status === 0, 'calcul réussi');
       var p = JSON.parse(r.stdout);
@@ -439,7 +630,10 @@
       var perim = { repli: null, tests: { 'G › retenu': ['fonction:MC.X.f'] }, fichiers: ['src/x.js'] };
       var c = P.controlerTrous(echecs, { commit: 'abc' }, function (ref) { A.equal(ref, 'abc', 'périmètre depuis le commit de la carte'); return perim; });
       A.deep(c.trous, [{ cle: 'G › rate', nom: 'rate' }], 'seul l\'échec non retenu est un trou');
-      A.deep(P.trousDePerimetre(echecs, { repli: 'x', tests: {} }), [], 'un repli (tout aurait tourné) ne laisse aucun trou');
+      A.equal(P.trousDePerimetre(echecs, { repli: 'x', tests: {} }), null, 'un repli ne prouve rien sur la carte : non vérifiable, jamais « zéro trou »');
+      var cRepli = P.controlerTrous(echecs, { commit: 'abc' }, function () { return { repli: 'outillage touché', tests: {} }; });
+      A.equal(cRepli.verifie, false, 'contrôle replié : non vérifié');
+      A.ok(/non vérifiable/.test(cRepli.motif), 'et il le dit : ' + cRepli.motif);
       A.equal(P.controlerTrous(echecs, null, function () { throw new Error('jamais'); }).verifie, false, 'sans carte : non vérifié, dit pourquoi');
       var resultats = { campagne: { preset: 'pr', perimetre: 'complet', totaux: { total: 2, passes: 0, echecs: 2, ignores: 0 }, trousPerimetre: c },
         tests: [{ nom: 'rate', type: 'spec', groupe: 'G', etat: 'echec', trou_perimetre: true, domaines: [], captures: [] }] };

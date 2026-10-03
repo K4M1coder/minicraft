@@ -199,6 +199,7 @@
         ['mode', p.mode === 'depuis' ? 'depuis ' + (p.depuis || '') : 'commit (fichiers indexés)'],
         ['repli sur la sélection complète', p.repli || 'non'],
         ['fichiers touchés', (p.fichiers || []).join(', ') || 'aucun'],
+        ['fichiers changés depuis la carte', (p.fichiersImpact || p.fichiers || []).join(', ') || 'aucun'],
         ['fonctions touchées', (p.fonctions || []).join(', ') || 'aucune'],
         ['tests retenus', String(p.retenus === undefined ? '' : p.retenus)],
         ['tests exclus', String(p.exclus === undefined ? '' : p.exclus)],

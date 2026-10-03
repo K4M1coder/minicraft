@@ -477,7 +477,8 @@ if (MODE_PERIMETRE || drapeau('--perimetre-json')) {
 /* Colonne `perimetre` de l'historique (SPEC-BANC-070) : 'commit' quand le
    périmètre a réellement restreint la sélection, 'manuel' pour une sélection
    choisie à la main, 'complet' sinon (préréglage entier, ou repli). */
-const SELECTION_MANUELLE = !!filtrePositionnel || ['domaines', 'types', 'groupes', 'tests', 'liste', 'echecs'].some(k => criteresArgs[k] && criteresArgs[k].length);
+const SELECTION_MANUELLE = !!filtrePositionnel || ['domaines', 'types', 'groupes', 'tests', 'liste', 'echecs'].some(k => criteresArgs[k] && criteresArgs[k].length) ||
+  !!(criteresArgs.sauf && Object.keys(criteresArgs.sauf).some(k => (criteresArgs.sauf[k] || []).length)); // --sauf retire des tests : sélection manuelle (revue M4)
 const NATURE_PERIMETRE = (perimetreCalcule && !perimetreCalcule.repli) ? 'commit' : (SELECTION_MANUELLE ? 'manuel' : 'complet');
 function raisonSelectionDe(cle) {
   if (NATURE_PERIMETRE === 'commit') return (perimetreCalcule.tests[cle] || []).slice();
@@ -892,7 +893,7 @@ const resultatsFinaux = {
     perimetre: NATURE_PERIMETRE,
     perimetreDetail: perimetreCalcule ? {
       mode: perimetreCalcule.mode, depuis: perimetreCalcule.depuis, repli: perimetreCalcule.repli || null,
-      fichiers: perimetreCalcule.fichiers, fonctions: perimetreCalcule.fonctions, details: perimetreCalcule.details,
+      fichiers: perimetreCalcule.fichiers, fichiersImpact: perimetreCalcule.fichiersImpact, base: perimetreCalcule.base || null, fonctions: perimetreCalcule.fonctions, details: perimetreCalcule.details,
       exclus: perimetreCalcule.exclus, retenus: testsResultats.length, carte: perimetreCalcule.carte, ecart: perimetreCalcule.ecart,
     } : null,
     trousPerimetre,
