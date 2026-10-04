@@ -192,7 +192,17 @@
   function creerBudget() {
     var credit = RESERVE;
     return {
-      crediter: function (dtReel) { credit = Math.min(RESERVE * 2, credit + dtReel); return credit; },
+      /* `attente` (facultatif) : la durée des entrées qui attendent déjà dans la
+         file. Le plafond (RESERVE × 2) empêche d'économiser du temps PENDANT
+         qu'on n'envoie rien ; il ne doit jamais retirer le temps d'entrées déjà
+         arrivées : après un tic serveur long, sinon, ce temps était perdu pour
+         toujours, et un client honnête — qui envoie exactement le temps réel —
+         gardait ce retard sans jamais le rattraper (SPEC-SYNC-004). */
+      crediter: function (dtReel, attente) {
+        var plafond = Math.max(RESERVE * 2, attente > 0 ? attente : 0);
+        credit = Math.min(plafond, credit + (dtReel > 0 ? dtReel : 0));
+        return credit;
+      },
       consommer: function (dt) {
         if (!(dt > 0) || dt > DT_MAX || dt > credit) return false;
         credit -= dt;
@@ -200,6 +210,38 @@
       },
       get credit() { return credit; },
     };
+  }
+
+  /* File d'entrées d'un joueur côté serveur. Bornée à MAX_EN_ATTENTE, comme
+     celle du client : au-delà, le client lui-même les a oubliées. (Avant :
+     240 — quatre secondes à 60 images/s ; un retard plus long faisait jeter
+     les plus anciennes, dont le déplacement, prédit par le client, n'avait
+     jamais lieu côté serveur : l'ETAT suivant ramenait le joueur en arrière.) */
+  function empilerEntree(file, e) {
+    file.push(e);
+    if (file.length > MAX_EN_ATTENTE) file.splice(0, file.length - MAX_EN_ATTENTE);
+    return file.length;
+  }
+  function dureeValide(dt) { return dt > 0 && dt <= DT_MAX; }
+  /* Un tic serveur pour un joueur : crédite le temps RÉEL écoulé (pas le dt
+     plafonné de la simulation du monde), rejoue les entrées que ce crédit
+     couvre, écarte celles qui ne passeront jamais (durée nulle, négative ou
+     trop longue : en tête de file, elles la bloquaient). Rend
+     { dernier, avance } : la dernière entrée traitée et le temps simulé. */
+  function avancerEntrees(joueur, file, budget, dtReel, dernier) {
+    var attente = 0;
+    for (var i = 0; i < file.length; i++) if (dureeValide(file[i].dt)) attente += file[i].dt;
+    budget.crediter(dtReel, attente);
+    var st = joueur.state, avance = 0;
+    for (;;) {
+      while (file.length && !dureeValide(file[0].dt)) file.shift();
+      if (!file.length || st.dead || !budget.consommer(file[0].dt)) break;
+      var e = file.shift();
+      rejouer(joueur, [e]);
+      dernier = e.s;
+      avance += e.dt;
+    }
+    return { dernier: dernier, avance: avance };
   }
 
   /* État d'un joueur tel que le serveur l'envoie à son client : position,
@@ -268,6 +310,6 @@
   MC.Synchro = { appliquerBloc: appliquerBloc, spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
                  peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
-                 creerBudget: creerBudget, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
+                 creerBudget: creerBudget, empilerEntree: empilerEntree, avancerEntrees: avancerEntrees, MAX_EN_ATTENTE: MAX_EN_ATTENTE, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
                  DT_MAX: DT_MAX, RESERVE: RESERVE, arrondi: arrondi };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

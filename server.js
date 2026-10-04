@@ -3026,9 +3026,8 @@ function traiter(c, m) {
     case NP.MSG.ENTREE: {
       const js = c.joueurs && c.joueurs[m.j];
       if (!js) break;
-      js.entrees.push(m);
-      // un client qui inonde le serveur perd ses entrées les plus anciennes
-      if (js.entrees.length > 240) js.entrees.splice(0, js.entrees.length - 240);
+      // un client qui inonde le serveur perd ses entrées les plus anciennes (au-delà de SY.MAX_EN_ATTENTE)
+      SY.empilerEntree(js.entrees, m);
       break;
     }
 
@@ -4720,7 +4719,12 @@ setInterval(() => {
      la pause, aucun rattrapage. */
   if (enPause) { dernier = now; return; }
   if (now - dernier < PERIODE_TICK * 0.9) return;
-  const dt = Math.min((now - dernier) / 1000, 0.25);
+  /* `dt` plafonné : la simulation du MONDE ne fait pas de pas géant après un
+     tic long. Le temps RÉEL (`dtReel`), lui, est crédité au budget d'entrées
+     des joueurs (SPEC-SYNC-004) : leurs entrées couvrent tout le temps écoulé,
+     les leur retirer les mettait en retard pour toujours (recul en marchant). */
+  const dtReel = (now - dernier) / 1000;
+  const dt = Math.min(dtReel, 0.25);
   dernier = now;
   const __t0 = MESURES_ACTIVES ? performance.now() : 0;
 
@@ -4850,17 +4854,13 @@ setInterval(() => {
      c'est le serveur qui décide de la position et des statistiques. */
   const joueurs = tousLesJoueurs();
   joueurs.forEach(({ js }) => {
-    js.budget.crediter(dt);
     js.attaqueCd = Math.max(0, js.attaqueCd - dt);
     js.tirCd = Math.max(0, js.tirCd - dt);
     const st = js.joueur.state;
-    let avance = 0;
-    while (js.entrees.length && !st.dead && js.budget.consommer(js.entrees[0].dt)) {
-      const e = js.entrees.shift();
-      SY.rejouer(js.joueur, [e]);
-      js.dernier = e.s;
-      avance += e.dt;
-    }
+    // SPEC-SYNC-004 : temps réel crédité, entrées invalides écartées (MC.Synchro.avancerEntrees)
+    const pas = SY.avancerEntrees(js.joueur, js.entrees, js.budget, dtReel, js.dernier);
+    js.dernier = pas.dernier;
+    const avance = pas.avance;
     entretenirMonture(js, dt, avance);                    // P-VEH : engin détruit, mort, client muet
     /* SPEC-ARCHI-026 : le corps vit au temps SERVEUR (dt réel, gelé en pause
        avec toute la boucle), jamais au rythme des entrées reçues : un client
@@ -4871,8 +4871,6 @@ setInterval(() => {
        des créatures — le client le prédit (MC.Synchro) sans connaître cette poussée, et
        chaque ETAT recalait un joueur immobile qu'une créature serrait. Ce sont les
        créatures qui cèdent (entites.update → cederAuxJoueurs). */
-    // des entrées trop longues ou trop nombreuses pour le temps écoulé : écartées
-    while (js.entrees.length && js.entrees[0].dt > SY.DT_MAX) js.entrees.shift();
     /* Le climat agit sur le corps : c'est au serveur, qui fait foi sur la
        vie et la faim, d'appliquer froid et chaleur. Température réévaluée
        deux fois par seconde, comme chez le client. */

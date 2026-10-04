@@ -497,6 +497,55 @@
       A.ok(b.credit >= 0);
     });
 
+    /* Recul en marchant : après un tic serveur long, le budget était crédité du
+       dt PLAFONNÉ (0,25 s) puis plafonné à 0,5 s, même avec des entrées en
+       attente — un retard jamais rattrapé, puis des entrées jetées (file à 240). */
+    it('SPEC-SYNC-004 : des tics serveur longs ne retardent ni ne font perdre aucune entrée d\'un client honnête', function () {
+      var c = couple(), pred = SY.creerPrediction(), file = [], budget = SY.creerBudget(), dernier = 0;
+      var t = 0, tEnvoi = 0, prochainBlocage = 1.5;
+      while (t < 20) {
+        var dtReel = 0.02;
+        if (t >= prochainBlocage) { dtReel = 0.9; prochainBlocage += 1.5; }   // la boucle du serveur a bloqué 0,9 s
+        t += dtReel;
+        // pendant ce temps, le client a envoyé une entrée par image de 20 ms (exacte au 1/10000 près, comme sur le réseau)
+        while (tEnvoi + 0.02 <= t + 1e-9) {
+          tEnvoi += 0.02;
+          var e = pred.enregistrer(0.02, { forward: 1, jump: Math.floor(tEnvoi) % 3 === 0 ? 1 : 0 }, 0.4, 0, false);
+          SY.rejouer(c.client, [e]);
+          SY.empilerEntree(file, JSON.parse(JSON.stringify(e)));
+        }
+        dernier = SY.avancerEntrees(c.serveur, file, budget, dtReel, dernier).dernier;
+      }
+      A.ok(file.length <= 1, 'aucun retard ne s\'accumule (' + file.length + ' entrées en attente)');
+      dernier = SY.avancerEntrees(c.serveur, file, budget, 0.02, dernier).dernier;
+      A.equal(dernier, pred.suivant - 1, 'toutes les entrées sont acquittées, dans l\'ordre');
+      var a = c.client.state.pos, b = c.serveur.state.pos;
+      A.ok(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-9, 'aucune entrée perdue : serveur et client au même endroit');
+    });
+
+    it('SPEC-SYNC-004 : le temps non utilisé reste plafonné (pas de réserve qui s\'accumule à l\'arrêt)', function () {
+      var c = couple(), file = [], budget = SY.creerBudget(), acceptees = 0;
+      for (var i = 0; i < 600; i++) SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0);   // 10 s sans rien envoyer
+      A.ok(budget.credit <= SY.RESERVE * 2 + 1e-9, 'réserve plafonnée (' + budget.credit + ')');
+      for (var k = 0; k < 300; k++) SY.empilerEntree(file, { s: k + 1, dt: 1 / 60, k: 1, yaw: 0, pitch: 0, v: 0 });   // 5 s d'un coup
+      var r = SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0);
+      acceptees = r.dernier;
+      A.ok(acceptees <= Math.ceil((SY.RESERVE * 2 + 1 / 60) * 60) + 1, 'seuls la réserve et le temps écoulé passent (' + acceptees + ')');
+      SY.avancerEntrees(c.serveur, file, budget, 1, r.dernier);
+      A.ok(file.length >= 300 - acceptees - 61, 'ensuite, une seconde réelle pour une seconde de jeu (' + file.length + ' restantes)');
+    });
+
+    it('SPEC-SYNC-004 : une entrée invalide ne bloque pas la file, et la file est bornée comme celle du client', function () {
+      var c = couple(), file = [], budget = SY.creerBudget();
+      [0, -0.01, 5, 1 / 60].forEach(function (dt, i) { SY.empilerEntree(file, { s: i + 1, dt: dt, k: 0, yaw: 0, pitch: 0, v: 0 }); });
+      var r = SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0);
+      A.equal(r.dernier, 4, 'l\'entrée valide derrière des entrées invalides est traitée');
+      A.equal(file.length, 0);
+      for (var i = 0; i < SY.MAX_EN_ATTENTE + 50; i++) SY.empilerEntree(file, { s: i, dt: 1 / 60 });
+      A.equal(file.length, SY.MAX_EN_ATTENTE, 'file bornée à MAX_EN_ATTENTE');
+      A.equal(file[0].s, 50, 'les plus anciennes partent');
+    });
+
     it('SPEC-SYNC-005 : les statistiques du serveur font foi', function () {
       var w = flatWorld(10, B.STONE), p = MC.createPlayer(w, MC.createEntities(w), M.regles('survie', 'facile'));
       p.state.hp = 7; p.state.hunger = 12; p.state.air = 3;

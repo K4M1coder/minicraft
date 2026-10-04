@@ -245,7 +245,7 @@ async function scenarioArbitrage() {
 
     // monter trop loin : on s'éloigne de plus de 6 blocs
     await conduire(cl, 2.5, TOUCHE.avant | TOUCHE.course, 0);
-    await dodo(150);
+    await jusqua(() => { const t = toi(cl); return t && t.s >= cl.seqE ? t : null; }, 5000);   // le serveur a rejoué toute la course
     r = refus(cl, 'portee');
     cl.envoyer({ t: 'vehicule_monter', j: 0, eid: p.eid });
     ok(!!(await r), 'SPEC-ARCHI-021 : monter à plus de six blocs est refusé (motif « portee »)');
@@ -331,7 +331,7 @@ async function scenarioSoute() {
 
     // trop loin pour ouvrir la soute : Alice s'éloigne de plus de six blocs
     await conduire(cl, 2.5, TOUCHE.avant | TOUCHE.course, 0);
-    await dodo(150);
+    await jusqua(() => { const t = toi(cl); return t && t.s >= cl.seqE ? t : null; }, 5000);   // le serveur a rejoué toute la course
     const ferme = prochain(cl, 'cont_etat', 1500);
     cl.envoyer({ t: 'cont_fermer', j: 0, cle: ca.cle });
     cl.envoyer({ t: 'cont_ouvrir', j: 0, eid: p.eid });
@@ -431,10 +431,20 @@ async function scenarioPersistance() {
     ok(!!revenu, 'SPEC-SERVEUR-006 : après la relance, le camion est de retour dans le monde');
     ok(revenu && vAvant && Math.abs(revenu.x - vAvant.x) < 0.05 && Math.abs(revenu.z - vAvant.z) < 0.05, 'SPEC-SERVEUR-006 : à la même position (' + (revenu && revenu.x) + ',' + (revenu && revenu.z) + ')');
     ok(revenu && revenu.ca !== undefined && Math.abs(revenu.ca - v0[6]) < 0.1, 'avec le même carburant');
+    /* Le Visiteur apparaît au point d'apparition ; le camion est là où le tour de
+       conduite l'a laissé (la distance dépend de la cadence réelle des entrées) :
+       il marche jusqu'à portée (6 blocs) avant d'ouvrir la soute et d'y monter. */
+    if (revenu) {
+      const pV = toi(cb), dV = Math.hypot(revenu.x - pV.x, revenu.z - pV.z);
+      if (dV > 3) {
+        await conduire(cb, (dV - 2.5) / 4.3, TOUCHE.avant, Math.atan2(-(revenu.x - pV.x), -(revenu.z - pV.z)));
+        await jusqua(() => { const t = toi(cb); return t && t.s >= cb.seqE ? t : null; }, 5000);
+      }
+    }
     const etatB = prochain(cb, 'cont_etat', 15000);
     cb.envoyer({ t: 'cont_ouvrir', j: 0, eid: revenu && revenu.e });
     const cs = await etatB;
-    ok(!!cs && cs.slots[5] && cs.slots[5][0] === I.DIAMOND && cs.slots[5][1] === 9, 'SPEC-SERVEUR-006 : la soute restitue son contenu exact (9 diamants en case 5)');
+    ok(!!cs && cs.slots[5] && cs.slots[5][0] === I.DIAMOND && cs.slots[5][1] === 9, 'SPEC-SERVEUR-006 : la soute restitue son contenu exact (9 diamants en case 5)', 'camion ' + JSON.stringify(vAvant && { x: vAvant.x, z: vAvant.z }) + ', visiteur ' + JSON.stringify(toi(cb) && { x: toi(cb).x, z: toi(cb).z }) + ', réponse ' + JSON.stringify(cs && cs.slots && cs.slots[5]));
     cb.envoyer({ t: 'cont_fermer', j: 0, cle: cs && cs.cle });
     const etatCb = prochain(cb, 'cont_etat', 15000);
     cb.envoyer({ t: 'cont_ouvrir', j: 0, x: cCoffre.x, y: cCoffre.y, z: cCoffre.z });

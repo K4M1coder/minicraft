@@ -21,7 +21,7 @@
    `--blocage 2000:500` bloque le tic serveur 500 ms toutes les 2 s.
 
    Usage : node tools/mesure-recul.js [--racine DIR] [--duree 30] [--charge N]
-           [--blocage P:D] [--json] [--graine N]
+           [--blocage P:D] [--json] [--graine N] [--prechargement R] [--journal F]
    Module : require('./mesure-recul.js').mesurer(opts) → résumé. */
 'use strict';
 const net = require('net');
@@ -173,7 +173,7 @@ function parcours(t, yaw0) {
 function centile(l, p) { if (!l.length) return 0; const s = l.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 
 async function mesurer(o) {
-  o = Object.assign({ racine: path.join(__dirname, '..'), duree: 30, charge: 0, blocage: '', graine: 20260921, seuil: 0.01, journal: null }, o || {});
+  o = Object.assign({ racine: path.join(__dirname, '..'), prechargement: 6, duree: 30, charge: 0, blocage: '', graine: 20260921, seuil: 0.01, journal: null }, o || {});
   const racine = path.resolve(o.racine);
   const MC = chargerModules(racine);
   const SY = MC.Synchro;
@@ -203,7 +203,11 @@ async function mesurer(o) {
       const cx = Math.floor(x / 16), cz = Math.floor(z / 16);
       for (let dx = -r; dx <= r; dx++) for (let dz = -r; dz <= r; dz++) monde.getChunk(cx + dx, cz + dz, true);
     };
-    charger(t0.x, t0.z, 3);
+    /* Le jeu génère ses chunks dans des workers : son image ne s'allonge pas
+       quand il en faut de nouveaux. Ici on génère d'avance tout le terrain du
+       parcours (6 chunks de rayon ≈ 96 blocs), pour que les images du client
+       émulé ne s'allongent qu'à cause de la machine, comme dans le jeu. */
+    charger(t0.x, t0.z, o.prechargement);
     const regles = MC.Modes && MC.Modes.regles ? MC.Modes.regles(bienvenue.mode, bienvenue.difficulte) : undefined;
     const pl = MC.createPlayer(monde, MC.createEntities(monde), regles);
     const st = pl.state;
@@ -325,6 +329,7 @@ if (require.main === module) {
     else if (a[i] === '--graine') o.graine = +a[++i];
     else if (a[i] === '--journal') o.journal = a[++i];
     else if (a[i] === '--json') o.json = true;
+    else if (a[i] === '--prechargement') o.prechargement = +a[++i];
   }
   mesurer(o).then((r) => {
     if (o.json) console.log(JSON.stringify(r));
