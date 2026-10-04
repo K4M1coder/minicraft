@@ -165,6 +165,53 @@
       });
     });
 
+    it('SPEC-SAVE-027 : ancien instantané (copie de chaque tampon) contre nouveau, sur 5 graines, escaliers posés puis certains remis à 0 — même maillage', function () {
+      // l'implémentation d'avant SPEC-SAVE-027, gardée ici comme référence
+      function ancienInstantane(w, cx, cz) {
+        var out = [];
+        for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) {
+          var c = w.chunkDe(cx + dx, cz + dz);
+          if (!c) { out.push(null); continue; }
+          out.push({ blocks: c.blocks.slice(), etats: c.etats ? c.etats.slice() : null,
+                     eau: c.eau ? { nature: c.eau.nature.slice(), flux: c.eau.flux.slice(), prof: c.eau.prof.slice() } : null });
+        }
+        return out;
+      }
+      function memesEtats(ancien, nouveau) {
+        if (nouveau === null) { for (var i = 0; ancien && i < ancien.length; i++) if (ancien[i]) return false; return true; }
+        return memeTableau(ancien, nouveau);
+      }
+      var CX = MC.Core.CHUNK_X, CZ = MC.Core.CHUNK_Z, B = MC.Core.B, F = MC.Formes;
+      [1, 42, 20260921, 777, 123456].forEach(function (graine) {
+        var cx = 1, cz = 1, w = mondeAvecVoisinage(graine, cx, cz);
+        var y = MC.Core.WORLD_H - 12, n = 0;
+        for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) {
+          var x0 = (cx + dx) * CX, z0 = (cz + dz) * CZ;
+          for (var k = 0; k < 3; k++) {
+            w.setBlock(x0 + 4 + k, y, z0 + 7, B.ESCALIER_STONE);
+            w.setEtat(x0 + 4 + k, y, z0 + 7, F.packEscalier((k + dx + 3) & 3, k === 1, F.DROIT));
+          }
+          // un chunk sur deux : ses escaliers sont remis à 0 (tampon propre resté plein de zéros)
+          if ((n++ & 1) === 0) for (var k2 = 0; k2 < 3; k2++) w.setEtat(x0 + 4 + k2, y, z0 + 7, 0);
+        }
+        var a = ancienInstantane(w, cx, cz), nv = MC.TachesChunks.instantaneVoisins(w, cx, cz);
+        a.forEach(function (v, i) {
+          A.ok(memeTableau(v.blocks, nv[i].blocks), 'graine ' + graine + ', voisin ' + i + ' : mêmes blocs');
+          A.ok(memesEtats(v.etats, nv[i].etats), 'graine ' + graine + ', voisin ' + i + ' : mêmes états (null = que des zéros)');
+        });
+        A.ok(nv.some(function (v) { return v.etats === null; }) && nv.some(function (v) { return v.etats; }), 'graine ' + graine + ' : des voisins avec et sans état');
+        function maille(voisins) {
+          return MC.TachesChunks.executerMaillage({ type: 'maille', epoque: 0, cx: cx, cz: cz, version: 1, simplifie: false, fusion: true, voisins: voisins }).message.passes;
+        }
+        var pa = maille(a), pn = maille(nv);
+        MC.ContratsV2.PASSES_MAILLAGE.forEach(function (pass) {
+          if (!pa[pass]) { A.ok(!pn[pass], 'graine ' + graine + ' : passe ' + pass + ' absente des deux côtés'); return; }
+          A.ok(memeTableau(pa[pass].positions, pn[pass].positions) && memeTableau(pa[pass].indices, pn[pass].indices),
+               'graine ' + graine + ' : sommets et indices identiques (' + pass + ')');
+        });
+      });
+    });
+
     it('SPEC-PERF-008 : versTableauxTypes — types, longueurs par sommet, valeurs par défaut de toGeometry ; transferablesDe liste chaque tampon une fois', function () {
       var w = mondeAvecVoisinage(321, 0, 0);
       var chunk = w.chunkDe(0, 0);
