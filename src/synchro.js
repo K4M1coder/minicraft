@@ -175,7 +175,15 @@
     /* À bord côté serveur mais réplique pas encore reçue : rejouer les entrées
        comme une marche à pied ferait dériver le joueur hors de son siège. */
     if (serveur.veh && !st.monture) { prediction.confirmer(serveur.s); return Math.hypot(st.pos.x - avant.x, st.pos.y - avant.y, st.pos.z - avant.z); }
+    /* SPEC-JOUABLE-004 : le REGARD est celui du joueur, maintenant. Le rejeu
+       oriente chaque entrée comme elle a été jouée (la marche suit le regard
+       de l'époque), puis on rend le regard courant : sans cela, un coup de
+       souris donné depuis la dernière entrée était effacé par un ETAT arrivé
+       avant l'image suivante — la caméra sautait en arrière, et un clic visait
+       un autre bloc que celui sous le viseur (constaté sous charge). */
+    var yaw = st.yaw, pitch = st.pitch;
     rejouer(joueur, prediction.confirmer(serveur.s));
+    st.yaw = yaw; st.pitch = pitch;
     /* Une bascule faite depuis la dernière entrée (double appui entre deux images)
        n'est dans aucune entrée : on la réapplique, comme basculerVol — la
        prochaine entrée la porte, et le serveur fera la même chose au même point. */

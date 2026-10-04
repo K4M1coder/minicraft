@@ -376,6 +376,22 @@
       A.ok(/equipe\[0\]\.useCd = 0\.22/.test(debut), 'onUse pose useCd avant toute utilisation');
       A.ok(/if \(j\.useCd <= 0\) \{ j\.useCd = 0\.22; utiliserPour\(j\); \}/.test(jeu), 'la boucle ne répète qu\'une fois le délai écoulé');
     });
+    it('SPEC-JOUABLE-004 : la réconciliation garde le regard courant du joueur (un coup de souris entre deux images n\'est pas effacé)', function () {
+      var SY = MC.Synchro;
+      var w = flatWorld(10), ents = MC.createEntities(w);
+      var pl = MC.createPlayer(w, ents, MC.Modes.regles('survie', 'facile'));
+      pl.state.pos = { x: 0.5, y: 11, z: 0.5 }; pl.state.onGround = true;
+      var pred = SY.creerPrediction();
+      pl.state.yaw = 0; pl.state.pitch = 0;
+      // deux images jouées avec le regard de l'époque, pas encore acquittées
+      for (var i = 0; i < 2; i++) { var e = pred.enregistrer(1 / 60, SY.decoderTouches(0), pl.state.yaw, pl.state.pitch, false); SY.rejouer(pl, [e]); }
+      // la souris tourne le regard, PUIS un ETAT arrive avant l'image suivante
+      pl.state.yaw = 1.2; pl.state.pitch = -0.7;
+      SY.reconcilier(pl, SY.etatJoueur(pl, 0), pred, null);
+      A.close(pl.state.yaw, 1.2, 1e-9, 'le regard courant survit au rejeu (yaw)');
+      A.close(pl.state.pitch, -0.7, 1e-9, 'et l\'inclinaison');
+    });
+
     it('SPEC-JOUABLE-004 : une équipe recomposée en ligne (serveur dans un autre mode) garde sa prédiction d\'inventaire', function () {
       var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
       var i = jeu.indexOf('function composerEquipe(');

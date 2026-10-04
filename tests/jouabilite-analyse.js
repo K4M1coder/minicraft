@@ -56,7 +56,7 @@
         out.deplacements.push({
           t_ms: Math.round(e.t - p0.t), vecteur: pas, norme: norme(pas), cumul: cumul,
           intervalle_ms: dernierT === null ? null : Math.round(e.t - dernierT),
-          source: sourceProbable({ etats: e.etats || 0, ecart: e.ecart, deltaServeur: e.deltaServeur || 0 }, seuil),
+          source: opts.source || sourceProbable({ etats: e.etats || 0, ecart: e.ecart, deltaServeur: e.deltaServeur || 0 }, seuil), info: e.info,
         });
         dernierT = e.t;
       }
@@ -91,7 +91,7 @@
       (a.deplacements.length ? ' ; sources : ' + Object.keys(srcs).map(function (k) { return k + ' ×' + srcs[k]; }).join(', ') : '')];
     a.deplacements.slice(0, max).forEach(function (d) {
       lignes.push('  t=' + d.t_ms + ' ms  Δ=' + vec(d.vecteur) + '  cumul=' + vec(d.cumul) +
-        '  intervalle=' + (d.intervalle_ms === null ? '—' : d.intervalle_ms + ' ms') + '  ← ' + d.source);
+        '  intervalle=' + (d.intervalle_ms === null ? '—' : d.intervalle_ms + ' ms') + '  ← ' + d.source + (d.info ? '  [' + d.info + ']' : ''));
     });
     if (a.deplacements.length > max) lignes.push('  … ' + (a.deplacements.length - max) + ' autre(s)');
     if (!a.ok && a.franchissement) {

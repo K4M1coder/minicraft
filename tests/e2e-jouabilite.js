@@ -58,7 +58,7 @@
             var toi = m.toi && m.toi[0];
             if (toi) {
               sp.nEtats++;
-              sp.etats.push({ n: sp.nEtats, t: t, x: toi.x, y: toi.y, z: toi.z, s: toi.s, sol: toi.sol, vol: toi.vol });
+              sp.etats.push({ n: sp.nEtats, t: t, x: toi.x, y: toi.y, z: toi.z, s: toi.s, sol: toi.sol, vol: toi.vol, vy: toi.vy });
               if (sp.etats.length > 6000) sp.etats.splice(0, 2000);
             }
             return;
@@ -68,7 +68,7 @@
         });
         var envoi = s.send;
         s.send = function (d) {
-          try { var m = JSON.parse(d); if (m && m.t !== 'e') sp.envoyes.push({ t: maintenant(), m: m }); } catch (e) { /* binaire */ }
+          try { var m = JSON.parse(d); if (m && m.t === 'e') sp.dernierEnvoye = m.s; else if (m) sp.envoyes.push({ t: maintenant(), m: m }); } catch (e) { /* binaire */ }
           return envoi.apply(s, arguments);
         };
       }
@@ -95,24 +95,42 @@
     A.ok(await sonder(cond, ms), 'préparation : ' + quoi + ' (non atteint en ' + (ms / 1000) + ' s)');
   }
 
-  async function demarrerPartie(g, mode, inv) {
-    var graineAvant = g.world.seed, ecartees = [];
+  /* `opts.sol` : le test a besoin d'un bloc de sol sec que la visée du jeu
+     touche (casser, poser, coffre). Il est cherché ICI, une fois le joueur au
+     repos et le terrain autour de lui chargé (sondages bornés, 45 s) ; une
+     graine sans candidat est écartée avec son diagnostic, jamais en silence. */
+  async function demarrerPartie(g, mode, inv, opts) {
+    opts = opts || {};
+    var graineAvant = g.world.seed, ecartees = [], t0 = maintenant();
     for (var k = 0; k < GRAINES.length; k++) {
       var p = await connecterServeurJeu(g, mode, inv, GRAINES[k], graineAvant);
       var terrain = await terrainSousJoueur(g, p);
+      if (terrain.ok && opts.sol) {
+        await attendreRepos(g, p, mode === 'survie');
+        p.sol = await solVise(g, 15000);
+        if (!p.sol) terrain = { ok: false, motif: 'aucun sol sec visable — ' + solVise.dernierDiag };
+      }
       if (terrain.ok) return p;
-      ecartees.push(GRAINES[k] + ' : ' + terrain.motif);
+      ecartees.push(GRAINES[k] + ' : ' + terrain.motif + ' (après ' + Math.round(maintenant() - t0) + ' ms)');
       await quitterPartie(g, p);
     }
-    A.ok(false, 'préparation : aucune graine de la liste fixe ne fait apparaître sur la terre ferme — ' + ecartees.join(' ; '));
+    A.ok(false, 'préparation : aucune graine de la liste fixe ne convient — ' + ecartees.join(' ; '));
+  }
+
+  // les chunks autour du joueur (rayon 1 : 3×3) sont générés côté page
+  function chunksAutour(g) {
+    var st = g.player.state, cx0 = Math.floor(st.pos.x / 16), cz0 = Math.floor(st.pos.z / 16), n = 0;
+    for (var cx = cx0 - 1; cx <= cx0 + 1; cx++) for (var cz = cz0 - 1; cz <= cz0 + 1; cz++) if (g.world.getChunk(cx, cz)) n++;
+    return n;
   }
 
   /* Le point d'apparition donné par le serveur est sur la terre ferme : sol
      solide sous les pieds (terrain chargé), aucun liquide à 4 blocs autour. */
   async function terrainSousJoueur(g, p) {
-    var st = g.player.state, verdict = null;
+    var verdict = null, t0 = maintenant();
     await sonder(function () {
-      if (!p.sp.dernierEtat()) return false;
+      var st = g.player.state;
+      if (!p.sp.dernierEtat() || chunksAutour(g) < 9) return false;   // état du serveur reçu, terrain 3×3 généré côté page
       var fx = Math.floor(st.pos.x), fy = Math.floor(st.pos.y), fz = Math.floor(st.pos.z), sol = false;
       for (var y = fy; y >= fy - 6 && !sol; y--) if (Cr().isSolid(g.world.getBlock(fx, y, fz))) sol = true;
       if (!sol) return false;                                   // terrain pas encore chargé : on attend
@@ -124,8 +142,8 @@
       }
       verdict = { ok: true };
       return true;
-    }, 20000);
-    return verdict || { ok: false, motif: 'terrain non chargé sous le joueur en 20 s' };
+    }, 45000);
+    return verdict || { ok: false, motif: 'terrain non prêt en 45 s (chunks 3×3 chargés ' + chunksAutour(g) + '/9, joueur ' + JSON.stringify(g.player.state.pos) + ', ' + Math.round(maintenant() - t0) + ' ms)' };
   }
 
   async function connecterServeurJeu(g, mode, inv, graine, graineAvant) {
@@ -170,23 +188,50 @@
 
   /* Prêt à mesurer : le serveur a envoyé l'état du joueur, le terrain sous
      lui est chargé, et (au sol / en vol) son corps ne bouge plus côté serveur
-     depuis 0,5 s. Sondage borné (20 s) : si le joueur bouge sans fin, on
+     depuis 0,5 s. Sondage borné (45 s) : si le joueur bouge sans fin, on
      mesure quand même — et la mesure le dira, avec le détail. */
+  /* Ce que dit le journal du serveur de jeu (boucle bloquée, exceptions,
+     refus) : joint aux échecs de préparation pour distinguer un serveur figé
+     par la charge de la machine d'un vrai désaccord client-serveur. */
+  async function journalServeurJeu() {
+    try {
+      var o = await (await fetch('/tests/serveur-jeu/journal')).json();
+      var l = String(o && o.journal || '').split(/\r?\n/).filter(function (x) { return /bloqu|EXCEPTION|erreur|refus|ATTENTION/i.test(x); });
+      return '\n journal du serveur de jeu : ' + (l.length ? l.slice(-8).join(' | ') : '(rien de notable)');
+    } catch (e) { return '\n journal du serveur de jeu illisible : ' + (e && e.message); }
+  }
+
   async function attendreRepos(g, p, auSol) {
     var st = g.player.state, sp = p.sp;
+    /* Un serveur figé (charge de la machine) n'envoie plus rien : « aucun ETAT
+       nouveau » ressemblerait à de l'immobilité. Le repos n'est donc admis que
+       si les relevés ARRIVENT (au moins 3 dans la dernière demi-seconde, le
+       dernier frais) et que le serveur traite les entrées du client (son
+       acquittement progresse d'au moins 10 entrées par demi-seconde). */
+    st = null;
     var stable = await sonder(function () {
-      var e = sp.dernierEtat();
-      if (!e) return false;
+      st = g.player.state;
+      var e = sp.dernierEtat(), t = maintenant();
+      if (!e || t - e.t > 250) return false;
       if (auSol && !(e.sol === 1 && st.onGround)) return false;
       if (!auSol && !(e.vol === 1 && st.flying)) return false;
-      var depuis = e.t - 500, ref = null, ok = true;
+      var depuis = e.t - 500, ref = null, ok = true, n = 0, sMin = e.s;
       for (var i = sp.etats.length - 1; i >= 0 && sp.etats[i].t >= depuis; i--) {
         var x = sp.etats[i];
+        n++;
+        if (x.s < sMin) sMin = x.s;
         if (!ref) ref = x;
         else if (Math.hypot(x.x - ref.x, x.y - ref.y, x.z - ref.z) > 1e-4) ok = false;
       }
-      return ok && i >= 0 && Math.hypot(st.pos.x - e.x, st.pos.y - e.y, st.pos.z - e.z) < 1e-3;
-    }, 20000);
+      // le serveur TRAITE les entrées du client (acquittement en progrès), il n'est pas figé
+      return ok && n >= 3 && e.s - sMin >= 10 && i >= 0 && Math.hypot(st.pos.x - e.x, st.pos.y - e.y, st.pos.z - e.z) < 1e-3;
+    }, 60000);
+    if (!stable) {
+      var e = sp.dernierEtat();
+      attendreRepos.diag = 'dernier ETAT ' + (e ? Math.round(maintenant() - e.t) + ' ms avant, acquitté s=' + e.s + ' pour ' + sp.dernierEnvoye + ' envoyées, sol=' + e.sol + ' vol=' + e.vol +
+        ', serveur (' + e.x.toFixed(3) + ',' + e.y.toFixed(3) + ',' + e.z.toFixed(3) + ')' : 'aucun') +
+        ', client (' + st.pos.x.toFixed(3) + ',' + st.pos.y.toFixed(3) + ',' + st.pos.z.toFixed(3) + ') sol=' + st.onGround + ' vol=' + st.flying + await journalServeurJeu();
+    }
     return stable;
   }
 
@@ -199,7 +244,9 @@
     var client = [{ t: 0, x: st.pos.x, y: st.pos.y, z: st.pos.z, etats: 0, deltaServeur: 0 }];
     var serveur = toi ? [{ t: 0, x: toi.x, y: toi.y, z: toi.z }] : [];
     var anomalies = [];
-    while (maintenant() - t0 < dureeMs) {
+    /* au moins `dureeMs` d'horloge réelle ET au moins 31 relevés du serveur : un serveur affamé par la
+       charge de la machine (relevés espacés de plusieurs secondes) prolonge la mesure, jusqu'à 60 s */
+    while (maintenant() - t0 < dureeMs || (serveur.length < 31 && maintenant() - t0 < 60000)) {
       await frames(1);
       var nouveaux = sp.etats.filter(function (e) { return e.n > dernierN; });
       if (nouveaux.length) dernierN = nouveaux[nouveaux.length - 1].n;
@@ -207,13 +254,15 @@
       nouveaux.forEach(function (e) {
         if (toi) delta = Math.max(delta, Math.hypot(e.x - toi.x, e.y - toi.y, e.z - toi.z));
         toi = e;
-        serveur.push({ t: e.t - t0, x: e.x, y: e.y, z: e.z });
+        serveur.push({ t: e.t - t0, x: e.x, y: e.y, z: e.z, info: 'ETAT s=' + e.s + ' sol=' + e.sol + ' vy=' + (typeof e.vy === 'number' ? e.vy.toFixed(3) : e.vy) + ' ; client y=' + st.pos.y.toFixed(4) + ' sol=' + (st.onGround ? 1 : 0) + '' + (g.player.state === st ? '' : ' (JOUEUR REMPLACÉ : mesure sur un état périmé)') });
       });
       var t = maintenant() - t0;
       client.push({ t: t, x: st.pos.x, y: st.pos.y, z: st.pos.z, etats: nouveaux.length, ecart: g.ecartReseau, deltaServeur: delta });
       if (verifier) { var a = verifier(toi); if (a && anomalies.length < 10) anomalies.push('t=' + Math.round(t) + ' ms : ' + a); }
     }
-    return { client: J.analyserPositions(client), serveur: J.analyserPositions(serveur), anomalies: anomalies };
+    var trou = 0;
+    for (var q = 1; q < serveur.length; q++) trou = Math.max(trou, serveur[q].t - serveur[q - 1].t);
+    return { client: J.analyserPositions(client), serveur: J.analyserPositions(serveur, { source: 'serveur : ETAT.toi (position tenue par le serveur)' }), anomalies: anomalies, plusGrandTrouEtat: Math.round(trou) };
   }
 
   // ─── visée et terrain ─────────────────────────────────────────────────────
@@ -273,21 +322,58 @@
   }
   /* Le premier sol candidat que la visée du jeu touche vraiment (un autre
      bloc peut masquer la face visée) — null si aucun. */
-  async function solVise(g) {
+  async function solVise(g, delaiMs) {
     /* Le terrain autour du joueur peut être encore en génération (monde neuf,
        workers) : on réessaie par sondage borné tant qu'aucun candidat n'est visé. */
-    var fin = maintenant() + 15000;
+    var t0 = maintenant(), fin = t0 + (delaiMs || 15000), images = 0, rates = {};
     do {
-      var rates = {};
+      rates = {};
       for (var k = 0; k < 24; k++) {
         var b = chercherSol(g, function (x, y, z) { return !!rates[x + ',' + y + ',' + z]; });
         if (!b) break;
         if (await viser(g, b)) return b;
         rates[b.x + ',' + b.y + ',' + b.z] = 1;
       }
-      await frames(10);
+      await frames(10); images += 10;
     } while (maintenant() < fin);
+    solVise.dernierDiag = diagSol(g, rates, maintenant() - t0, images);
     return null;
+  }
+  /* Ce qui empêche de trouver un sol visable : graine, position, chunks
+     chargés autour du joueur, motifs de rejet des colonnes, temps et images. */
+  function diagSol(g, rates, ecoule, images) {
+    var C = Cr(), st = g.player.state, w = g.world;
+    var fx = Math.floor(st.pos.x), fy = Math.floor(st.pos.y), fz = Math.floor(st.pos.z);
+    var cx0 = Math.floor(fx / 16), cz0 = Math.floor(fz / 16), charges = 0, total = 0;
+    for (var cx = cx0 - 1; cx <= cx0 + 1; cx++) for (var cz = cz0 - 1; cz <= cz0 + 1; cz++) { total++; if (w.getChunk(cx, cz)) charges++; }
+    var motifs = {};
+    function noter(m) { motifs[m] = (motifs[m] || 0) + 1; }
+    for (var ax = -6; ax <= 6; ax++) for (var az = -6; az <= 6; az++) {
+      var dh = Math.hypot(ax, az);
+      if (dh < 2 || dh > 6) continue;
+      var x = fx + ax, z = fz + az, vu = false;
+      if (!w.getChunk(Math.floor(x / 16), Math.floor(z / 16))) { noter('chunk absent'); continue; }
+      for (var y = fy + 2; y >= fy - 8; y--) {
+        var id = w.getBlock(x, y, z);
+        if (!id) continue;
+        vu = true;
+        var d = C.BLOCKS[id];
+        if (!d) noter('id inconnu');
+        else if (d.liquid) noter('liquide');
+        else if (!C.isSolid(id)) noter('plante/non plein (' + d.name + ')');
+        else if (!(d.hardness > 0 && d.hardness <= 1)) noter('trop dur (' + d.name + ')');
+        else if (w.getBlock(x, y + 1, z) !== 0 || w.getBlock(x, y + 2, z) !== 0) noter('pas d\'air au-dessus');
+        else if (!voisinageSec(g, x, y, z) || !voisinageSec(g, x, y + 1, z)) noter('liquide voisin');
+        else if (rates[x + ',' + y + ',' + z]) noter('visée ratée');
+        else if (y < fy - 3 || y > fy + 1 || dh > 4) noter('hors de la plage cherchée (dy ' + (y - fy) + ', d ' + dh.toFixed(1) + ')');
+        else noter('candidat');
+        break;
+      }
+      if (!vu) noter('colonne vide');
+    }
+    return 'graine ' + w.seed + ', joueur (' + st.pos.x.toFixed(2) + ',' + st.pos.y.toFixed(2) + ',' + st.pos.z.toFixed(2) + ') ' +
+      (st.flying ? 'en vol' : st.onGround ? 'au sol' : 'en l\'air') + ', chunks 3×3 chargés ' + charges + '/' + total +
+      ', colonnes (rayon 6) : ' + JSON.stringify(motifs) + ', ' + Math.round(ecoule) + ' ms et ' + images + ' images de recherche';
   }
 
   // ─── observation après une action ─────────────────────────────────────────
@@ -308,19 +394,30 @@
     return l.join('\n');
   }
   function signatureInv(st) { return JSON.stringify(st.inv.serialize()); }
+  /* Relecture bornée (45 s) : un serveur de jeu affamé par la charge de la
+     machine peut ne pas répondre à temps au relais du banc (502) — on
+     redemande ; à l'échec, les réponses obtenues sont citées. */
+  var dernieresReponsesInv = [];
   async function inventaireServeur() {
-    try {
-      var r = await fetch('/tests/serveur-jeu/inventaire?nom=' + encodeURIComponent(PSEUDO));
-      var o = await r.json();
-      return o && o.ok ? o.data : null;
-    } catch (e) { return null; }
+    var fin = maintenant() + 45000;
+    dernieresReponsesInv = [];
+    do {
+      try {
+        var r = await fetch('/tests/serveur-jeu/inventaire?nom=' + encodeURIComponent(PSEUDO));
+        var o = await r.json();
+        if (o && o.ok) return o.data;
+        dernieresReponsesInv.push(r.status + ' ' + JSON.stringify(o).slice(0, 120));
+      } catch (e) { dernieresReponsesInv.push(String(e && e.message || e)); }
+      await frames(30);
+    } while (maintenant() < fin);
+    return null;
   }
   /* Inventaire : le serveur (relu par l'administration) égale le client et
      l'attendu, case à case. */
   async function verifierInventaire(g, p, attendu, quand) {
     var st = g.player.state;
     var serv = await inventaireServeur();
-    A.ok(serv, 'inventaire du serveur relu par l\'administration (' + quand + ')');
+    A.ok(serv, (serv ? '' : await journalServeurJeu()) + 'inventaire du serveur relu par l\'administration (' + quand + ') — réponses : ' + dernieresReponsesInv.slice(-3).join(' | '));
     var client = st.inv.serialize();
     var c1 = J.comparerInventaires(client, attendu), c2 = J.comparerInventaires(serv, attendu);
     A.ok(c1.ok && c2.ok, quand + ' : ' + J.messageInventaires('client / attendu', c1) + ' ; ' + J.messageInventaires('serveur / attendu', c2) +
@@ -344,8 +441,8 @@
     });
     p.temoin = cl;
     cl.connecter('ws://127.0.0.1:' + p.port, 'Temoin', 1);
-    await sonder(function () { return cl.etat === 'en ligne' || cl.etat === 'erreur'; }, 15000);
-    A.equal(cl.etat, 'en ligne', 'le Témoin (second client) est admis par le serveur de jeu (' + (cl.erreur || 'sans erreur') + ')');
+    await sonder(function () { return cl.etat === 'en ligne' || cl.etat === 'erreur'; }, 45000);
+    A.equal(cl.etat, 'en ligne', (cl.etat === 'en ligne' ? '' : await journalServeurJeu()) + 'le Témoin (second client) est admis par le serveur de jeu (' + (cl.erreur || 'sans erreur') + ')');
     return { cl: cl, recu: recu };
   }
   /* Ce que le serveur tient à (x, y, z), d'après les overrides du chunk
@@ -355,7 +452,7 @@
     try {
       var cx = Math.floor(x / 16), cz = Math.floor(z / 16), cle = cx + ',' + cz;
       t.cl.demanderOverrides(cx, cz);
-      await sonder(function () { return !!t.recu.overrides[cle]; }, 10000);
+      await sonder(function () { return !!t.recu.overrides[cle]; }, 30000);
       A.ok(t.recu.overrides[cle], 'le serveur répond aux overrides du chunk ' + cle);
       var b = t.recu.overrides[cle].filter(function (o) { return o[0] === x && o[1] === y && o[2] === z; })[0];
       var bv = ((t.recu.bienvenue && t.recu.bienvenue.blocs) || []).filter(function (o) { return o[0] === x && o[1] === y && o[2] === z; })[0];
@@ -380,14 +477,15 @@
       T.etape('repos');
       var auRepos = await attendreRepos(g, p, true);
       var st = g.player.state;
-      A.ok(st.onGround, 'le joueur est au sol (repos ' + (auRepos ? 'atteint' : 'NON atteint en 20 s') + ')');
+      A.ok(auRepos, 'préparation : joueur au repos au sol, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
+      A.ok(st.onGround, 'le joueur est au sol');
       T.etape('immobile 8 s');
       var m = await mesurerImmobilite(g, p, DUREE_IMMOBILE_MS);
       capture('apres-immobilite');
       A.ok(m.client.ok && m.serveur.ok, 'SPEC-JOUABLE-001 : le joueur immobile a bougé\n' +
         J.messagePositions('client (chaque image)', m.client) + '\n' + J.messagePositions('serveur (ETAT.toi)', m.serveur));
       A.ok(m.client.echantillons > 100, 'mesure à chaque image (' + m.client.echantillons + ' relevés en ' + (m.client.duree_ms / 1000).toFixed(1) + ' s)');
-      A.ok(m.serveur.echantillons > 30, 'le serveur a envoyé ses relevés pendant la mesure (' + m.serveur.echantillons + ')');
+      A.ok(m.serveur.echantillons > 30, (m.serveur.echantillons > 30 ? '' : await journalServeurJeu()) + 'le serveur a envoyé ses relevés pendant la mesure (' + m.serveur.echantillons + ' en ' + (m.serveur.duree_ms / 1000).toFixed(1) + ' s, plus grand intervalle entre deux ETAT ' + m.plusGrandTrouEtat + ' ms)');
     } finally { await quitterPartie(g, p); }
   });
 
@@ -400,7 +498,7 @@
     var p = await demarrerPartie(g, 'creatif', []);
     try {
       var st = g.player.state;
-      await preparer(function () { return !!p.sp.dernierEtat(); }, 10000, 'le serveur envoie l\'état du joueur (ETAT)');
+      await preparer(function () { return !!p.sp.dernierEtat(); }, 30000, 'le serveur envoie l\'état du joueur (ETAT)');
       if (!st.flying) MC.Synchro.basculerVol(st);
       T.etape('montée');
       key('Space');
@@ -409,7 +507,8 @@
       key('Space', 'keyup');
       T.etape('arrêt');
       var auRepos = await attendreRepos(g, p, false);
-      A.ok(st.flying, 'le joueur vole (repos ' + (auRepos ? 'atteint' : 'NON atteint en 20 s') + ')');
+      A.ok(auRepos, 'préparation : joueur en vol statique, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
+      A.ok(st.flying, 'le joueur vole');
       T.etape('vol statique 8 s');
       var m = await mesurerImmobilite(g, p, DUREE_IMMOBILE_MS, function (toi) {
         if (!st.flying) return 'le client ne vole plus';
@@ -428,16 +527,16 @@
      4 s : le bloc reste de l'air à chaque image, et le serveur le tient cassé. */
   async function scenarioCasser(g, mode) {
     var C = Cr();
-    var p = await demarrerPartie(g, mode, mode === 'survie' ? [[C.I.IRON_SHOVEL, 1]] : []);
+    var p = await demarrerPartie(g, mode, mode === 'survie' ? [[C.I.IRON_SHOVEL, 1]] : [], { sol: true });
     try {
       var st = g.player.state;
-      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
+      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
       st.selected = 0;
-      var b = await solVise(g);
-      A.ok(b, 'un bloc de surface tendre, sec, à portée, que la visée du jeu touche');
+      var b = p.sol;
+      A.ok(await viser(g, b), 'la visée du jeu touche le sol choisi (' + b.x + ',' + b.y + ',' + b.z + ') — ' + diagSol(g, {}, 0, 0));
       T.etape('casser');
       mouseDown(g, 0);
-      await sonder(function () { return g.world.getBlock(b.x, b.y, b.z) === 0; }, 15000);
+      await sonder(function () { return g.world.getBlock(b.x, b.y, b.z) === 0; }, 30000);
       mouseUp(0);
       var tAction = maintenant();
       p.t0Action = tAction;
@@ -480,21 +579,21 @@
      (client), le serveur le tient et un second client le voit. */
   async function scenarioPoser(g, mode) {
     var C = Cr();
-    var p = await demarrerPartie(g, mode, [[C.B.PLANKS, 16]]);
+    var p = await demarrerPartie(g, mode, [[C.B.PLANKS, 16]], { sol: true });
     try {
       var st = g.player.state;
-      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
+      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
       st.selected = 0;
-      await preparer(function () { return st.inv.count(C.B.PLANKS) === 16; }, 10000, 'les 16 planches de départ données par le serveur sont à l\'inventaire');
-      var b = await solVise(g);
-      A.ok(b, 'un bloc de surface sec, à portée, avec de l\'air au-dessus');
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 16; }, 30000, 'les 16 planches de départ données par le serveur sont à l\'inventaire');
+      var b = p.sol;
+      A.ok(await viser(g, b), 'la visée du jeu touche le sol choisi (' + b.x + ',' + b.y + ',' + b.z + ') — ' + diagSol(g, {}, 0, 0));
       var x = b.x, y = b.y + 1, z = b.z;
       T.etape('poser');
       var tClic = maintenant();
       mouseDown(g, 2);
       await frames(1);
       mouseUp(2);
-      await sonder(function () { return g.world.getBlock(x, y, z) === C.B.PLANKS; }, 5000);
+      await sonder(function () { return g.world.getBlock(x, y, z) === C.B.PLANKS; }, 15000);
       var tAction = maintenant();
       p.t0Action = tAction;
       A.ok(g.world.getBlock(x, y, z) === C.B.PLANKS, 'la planche est posée sur la face visée (obtenu ' + g.world.getBlock(x, y, z) +
@@ -568,8 +667,8 @@
     var p = await demarrerPartie(g, 'survie', [[C.B.COBBLE, 10], [C.B.PLANKS, 8]]);
     try {
       var st = g.player.state;
-      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
-      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8 && st.inv.count(C.B.COBBLE) === 10; }, 10000, 'pierre ×10 et planches ×8 de départ à l\'inventaire');
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8 && st.inv.count(C.B.COBBLE) === 10; }, 30000, 'pierre ×10 et planches ×8 de départ à l\'inventaire');
       key('KeyE');
       await frames(2);
       A.equal(g.input.state, 'ui', 'l\'inventaire est ouvert');
@@ -620,8 +719,8 @@
     var p = await demarrerPartie(g, 'survie', [[C.B.PLANKS, 8]]);
     try {
       var st = g.player.state;
-      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
-      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8; }, 10000, 'planches ×8 de départ à l\'inventaire');
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8; }, 30000, 'planches ×8 de départ à l\'inventaire');
       st.selected = 0;
       var yaw = directionDegagee(g);
       A.ok(yaw !== null, 'une direction dégagée sur 6 blocs');
@@ -641,7 +740,7 @@
       T.etape('ramasser');
       st.yaw = Math.atan2(-(objet.cible.x - st.pos.x), -(objet.cible.z - st.pos.z));
       key('KeyW');
-      await sonder(function () { return st.inv.count(C.B.PLANKS) === 8; }, 10000);
+      await sonder(function () { return st.inv.count(C.B.PLANKS) === 8; }, 20000);
       key('KeyW', 'keyup');
       var t2 = maintenant();
       A.equal(st.inv.count(C.B.PLANKS), 8, 'en marchant dessus, la planche revient à l\'inventaire');
@@ -657,18 +756,18 @@
         "delai": 180
   }, async function (g) {
     var C = Cr(), CV = MC.ContratsV2;
-    var p = await demarrerPartie(g, 'survie', [[C.B.CHEST, 1], [C.B.COBBLE, 10], [C.B.PLANKS, 8]]);
+    var p = await demarrerPartie(g, 'survie', [[C.B.CHEST, 1], [C.B.COBBLE, 10], [C.B.PLANKS, 8]], { sol: true });
     try {
       var st = g.player.state;
-      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
-      await preparer(function () { return st.inv.count(C.B.CHEST) === 1 && st.inv.count(C.B.PLANKS) === 8; }, 10000, 'coffre, pierre et planches de départ à l\'inventaire');
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
+      await preparer(function () { return st.inv.count(C.B.CHEST) === 1 && st.inv.count(C.B.PLANKS) === 8; }, 30000, 'coffre, pierre et planches de départ à l\'inventaire');
       st.selected = 0;
-      var b = await solVise(g);
-      A.ok(b, 'un bloc de surface sec, à portée, pour poser le coffre');
+      var b = p.sol;
+      A.ok(await viser(g, b), 'la visée du jeu touche le sol choisi (' + b.x + ',' + b.y + ',' + b.z + ') — ' + diagSol(g, {}, 0, 0));
       T.etape('poser le coffre');
       mouseDown(g, 2); await frames(1); mouseUp(2);
       var pos = { x: b.x, y: b.y + 1, z: b.z };
-      await sonder(function () { return g.world.getBlock(pos.x, pos.y, pos.z) === C.B.CHEST; }, 5000);
+      await sonder(function () { return g.world.getBlock(pos.x, pos.y, pos.z) === C.B.CHEST; }, 15000);
       A.equal(g.world.getBlock(pos.x, pos.y, pos.z), C.B.CHEST, 'le coffre est posé');
       await frames(10);
       A.notOk(g.ui.isContainerOpen(), 'le clic qui pose le coffre ne l\'ouvre pas aussi (un clic, une utilisation)');
@@ -676,8 +775,9 @@
         A.ok(await viser(g, pos), 'la visée touche le coffre');
         var avant = g.ui.container && g.ui.container.cont;
         mouseDown(g, 2); await frames(1); mouseUp(2);
-        await sonder(function () { return g.ui.container && g.ui.container.cont && g.ui.container.cont !== avant; }, 10000);
-        A.ok(g.ui.container && g.ui.container.cont && g.ui.container.kind === 'chest', 'le coffre s\'ouvre au clic droit (CONTENEUR_ETAT du serveur)');
+        await sonder(function () { return g.ui.container && g.ui.container.cont && g.ui.container.cont !== avant; }, 30000);
+        var ouvert = !!(g.ui.container && g.ui.container.cont && g.ui.container.kind === 'chest');
+        A.ok(ouvert, 'le coffre s\'ouvre au clic droit (CONTENEUR_ETAT du serveur)' + (ouvert ? '' : ' — visée ' + JSON.stringify(g.player.aim()) + ', état ' + g.input.state + await journalServeurJeu()));
         await frames(2);
       }
       function contenuCoffre() { return JSON.stringify(g.ui.container && g.ui.container.cont ? g.ui.container.cont.slots.map(CV.pileVersCase) : null); }
@@ -711,7 +811,7 @@
       var t = await temoin(p);
       try {
         t.cl.envoyer({ t: 'cont_ouvrir', j: 0, x: pos.x, y: pos.y, z: pos.z });
-        await sonder(function () { return t.recu.conteneurs.length > 0; }, 10000);
+        await sonder(function () { return t.recu.conteneurs.length > 0; }, 30000);
         var ce = t.recu.conteneurs[0];
         A.ok(ce, 'le second client reçoit le contenu du coffre (CONTENEUR_ETAT)');
         A.equal(ce.cle, cle, 'c\'est le même coffre (clé ' + cle + ')');

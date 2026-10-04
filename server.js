@@ -2129,6 +2129,7 @@ function traiterServeurHistoireTest(req, res) {
    d'un joueur tel que le SERVEUR le tient (GET /tests/serveur-jeu/inventaire?nom=…), indépendamment
    de ce que le client affiche. */
 let serveurJeuTest = null;
+let journalJeuTest = '';            // sortie du dernier serveur de jeu de test (bornée), gardée après son arrêt
 function arreterServeurJeuTest() {
   if (serveurJeuTest) { try { serveurJeuTest.enfant.kill(); } catch (e) { /* déjà parti */ } serveurJeuTest = null; }
 }
@@ -2137,6 +2138,10 @@ function traiterServeurJeuTest(req, res) {
   const refus = refusRequeteLocale(req);
   if (refus) { repondreJSON(res, 403, { ok: false, motif: refus }); return true; }
   const chemin = req.url.split('?')[0];
+  if (chemin === '/tests/serveur-jeu/journal') {
+    repondreJSON(res, 200, { ok: true, journal: journalJeuTest });
+    return true;
+  }
   if (chemin === '/tests/serveur-jeu/arreter') {
     if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
     const avait = !!serveurJeuTest;
@@ -2150,7 +2155,7 @@ function traiterServeurJeuTest(req, res) {
     if (!sj || !sj.port) { repondreJSON(res, 409, { ok: false, motif: 'aucun_serveur_de_jeu' }); return true; }
     const nom = new URL(req.url, 'http://localhost').searchParams.get('nom') || '';
     const rq = require('http').get({ host: '127.0.0.1', port: sj.port, path: '/admin/api/inventaire?nom=' + encodeURIComponent(nom),
-      headers: { Authorization: 'Bearer ' + sj.jeton, Host: '127.0.0.1:' + sj.port }, timeout: 5000 }, (r2) => {
+      headers: { Authorization: 'Bearer ' + sj.jeton, Host: '127.0.0.1:' + sj.port }, timeout: 15000 }, (r2) => {
       let brut = '';
       r2.on('data', (d) => { brut += d; });
       r2.on('end', () => {
@@ -2204,13 +2209,16 @@ function traiterServeurJeuTest(req, res) {
       const m = /MC_PORT=(\d+)/.exec(sortie);
       if (!m) return;
       enfant.stdout.removeListener('data', ecouteSortie);
-      enfant.stdout.on('data', () => {});
       sortie = '';
       sj.port = parseInt(m[1], 10);
       repondre(200, { ok: true, port: sj.port, mode, difficulte, graine });
     };
+    // le journal du serveur de jeu, borné (les 32 derniers Kio), relu par le banc pour expliquer un échec
+    const garder = (d) => { journalJeuTest = (journalJeuTest + d).slice(-32768); };
+    journalJeuTest = '';
+    enfant.stdout.on('data', garder);
     enfant.stdout.on('data', ecouteSortie);
-    enfant.stderr.on('data', () => {});
+    enfant.stderr.on('data', garder);
     enfant.on('exit', () => { if (serveurJeuTest === sj) serveurJeuTest = null; repondre(500, { ok: false, motif: 'serveur_arrete' }); });
   });
   return true;
@@ -5160,6 +5168,17 @@ function adressesReseau() {
    jetable au réseau : il n'écoute alors que la boucle locale. */
 const BOUCLE_LOCALE_TEST = process.env.MC_TEST_BOUCLE_LOCALE === '1';
 if (BOUCLE_LOCALE_TEST) setImmediate(() => journal('ATTENTION : MC_TEST_BOUCLE_LOCALE actif — règles du mode ouvert, écoute sur la boucle locale seulement (réglage de test, jamais en exploitation)'));
+/* Diagnostic des e2e de jouabilité : une boucle d'évènements bloquée (le
+   serveur ne tique plus, n'envoie plus d'ETAT, ne répond plus) est datée et
+   chiffrée dans le journal, que le banc relit (GET /tests/serveur-jeu/journal). */
+if (BOUCLE_LOCALE_TEST) {
+  let attendu = Date.now() + 250;
+  setInterval(() => {
+    const retard = Date.now() - attendu;
+    if (retard > 400) journal(`boucle bloquée ${retard} ms (joueurs ${clients.size}, chunks ${monde.chunks ? monde.chunks.size : '?'})`);
+    attendu = Date.now() + 250;
+  }, 250);
+}
 /* Ouvre les écouteurs du mode courant sur `port` (0 = éphémère) et renvoie le
    port réel. Lève l'erreur d'écoute (EADDRINUSE…) sans rien laisser ouvert. */
 async function ouvrirEcoute(port) {
