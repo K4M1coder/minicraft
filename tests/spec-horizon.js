@@ -535,6 +535,29 @@
       A.ok(file.length >= 300 - acceptees - 61, 'ensuite, une seconde réelle pour une seconde de jeu (' + file.length + ' restantes)');
     });
 
+    /* Revue adversariale : mort, la file gardée pleine faisait monter le crédit
+       jusqu'à la durée de toute la file (60 s), dépensée d'un coup à la
+       renaissance — 134 blocs en un tic. */
+    it('SPEC-SYNC-004 : mort puis rafale — aucun crédit ne s\'accumule pendant la mort, ni file pleine ni temps qui passe', function () {
+      var c = couple(), file = [], budget = SY.creerBudget(), s = 0;
+      var pleine = function () { while (file.length < SY.MAX_EN_ATTENTE) SY.empilerEntree(file, { s: ++s, dt: 0.1, k: 1, yaw: 0, pitch: 0, v: 0 }); };
+      c.serveur.state.dead = true;
+      for (var i = 0; i < 1800; i++) { pleine(); SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0); }   // 30 s de mort, file toujours pleine
+      A.ok(budget.credit <= SY.RESERVE * 2 + 1e-9, 'crédit borné à la réserve pendant la mort (' + budget.credit.toFixed(3) + ')');
+      A.equal(file.length, 0, 'les entrées d\'un mort sont jetées');
+      c.serveur.state.dead = false;
+      var p0 = { x: c.serveur.state.pos.x, z: c.serveur.state.pos.z };
+      pleine();
+      var r = SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0);
+      A.ok(r.avance <= SY.RESERVE * 2 + 1 / 60 + 1e-9, 'premier tic après la renaissance : au plus la réserve et le temps écoulé (' + r.avance.toFixed(3) + ' s)');
+      var d = Math.hypot(c.serveur.state.pos.x - p0.x, c.serveur.state.pos.z - p0.z);
+      A.ok(d < 3, 'pas de téléportation (' + d.toFixed(2) + ' blocs)');
+      // file gardée pleine longtemps sans mort : jamais plus que le temps réel + la réserve
+      var total = r.avance;
+      for (var k = 0; k < 600; k++) { pleine(); total += SY.avancerEntrees(c.serveur, file, budget, 1 / 60, 0).avance; }
+      A.ok(total <= 601 / 60 + SY.RESERVE * 2 + 1e-6, 'file pleine pendant 10 s : au plus 10 s + réserve (' + total.toFixed(3) + ' s)');
+    });
+
     it('SPEC-SYNC-004 : une entrée invalide ne bloque pas la file, et la file est bornée comme celle du client', function () {
       var c = couple(), file = [], budget = SY.creerBudget();
       [0, -0.01, 5, 1 / 60].forEach(function (dt, i) { SY.empilerEntree(file, { s: i + 1, dt: dt, k: 0, yaw: 0, pitch: 0, v: 0 }); });

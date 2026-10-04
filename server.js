@@ -3025,7 +3025,8 @@ function traiter(c, m) {
 
     case NP.MSG.ENTREE: {
       const js = c.joueurs && c.joueurs[m.j];
-      if (!js) break;
+      // un mort ne rejoue rien : ses entrées ne sont pas gardées pour après la renaissance
+      if (!js || js.joueur.state.dead) break;
       // un client qui inonde le serveur perd ses entrées les plus anciennes (au-delà de SY.MAX_EN_ATTENTE)
       SY.empilerEntree(js.entrees, m);
       break;
@@ -3127,6 +3128,7 @@ function traiter(c, m) {
       if (!js || !js.joueur.state.dead) break;
       js.joueur.respawn(lieuRenaissance(js, m.j));
       js.entrees.length = 0;
+      js.budget = SY.creerBudget();                  // la renaissance repart de la réserve normale, rien d'accumulé
       js.attaqueCd = 0; js.tirCd = 0;
       break;
     }

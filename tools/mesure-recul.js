@@ -182,12 +182,18 @@ async function mesurer(o) {
   const env = Object.assign({}, process.env, {
     MESURE_SORTIE: fichierStats, MESURE_BLOCAGE: o.blocage || '', MC_GRAINE: String(o.graine), MC_MODE: 'survie',
     MC_DIFFICULTE: 'paisible', MC_TEST_ARRET_SI_MORT: String(process.pid), MC_SAUVEGARDE_MS: '3600000',
-    MC_JOURNAL_DOSSIER: path.join(os.tmpdir(), 'mesure-recul-logs'),
+    MC_JOURNAL_DOSSIER: path.join(os.tmpdir(), 'mesure-recul-logs-' + process.pid + '-' + port),   // supprimé à la fin
   });
-  // le monde du serveur jetable va dans un dossier temporaire (pas dans parties/ de l'arbre mesuré)
+  /* Le monde du serveur jetable va dans un dossier temporaire, jamais dans
+     parties/ de l'arbre mesuré. Seuls les arbres antérieurs à --dossier-parties
+     (avant L50) ne l'acceptent pas : un paramètre inconnu y arrêterait le
+     serveur ; ils écrivent alors dans leur propre parties/ (clone jetable). */
   const dossierParties = path.join(os.tmpdir(), 'mesure-recul-parties-' + process.pid + '-' + port);
   let args = [];
-  try { if (/dossier-parties/.test(fs.readFileSync(path.join(racine, 'src', 'parametres.js'), 'utf8'))) args = ['--dossier-parties', dossierParties]; } catch (e) { /* ancien arbre */ }
+  let accepte = false;
+  try { accepte = /dossier-parties/.test(fs.readFileSync(path.join(racine, 'src', 'parametres.js'), 'utf8')); } catch (e) { /* ancien arbre */ }
+  if (accepte) args = ['--dossier-parties', dossierParties];
+  else if (path.resolve(racine) === path.resolve(__dirname, '..')) throw new Error('cet arbre ne connaît pas --dossier-parties : refus d\'écrire dans ses parties/');
   const charge = o.charge > 0 ? lancerCharge(o.charge) : null;
   const srv = await lancerServeur(racine, port, env, args);
   let cl = null, iv = null;
@@ -273,6 +279,13 @@ async function mesurer(o) {
     let stats = null;
     await dodo(600);
     try { stats = JSON.parse(fs.readFileSync(fichierStats, 'utf8')); } catch (e) { stats = null; }
+    /* Le préchargement reconnaît la boucle de simulation à son texte (/dernier/ et
+       /0\.25/). Si server.js change de forme, il ne l'enveloppe plus : sans tics
+       relevés ni blocage injecté, la mesure serait fausse — on le dit clairement. */
+    if (!stats || !stats.enveloppe) {
+      throw new Error('mesure-recul : boucle de simulation de server.js introuvable par le préchargement (motifs /dernier/ et /0\\.25/ dans le corps du setInterval) — ' +
+        'adapter tools/mesure-recul-preload.js ; ni tics serveur relevés ni blocage injecté');
+    }
 
     const corr = releves.filter(r => r.n > o.seuil);
     const reculs = releves.filter(r => r.recul > o.seuil);
@@ -314,6 +327,7 @@ async function mesurer(o) {
     if (charge) charge.arreter();
     try { fs.unlinkSync(fichierStats); } catch (e) { /* absent */ }
     try { fs.rmSync(dossierParties, { recursive: true, force: true }); } catch (e) { /* tant pis */ }
+    try { fs.rmSync(env.MC_JOURNAL_DOSSIER, { recursive: true, force: true }); } catch (e) { /* tant pis */ }
   }
 }
 

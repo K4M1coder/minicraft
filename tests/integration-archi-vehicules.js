@@ -431,9 +431,16 @@ async function scenarioPersistance() {
     ok(!!revenu, 'SPEC-SERVEUR-006 : après la relance, le camion est de retour dans le monde');
     ok(revenu && vAvant && Math.abs(revenu.x - vAvant.x) < 0.05 && Math.abs(revenu.z - vAvant.z) < 0.05, 'SPEC-SERVEUR-006 : à la même position (' + (revenu && revenu.x) + ',' + (revenu && revenu.z) + ')');
     ok(revenu && revenu.ca !== undefined && Math.abs(revenu.ca - v0[6]) < 0.1, 'avec le même carburant');
-    /* Le Visiteur apparaît au point d'apparition ; le camion est là où le tour de
-       conduite l'a laissé (la distance dépend de la cadence réelle des entrées) :
-       il marche jusqu'à portée (6 blocs) avant d'ouvrir la soute et d'y monter. */
+    /* Le Visiteur apparaît au point d'apparition, à 2 blocs du coffre posé : il
+       l'ouvre d'abord, sur place. Le camion, lui, est là où le tour de conduite
+       l'a laissé (2 ou 9 m selon l'instant où la descente a été traitée parmi les
+       entrées) : il marche ensuite jusqu'à lui (portée 6 blocs, mesurée depuis sa
+       position réelle) pour ouvrir la soute et y monter. */
+    const etatCb = prochain(cb, 'cont_etat', 15000);
+    cb.envoyer({ t: 'cont_ouvrir', j: 0, x: cCoffre.x, y: cCoffre.y, z: cCoffre.z });
+    const csC = await etatCb;
+    ok(!!csC && csC.slots[2] && csC.slots[2][0] === I.DIAMOND && csC.slots[2][1] === 3, 'SPEC-SERVEUR-006 : le coffre posé restitue lui aussi son contenu exact (3 diamants en case 2)');
+    cb.envoyer({ t: 'cont_fermer', j: 0, cle: csC && csC.cle });
     if (revenu) {
       const pV = toi(cb), dV = Math.hypot(revenu.x - pV.x, revenu.z - pV.z);
       if (dV > 3) {
@@ -446,10 +453,6 @@ async function scenarioPersistance() {
     const cs = await etatB;
     ok(!!cs && cs.slots[5] && cs.slots[5][0] === I.DIAMOND && cs.slots[5][1] === 9, 'SPEC-SERVEUR-006 : la soute restitue son contenu exact (9 diamants en case 5)', 'camion ' + JSON.stringify(vAvant && { x: vAvant.x, z: vAvant.z }) + ', visiteur ' + JSON.stringify(toi(cb) && { x: toi(cb).x, z: toi(cb).z }) + ', réponse ' + JSON.stringify(cs && cs.slots && cs.slots[5]));
     cb.envoyer({ t: 'cont_fermer', j: 0, cle: cs && cs.cle });
-    const etatCb = prochain(cb, 'cont_etat', 15000);
-    cb.envoyer({ t: 'cont_ouvrir', j: 0, x: cCoffre.x, y: cCoffre.y, z: cCoffre.z });
-    const csC = await etatCb;
-    ok(!!csC && csC.slots[2] && csC.slots[2][0] === I.DIAMOND && csC.slots[2][1] === 3, 'SPEC-SERVEUR-006 : le coffre posé restitue lui aussi son contenu exact (3 diamants en case 2)');
     // il est de nouveau utilisable : on y monte
     const mt = evt(cb, 'monte', 15000);
     cb.envoyer({ t: 'vehicule_monter', j: 0, eid: revenu && revenu.e });

@@ -208,6 +208,12 @@
         credit -= dt;
         return true;
       },
+      /* Après chaque tic : ce qui n'a pas été consommé retombe sous la réserve.
+         Le plafond « attente » de crediter ne vaut que pour des entrées rejouées
+         DANS CE tic ; sans cette borne, un joueur qui ne peut pas consommer (mort,
+         file gardée pleine…) accumulait jusqu'à la durée de sa file entière, puis
+         la dépensait d'un coup : téléportation (revue adversariale). */
+      borner: function () { if (credit > RESERVE * 2) credit = RESERVE * 2; return credit; },
       get credit() { return credit; },
     };
   }
@@ -228,12 +234,25 @@
      couvre, écarte celles qui ne passeront jamais (durée nulle, négative ou
      trop longue : en tête de file, elles la bloquaient). Rend
      { dernier, avance } : la dernière entrée traitée et le temps simulé. */
+  /* Borne du rattrapage : au plus MAX_REJEUX_PAR_TIC rejeux par joueur et par
+     tic (la file entière ; mesuré ≈ 5,5 ms pour 600 entrées à pied). */
+  var MAX_REJEUX_PAR_TIC = MAX_EN_ATTENTE;
   function avancerEntrees(joueur, file, budget, dtReel, dernier) {
+    var st = joueur.state, avance = 0, n = 0;
+    /* Un joueur qui ne peut rien rejouer (mort) : ses entrées sont jetées et son
+       crédit ne dépasse pas la réserve — rien ne s'accumule pour plus tard. */
+    if (st.dead) {
+      file.length = 0;
+      budget.crediter(dtReel, 0);
+      budget.borner();
+      return { dernier: dernier, avance: 0 };
+    }
     var attente = 0;
     for (var i = 0; i < file.length; i++) if (dureeValide(file[i].dt)) attente += file[i].dt;
     budget.crediter(dtReel, attente);
-    var st = joueur.state, avance = 0;
     for (;;) {
+      if (n >= MAX_REJEUX_PAR_TIC) break;
+      n++;
       while (file.length && !dureeValide(file[0].dt)) file.shift();
       if (!file.length || st.dead || !budget.consommer(file[0].dt)) break;
       var e = file.shift();
@@ -241,6 +260,7 @@
       dernier = e.s;
       avance += e.dt;
     }
+    budget.borner();
     return { dernier: dernier, avance: avance };
   }
 
@@ -310,6 +330,6 @@
   MC.Synchro = { appliquerBloc: appliquerBloc, spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
                  peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
-                 creerBudget: creerBudget, empilerEntree: empilerEntree, avancerEntrees: avancerEntrees, MAX_EN_ATTENTE: MAX_EN_ATTENTE, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
+                 creerBudget: creerBudget, empilerEntree: empilerEntree, avancerEntrees: avancerEntrees, MAX_EN_ATTENTE: MAX_EN_ATTENTE, MAX_REJEUX_PAR_TIC: MAX_REJEUX_PAR_TIC, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
                  DT_MAX: DT_MAX, RESERVE: RESERVE, arrondi: arrondi };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

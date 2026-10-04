@@ -18,13 +18,14 @@ const sortie = process.env.MESURE_SORTIE;
 const blocage = (process.env.MESURE_BLOCAGE || '').split(':').map(Number);
 const periodeBlocage = blocage[0] > 0 ? blocage[0] : 0, dureeBlocage = blocage[1] > 0 ? blocage[1] : 0;
 
-const stats = { tics: 0, ecarts: [], perduMs: 0, maxEcartMs: 0, maxTicMs: 0, blocages: 0, ticsLongs: 0 };
+const stats = { enveloppe: false, tics: 0, ecarts: [], perduMs: 0, maxEcartMs: 0, maxTicMs: 0, blocages: 0, ticsLongs: 0 };
 const origSetInterval = global.setInterval;
 let enveloppe = false;
 global.setInterval = function (fn, ms) {
   const args = Array.prototype.slice.call(arguments, 2);
   if (!enveloppe && typeof fn === 'function' && /dernier/.test(String(fn)) && /0\.25/.test(String(fn))) {
     enveloppe = true;
+    stats.enveloppe = true;
     let precedent = null, prochainBlocage = performance.now() + (periodeBlocage || 0);
     stats.longs = [];
     return origSetInterval(function () {
