@@ -1125,7 +1125,13 @@
       circuits.forEach(function (p) { if (estCharge(p[0], p[2])) positions.push(p); });
       if (!positions.length) return [];
       var api = { getBlock: getBlock, getEtat: getEtat, setEtat: setEtat, setBlock: setBlock };
-      return MC.Circuits.tick(positions, api, ctx || {});
+      ctx = ctx || {};
+      // SPEC-MECA-002 / SPEC-VENT-001 : l'éolienne lit le vent du climat de CE
+      // monde (déterministe), sauf si l'appelant en impose un autre.
+      if (ctx.ventEn === undefined && ctx.vent === undefined && meteo && meteo.ventEn) {
+        ctx = Object.assign({}, ctx, { ventEn: meteo.ventEn });
+      }
+      return MC.Circuits.tick(positions, api, ctx);
     }
 
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
@@ -1141,7 +1147,7 @@
       }
       if (MC.Circuits && !(opts && opts.circuits === false)) {
         circuitsT += dt;
-        if (circuitsT >= 0.2) { circuitsT = 0; tickCircuits(opts && opts.circuitsCtx); }
+        if (circuitsT >= 0.2) { circuitsT = 0; tickCircuits(opts && (opts.circuitsCtx || (opts.temps !== undefined ? { temps: opts.temps } : undefined))); }
       }
       var temps = opts && opts.temps;
       var surBloc = opts && opts.surBloc;   // SPEC-ARCHI-034 : le serveur diffuse ce que le monde fait pousser ou brûler

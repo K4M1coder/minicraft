@@ -166,6 +166,28 @@
     });
   });
 
+  describe('SPEC-MECA-002 : éolienne et vent du monde (tic SANS contexte vent, comme le serveur)', function () {
+    it('SPEC-MECA-002 : le tic de circuits sans vent explicite ne lève pas et alimente avec le vent réel de l’altitude', function () {
+      var w = MC.createWorld(20261004);
+      w.getChunk(0, 0, true);
+      var y = 120, t = 3000;
+      w.setBlock(4, y, 4, B.EOLIENNE);
+      var attendu = K.puissanceEolienne(w.meteo.ventEn(t, y), y, 128);
+      A.gt(attendu, 0, 'à cette altitude et à cet instant le vent du climat fait tourner l’éolienne');
+      // exactement le contexte du serveur : `temps` seulement
+      w.tickCircuits({ temps: t });
+      A.equal(w.getEtat(4, y, 4), attendu, 'l’éolienne produit selon le vent du monde à son altitude');
+      // repli sûr : sans météo ni vent, jamais d’exception, vent nul
+      var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+      var saveM = MC.Meteo;
+      MC.Meteo = undefined;
+      try {
+        K.tick([[4, y, 4, B.EOLIENNE]], api, { temps: t });
+      } finally { MC.Meteo = saveM; }
+      A.equal(w.getEtat(4, y, 4), 0, 'vent indisponible : production nulle, sans exception');
+    });
+  });
+
   describe('SPEC-MECA-003 : batteries', function () {
     it('SPEC-MECA-003 : la batterie charge et décharge à débit borné, et son niveau reste dans les limites', function () {
       var r1 = K.tickBatterie(0, 15, 10, 0, 4);

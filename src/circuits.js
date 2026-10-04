@@ -371,9 +371,14 @@
         nouvelEtat = appareil(ctx.energieDisponible !== false, bruts.some(Boolean)) ? 1 : 0;
       } else if (t === 'eolienne') {
         // le vent DE SON ALTITUDE (SPEC-VENT-001) : `ctx.vent` permet de rejouer
-        // une situation précise en test, sinon on l'interroge nous-mêmes.
-        var vent = ctx.vent !== undefined ? ctx.vent
-                 : (MC.Meteo ? MC.Meteo.ventEn(ctx.temps || 0, b.y) : null);
+        // une situation précise en test ; sinon `ctx.ventEn(temps, y)` (la
+        // fonction de vent du climat du monde, fournie par world.tickCircuits).
+        // Jamais d'exception : sans vent disponible, vent nul.
+        var vent = null;
+        if (ctx.vent !== undefined) vent = ctx.vent;
+        else if (typeof ctx.ventEn === 'function') {
+          try { vent = ctx.ventEn(ctx.temps || 0, b.y); } catch (e) { vent = null; }
+        }
         nouvelEtat = puissanceEolienne(vent, b.y, ctx.altitudeMax || 128);
       } else if (t === 'hydraulique') {
         // le courant local (SPEC-EAU-002) : le plus fort niveau d'eau voisin
