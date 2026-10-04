@@ -140,6 +140,9 @@
      n'aurait jamais dû pouvoir commettre. */
   function pileIds(p, conv) { if (Array.isArray(p) && typeof p[0] === 'number' && p[0]) p[0] = conv(p[0]); }
   function pilesIds(l, conv) { if (Array.isArray(l)) l.forEach(function (p) { pileIds(p, conv); }); }
+  // un champ mal formé (pas un tableau) est laissé tel quel, jamais une exception :
+  // un import ne doit pas rejeter toute la partie pour un champ abîmé
+  function liste(l) { return Array.isArray(l) ? l : []; }
   // un objet dont les CLÉS sont des ids (stocks de l'économie) : renommées
   function clesIds(o, conv) {
     if (!o || typeof o !== 'object') return o;
@@ -178,16 +181,16 @@
       if (p.equip && typeof p.equip === 'object') Object.keys(p.equip).forEach(function (s) { pileIds(p.equip[s], conv); });
     },
     banque: function (b, conv) { pilesIds(b, conv); },
-    chests: function (l, conv) { (l || []).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
-    distributeurs: function (l, conv) { (l || []).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
+    chests: function (l, conv) { liste(l).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
+    distributeurs: function (l, conv) { liste(l).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
     furnaces: function (l, conv) {
-      (l || []).forEach(function (f) { if (f) [1, 2, 3].forEach(function (i) { pileIds(f[i], conv); }); });
+      liste(l).forEach(function (f) { if (f) [1, 2, 3].forEach(function (i) { pileIds(f[i], conv); }); });
     },
     // soute : 6e champ de chaque véhicule (MC.Vehicules.serialiser)
-    vehicules: function (l, conv) { (l || []).forEach(function (v) { if (Array.isArray(v)) pilesIds(v[5], conv); }); },
+    vehicules: function (l, conv) { liste(l).forEach(function (v) { if (Array.isArray(v)) pilesIds(v[5], conv); }); },
     // présentoirs et socles : [clé, id, n, data]
     expositions: function (l, conv) {
-      (l || []).forEach(function (e) { if (Array.isArray(e) && typeof e[1] === 'number' && e[1]) e[1] = conv(e[1]); });
+      liste(l).forEach(function (e) { if (Array.isArray(e) && typeof e[1] === 'number' && e[1]) e[1] = conv(e[1]); });
     },
     // récit : seuls les indices d'objet d'une enquête portent un id d'objet ;
     // l'épopée ne garde que des clés de chapitres, la colonie des ids de BLOC
@@ -220,7 +223,10 @@
     });
     return data;
   }
-  /* Champs de `data` (et de `data.player`) absents du classement. */
+  /* Champs de `data` (et de `data.player`) absents du classement. Conçu pour
+     la SORTIE de `serialize` (format courant) : c'est elle que le test de
+     classement lui passe ; une sauvegarde ancienne ou forgée n'a pas à y
+     être soumise. */
   function champsNonClasses(data) {
     var manquants = Object.keys(data || {}).filter(function (k) { return !CHAMPS_IDS.hasOwnProperty(k); });
     if (data && data.player && typeof data.player === 'object') {
@@ -234,10 +240,13 @@
   /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés vers
      128 pour laisser la place à de nouveaux blocs. Étape intermédiaire :
      produit une sauvegarde v2 (128..255), que migrerV2 convertit ensuite
-     vers le nouvel espace 16 bits. */
+     vers le nouvel espace 16 bits. Idempotente : sans effet sur une
+     sauvegarde qui n'est pas v1, et ne convertit que l'ancien espace
+     d'objets (64..127). */
   function migrerV1(data) {
+    if (!data || data.v !== 1) return data;
     var dec = MC.Core.DECALAGE_OBJETS_V1;
-    migrerIdsObjets(data, function (v) { return v >= 64 ? v + dec : v; });
+    migrerIdsObjets(data, function (v) { return v >= dec && v < MC.Core.ANCIEN_FIRST_ITEM ? v + dec : v; });
     data.v = 2;
     return data;
   }
@@ -246,10 +255,14 @@
      bougent pas (1..127, inchangés dans le nouvel espace) ; tous les objets
      (inventaire, coffres, fours, banque, soutes, indices d'enquête…) sont
      décalés vers MC.Core.FIRST_ITEM. Une sauvegarde de ce format n'a jamais
-     connu d'état de bloc : `etats` est simplement absent (aucun état). */
+     connu d'état de bloc : `etats` est simplement absent (aucun état).
+     Idempotente : sans effet sur une sauvegarde qui n'est pas v2 (une v3
+     peut porter le bloc 200, ancien id de la carte), et ne convertit que
+     l'ancien espace d'objets (128..255). */
   function migrerV2(data) {
-    var off = MC.Core.FIRST_ITEM - MC.Core.ANCIEN_FIRST_ITEM;
-    migrerIdsObjets(data, function (v) { return v >= MC.Core.ANCIEN_FIRST_ITEM ? v + off : v; });
+    if (!data || data.v !== 2) return data;
+    var ancien = MC.Core.ANCIEN_FIRST_ITEM, off = MC.Core.FIRST_ITEM - ancien;
+    migrerIdsObjets(data, function (v) { return v >= ancien && v < 2 * ancien ? v + off : v; });
     data.v = 3;
     return data;
   }

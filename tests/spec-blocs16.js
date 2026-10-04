@@ -148,11 +148,21 @@
     });
   });
 
-  /* Correctif de la migration v1/v2 → v3 (défauts D1, D2, D3 de
-     docs/l40-blocs-16-bits-proposition.md) : la banque, les soutes des
+  /* Correctif de la migration v1/v2 → v3 : la banque, les soutes des
      véhicules et les indices d'objet d'une enquête n'étaient pas
-     renumérotés. Les sauvegardes sont forgées à la main, aux valeurs
-     d'origine lisibles (aucune vraie sauvegarde ancienne n'existe). */
+     renumérotés (audit L40 du 2026-10-03). La plupart des sauvegardes sont
+     forgées à la main, aux valeurs d'origine lisibles ; `V2_REELLE`, elle,
+     a été écrite par le code de 9f92f99^ (dernier client v2), sans retouche. */
+  var V2_REELLE = {"v":2,"seed":4242,"time":321,"overrides":[[1,40,1,24]],"crops":[],"donjons":[],"pilles":[],"explores":[],"reperes":[],"suivi":0,"reputation":{"village":0,"pillards":-60,"morts":-100,"betes":0},"banque":[[158,7],[200,1],[10,5],0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"pnjsMorts":[],"histoire":{"archetype":"enquete","enquete":{"params":{},"depart":{"id":"v1","nom":"Bourg","x":10,"z":10},"crime":"vol_tresor","suspects":[{"id":"p2","nom":"Lise","role":"forgeron","alibi":{"lieu":"v1","lieuNom":"Bourg","heure":"à l'aube"},"mobile":"la peur d'être démasqué"},{"id":"p5","nom":"Marc","role":"garde","alibi":{"lieu":"v1","lieuNom":"Bourg","heure":"en matinée"},"mobile":"une dette de jeu"},{"id":"p3","nom":"Paul","role":"aubergiste","alibi":{"lieu":"v1","lieuNom":"Bourg","heure":"l'après-midi"},"mobile":"une vieille rancune"},{"id":"p1","nom":"Jean","role":"fermier","alibi":{"lieu":"v1","lieuNom":"Bourg","heure":"en matinée"},"mobile":"une dette de jeu"},{"id":"p4","nom":"Anne","role":"tisserand","alibi":{"lieu":"v1","lieuNom":"Bourg","heure":"à midi"},"mobile":"la vengeance"}],"coupableId":"p3","indices":[{"id":"temoin0","type":"temoignage","pnj":"p3","nom":"Paul","texte":"Interrogez Paul.","obtenu":false},{"id":"temoin1","type":"temoignage","pnj":"p5","nom":"Marc","texte":"Interrogez Marc.","obtenu":false},{"id":"temoin2","type":"temoignage","pnj":"p4","nom":"Anne","texte":"Interrogez Anne.","obtenu":false},{"id":"temoin3","type":"temoignage","pnj":"p2","nom":"Lise","texte":"Interrogez Lise.","obtenu":false},{"id":"objet0","type":"objet","objet":200,"texte":"Retrouvez carte abandonné sur la scène.","obtenu":false},{"id":"objet1","type":"objet","objet":200,"texte":"Retrouvez carte abandonné sur la scène.","obtenu":false},{"id":"contradiction0","type":"contradiction","a":"temoin0","b":"temoin1","texte":"Recoupez deux témoignages qui se contredisent.","obtenu":false}],"rebondissement":"fuite","chapitres":["crime","enquete","rebondissement","accusation"],"chap":1,"commence":true,"accusation":null,"fin":null,"journal":["Chapitre : Le vol du trésor","Chapitre : L'enquête"]}},"vehicules":[["camion",5.5,40,5.5,0,[[130,9],[5,4],[128,16],0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]]],"succes":null,"player":{"x":4.5,"y":60,"z":4.5,"yaw":0,"pitch":0,"hp":17,"hunger":20,"air":10,"selected":0,"flying":false,"inv":[[129,10],[140,1,37],[200,1],[7,20],[159,3],0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]},"chests":[["1,40,1",[[137,5],[8,12],[161,4],0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]]],"furnaces":[["2,40,2",[134,3],[129,4],[135,2],3.5,1.25]]};
+  // ce que contenait cette partie, nommé par le code de l'époque (C.nameOf de 9f92f99^)
+  var V2_REELLE_NOMS = {
+    inv: [['Charbon', 10], ['Pioche en fer', 1], ['Carte', 1], ['Planche', 20], ['Diamant', 3]],
+    coffre: [['Émeraude', 5], ['Pavé', 12], ['Os', 4]],
+    four: [['Mouton cru', 3], ['Charbon', 4], ['Mouton cuit', 2]],
+    banque: [["Lingot d'or", 7], ['Carte', 1], ['Verre', 5]],
+    soute: [['Lingot de fer', 9], ['Tronc', 4], ['Bâton', 16]],
+    indices: ['Carte', 'Carte'],
+  };
   describe('Specs — SPEC-SAVE-017 : migration de TOUS les ids d\'objet', function () {
     var OFF_V2 = C.FIRST_ITEM - C.ANCIEN_FIRST_ITEM;      // 128 → 4096
     var DEC_V1 = C.DECALAGE_OBJETS_V1;                     // 64 → 128
@@ -238,7 +248,67 @@
       A.equal(f.extras.histoire.enquete.indices[0].objet, I.EMERALD, 'indice d\'enquête importé migré');
     });
 
-    it('SPEC-SAVE-017 : aucun champ porteur d\'objet n\'échappe à la migration v2, et migrer deux fois ne décale pas deux fois', function () {
+    it('SPEC-SAVE-017 : une vraie sauvegarde v2 (écrite par le client de 9f92f99^) se recharge sans perte', function () {
+      function noms(piles) {
+        return piles.filter(Boolean).map(function (s) { return [C.nameOf(s[0]), s[1]]; });
+      }
+      var avant = copie(V2_REELLE);
+      var e = G.etatMinimal(4242);
+      A.ok(MC.Save.apply(V2_REELLE, e), 'chargée');
+      A.deep(V2_REELLE, avant, 'la donnée d\'origine n\'est pas modifiée');
+      var d = MC.Save.serialize(e);
+      A.deep(noms(d.player.inv), V2_REELLE_NOMS.inv, 'inventaire');
+      A.equal(d.player.inv[1][2], 37, 'usure de la pioche conservée');
+      A.deep(noms(d.chests[0][1]), V2_REELLE_NOMS.coffre, 'coffre');
+      A.deep(noms([d.furnaces[0][1], d.furnaces[0][2], d.furnaces[0][3]]), V2_REELLE_NOMS.four, 'four');
+      A.deep(noms(d.banque), V2_REELLE_NOMS.banque, 'banque');
+      A.deep(noms(d.vehicules[0][5]), V2_REELLE_NOMS.soute, 'soute du camion');
+      A.deep(e.histoire.enquete.indices.filter(function (i) { return i.type === 'objet'; })
+               .map(function (i) { return C.nameOf(i.objet); }), V2_REELLE_NOMS.indices, 'indices d\'enquête');
+      // et par l'import (SPEC-ARCHI-015)
+      var f = MC.PartiesFichier.migrerSauvegarde({ id: 'reelle' }, V2_REELLE);
+      A.deep(noms(f.soloJoueur.inv), V2_REELLE_NOMS.inv, 'import : inventaire');
+      A.deep(noms(f.soloJoueur.banque), V2_REELLE_NOMS.banque, 'import : banque');
+      A.deep(noms(f.extras.vehicules[0][5]), V2_REELLE_NOMS.soute, 'import : soute');
+      A.deep(f.extras.histoire.enquete.indices.filter(function (i) { return i.type === 'objet'; })
+               .map(function (i) { return C.nameOf(i.objet); }), V2_REELLE_NOMS.indices, 'import : indices');
+    });
+
+    it('SPEC-SAVE-017 : migrerV1/migrerV2 appelées deux fois (ou sur une v3) ne décalent pas deux fois', function () {
+      var v2 = v2Base({ banque: [[enV2(I.COAL), 2]] });
+      v2.player.inv = [[enV2(I.EMERALD), 1], [B.PLANKS, 4]];
+      var une = MC.Save.migrerV2(copie(v2));
+      var deux = MC.Save.migrerV2(copie(une));
+      A.deep(deux, une, 'migrerV2 appliquée deux fois = une fois');
+      A.equal(deux.banque[0][0], I.COAL, 'le charbon n\'est pas décalé une seconde fois');
+      // une v3 contenant un bloc de forme (id 200, l'ancien id de la carte) n'est jamais touchée
+      A.equal(B.ESCALIER_PLANKS, 200, 'l\'escalier de planches occupe l\'ancien id de la carte');
+      var v3 = v2Base({ banque: [[B.ESCALIER_PLANKS, 1], [I.COAL, 3]], overrides: [[0, 40, 0, B.ESCALIER_PLANKS]] });
+      v3.v = 3;
+      v3.player.inv = [[200, 5]];
+      A.deep(MC.Save.migrerV2(copie(v3)), v3, 'migrerV2 laisse une v3 intacte');
+      A.deep(MC.Save.migrerV1(copie(v3)), v3, 'migrerV1 aussi');
+      // v1 : deux appels directs de migrerV1, puis migrerV2 deux fois
+      var v1 = v2Base({ banque: [[enV1(I.COAL), 2]] }); v1.v = 1;
+      var a = MC.Save.migrerV1(copie(v1));
+      A.deep(MC.Save.migrerV1(copie(a)), a, 'migrerV1 appliquée deux fois = une fois');
+      A.equal(MC.Save.migrerV2(MC.Save.migrerV2(a)).banque[0][0], I.COAL, 'v1 → v3 : charbon');
+      // un id hors de l'ancien espace d'objets n'est jamais converti
+      var bizarre = v2Base({ banque: [[I.COAL, 1], [300, 1]] });
+      var mb = MC.Save.migrerV2(bizarre);
+      A.deep(mb.banque, [[I.COAL, 1], [300, 1]], 'ids ≥ 256 inchangés par migrerV2');
+    });
+
+    it('SPEC-SAVE-017 : un champ porteur mal formé (pas un tableau) ne fait pas rejeter toute la partie à l\'import', function () {
+      var v2 = v2Base({ banque: [[enV2(I.COAL), 5]], vehicules: {}, expositions: 5, distributeurs: 'x', chests: null, furnaces: { a: 1 } });
+      v2.player.inv = souteVide(36); v2.player.inv[0] = [enV2(I.DIAMOND), 1];
+      var f = MC.PartiesFichier.migrerSauvegarde({ id: 'abimee' }, v2);   // ne lève pas
+      A.ok(f && f.soloJoueur, 'la partie est importée, joueur compris');
+      A.deep(f.soloJoueur.banque[0], [I.COAL, 5], 'et sa banque migrée');
+      A.deep(f.soloJoueur.inv[0], [I.DIAMOND, 1], 'son inventaire aussi');
+    });
+
+    it('SPEC-SAVE-017 : aucun champ porteur d\'objet n\'échappe à la migration v2', function () {
       var X = enV2(I.COAL);                         // 129 : ne figure nulle part ailleurs dans la sauvegarde forgée
       var soute = souteVide(27); soute[4] = [X, 1];
       var v2 = v2Base({
@@ -254,11 +324,9 @@
       })(m, 'data');
       A.deep(restes, [], 'plus aucun id 129 après migration');
       A.equal(m.v, 3, 'version montée');
-      var e1 = G.etatMinimal(4242), e2 = G.etatMinimal(4242);
+      var e1 = G.etatMinimal(4242);
       A.ok(MC.Save.apply(copie(m), e1), 'la sauvegarde migrée se recharge');
-      A.ok(MC.Save.apply(copie(v2), e2), 'la sauvegarde v2 se charge');
-      A.deep(MC.Save.serialize(e1).banque, MC.Save.serialize(e2).banque, 'idempotent : une v3 n\'est jamais re-migrée');
-      A.deep(MC.Save.serialize(e1).player.inv, MC.Save.serialize(e2).player.inv, 'idem pour l\'inventaire');
+      A.equal(e1.world.banque.slots[0].id, I.COAL, 'et reste juste');
     });
 
     it('SPEC-SAVE-017 : migrerIdsObjets renumérote tous les champs porteurs, y compris ceux apparus après la v3', function () {
