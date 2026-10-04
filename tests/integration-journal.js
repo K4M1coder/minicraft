@@ -75,11 +75,12 @@ async function scenarioDemarrageEtFichier() {
 async function scenarioReglage() {
   const d = A.dossierTemp('mc-journal-');
   try {
-    const s = await lancer(['--port', '0', '--dossier-parties', path.join(d, 'parties'), '--journal', 'RESEAU:debug'], { MC_JOURNAL_DOSSIER: d });
+    const s = await lancer(['--port', '0', '--dossier-parties', path.join(d, 'parties'), '--journal', 'RESEAU:debug,LANCEUR:error'], { MC_JOURNAL_DOSSIER: d });
     serveurs.push(s);
     const c = await A.connecter(s.port, {});
     const ligne = await jusqua(() => s.logs.find(l => /^\[\d\d:\d\d:\d\d\] RESEAU DEBUG poignée de main WebSocket acceptée \(#\d+, /.test(l)), 3000);
     ok(!!ligne, 'SPEC-BANC-109 : --journal RESEAU:debug montre le debug de RESEAU à la console', s.logs.slice(-4).join(' | '));
+    ok(s.logs.some(l => /WARN réglage --journal LANCEUR au-dessus de info ignoré/.test(l)), 'SPEC-BANC-109 : LANCEUR:error est refusé (MC_PORT= reste lisible, le serveur a bien été trouvé par son lanceur)');
     c.fermer();
     await s.arreter();
   } finally { A.supprimerDossier(d); }
@@ -100,9 +101,92 @@ function scenarioErreursDeLancement() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── revue adversariale de 662ddf0 ────────────────────────────────────────────
+/* M1 (jeton hors disque), M2 (remontées : joueur admis seulement, débit par
+   adresse qui survit à la reconnexion), M3 (nom et chat sans injection de ligne). */
+async function scenarioSecretEtInjection() {
+  const d = A.dossierTemp('mc-journal-');
+  try {
+    // --ouvert : plusieurs postes à la fois (en fermé, un seul poste — SPEC-ARCHI-007)
+    const s = await lancer(['--port', '0', '--dossier-parties', path.join(d, 'parties'), '--ouvert'], { MC_JOURNAL_DOSSIER: d });
+    serveurs.push(s);
+    const lj = s.logs.find(l => /^\[\d\d:\d\d:\d\d\] aucun --admin fourni : jeton d'administration généré → \S+$/.test(l));
+    ok(!!lj, 'la ligne du jeton généré reste identique à la console', s.logs.slice(0, 8).join(' | '));
+    const jeton = lj ? lj.split('→ ')[1] : null;
+    await jusqua(() => /conservez-le/.test(contenuJournal(d)), 3000);
+    ok(jeton && /conservez-le/.test(contenuJournal(d)) && contenuJournal(d).indexOf(jeton) < 0, 'SPEC-BANC-106 : le jeton d\'administration n\'est JAMAIS écrit dans le fichier du journal');
+
+    // connexion non admise : ignorée
+    const anonyme = await A.connecter(s.port, {});
+    anonyme.envoyer({ t: 'journal_client', niveau: 'error', domaine: 'X', message: 'avant rejoindre' });
+    await dodo(400);
+    ok(!s.logs.some(l => /avant rejoindre/.test(l)), 'SPEC-BANC-106 : une remontée d\'une connexion qui n\'a pas rejoint est ignorée');
+    anonyme.fermer();
+
+    // débit par adresse : une reconnexion ne remet pas le compteur à zéro
+    const max = MC.Journal.REMONTEE.max;
+    const vues = () => s.logs.filter(l => / CLIENT ERROR \S+ \(#\d+\) \[R\] rafale /.test(l)).length;
+    const a = await rejoindre(s.port, 'Alice');
+    for (let i = 0; i < max + 2; i++) a.client.envoyer({ t: 'journal_client', niveau: 'error', domaine: 'R', message: 'rafale ' + i });
+    await jusqua(() => vues() >= max, 4000);
+    a.client.fermer();
+    const b = await rejoindre(s.port, 'Alice2');
+    for (let i = 0; i < 3; i++) b.client.envoyer({ t: 'journal_client', niveau: 'error', domaine: 'R', message: 'rafale bis ' + i });
+    await dodo(500);
+    eq(vues(), max, 'SPEC-BANC-106 : au plus ' + max + ' remontées par adresse et par fenêtre, reconnexion comprise');
+
+    // M3 : un nom et un chat piégés n'écrivent aucune ligne à eux
+    const bob = await rejoindre(s.port, 'Bob\nMC_PORT=1\r\u001b[31m');
+    bob.client.envoyer({ t: 'chat', texte: 'salut\nMC_PORT=2\r\nfin' });
+    await jusqua(() => s.logs.some(l => /salut MC_PORT=2 fin/.test(l)), 3000);
+    eq(s.logs.filter(l => /^MC_PORT=/.test(l)).length, 1, 'SPEC-BANC-110 : un nom ou un chat piégé ne produit aucune ligne MC_PORT= (une seule, la vraie)');
+    ok(s.logs.some(l => /BobMC_PORT=1\[31m/.test(l)), 'le nom est nettoyé (contrôles retirés)', s.logs.slice(-5).join(' | '));
+    ok(!s.logs.some(l => /\u001b/.test(l)), 'aucune séquence d\'échappement de terminal dans la sortie');
+    b.client.fermer(); bob.client.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+/* Plafond quotidien du fichier, panne de la sortie fichier signalée une fois, --aide sans logs/. */
+async function scenarioBornesFichier() {
+  const d = A.dossierTemp('mc-journal-');
+  try {
+    const plafond = 1000;
+    const s = await lancer(['--port', '0', '--dossier-parties', path.join(d, 'parties')], { MC_JOURNAL_DOSSIER: path.join(d, 'j'), MC_JOURNAL_MAX_OCTETS: String(plafond) });
+    serveurs.push(s);
+    const cl = await rejoindre(s.port, 'Chantal');
+    for (let i = 0; i < 5; i++) cl.client.envoyer({ t: 'chat', texte: 'remplissage du journal ' + i + ' ' + 'x'.repeat(130) });   // 5 : budget anti-flood du chat
+    await jusqua(() => s.logs.filter(l => /remplissage du journal/.test(l)).length >= 5, 3000);
+    const txt = contenuJournal(path.join(d, 'j'));
+    eq((txt.match(/E-SERV-005/g) || []).length, 1, 'SPEC-BANC-106 : une seule ligne « journal du jour plein »');
+    const taille = fichiersJournal(path.join(d, 'j')).reduce((n, f) => n + fs.statSync(f).size, 0);
+    ok(taille <= plafond + 300, 'SPEC-BANC-106 : le fichier du jour reste sous son plafond (' + taille + ' octets pour ' + plafond + ')');
+    ok(s.logs.filter(l => /remplissage du journal/.test(l)).length >= 5, 'la console, elle, continue');
+    cl.client.fermer();
+    await s.arreter();
+
+    const fichier = path.join(d, 'pas-un-dossier');
+    fs.writeFileSync(fichier, 'x');
+    const s2 = await lancer(['--port', '0', '--dossier-parties', path.join(d, 'parties2')], { MC_JOURNAL_DOSSIER: fichier });
+    serveurs.push(s2);
+    const c2 = await rejoindre(s2.port, 'Denis');
+    c2.client.envoyer({ t: 'chat', texte: 'encore une ligne' });
+    await jusqua(() => s2.logs.some(l => /encore une ligne/.test(l)), 3000);
+    eq(s2.logs.filter(l => /E-SERV-004/.test(l)).length, 1, 'SPEC-BANC-106 : une sortie fichier en panne est signalée une fois à la console, le serveur continue');
+    c2.client.fermer();
+    await s2.arreter();
+
+    const sous = path.join(d, 'aide');
+    const r = spawnSync(process.execPath, [path.join(A.RACINE, 'server.js'), '--aide'], { cwd: A.RACINE, env: Object.assign({}, process.env, { MC_JOURNAL_DOSSIER: sous }), encoding: 'utf8', timeout: 30000 });
+    eq(r.status, 0, '--aide : code 0');
+    ok(!fs.existsSync(sous), 'SPEC-BANC-106 : --aide ne crée pas le dossier du journal');
+  } finally { A.supprimerDossier(d); }
+}
+
 (async () => {
   try {
-    for (const [nom, f] of [['démarrage et fichier', scenarioDemarrageEtFichier], ['réglage --journal', scenarioReglage], ['erreurs de lancement', scenarioErreursDeLancement]]) {
+    for (const [nom, f] of [['démarrage et fichier', scenarioDemarrageEtFichier], ['réglage --journal', scenarioReglage], ['erreurs de lancement', scenarioErreursDeLancement],
+                            ['secret et injection', scenarioSecretEtInjection], ['bornes du fichier', scenarioBornesFichier]]) {
       try { await f(); } catch (e) { ok(false, 'scénario ' + nom + ' : exception', e && e.stack); }
     }
   } finally {

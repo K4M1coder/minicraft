@@ -4,6 +4,7 @@
    lancement/arrêt d'un vrai `server.js` (jamais require()d) et de petits
    assertions. Chaque suite lance ET arrête ses serveurs. */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
 const os = require('os');

@@ -93,5 +93,47 @@
       A.deep(CD.verifier(RACINE), [], 'aucun console.* direct dans src/ et server.js');
       A.ok(/G16/.test(lire('tests/gates.js')) && /console-directe/.test(lire('tests/gates.js')), 'la porte G16 de tests/gates.js utilise cette détection');
     });
+
+    it('SPEC-BANC-110 : G16 voit les contournements simples (alias, ?., call/apply/bind, déstructuration, process.stdout) sans faux positif dans les chaînes, gabarits et expressions régulières', function () {
+      var fautifs = [
+        'const c = console; c.log(1);',
+        'console?.log(1)',
+        'console.log.call(null, 1)',
+        'console.warn.apply(console, [1])',
+        'var f = console.error.bind(console);',
+        'const { log } = console;',
+        'process.stdout.write("x\\n");',
+        'process . stderr . write(x)',
+        'var o = { c: console };',
+        'f(console)',
+        'var t = `a ${console.log(1)} b`;',
+      ];
+      fautifs.forEach(function (s) { A.equal(CD.appelsConsole(s).length, 1, 'repéré : ' + s); });
+      var sains = [
+        'var s = "console.log(1)";',
+        "var s = 'process.stdout.write(x)';",
+        'var t = `console.log(${a})`;',
+        'var re = /console\\.log\\(/;',
+        'var re2 = /["\']/; var x = 1;',
+        'vm.createContext({ console, Math });',
+        'var consoleLog = 1; monconsole.log(1); journal.console = 2;',
+        'a = b / c; // console.log(1)',
+      ];
+      sains.forEach(function (s) { A.equal(CD.appelsConsole(s).length, 0, 'pas de faux positif : ' + s); });
+      A.deep(CD.verifier(RACINE), [], 'le dépôt reste propre avec la détection durcie');
+    });
+
+    it('SPEC-BANC-106 : les tests qui lancent server.js écrivent son journal dans un dossier temporaire, jamais dans logs/ du dépôt', function () {
+      var lanceurs = fs.readdirSync(path.join(RACINE, 'tests')).filter(function (f) { return /^integration-.*\.js$/.test(f) || f === 'charge.js' || f === 'aide-integration-archi.js'; })
+        .map(function (f) { return 'tests/' + f; }).concat(['tools/e2e-headless.js', 'tests/run.js']);
+      lanceurs.forEach(function (f) {
+        var t = lire(f);
+        if (!/server\.js/.test(t) || !/spawn/.test(t)) return;
+        A.ok(/require\([^)]*(journal-temp|aide-integration-archi)(\.js)?['"]\)|MC_JOURNAL_DOSSIER/.test(t), f + ' pose MC_JOURNAL_DOSSIER (tests/journal-temp.js, directement ou par aide-integration-archi.js)');
+      });
+      var JT = require(path.join(RACINE, 'tests', 'journal-temp.js'));
+      A.ok(path.isAbsolute(JT) && JT.indexOf(path.join(RACINE, 'logs')) !== 0, 'dossier temporaire hors du dépôt : ' + JT);
+      A.ok(/MC\.Journal\.reglerDepuisUrl\(location\.search\)/.test(lire('index.html')), 'index.html règle le journal par reglerDepuisUrl (protégé contre ?journal=%)');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

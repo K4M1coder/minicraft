@@ -45,6 +45,7 @@
    échoué : voir le JSON), 2 si l'infrastructure (navigateur ou serveur) n'a
    pas pu démarrer, 3 si le délai global est dépassé. */
 'use strict';
+require('../tests/journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const fs = require('fs');
 const os = require('os');
 const path = require('path');

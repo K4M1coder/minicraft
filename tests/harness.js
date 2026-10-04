@@ -33,7 +33,13 @@
   /* Journal (SPEC-BANC-105/106) : chargé APRÈS ce fichier, src/journal.js lit
      ce mode — console muette, niveau trace produit (enregistreur de vol). */
   G.MC_JOURNAL_MODE = 'test';
-  function journalDuTest() { return G.MC && typeof G.MC.Journal === 'function' ? G.MC.Journal : null; }
+  /* `outilsHarnais` (objet non enveloppé par l'observation des fonctions de
+     tests/run.js) : ces appels de service ne comptent pas comme des appels
+     du test au journal. */
+  function journalDuTest() {
+    var J = G.MC && typeof G.MC.Journal === 'function' ? G.MC.Journal : null;
+    return J ? (J.outilsHarnais || J) : null;
+  }
 
   function normaliserFiche(f) {
     if (!f || typeof f !== 'object') return null;

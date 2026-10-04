@@ -108,13 +108,9 @@ window.MC_VERSION = String(Date.now());
   /* Journal (SPEC-BANC-106/109) : ?dev passe la console au seuil info,
      ?journal=RENDU:debug,SYNC:trace règle des domaines, sans redémarrage. */
   function reglerJournal() {
-    var q = location.search;
-    if (/[?&]dev(=|&|$)/.test(q)) MC.Journal.configurer({ mode: 'dev' });
-    var m = /[?&]journal=([^&]*)/.exec(q);
-    if (m) {
-      var r = MC.Journal.regler(decodeURIComponent(m[1]));
-      if (!r.ok) MC.Journal('JEU').warn('réglage ?journal= ignoré en partie : ' + r.erreurs.join(', '));
-    }
+    // ne lève jamais : un ?journal=% mal encodé est refusé, le chargement continue
+    var r = MC.Journal.reglerDepuisUrl(location.search);
+    if (!r.ok) MC.Journal('JEU').warn('réglage ?journal= ignoré en partie : ' + r.erreurs.join(', '));
   }
 
   function start() {

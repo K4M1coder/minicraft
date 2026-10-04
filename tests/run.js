@@ -27,6 +27,7 @@
    plus domaines des fichiers src/ modifiés depuis la dernière étiquette,
    par correspondance de nom best-effort) avant l'appel à MC_TESTS.selection. */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -594,8 +595,15 @@ function envelopperFonctions(vmCtx) {
       // fabriques n'est jamais observé (constaté : tests du bruit procédural).
       if (typeof val === 'function') {
         const env = enveloppeDe('MC.' + cle, val);
-        // une fonction qui porte aussi une API (MC.Journal('X') ET MC.Journal.niveau…) la garde
-        Object.keys(val).forEach((k) => { env[k] = val[k]; });
+        // une fonction qui porte aussi une API (MC.Journal('X') ET MC.Journal.niveau…) la garde,
+        // et ses statiques fonctions sont observées comme celles d'un espace `MC.X.f`
+        Object.keys(val).forEach((k) => {
+          const st = val[k];
+          if (typeof st !== 'function') { env[k] = st; return; }
+          const envSt = enveloppeDe('MC.' + cle + '.' + k, st);
+          env[k] = envSt;
+          entrees.push({ obj: env, cle: k, orig: st, enveloppe: envSt });
+        });
         MCns[cle] = env;
         entrees.push({ obj: MCns, cle, orig: val, enveloppe: env });
         return;

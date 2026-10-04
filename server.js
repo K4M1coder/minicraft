@@ -52,29 +52,44 @@ const C = MC.Core;
    `[HH:MM:SS] texte` sur la sortie standard — que les tests d'intégration et
    les lanceurs lisent (« écoute : », MC_PORT=…) ; les autres domaines et
    niveaux y ajoutent leur nom (`[HH:MM:SS] CLIENT ERROR …`). Les lignes de
-   protocole (`brut`) sortent telles quelles. */
+   protocole (`brut`) sortent telles quelles ; toute autre entrée passe par
+   J.ligneSure : ses sauts de ligne sont indentés et ses caractères de
+   contrôle retirés, si bien qu'aucun texte venu d'un joueur (nom, chat,
+   remontée) ne peut fabriquer une ligne à lui (un faux `MC_PORT=`). */
 const J = MC.Journal;
+const SANS_PREFIXE = new Set(['SERVEUR', 'SECRET']);
 function formatConsoleServeur(e) {
   if (e.brut) return e.message;
   const h = new Date(e.t).toTimeString().slice(0, 8);
-  const prefixe = (e.domaine === 'SERVEUR' ? '' : e.domaine + ' ') + (e.niveau === 'info' ? '' : e.niveau.toUpperCase() + ' ');
+  const prefixe = (SANS_PREFIXE.has(e.domaine) ? '' : e.domaine + ' ') + (e.niveau === 'info' ? '' : e.niveau.toUpperCase() + ' ');
   const code = e.code && e.message.indexOf(e.code) < 0 ? e.code + ' ' : '';
-  return `[${h}] ${prefixe}${code}${e.message}`;
+  return `[${h}] ${prefixe}${code}${J.ligneSure(e.message)}`;
 }
 J.configurer({ mode: 'serveur', console: { methode: 'log', format: formatConsoleServeur } });
 const logServeur = J('SERVEUR');
-const logLanceur = J('LANCEUR');       // lignes lues par un programme (aide, MC_PORT=) : un domaine à part, jamais coupé par SERVEUR:warn
+/* Lignes lues par un programme (aide, MC_PORT=) : un domaine à part, jamais
+   coupé par SERVEUR:warn — et jamais en dessous de info (voir --journal). */
+const logLanceur = J('LANCEUR');
 const logReseau = J('RESEAU');
 const logClient = J('CLIENT');         // erreurs remontées par les clients (SPEC-BANC-106)
+/* Ce qui ne doit JAMAIS aller sur disque (jeton d'administration généré) :
+   affiché à la console comme une ligne SERVEUR, ignoré par la sortie fichier. */
+const logSecret = J('SECRET');
 
 /* Sortie « fichier du serveur » (SPEC-BANC-106) : `logs/serveur-<date>.log`
    (dossier réglable par MC_JOURNAL_DOSSIER), un fichier par jour, les
-   JOURNAUX_GARDES plus récents seulement. Écriture synchrone sur un
-   descripteur ouvert : une ligne `fatal` juste avant process.exit() n'est
-   jamais perdue. Une panne d'écriture coupe la sortie, jamais le serveur. */
+   JOURNAUX_GARDES plus récents seulement, et au plus PLAFOND_JOURNAL octets
+   par jour (MC_JOURNAL_MAX_OCTETS) : au-delà, une seule ligne E-SERV-005
+   puis plus rien jusqu'au lendemain — un client ou un flot d'évènements ne
+   remplit jamais le disque. Écriture synchrone sur un descripteur ouvert,
+   donc bornée par ce plafond : une ligne `fatal` juste avant process.exit()
+   n'est jamais perdue. Une panne d'écriture coupe la sortie (un seul
+   avertissement E-SERV-004 à la console), jamais le serveur. Le domaine
+   SECRET n'y entre pas. */
 const JOURNAUX_GARDES = 14;
+const PLAFOND_JOURNAL = parseInt(process.env.MC_JOURNAL_MAX_OCTETS, 10) > 0 ? parseInt(process.env.MC_JOURNAL_MAX_OCTETS, 10) : 50 * 1024 * 1024;
 function sortieFichierJournal(dossier) {
-  let fd = null, jour = null, enPanne = false;
+  let fd = null, jour = null, octets = 0, plein = false, enPanne = false;
   const deux = (n) => String(n).padStart(2, '0');
   const jourDe = (t) => { const d = new Date(t); return d.getFullYear() + '-' + deux(d.getMonth() + 1) + '-' + deux(d.getDate()); };
   function ouvrir(j) {
@@ -82,6 +97,8 @@ function sortieFichierJournal(dossier) {
     fs.mkdirSync(dossier, { recursive: true });
     fd = fs.openSync(path.join(dossier, 'serveur-' + j + '.log'), 'a');
     jour = j;
+    octets = fs.fstatSync(fd).size;
+    plein = false;
     try {
       fs.readdirSync(dossier).filter(f => /^serveur-\d{4}-\d\d-\d\d\.log$/.test(f)).sort().slice(0, -JOURNAUX_GARDES)
         .forEach(f => { try { fs.unlinkSync(path.join(dossier, f)); } catch (e) { /* tant pis */ } });
@@ -90,30 +107,51 @@ function sortieFichierJournal(dossier) {
   return {
     nom: 'fichier', seuil: 'info',
     ecrire(e) {
-      if (enPanne) return;
+      if (enPanne || e.domaine === 'SECRET') return;
       try {
         const j = jourDe(e.t);
         if (j !== jour) ouvrir(j);
-        fs.writeSync(fd, process.pid + ' ' + J.formater(e) + '\n');
-      } catch (err) { enPanne = true; }
+        if (plein) return;
+        let ligne = process.pid + ' ' + J.formater(e) + '\n';
+        if (octets + Buffer.byteLength(ligne) > PLAFOND_JOURNAL) {
+          plein = true;
+          ligne = process.pid + ' ' + new Date(e.t).toISOString() + ' WARN SERVEUR E-SERV-005 journal du jour plein (' + PLAFOND_JOURNAL + ' octets) : écriture suspendue jusqu\'à demain\n';
+        }
+        octets += fs.writeSync(fd, ligne);
+      } catch (err) {
+        enPanne = true;
+        logServeur.warn(`E-SERV-004 sortie fichier du journal en panne (${dossier}) : ${(err && err.message) || err} — le journal continue à la console seulement`);
+      }
     },
   };
 }
-J.ajouterSortie(sortieFichierJournal(path.resolve(RACINE, process.env.MC_JOURNAL_DOSSIER || 'logs')));
+const DOSSIER_JOURNAL = path.resolve(RACINE, process.env.MC_JOURNAL_DOSSIER || 'logs');
 
 /* L'analyse elle-même est pure et testée sous Node (tests/spec-parametres.js) ;
-   c'est ICI, et seulement ici, qu'une erreur ou --aide arrête le programme. */
+   c'est ICI, et seulement ici, qu'une erreur ou --aide arrête le programme.
+   La sortie fichier n'est branchée qu'APRÈS : `--aide` ne crée pas logs/ ;
+   une erreur de paramètre, elle, y laisse sa trace (E-SERV-003). */
 const analyse = MC.Parametres.analyser(argvBrut);
 if (!analyse.ok) {
   if (analyse.code === 'aide') logLanceur.info(analyse.message, null, null, { brut: true });
-  else logLanceur.error(analyse.message, null, null, { brut: true, code: 'E-SERV-003' });
+  else {
+    J.ajouterSortie(sortieFichierJournal(DOSSIER_JOURNAL));
+    logLanceur.error(analyse.message, null, null, { brut: true, code: 'E-SERV-003' });
+  }
   process.exit(analyse.code === 'aide' ? 0 : 1);
 }
 const PARAMS = analyse.config;
+J.ajouterSortie(sortieFichierJournal(DOSSIER_JOURNAL));
 // SPEC-BANC-109 : --journal SYNC:trace,SERVEUR:debug — niveaux par domaine dès le lancement
 if (PARAMS.journal) {
   const r = J.regler(PARAMS.journal);
   if (!r.ok) logServeur.warn(`réglage --journal ignoré en partie : ${r.erreurs.join(', ')}`);
+  /* LANCEUR porte MC_PORT= : le relever au-dessus de info rendrait le
+     serveur muet pour son lanceur — refusé, il reste au défaut. */
+  if (['warn', 'error', 'fatal', 'aucun'].indexOf(J.niveau('LANCEUR')) >= 0) {
+    J.niveau('LANCEUR', null);
+    logServeur.warn('réglage --journal LANCEUR au-dessus de info ignoré : MC_PORT= doit rester lisible par le lanceur');
+  }
 }
 
 /* Commit courant (SPEC-BANC-012) : calculé UNE FOIS au démarrage, jamais par
@@ -212,7 +250,8 @@ const admin = MC.Admin.creerEtat({
   generateurAleatoire: crypto.randomBytes,  // SPEC-SECU-009 : entropie cryptographique injectée, jamais Math.random
 });
 if (!PARAMS.admin && !ADMIN_HERITE) {
-  journal(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);
+  // domaine SECRET : même ligne à la console, JAMAIS dans le fichier du journal (revue SPEC-BANC-106)
+  logSecret.info(`aucun --admin fourni : jeton d'administration généré → ${ADMIN_SECRET}`);
   journal('conservez-le : il ne sera plus jamais affiché (relancez avec --admin=... pour le fixer)');
 }
 
@@ -1292,6 +1331,8 @@ function sauvegarderAuDepart() {
 /* Le journal historique du serveur : une ligne `[HH:MM:SS] texte` — désormais
    MC.Journal, domaine SERVEUR, niveau info (même sortie, plus le fichier). */
 function journal(txt) { logServeur.info(txt); }
+// SPEC-BANC-106 : filtre des erreurs remontées par les clients, partagé par toutes les connexions
+const filtreRemontees = J.filtreRemontee();
 
 // ── fichiers statiques ───────────────────────────────────────────────────────
 const TYPES = {
@@ -3063,11 +3104,13 @@ function traiter(c, m) {
     }
 
     /* SPEC-BANC-106 : erreur error/fatal d'un client, rassemblée dans le journal
-       du serveur — au plus MC.Journal.REMONTEE.max par fenêtre et par
-       connexion, au-delà ignorée (le client applique déjà la même limite). */
+       du serveur, au-delà du débit ignorée (le client applique déjà la même
+       limite de son côté). */
     case NP.MSG.JOURNAL_CLIENT: {
-      if (!c.limiteJournal) c.limiteJournal = J.limiteur(J.REMONTEE.max, J.REMONTEE.fenetreMs);
-      if (!c.limiteJournal()) break;
+      // seulement un joueur admis ; au plus REMONTEE.max par fenêtre et par ADRESSE (une reconnexion ne remet
+      // rien à zéro) et REMONTEE_SERVEUR.globalMax en tout — le fichier du journal reste borné
+      if (!c.rejoint) break;
+      if (!filtreRemontees(c.ip)) break;
       logClient[m.niveau](`${c.nom} (#${c.id}) [${m.domaine}] ${m.message}`, { client: c.id, domaine: m.domaine }, m.pile || null, m.code ? { code: m.code } : null);
       break;
     }

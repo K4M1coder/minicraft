@@ -5,6 +5,7 @@
    Usage : node tests/integration-net.js [port]
    Le serveur est démarré et arrêté par le test lui-même. */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
 const http = require('http');

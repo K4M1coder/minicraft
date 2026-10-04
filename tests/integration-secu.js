@@ -8,6 +8,7 @@
    Chaque serveur lancé par ce test est arrêté (`kill()`) dans un `finally`,
    même si une assertion échoue ou qu'une exception est levée. */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
 const http = require('http');

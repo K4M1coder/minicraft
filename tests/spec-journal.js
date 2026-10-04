@@ -224,6 +224,97 @@
       A.deep(mauvais.domaines, { RENDU: 'warn' });
     });
 
+    /* ── revue adversariale de 662ddf0 ─────────────────────────────────────── */
+
+    it('SPEC-BANC-106 : une ligne formatée ne peut jamais en fabriquer une autre (sauts de ligne indentés, caractères de contrôle retirés)', function () {
+      var o = journalIsole('jeu'), J = o.J;
+      var e = J('SERVEUR').info('Bob\nMC_PORT=1\r\u001b[31mrouge\u0085\u2028fin', null, 'Error: x\r\n\u001b]0;titre\u0007    at y');
+      var l = MC.Journal.formater(e);
+      A.ok(!/(^|\n)MC_PORT=/.test(l), 'aucune ligne ne commence par MC_PORT= : ' + JSON.stringify(l));
+      A.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/.test(l), 'aucun caractère de contrôle C0/C1 : ' + JSON.stringify(l));
+      l.split('\n').slice(1).forEach(function (s) { A.ok(/^    /.test(s), 'ligne de suite indentée : ' + JSON.stringify(s)); });
+      A.equal(MC.Journal.ligneSure('a\nb'), 'a\n    b');
+      A.equal(MC.Journal.ligneSure('a\u001b[0mb\tc'), 'a[0mb\tc', 'ESC retiré, tabulation gardée');
+    });
+
+    it('SPEC-BANC-106 : la pile remontée par un client est nettoyée (ESC, OSC, C1, retour chariot)', function () {
+      var v = MC.Journal.validerRemontee({ t: 'journal_client', niveau: 'error', domaine: 'X', message: 'm', pile: 'Error: a\r\n\u001b]0;pwn\u0007\u009b31m    at b' });
+      A.ok(!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/.test(v.pile), JSON.stringify(v.pile));
+      A.ok(/Error: a\n/.test(v.pile), 'les sauts de ligne de la pile restent (indentés à l\'écriture)');
+    });
+
+    it('SPEC-BANC-106 : le serveur filtre les remontées par adresse ET globalement', function () {
+      var t = 0;
+      var passe = MC.Journal.filtreRemontee({ globalMax: 4, globalFenetreMs: 60000, ipMax: 2, ipFenetreMs: 10000, horloge: function () { return t; } });
+      A.deep([passe('1.1.1.1'), passe('1.1.1.1'), passe('1.1.1.1')], [true, true, false], 'par adresse : 2 par fenêtre, reconnexion comprise');
+      A.deep([passe('2.2.2.2'), passe('3.3.3.3'), passe('4.4.4.4')], [true, true, false], 'globalement : 4 par fenêtre, toutes adresses confondues');
+      t = 60000;
+      A.ok(passe('5.5.5.5'), 'la fenêtre globale se libère');
+      var defaut = MC.Journal.filtreRemontee();
+      for (var i = 0; i < 200; i++) defaut('10.0.' + (i >> 8) + '.' + (i & 255));
+      A.equal(MC.Journal.REMONTEE_SERVEUR.globalMax, 30);
+    });
+
+    it('SPEC-BANC-106 : le tampon est un vrai tampon circulaire (ordre gardé après plusieurs tours, capacité réglable à chaud)', function () {
+      var o = journalIsole('test'), J = o.J;
+      J.configurer({ capaciteTampon: 3 });
+      for (var i = 0; i < 10; i++) J('X').info('n' + i);
+      A.deep(J.tampon().map(function (e) { return e.message; }), ['n7', 'n8', 'n9']);
+      J.configurer({ capaciteTampon: 2 });
+      A.deep(J.tampon().map(function (e) { return e.message; }), ['n8', 'n9'], 'réduire garde les plus récentes');
+      J.configurer({ capaciteTampon: 5 });
+      J('X').info('n10');
+      A.deep(J.tampon().map(function (e) { return e.message; }), ['n8', 'n9', 'n10'], 'agrandir garde l\'ordre');
+      A.equal(J.viderTampon(), 3); A.equal(J.tampon().length, 0);
+    });
+
+    it('SPEC-BANC-105 : un appel au journal ne lève jamais (objets sans prototype, pile qui lève, sortie qui lève)', function () {
+      var o = journalIsole('jeu'), J = o.J;
+      var sansProto = Object.create(null);
+      var piege = {}; Object.defineProperty(piege, 'stack', { get: function () { throw new Error('piège'); } });
+      var ok = true;
+      try {
+        J('X').error(sansProto, sansProto, sansProto, { joueur: sansProto, code: sansProto });
+        J('X').error('m', null, piege);
+        J.configurer({ console: { format: function () { throw new Error('format'); } } });
+        J('X').fatal('m');
+        J.configurer({ horloge: function () { throw new Error('horloge'); } });
+        J('X').fatal('m');
+      } catch (e) { ok = false; }
+      A.ok(ok, 'aucune exception ne sort du journal');
+    });
+
+    it('SPEC-BANC-109 : niveaux, modes et domaines ne se confondent pas avec les propriétés héritées (constructor, __proto__)', function () {
+      var J = MC.Journal.creer({ mode: 'constructor' });
+      A.equal(J.configuration().mode, 'jeu', 'mode inconnu → jeu');
+      A.equal(J.niveau('X', 'constructor'), null);
+      A.equal(J.niveau('X', '__proto__'), null);
+      A.equal(MC.Journal.analyserReglage('X:constructor,Y:toString').ok, false);
+      J.configurer({ mode: 'hasOwnProperty' });
+      A.equal(J.configuration().mode, 'jeu');
+      A.equal(J('__proto__').warn('m').domaine, '__PROTO__');
+    });
+
+    it('SPEC-BANC-109 : le réglage par l\'URL ne bloque jamais le chargement (?journal=% mal encodé, ?dev)', function () {
+      var o = journalIsole('jeu'), J = o.J;
+      var r = J.reglerDepuisUrl('?journal=%');
+      A.equal(r.ok, false, 'encodage invalide : refusé sans exception');
+      r = J.reglerDepuisUrl('?dev&journal=SYNC%3Atrace');
+      A.ok(r.ok); A.equal(J.configuration().mode, 'dev'); A.equal(J.niveau('SYNC'), 'trace');
+      A.ok(J.reglerDepuisUrl('').ok, 'sans paramètre : rien à faire');
+    });
+
+    it('SPEC-BANC-110 : le nom d\'un joueur et le texte du chat n\'emportent ni saut de ligne ni caractère de contrôle (NP.valider)', function () {
+      var NP = MC.NetProtocol;
+      var r = NP.valider({ t: 'rejoindre', nom: '  Bob\nMC_PORT=1\r\u001b[31m\u0085\u2028  ' });
+      A.equal(r.nom, 'BobMC_PORT=1[31m', 'C0, C1, U+2028/2029 retirés puis espaces de bord');
+      A.equal(NP.valider({ t: 'rejoindre', nom: 'Élodie Ünal' }).nom, 'Élodie Ünal', 'un nom ordinaire, accents compris, reste intact');
+      A.equal(NP.valider({ t: 'rejoindre', nom: '\n\u0007' }).nom, 'Joueur', 'nom vide après nettoyage : défaut');
+      A.equal(NP.valider({ t: 'rejoindre', nom: new Array(40).join('é') }).nom.length, 24);
+      A.equal(NP.valider({ t: 'chat', texte: 'a\nMC_PORT=1\u001b[0m' }).texte, 'a MC_PORT=1 [0m', 'chat : contrôles remplacés par une espace');
+      A.equal(NP.valider({ t: 'chat', texte: '\n\r' }), null, 'chat vide après nettoyage : refusé');
+    });
+
     it('SPEC-BANC-109 : --journal est une option du serveur', function () {
       var r = MC.Parametres.analyser(['--journal', 'SYNC:trace']);
       A.ok(r.ok, r.message);

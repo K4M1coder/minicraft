@@ -46,37 +46,67 @@
   var METHODE = { trace: 'debug', debug: 'debug', info: 'info', warn: 'warn', error: 'error', fatal: 'error' };
   /* Remontée des erreurs client vers le serveur (SPEC-BANC-106) : type de
      message réseau (repris par MC.NetProtocol.MSG.JOURNAL_CLIENT) et débit
-     limité, appliqué des DEUX côtés (le client n'envoie pas plus, le serveur
-     n'en journalise pas plus par connexion). */
+     limité. Le client n'envoie pas plus de REMONTEE.max par fenêtre ; le
+     serveur n'en journalise pas plus par ADRESSE (une reconnexion ne remet
+     rien à zéro) ni, toutes adresses confondues, plus de REMONTEE_SERVEUR. */
   var TYPE_REMONTEE = 'journal_client';
   var REMONTEE = { max: 5, fenetreMs: 10000, messageMax: 500, pileMax: 2000 };
+  var REMONTEE_SERVEUR = { globalMax: 30, globalFenetreMs: 60000, maxAdresses: 1000 };
   var CAPACITE_TAMPON = 2000;
   var RE_CODE = /\bE-[A-Z]+-\d{3}\b/;
   var RE_DOMAINE = /^[A-Z0-9_-]{1,24}$/;
+  /* Caractères de contrôle C0 (hors tabulation et saut de ligne), DEL, C1,
+     séparateurs de ligne Unicode : jamais dans une ligne écrite. */
+  var RE_CONTROLES = /[\u0000-\u0008\u000b-\u001f\u007f-\u009f\u2028\u2029]/g;
 
-  function rang(niveau) { return RANG[niveau] !== undefined ? RANG[niveau] : RANG.info; }
-  function niveauValide(n) { return typeof n === 'string' && RANG[n] !== undefined; }
-  function domaineDe(d) { return String(d || 'JEU').toUpperCase(); }
+  function aPropre(o, k) { return typeof k === 'string' && Object.prototype.hasOwnProperty.call(o, k); }
+  function rang(niveau) { return aPropre(RANG, niveau) ? RANG[niveau] : RANG.info; }
+  function niveauValide(n) { return aPropre(RANG, n); }
+  function modeValide(m) { return aPropre(MODES, m); }
+  /* Texte d'une valeur quelconque, sans jamais lever (objet sans prototype,
+     toString qui lève…). */
+  function texteSur(v) {
+    if (v === undefined || v === null) return '';
+    if (typeof v === 'string') return v;
+    try { return String(v); } catch (e) {
+      try { return Object.prototype.toString.call(v); } catch (e2) { return '[illisible]'; }
+    }
+  }
+  function domaineDe(d) { return texteSur(d || 'JEU').toUpperCase(); }
+
+  /* Une entrée écrite tient sur des lignes à elle : chaque saut de ligne est
+     suivi d'une indentation (une suite ne commence jamais en colonne 0, donc
+     jamais par `MC_PORT=`), les caractères de contrôle sont retirés. */
+  function ligneSure(texte) {
+    return texteSur(texte).replace(/\r\n|\r|\n|\u2028|\u2029/g, '\n    ').replace(RE_CONTROLES, '');
+  }
+  /* Version une-ligne (texte venu d'un client) : chaque suite de contrôles
+     devient une espace. */
+  function uneLigne(texte) {
+    return texteSur(texte).replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g, ' ');
+  }
 
   /* Copie défensive et bornée des données structurées : une entrée ne doit
      jamais garder une référence vivante (le monde, un joueur) ni grossir sans
      limite le tampon. */
   function copieDonnees(d) {
     if (d === undefined || d === null) return null;
-    if (typeof d !== 'object') return d;
+    if (typeof d !== 'object') return typeof d === 'function' ? null : d;
     try {
       var s = JSON.stringify(d);
       if (s === undefined) return null;
       if (s.length > 4000) return { tronque: true, apercu: s.slice(0, 4000) };
       return JSON.parse(s);
-    } catch (e) { return { illisible: String(e && e.message || e) }; }
+    } catch (e) { return { illisible: texteSur(e && e.message) || 'données illisibles' }; }
   }
   function pileDe(erreur) {
     if (!erreur) return null;
     if (typeof erreur === 'string') return erreur;
-    if (erreur.stack) return String(erreur.stack);
-    if (erreur.message) return String(erreur.message);
-    return String(erreur);
+    try {
+      if (erreur.stack) return texteSur(erreur.stack);
+      if (erreur.message) return texteSur(erreur.message);
+    } catch (e) { return '[pile illisible]'; }
+    return texteSur(erreur);
   }
 
   function deuxChiffres(n) { return (n < 10 ? '0' : '') + n; }
@@ -87,17 +117,17 @@
            '.' + (ms < 10 ? '00' : ms < 100 ? '0' : '') + ms;
   }
 
-  /* Une ligne de texte par entrée (fichier du serveur, rapport de test) :
-     on y retrouve au grep le domaine, le niveau et le code d'erreur. */
   /* Le code rappelé devant le message, sauf s'il y figure déjà. */
   function prefixeCode(e) { return e.code && e.message.indexOf(e.code) < 0 ? e.code + ' ' : ''; }
+  /* Une ligne de texte par entrée (fichier du serveur, rapport de test) :
+     on y retrouve au grep le domaine, le niveau et le code d'erreur. */
   function formater(e) {
-    var l = e.horodatage + ' ' + e.niveau.toUpperCase() + ' ' + e.domaine + ' ' + prefixeCode(e) + e.message;
+    var l = e.horodatage + ' ' + e.niveau.toUpperCase() + ' ' + e.domaine + ' ' + prefixeCode(e) + ligneSure(e.message);
     if (e.donnees !== null && e.donnees !== undefined) {
       try { l += ' ' + JSON.stringify(e.donnees); } catch (err) { /* illisible */ }
     }
-    if (e.contexte && e.contexte.test) l += ' {test: ' + e.contexte.test + '}';
-    if (e.pile) l += '\n    ' + String(e.pile).split('\n').join('\n    ');
+    if (e.contexte && e.contexte.test) l += ' {test: ' + ligneSure(e.contexte.test) + '}';
+    if (e.pile) l += '\n    ' + ligneSure(e.pile);
     return l;
   }
 
@@ -115,11 +145,32 @@
     };
   }
 
+  /* Filtre des remontées côté serveur : `passe(adresse)` dit si une
+     remontée de cette adresse est journalisée — au plus `ipMax` par
+     `ipFenetreMs` et par adresse, `globalMax` par `globalFenetreMs` en tout.
+     La table des adresses est bornée (vidée au-delà de `maxAdresses`). */
+  function filtreRemontee(opts) {
+    opts = opts || {};
+    var horloge = opts.horloge;
+    var ipMax = opts.ipMax || REMONTEE.max, ipFenetre = opts.ipFenetreMs || REMONTEE.fenetreMs;
+    var maxAdresses = opts.maxAdresses || REMONTEE_SERVEUR.maxAdresses;
+    var global = limiteur(opts.globalMax || REMONTEE_SERVEUR.globalMax, opts.globalFenetreMs || REMONTEE_SERVEUR.globalFenetreMs, horloge);
+    var parAdresse = Object.create(null), nAdresses = 0;
+    return function (adresse) {
+      var a = texteSur(adresse) || '?';
+      if (!parAdresse[a]) {
+        if (nAdresses >= maxAdresses) { parAdresse = Object.create(null); nAdresses = 0; }
+        parAdresse[a] = limiteur(ipMax, ipFenetre, horloge); nAdresses++;
+      }
+      return parAdresse[a]() && global();
+    };
+  }
+
   /* Analyse `RENDU:debug,SYNC:trace` (paramètre d'URL `?journal=`, option
      serveur `--journal`) : { ok, domaines: { RENDU: 'debug', … }, erreurs }. */
   function analyserReglage(texte) {
-    var domaines = {}, erreurs = [];
-    String(texte || '').split(',').forEach(function (morceau) {
+    var domaines = Object.create(null), erreurs = [];
+    texteSur(texte).split(',').forEach(function (morceau) {
       var m = morceau.trim();
       if (!m) return;
       var i = m.lastIndexOf(':');
@@ -128,44 +179,69 @@
       if (!RE_DOMAINE.test(d) || !niveauValide(n)) { erreurs.push(m); return; }
       domaines[d] = n;
     });
-    return { ok: erreurs.length === 0, domaines: domaines, erreurs: erreurs };
+    var copie = {};
+    Object.keys(domaines).forEach(function (k) { copie[k] = domaines[k]; });
+    return { ok: erreurs.length === 0, domaines: copie, erreurs: erreurs };
   }
 
-  /* Validation d'une remontée reçue par le serveur : copie bornée, ou null. */
+  /* Validation d'une remontée reçue par le serveur : copie bornée et
+     nettoyée, ou null. Le message tient sur UNE ligne (un client ne doit
+     jamais écrire une ligne à lui dans la sortie du serveur, un faux
+     `MC_PORT=` lu par un lanceur) ; la pile garde ses sauts de ligne mais
+     perd tout caractère de contrôle (ESC, OSC, C1, retour chariot). */
   function validerRemontee(msg) {
     if (!msg || typeof msg !== 'object' || msg.t !== TYPE_REMONTEE) return null;
     if (msg.niveau !== 'error' && msg.niveau !== 'fatal') return null;
     var d = typeof msg.domaine === 'string' ? msg.domaine.toUpperCase() : '';
     if (!RE_DOMAINE.test(d)) return null;
-    if (typeof msg.message !== 'string' || !msg.message) return null;
-    /* Une seule ligne : un client ne doit jamais pouvoir écrire une ligne à
-       lui dans la sortie du serveur (un faux `MC_PORT=` lu par un lanceur). */
-    var texte = msg.message.replace(/[\u0000-\u001f\u007f]+/g, ' ').slice(0, REMONTEE.messageMax);
+    if (typeof msg.message !== 'string') return null;
+    var texte = uneLigne(msg.message).trim().slice(0, REMONTEE.messageMax);
+    if (!texte) return null;
     var v = { t: TYPE_REMONTEE, niveau: msg.niveau, domaine: d, message: texte };
     if (typeof msg.code === 'string' && /^E-[A-Z]+-\d{3}$/.test(msg.code)) v.code = msg.code;
-    if (typeof msg.pile === 'string' && msg.pile) v.pile = msg.pile.slice(0, REMONTEE.pileMax);
+    if (typeof msg.pile === 'string' && msg.pile) {
+      var pile = msg.pile.slice(0, REMONTEE.pileMax).replace(/\r\n|\r/g, '\n').replace(RE_CONTROLES, '');
+      if (pile) v.pile = pile;
+    }
     return v;
   }
 
   // ─── une instance de journal ───────────────────────────────────────────────
   function creer(options) {
     options = options || {};
-    var modeInitial = MODES[options.mode] ? options.mode : 'jeu';
+    var modeInitial = modeValide(options.mode) ? options.mode : 'jeu';
     var etat = {
       mode: modeInitial,
       production: MODES[modeInitial].production,
-      domaines: {},
-      contexte: {},
+      domaines: Object.create(null),
+      contexte: Object.create(null),
       fournisseur: null,
       afficherJoueur: null,
       horloge: function () { return Date.now(); },
       cibleConsole: null,           // null : la console de l'environnement (G.console)
       formatConsole: null,
       methodeConsole: null,
-      tampon: [],
-      capacite: CAPACITE_TAMPON,
       enCours: 0,
     };
+    /* Tampon circulaire : un tableau de taille fixe, un index de début, une
+       taille — l'insertion ne déplace jamais rien. */
+    var anneau = { cases: new Array(CAPACITE_TAMPON), debut: 0, taille: 0 };
+    function anneauAjouter(e) {
+      var cap = anneau.cases.length;
+      if (anneau.taille < cap) { anneau.cases[(anneau.debut + anneau.taille) % cap] = e; anneau.taille++; }
+      else { anneau.cases[anneau.debut] = e; anneau.debut = (anneau.debut + 1) % cap; }
+    }
+    function anneauListe() {
+      var out = [], cap = anneau.cases.length;
+      for (var i = 0; i < anneau.taille; i++) out.push(anneau.cases[(anneau.debut + i) % cap]);
+      return out;
+    }
+    function anneauCapacite(n) {
+      var garder = anneauListe().slice(-n);
+      anneau = { cases: new Array(n), debut: 0, taille: 0 };
+      garder.forEach(anneauAjouter);
+    }
+
     var sortieConsole = {
       nom: 'console', seuil: MODES[modeInitial].console, suitDomaines: true,
       ecrire: function (e) {
@@ -182,15 +258,9 @@
         f.apply(c, args);
       },
     };
-    var sortieTampon = {
-      nom: 'tampon', seuil: 'trace',
-      ecrire: function (e) {
-        etat.tampon.push(e);
-        if (etat.tampon.length > etat.capacite) etat.tampon.splice(0, etat.tampon.length - etat.capacite);
-      },
-    };
+    var sortieTampon = { nom: 'tampon', seuil: 'trace', ecrire: anneauAjouter };
     var sorties = [sortieConsole, sortieTampon];
-    var loggers = {};
+    var loggers = Object.create(null);
 
     function seuilProduction(domaine) {
       return etat.domaines[domaine] !== undefined ? etat.domaines[domaine] : etat.production;
@@ -207,37 +277,46 @@
       return c;
     }
 
+    /* Ne lève JAMAIS : un journal qui ferait tomber l'appelant serait pire
+       que pas de journal. */
     function emettre(domaine, niveau, message, donnees, erreur, opts) {
-      if (rang(niveau) < rang(seuilProduction(domaine))) return null;
-      // une sortie (ou l'affichage joueur) qui journalise à son tour ne doit pas boucler
-      if (etat.enCours > 2) return null;
-      opts = opts || {};
-      var t = etat.horloge();
-      var texte = String(message === undefined ? '' : message);
-      var codeMsg = RE_CODE.exec(texte);
-      var e = {
-        t: t,
-        horodatage: new Date(t).toISOString(),
-        domaine: domaine,
-        niveau: niveau,
-        message: texte,
-        donnees: copieDonnees(donnees),
-        pile: pileDe(erreur),
-        contexte: contexteCourant(),
-        code: opts.code || (codeMsg ? codeMsg[0] : null),
-        joueur: opts.joueur ? String(opts.joueur) : null,
-        brut: !!opts.brut,
-      };
-      // l'objet d'erreur n'est gardé que pour la console (inspectable dans les outils) — pas énumérable
-      if (erreur && typeof erreur === 'object') Object.defineProperty(e, 'erreurObjet', { value: erreur, enumerable: false });
+      try {
+        if (rang(niveau) < rang(seuilProduction(domaine))) return null;
+        // une sortie (ou l'affichage joueur) qui journalise à son tour ne doit pas boucler
+        if (etat.enCours > 2) return null;
+        opts = opts && typeof opts === 'object' ? opts : {};
+        var t;
+        try { t = etat.horloge(); } catch (err) { t = NaN; }
+        if (typeof t !== 'number' || !isFinite(t)) t = Date.now();
+        var texte = texteSur(message);
+        var codeMsg = RE_CODE.exec(texte);
+        var codeOpt = typeof opts.code === 'string' && RE_CODE.test(opts.code) ? opts.code : null;
+        var e = {
+          t: t,
+          horodatage: new Date(t).toISOString(),
+          domaine: domaine,
+          niveau: niveau,
+          message: texte,
+          donnees: copieDonnees(donnees),
+          pile: pileDe(erreur),
+          contexte: contexteCourant(),
+          code: codeOpt || (codeMsg ? codeMsg[0] : null),
+          joueur: opts.joueur ? texteSur(opts.joueur) : null,
+          brut: !!opts.brut,
+        };
+        // l'objet d'erreur n'est gardé que pour la console (inspectable dans les outils) — pas énumérable
+        if (erreur && typeof erreur === 'object') Object.defineProperty(e, 'erreurObjet', { value: erreur, enumerable: false });
+      } catch (err) { return null; }
       etat.enCours++;
       try {
         for (var i = 0; i < sorties.length; i++) {
           var s = sorties[i];
-          var seuil = rang(s.seuil);
-          if (s.suitDomaines && etat.domaines[domaine] !== undefined) seuil = Math.min(seuil, rang(etat.domaines[domaine]));
-          if (rang(niveau) < seuil) continue;
-          try { s.ecrire(e); } catch (err) { /* une sortie en panne ne fait pas tomber les autres */ }
+          try {
+            var seuil = rang(s.seuil);
+            if (s.suitDomaines && etat.domaines[domaine] !== undefined) seuil = Math.min(seuil, rang(etat.domaines[domaine]));
+            if (rang(niveau) < seuil) continue;
+            s.ecrire(e);
+          } catch (err) { /* une sortie en panne ne fait pas tomber les autres */ }
         }
         if (e.joueur && etat.afficherJoueur) {
           try { etat.afficherJoueur(e.joueur, e); } catch (err) { /* idem */ }
@@ -264,15 +343,15 @@
       var ancien = {};
       if (o.mode !== undefined) {
         ancien.mode = etat.mode; ancien.seuilConsole = sortieConsole.seuil; ancien.production = etat.production;
-        if (MODES[o.mode]) { etat.mode = o.mode; sortieConsole.seuil = MODES[o.mode].console; etat.production = MODES[o.mode].production; }
+        if (modeValide(o.mode)) { etat.mode = o.mode; sortieConsole.seuil = MODES[o.mode].console; etat.production = MODES[o.mode].production; }
       }
       if (o.seuilConsole !== undefined) { ancien.seuilConsole = sortieConsole.seuil; if (niveauValide(o.seuilConsole)) sortieConsole.seuil = o.seuilConsole; }
       if (o.production !== undefined) { ancien.production = etat.production; if (niveauValide(o.production)) etat.production = o.production; }
       if (o.afficherJoueur !== undefined) { ancien.afficherJoueur = etat.afficherJoueur; etat.afficherJoueur = typeof o.afficherJoueur === 'function' ? o.afficherJoueur : null; }
       if (o.horloge !== undefined) { ancien.horloge = etat.horloge; if (typeof o.horloge === 'function') etat.horloge = o.horloge; }
       if (o.capaciteTampon !== undefined) {
-        ancien.capaciteTampon = etat.capacite;
-        if (o.capaciteTampon > 0) { etat.capacite = Math.floor(o.capaciteTampon); if (etat.tampon.length > etat.capacite) etat.tampon.splice(0, etat.tampon.length - etat.capacite); }
+        ancien.capaciteTampon = anneau.cases.length;
+        if (o.capaciteTampon >= 1) anneauCapacite(Math.floor(o.capaciteTampon));
       }
       if (o.console !== undefined) {
         var c = o.console || {};
@@ -287,7 +366,7 @@
       var d = {};
       Object.keys(etat.domaines).forEach(function (k) { d[k] = etat.domaines[k]; });
       return { mode: etat.mode, seuilConsole: sortieConsole.seuil, production: etat.production, domaines: d,
-               capaciteTampon: etat.capacite, sorties: sorties.map(function (s) { return s.nom; }) };
+               capaciteTampon: anneau.cases.length, sorties: sorties.map(function (s) { return s.nom; }) };
     }
 
     /* `niveau('SYNC', 'trace')` règle un domaine à chaud ; `niveau('SYNC')`
@@ -304,6 +383,19 @@
       var r = analyserReglage(texte);
       Object.keys(r.domaines).forEach(function (d) { etat.domaines[d] = r.domaines[d]; });
       return r;
+    }
+    /* Le réglage d'une page (`location.search`) : `?dev` passe en mode
+       développement, `?journal=RENDU:debug,…` règle des domaines. Ne lève
+       jamais : un paramètre mal encodé (`?journal=%`) est refusé, le
+       chargement continue. */
+    function reglerDepuisUrl(recherche) {
+      var q = texteSur(recherche);
+      if (/[?&]dev(=|&|$)/.test(q)) configurer({ mode: 'dev' });
+      var m = /[?&]journal=([^&]*)/.exec(q);
+      if (!m) return { ok: true, domaines: {}, erreurs: [] };
+      var brut;
+      try { brut = decodeURIComponent(m[1].replace(/\+/g, ' ')); } catch (e) { return { ok: false, domaines: {}, erreurs: [m[1]] }; }
+      return regler(brut);
     }
 
     function contexte(o) {
@@ -340,19 +432,20 @@
 
     function tampon(filtre) {
       var f = filtre || {};
-      return etat.tampon.filter(function (e) {
+      return anneauListe().filter(function (e) {
         if (f.domaine && e.domaine !== domaineDe(f.domaine)) return false;
         if (f.niveau && rang(e.niveau) < rang(f.niveau)) return false;
         if (f.test && (!e.contexte || e.contexte.test !== f.test)) return false;
         return true;
       });
     }
-    function viderTampon() { var n = etat.tampon.length; etat.tampon = []; return n; }
+    function viderTampon() { var n = anneau.taille; anneau = { cases: new Array(anneau.cases.length), debut: 0, taille: 0 }; return n; }
 
     journal.configurer = configurer;
     journal.configuration = configuration;
     journal.niveau = niveau;
     journal.regler = regler;
+    journal.reglerDepuisUrl = reglerDepuisUrl;
     journal.contexte = contexte;
     journal.fournirContexte = fournirContexte;
     journal.ajouterSortie = ajouterSortie;
@@ -363,7 +456,9 @@
     // outils sans état, communs à toutes les instances
     journal.creer = creer;
     journal.formater = formater;
+    journal.ligneSure = ligneSure;
     journal.limiteur = limiteur;
+    journal.filtreRemontee = filtreRemontee;
     journal.analyserReglage = analyserReglage;
     journal.validerRemontee = validerRemontee;
     journal.sortieRemontee = sortieRemontee;
@@ -373,6 +468,12 @@
     journal.MODES = MODES;
     journal.TYPE_REMONTEE = TYPE_REMONTEE;
     journal.REMONTEE = REMONTEE;
+    journal.REMONTEE_SERVEUR = REMONTEE_SERVEUR;
+    /* Pour le harnais de test (contexte du test en cours, collecte du
+       rapport) : un OBJET, que l'observation des fonctions de tests/run.js
+       n'enveloppe pas — sans quoi chaque test « appellerait » le journal et
+       la carte d'impact rattacherait tous les tests à src/journal.js. */
+    journal.outilsHarnais = { contexte: contexte, ajouterSortie: ajouterSortie, retirerSortie: retirerSortie, sortieCollecte: sortieCollecte };
     return journal;
   }
 
@@ -388,7 +489,7 @@
         if (!passe()) return;
         var msg = { t: TYPE_REMONTEE, niveau: e.niveau, domaine: e.domaine, message: e.message.slice(0, REMONTEE.messageMax) };
         if (e.code) msg.code = e.code;
-        if (e.pile) msg.pile = String(e.pile).slice(0, REMONTEE.pileMax);
+        if (e.pile) msg.pile = e.pile.slice(0, REMONTEE.pileMax);
         envoyer(msg);
       },
     };
