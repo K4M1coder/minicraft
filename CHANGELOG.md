@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.7.0] - 2026-10-04
 ### Ajouté
 - SPEC-SAVE-025 — **format d'identifiants annoncé à la connexion** : `REJOINDRE` porte la version du jeu (`version`, `MC.Core.VERSION_JEU`) et le format d'identifiants (`formatIds`, `MC.Core.FIRST_ITEM`) ; `BIENVENUE` porte ceux du serveur. Un client d'un autre format d'identifiants — ou qui n'en annonce aucun, donc tout client antérieur à cette version, page restée ouverte pendant une mise à jour comprise — est refusé (`REFUS`) avec un motif lisible qui donne les deux formats (« format d'identifiants incompatible : client aucun (version antérieure), serveur 4096 — … »), sa connexion est fermée et aucun de ses messages n'est appliqué. Un format annoncé mais invalide (0, négatif, non entier) est refusé de même, avec « client invalide » dans le motif. Une autre version du jeu au même format d'identifiants reste admise. Recharger la page suffit à reprendre la partie.
 - SPEC-SAVE-021 — **état de bloc borné** : chaque bloc déclare `etatMax` (0 = sans état), au plus 255, lu par `MC.Core.etatMaxDe(id)` (alias `MC.Core.etatMax`). Bornes prises au code réel : escalier 63 (tout le domaine de `packEscalier` : orientation, inversion, angle), dalle 1, meuble 7, portes et trappes 1 (dernier signal vu par les circuits ; orientation et ouverture restent dans leurs 10 ids), feu 29 (âge < `AGE_MAX`) ; circuits : fil et câble 14 (force reçue moins un), répéteur 3 (`1 | délai << 1`, délai 1), compteur 31, bascule 3, piston 15, batterie et générateurs 15, portes logiques, détecteurs, appareils, distributeur, bloc de commande, levier, bouton et plaque 1, lampe et tête de piston 0. Un test compare chaque bloc à une liste explicite des blocs à état (tout autre bloc doit valoir 0), vérifie que chaque borne est réellement atteinte, et balaie tous les producteurs d'état — empaqueteurs de `MC.Formes` sur tout leur domaine, `MC.Circuits.tick` pour chaque bloc de circuit, porte et trappe (chaque état d'entrée × 64 voisinages × 4 sortes de voisins, et les contextes énergie, vent, eau, lave, batterie, détecteurs), `MC.Feu` (tout âge d'entrée), la génération (chaque bâtiment × chaque style, campagne et ville × 4 orientations × variantes, chaque genre de lieu dans chaque style, et la pose des lieux dans les chunks) et la pose d'une batterie ; il échoue sur tout état au-delà de la borne au lieu de le tronquer, et une garde lit `src/habitats.js` pour refuser tout état qui ne vient pas d'un empaqueteur. Toits raides en état 64, dalles de faîtage en état 2 et pierres posées avec un état sont détectés. Pour ce balayage, `MC.Habitats` expose `batirPourEssai` et `batirBatimentPourEssai` (lieu ou bâtiment de style imposé, hors cache, jamais en jeu ; `construire` passe désormais par `fabriquer`, sans changement de résultat). Une batterie posée reprend le niveau de sa pile **borné à 0..15** (une pile forgée de niveau 200 posait l'état 200).
@@ -1476,6 +1478,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.7.0]: #
 [0.6.0]: #
 [0.5.0]: #
 [0.4.0]: #
