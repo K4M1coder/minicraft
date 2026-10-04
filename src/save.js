@@ -124,42 +124,155 @@
     };
   }
 
-  /* Réinjecte un état sauvegardé. Les overrides sont posés AVANT toute
-     génération de chunk : generateChunk les applique ensuite tout seul. */
+  /* ── Identifiants d'objet dans la sauvegarde (SPEC-SAVE-017) ──────────────
+     Les ids d'OBJET ont changé deux fois (v1 : dès 64 ; v2 : dès 128 ; v3 :
+     dès MC.Core.FIRST_ITEM) ; les ids de BLOC, jamais. Toute renumérotation
+     passe donc par UNE fonction, `migrerIdsObjets`, qui applique la
+     conversion à TOUS les champs qui portent un id d'objet — y compris ceux
+     apparus après la v3 (inutile pour v1/v2, où ils sont absents, mais prêt
+     pour une future renumérotation).
+
+     `CHAMPS_IDS` classe chaque champ de `serialize` : une fonction (le champ
+     porte des ids d'objet, voici comment les convertir) ou un texte (le
+     champ n'en porte aucun, et pourquoi). Un champ ajouté à `serialize` sans
+     classement fait échouer un test (`champsNonClasses`) : c'est l'oubli de
+     la banque, des soutes et des indices d'enquête (corrigé ici) qu'on
+     n'aurait jamais dû pouvoir commettre. */
+  function pileIds(p, conv) { if (Array.isArray(p) && typeof p[0] === 'number' && p[0]) p[0] = conv(p[0]); }
+  function pilesIds(l, conv) { if (Array.isArray(l)) l.forEach(function (p) { pileIds(p, conv); }); }
+  // un champ mal formé (pas un tableau) est laissé tel quel, jamais une exception :
+  // un import ne doit pas rejeter toute la partie pour un champ abîmé
+  function liste(l) { return Array.isArray(l) ? l : []; }
+  // un objet dont les CLÉS sont des ids (stocks de l'économie) : renommées
+  function clesIds(o, conv) {
+    if (!o || typeof o !== 'object') return o;
+    var out = {};
+    Object.keys(o).forEach(function (k) {
+      var n = +k;
+      out[Number.isInteger(n) && n > 0 && String(n) === k ? String(conv(n)) : k] = o[k];
+    });
+    return out;
+  }
+  var SANS_ID = 'sans id d\'objet : ';
+  var CHAMPS_IDS = {
+    v: SANS_ID + 'version du format',
+    seed: SANS_ID + 'graine',
+    time: SANS_ID + 'heure',
+    overrides: SANS_ID + 'ids de BLOC (inchangés d\'une version à l\'autre)',
+    etats: SANS_ID + 'états de bloc',
+    crops: SANS_ID + 'positions et croissance',
+    donjons: SANS_ID + 'identifiants de donjons (textes)',
+    pilles: SANS_ID + 'clés de coffres pillés (textes)',
+    explores: SANS_ID + 'cases de carte explorées',
+    reperes: SANS_ID + 'repères (nom, position, couleur)',
+    suivi: SANS_ID + 'repère suivi',
+    reputation: SANS_ID + 'valeur par faction',
+    politique: SANS_ID + 'factions, relations, annonces (apparu après la v3)',
+    guildes: SANS_ID + 'guildes du joueur (apparu après la v3)',
+    pnjsMorts: SANS_ID + 'identifiants d\'habitants (textes)',
+    zones: SANS_ID + 'régions (apparu après la v3)',
+    succes: SANS_ID + 'compteurs par identifiant de succès (textes)',
+    spawnPoint: SANS_ID + 'position (apparu après la v3)',
+    commandes: SANS_ID + 'texte des blocs de commande (apparu après la v3)',
+    // ── porteurs d'ids d'objet ──
+    player: function (p, conv) {
+      if (!p) return;
+      pilesIds(p.inv, conv);
+      if (p.equip && typeof p.equip === 'object') Object.keys(p.equip).forEach(function (s) { pileIds(p.equip[s], conv); });
+    },
+    banque: function (b, conv) { pilesIds(b, conv); },
+    chests: function (l, conv) { liste(l).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
+    distributeurs: function (l, conv) { liste(l).forEach(function (c) { if (c) pilesIds(c[1], conv); }); },
+    furnaces: function (l, conv) {
+      liste(l).forEach(function (f) { if (f) [1, 2, 3].forEach(function (i) { pileIds(f[i], conv); }); });
+    },
+    // soute : 6e champ de chaque véhicule (MC.Vehicules.serialiser)
+    vehicules: function (l, conv) { liste(l).forEach(function (v) { if (Array.isArray(v)) pilesIds(v[5], conv); }); },
+    // présentoirs et socles : [clé, id, n, data]
+    expositions: function (l, conv) {
+      liste(l).forEach(function (e) { if (Array.isArray(e) && typeof e[1] === 'number' && e[1]) e[1] = conv(e[1]); });
+    },
+    // récit : seuls les indices d'objet d'une enquête portent un id d'objet ;
+    // l'épopée ne garde que des clés de chapitres, la colonie des ids de BLOC
+    histoire: function (h, conv) {
+      var q = h && h.archetype === 'enquete' ? h.enquete : null;
+      if (!q || !Array.isArray(q.indices)) return;
+      q.indices.forEach(function (ind) {
+        if (ind && ind.type === 'objet' && typeof ind.objet === 'number') ind.objet = conv(ind.objet);
+      });
+    },
+    // économie (apparue après la v3) : stocks et minerai indexés par id d'objet
+    economie: function (eco, conv) {
+      if (!eco || !Array.isArray(eco.lieux)) return;
+      eco.lieux.forEach(function (e) {
+        var L = Array.isArray(e) ? e[1] : null;
+        if (!L) return;
+        if (L.stocks) L.stocks = clesIds(L.stocks, conv);
+        if (L.minerai) L.minerai = clesIds(L.minerai, conv);
+      });
+    },
+  };
+  // champs de `player` : seuls `inv` et `equip` portent des ids d'objet
+  var CHAMPS_JOUEUR = { x: 1, y: 1, z: 1, yaw: 1, pitch: 1, hp: 1, hunger: 1, air: 1, selected: 1, flying: 1,
+                        inv: 'objets', equip: 'objets' };
+
+  /* Applique `conv(id)` à chaque id d'objet de la sauvegarde `data` (en place). */
+  function migrerIdsObjets(data, conv) {
+    Object.keys(CHAMPS_IDS).forEach(function (k) {
+      if (typeof CHAMPS_IDS[k] === 'function' && data[k] != null) CHAMPS_IDS[k](data[k], conv);
+    });
+    return data;
+  }
+  /* Champs de `data` (et de `data.player`) absents du classement. Conçu pour
+     la SORTIE de `serialize` (format courant) : c'est elle que le test de
+     classement lui passe ; une sauvegarde ancienne ou forgée n'a pas à y
+     être soumise. */
+  function champsNonClasses(data) {
+    var manquants = Object.keys(data || {}).filter(function (k) { return !CHAMPS_IDS.hasOwnProperty(k); });
+    if (data && data.player && typeof data.player === 'object') {
+      Object.keys(data.player).forEach(function (k) {
+        if (!CHAMPS_JOUEUR.hasOwnProperty(k)) manquants.push('player.' + k);
+      });
+    }
+    return manquants;
+  }
+
   /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés vers
-     128 pour laisser la place à de nouveaux blocs ; on convertit donc toute
-     pile d'objet des anciennes sauvegardes plutôt que de les déclarer
-     illisibles. Étape intermédiaire : produit une sauvegarde v2 (128..255),
-     que migrerV2 convertit ensuite vers le nouvel espace 16 bits. */
+     128 pour laisser la place à de nouveaux blocs. Étape intermédiaire :
+     produit une sauvegarde v2 (128..255), que migrerV2 convertit ensuite
+     vers le nouvel espace 16 bits. Idempotente : sans effet sur une
+     sauvegarde qui n'est pas v1, et ne convertit que l'ancien espace
+     d'objets (64..127). */
   function migrerV1(data) {
+    if (!data || data.v !== 1) return data;
     var dec = MC.Core.DECALAGE_OBJETS_V1;
-    function id(v) { return v >= 64 ? v + dec : v; }
-    function pile(p) { if (p && p[0]) p[0] = id(p[0]); return p; }
-    if (data.player && data.player.inv) data.player.inv.forEach(pile);
-    (data.chests || []).forEach(function (c) { (c[1] || []).forEach(pile); });
-    (data.furnaces || []).forEach(function (f) { [1, 2, 3].forEach(function (i) { pile(f[i]); }); });
+    migrerIdsObjets(data, function (v) { return v >= dec && v < MC.Core.ANCIEN_FIRST_ITEM ? v + dec : v; });
     data.v = 2;
     return data;
   }
 
   /* Version 2 : format 8 bits, objets 128..255 (SPEC-SAVE-017). Les blocs ne
-     bougent pas (1..127, inchangés dans le nouvel espace) ; seuls les objets
-     d'inventaire (piles du joueur, coffres, fours) sont décalés vers
-     MC.Core.FIRST_ITEM. Une sauvegarde de ce format n'a jamais connu d'état
-     de bloc : `etats` est simplement absent (aucun état, comme le défaut). */
+     bougent pas (1..127, inchangés dans le nouvel espace) ; tous les objets
+     (inventaire, coffres, fours, banque, soutes, indices d'enquête…) sont
+     décalés vers MC.Core.FIRST_ITEM. Une sauvegarde de ce format n'a jamais
+     connu d'état de bloc : `etats` est simplement absent (aucun état).
+     Idempotente : sans effet sur une sauvegarde qui n'est pas v2 (une v3
+     peut porter le bloc 200, ancien id de la carte), et ne convertit que
+     l'ancien espace d'objets (128..255). */
   function migrerV2(data) {
-    var off = MC.Core.FIRST_ITEM - MC.Core.ANCIEN_FIRST_ITEM;
-    function id(v) { return v >= MC.Core.ANCIEN_FIRST_ITEM ? v + off : v; }
-    function pile(p) { if (p && p[0]) p[0] = id(p[0]); return p; }
-    if (data.player && data.player.inv) data.player.inv.forEach(pile);
-    (data.chests || []).forEach(function (c) { (c[1] || []).forEach(pile); });
-    (data.furnaces || []).forEach(function (f) { [1, 2, 3].forEach(function (i) { pile(f[i]); }); });
+    if (!data || data.v !== 2) return data;
+    var ancien = MC.Core.ANCIEN_FIRST_ITEM, off = MC.Core.FIRST_ITEM - ancien;
+    migrerIdsObjets(data, function (v) { return v >= ancien && v < 2 * ancien ? v + off : v; });
     data.v = 3;
     return data;
   }
 
+  /* Réinjecte un état sauvegardé. Les overrides sont posés AVANT toute
+     génération de chunk : generateChunk les applique ensuite tout seul. */
   function apply(data, state) {
-    if (data && data.v === 1) data = migrerV1(JSON.parse(JSON.stringify(data)));
+    // migrations sur une copie : la donnée de l'appelant n'est jamais modifiée
+    if (data && (data.v === 1 || data.v === 2)) data = JSON.parse(JSON.stringify(data));
+    if (data && data.v === 1) data = migrerV1(data);
     if (data && data.v === 2) data = migrerV2(data);
     if (!data || data.v !== VERSION) return false;    // format inconnu : refusé proprement
     var w = state.world;
@@ -245,8 +358,8 @@
     p.dead = p.hp <= 0;
     if (d.inv) p.inv.load(d.inv);
     // équipement (B1.md § 8) : absent (vieille sauvegarde) → équipement vide,
-    // comportement d'avant cette section — jamais de conversion d'id ici,
-    // les migrations v1/v2 ci-dessus ne portent que sur `inv`/`chests`/`furnaces`.
+    // comportement d'avant cette section — aucune conversion d'id ici : elle
+    // est faite plus haut, par migrerIdsObjets (CHAMPS_IDS.player).
     if (MC.ContratsV2 && p.equip) {
       var equipCharge = MC.ContratsV2.validerEquip(d.equip || {}) || {};
       MC.ContratsV2.EQUIP_SLOTS.forEach(function (s) {
@@ -337,5 +450,6 @@
 
   MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply,
               migrerV1: migrerV1, migrerV2: migrerV2,
+              CHAMPS_IDS: CHAMPS_IDS, migrerIdsObjets: migrerIdsObjets, champsNonClasses: champsNonClasses,
               save: save, load: load, hasSave: hasSave, clear: clear };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
