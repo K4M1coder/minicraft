@@ -2111,8 +2111,15 @@
           }
           heldStack = null;
         } else if (heldStack) {
-          var rr = container.inv.add(heldStack.id, heldStack.n);
-          if (rr) rendus.push({ id: heldStack.id, n: rr });
+          var etatH = heldStack.dmg || heldStack.data !== undefined;
+          var rr = etatH ? container.inv.addStack(heldStack.id, heldStack.n, heldStack.data, heldStack.dmg)
+                         : container.inv.add(heldStack.id, heldStack.n);
+          if (rr) {
+            var rp = { id: heldStack.id, n: rr };
+            if (heldStack.dmg) rp.dmg = heldStack.dmg;
+            if (heldStack.data !== undefined) rp.data = heldStack.data;
+            rendus.push(rp);
+          }
           heldStack = null;
         }
       }

@@ -3171,7 +3171,7 @@ function traiter(c, m) {
           const contCasse = conteneursPoses.get(kc) || contNeuf;
           if (contCasse) {
             fermerConteneurPourAbonnes(kc);
-            contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n, null, s.data, s.dmg); });
+            contCasse.slots.forEach(s => { if (s) entites.dropStack(m.x + 0.5, m.y + 0.5, m.z + 0.5, s); });
             conteneursPoses.delete(kc);
             derniereEmissionFour.delete(kc);
           }
@@ -3716,7 +3716,7 @@ function normaliserTailleConteneur(cle, cont) {
   excedent.forEach(s => {
     if (!s) return;
     lachees++;
-    if (p.length === 3) entites.dropItem(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s.id, s.n, null, s.data, s.dmg);
+    if (p.length === 3) entites.dropStack(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s);
   });
   journal(`avertissement : conteneur ${cle} (${cont.type}) mal formé — ` +
           `${cont.slots.length + excedent.length} case(s) au lieu de ${cont.taille}, tronqué` +
@@ -3785,7 +3785,7 @@ function refuserOp(c, j, seq, motif) {
 function lacherAuxPieds(js, pile) {
   if (!pile || !pile.n) return;
   const p = js.joueur.state.pos;
-  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n, null, pile.data, pile.dmg);
+  entites.dropStack(p.x, p.y + 1, p.z, pile);
 }
 function lancerDevant(js, pile) {
   if (!pile || !pile.n) return;
@@ -3825,6 +3825,8 @@ function traiterOp(c, m, js, op) {
   if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); return r; }
   // SPEC-JOUABLE-006 : un objet JETÉ part devant le joueur (jamais rendu aussitôt) ; un trop-plein tombe aux pieds
   if (r.effets && r.effets.lache) (op.k === 'lacher' ? lancerDevant : lacherAuxPieds)(js, r.effets.lache);
+  // la grille fermée sur un inventaire plein : le reliquat (état compris) tombe aux pieds, jamais perdu
+  if (r.effets && r.effets.reste) r.effets.reste.forEach(p => lacherAuxPieds(js, p));
   const deltas = [];
   (r.modifs.conteneurs || []).forEach(cle => {
     const cont = conteneurParCle(js, cle);
@@ -4225,7 +4227,7 @@ function liberSoutesDetruites() {
     vehiculesSoute.delete(e);
     fermerConteneurPourAbonnes('v' + e.eid);
     e.soute.slots.forEach((s, i) => {
-      if (s) entites.dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.id, s.n, null, s.data, s.dmg);
+      if (s) entites.dropStack(e.pos.x, e.pos.y + 0.5, e.pos.z, s);
       e.soute.slots[i] = null;
     });
   });
@@ -4707,7 +4709,7 @@ setInterval(() => {
           entites.tirer({ x: x + 0.5, y: y + 1, z: z + 0.5 }, { x: 0, y: 1, z: 0 },
                          14, idef.damage || 5, null, idef.ammoType || 'fleche');
         } else {
-          entites.dropItem(x + 0.5, y + 1, z + 0.5, st.id, 1);
+          entites.dropStack(x + 0.5, y + 1, z + 0.5, { id: st.id, n: 1, dmg: st.dmg, data: st.data });
         }
         // SPEC-SYNC-015 : un joueur qui a ce distributeur ouvert voit l'éjection
         const abonnesD = abonnesActuels(kd);
@@ -4908,7 +4910,7 @@ setInterval(() => {
     const reste = x.js.joueur.pickUp(p.id, p.n, p.data, p.dmg);
     const pris = p.n - reste;
     if (pris > 0) envoyerInvMaj(x.c, x.j, { gain: { id: p.id, n: pris } });
-    if (reste > 0) entites.dropItem(p.joueur.pos.x, p.joueur.pos.y + 1, p.joueur.pos.z, p.id, reste, null, p.data, p.dmg);
+    if (reste > 0) entites.dropStack(p.joueur.pos.x, p.joueur.pos.y + 1, p.joueur.pos.z, { id: p.id, n: reste, data: p.data, dmg: p.dmg });
     envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: pris > 0 ? pris : p.n });
   });
   entites.mergeItems();

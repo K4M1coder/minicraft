@@ -235,12 +235,70 @@
       var r2 = PV.resoudreButin(p2, plein, 'graine-usure');
       A.equal(r2.reste.length, 1, 'inventaire plein : reliquat');
       A.equal(r2.reste[0].dmg, 11, 'le reliquat (lâché au sol) porte l\'usure');
+      // coffre cassé, soute détruite, conteneur tronqué, distributeur, trop-plein, reliquat : tous passent par dropStack
+      var ents = MC.createEntities(flatWorld(10));
+      var e1 = ents.dropStack(0.5, 11, 0.5, { id: I.BRONZE_PIOCHE, n: 1, dmg: 4, data: { note: 'q' } }, seededRand(1));
+      A.equal(e1.dmg, 4, 'dropStack : usure portée par l\'objet au sol');
+      A.equal(JSON.stringify(e1.data), '{"note":"q"}', 'dropStack : donnée portée aussi');
+      var e2 = ents.dropStack(9.5, 11, 9.5, { id: B.COBBLE, n: 3 }, seededRand(2));
+      A.equal(e2.dmg, 0, 'une pile sans usure reste sans usure');
+      e1.pickup = e2.pickup = 0; e1.pos = { x: 0.5, y: 11, z: 0.5 }; e1.vel = { x: 0, y: 0, z: 0 };
+      var pris = ents.update(1 / 60, { pos: { x: 0.5, y: 11, z: 0.5 } }).picked.filter(function (p) { return p.id === I.BRONZE_PIOCHE; });
+      A.equal(pris.length, 1, 'ramassé');
+      A.equal(pris[0].dmg, 4, 'rapporte l\'usure');
+    });
+
+    it('SPEC-JOUABLE-006 : fermer la grille et déclarer un distributeur rendent l\'outil avec son usure (jamais neuf), reliquat compris', function () {
+      var I = C.I, OUTIL = I.BRONZE_PIOCHE, Cx = MC.Conteneurs;
+      function joueurAvecOutil(dmg) {
+        var j = { inv: MC.Inventory.create(36), grille: MC.Inventory.create(9), equip: {} };
+        j.inv.slots[0] = { id: OUTIL, n: 1, dmg: dmg };
+        return j;
+      }
+      var regles = MC.Modes.regles('survie', 'facile');
+      var j = joueurAvecOutil(7), cx = { joueur: j, conteneur: function () { return null; }, regles: regles };
+      A.ok(Cx.appliquer(cx, { k: 'transfert', de: { z: 'inv', i: 0 }, vers: { z: 'grille', i: 0 }, n: 1 }).ok);
+      A.equal(j.grille.slots[0].dmg, 7, 'déposé dans la grille avec son usure');
+      var r = Cx.appliquer(cx, { k: 'rendreGrille' });
+      A.ok(r.ok);
+      A.equal(j.inv.slots.filter(Boolean).length, 1, 'rendu à l\'inventaire');
+      A.equal(j.inv.slots.filter(Boolean)[0].dmg, 7, 'grille rendue : usure conservée');
+      var j2 = joueurAvecOutil(0);
+      for (var i = 0; i < 36; i++) j2.inv.slots[i] = { id: B.COBBLE, n: 64 };
+      j2.grille.slots[0] = { id: OUTIL, n: 1, dmg: 6, data: { k: 1 } };
+      var r2 = Cx.appliquer({ joueur: j2, conteneur: function () { return null; }, regles: regles }, { k: 'rendreGrille' });
+      A.equal(r2.effets.reste.length, 1, 'reliquat');
+      A.equal(r2.effets.reste[0].dmg, 6, 'le reliquat porte l\'usure');
+      A.equal(JSON.stringify(r2.effets.reste[0].data), '{"k":1}', 'et la donnée');
+      // distributeur : l'état vient de ce que le joueur possède, déclaré avec ou sans usure
+      [[[OUTIL, 1, 9]], [[OUTIL, 1]]].forEach(function (decl) {
+        var j3 = joueurAvecOutil(9);
+        var cont = { type: 'distributeur', taille: 9, slots: new Array(9).fill(null), rev: 0 };
+        var r3 = Cx.appliquer({ joueur: j3, conteneur: function () { return cont; }, regles: regles }, { k: 'declarer', cle: 'x', slots: decl });
+        A.ok(r3.ok);
+        A.equal(cont.slots[0] && cont.slots[0].dmg, 9, 'distributeur : l\'outil entre avec son usure (' + JSON.stringify(decl) + ')');
+        A.equal(j3.inv.slots.filter(Boolean).length, 0, 'et quitte l\'inventaire');
+        var r4 = Cx.appliquer({ joueur: j3, conteneur: function () { return cont; }, regles: regles }, { k: 'declarer', cle: 'x', slots: [] });
+        A.ok(r4.ok);
+        A.equal(cont.slots[0], null, 'distributeur vidé');
+        A.equal(j3.inv.slots.filter(Boolean)[0].dmg, 9, 'retrait : l\'usure revient dans l\'inventaire');
+      });
+      // une usure déclarée qu'on ne possède pas ne prélève rien : l'outil neuf reste neuf
+      var j5 = { inv: MC.Inventory.create(36), grille: MC.Inventory.create(9), equip: {} };
+      j5.inv.slots[0] = { id: OUTIL, n: 1 };
+      var cont5 = { type: 'distributeur', taille: 9, slots: new Array(9).fill(null), rev: 0 };
+      Cx.appliquer({ joueur: j5, conteneur: function () { return cont5; }, regles: regles }, { k: 'declarer', cle: 'x', slots: [[OUTIL, 1, 3]] });
+      A.equal(cont5.slots[0], null, 'rien de prélevé');
+      A.ok(j5.inv.slots[0] && !j5.inv.slots[0].dmg, 'l\'outil neuf reste dans l\'inventaire, neuf');
+    });
+
+    it('SPEC-JOUABLE-006 : tout lâcher du serveur passe par dropStack (comptage exact) ; aucune pile à état ne retombe sur dropItem(id, n) nu', function () {
       var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
-      A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/.test(src), 'jet : usure transmise');
-      A.ok(/dropItem\(p\.x, p\.y \+ 1, p\.z, pile\.id, pile\.n, null, pile\.data, pile\.dmg\)/.test(src), 'trop-plein aux pieds : usure transmise');
-      A.ok(/pickUp\(p\.id, p\.n, p\.data, p\.dmg\)/.test(src), 'ramassage : usure transmise');
-      A.ok(/pris, null, p\.data, p\.dmg\)|reste, null, p\.data, p\.dmg\)/.test(src), 'reliquat au sol : usure transmise');
-      A.ok(/s\.id, s\.n, null, s\.data, s\.dmg\)/.test(src), 'soute / coffre cassé : usure transmise');
+      A.equal((src.match(/entites\.dropStack\(/g) || []).length, 6, 'coffre cassé, conteneur tronqué, soute, distributeur, trop-plein aux pieds, reliquat de ramassage');
+      A.equal((src.match(/entites\.dropItem\(/g) || []).length, 1, 'un seul dropItem nu : le butin d\'un bloc cassé (aucun état)');
+      A.equal((src.match(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/g) || []).length, 1, 'jet : usure transmise');
+      A.equal((src.match(/pickUp\(p\.id, p\.n, p\.data, p\.dmg\)/g) || []).length, 1, 'ramassage : usure transmise');
+      A.equal((src.match(/r\.effets\.reste\.forEach\(p => lacherAuxPieds\(js, p\)\)/g) || []).length, 1, 'reliquat de la grille lâché aux pieds');
     });
 
     it('SPEC-JOUABLE-001 : le serveur de jeu de test n\'hérite d\'aucun réglage MC_*, valide l\'inventaire de départ et n\'écoute que la boucle locale', function () {

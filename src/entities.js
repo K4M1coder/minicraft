@@ -250,6 +250,12 @@
       return e;
     }
 
+    /* Lâche une pile entière { id, n, dmg?, data? } : son état (usure, donnée)
+       part avec elle (SPEC-JOUABLE-006). */
+    function dropStack(x, y, z, pile, rand) {
+      return dropItem(x, y, z, pile.id, pile.n, rand, pile.data, pile.dmg);
+    }
+
     /* SPEC-JOUABLE-006 : un objet JETÉ (touche G) est lancé devant le lanceur,
        dans la direction du regard, depuis la hauteur des yeux — et personne
        ne peut le ramasser avant DELAI_RAMASSAGE_JET. Lâché aux pieds et
@@ -1346,7 +1352,7 @@
     }
 
     return {
-      list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, lancerObjet: lancerObjet, DELAI_RAMASSAGE_JET: DELAI_RAMASSAGE_JET, remove: remove,
+      list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, dropStack: dropStack, lancerObjet: lancerObjet, DELAI_RAMASSAGE_JET: DELAI_RAMASSAGE_JET, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, cederAuxJoueurs: cederAuxJoueurs, ecarter: ecarter,

@@ -265,14 +265,58 @@
     return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: {} };
   }
 
+  /* SPEC-JOUABLE-006 : l'état d'une pile (usure `dmg`, donnée `data`) la suit
+     partout où elle passe — jamais un outil usé qui redevient neuf. */
+  function porteEtat(p) { return !!p && (!!p.dmg || p.data !== undefined); }
+  function memeEtat(a, b) {
+    return a.id === b.id && (a.dmg || 0) === (b.dmg || 0) && JSON.stringify(a.data) === JSON.stringify(b.data);
+  }
+  function copiePile(p, n) {
+    var q = { id: p.id, n: n };
+    if (p.dmg) q.dmg = p.dmg;
+    if (p.data !== undefined) q.data = p.data;
+    return q;
+  }
+  // range n exemplaires de `p` (avec son état) ; renvoie le reliquat non casé
+  function ajouterPile(inv, p, n) {
+    return porteEtat(p) ? inv.addStack(p.id, n, p.data, p.dmg) : inv.add(p.id, n);
+  }
+  // retire jusqu'à n exemplaires ayant EXACTEMENT l'état de `p` (id, usure, donnée) ; renvoie le nombre retiré
+  function retirerExact(inv, p, n) {
+    var retire = 0;
+    for (var i = 0; i < inv.slots.length && retire < n; i++) {
+      var s = inv.slots[i];
+      if (!s || !memeEtat(s, p)) continue;
+      retire += inv.consumeAt(i, n - retire);
+    }
+    return retire;
+  }
+
+  /* Prélève dans `inv` ce que le joueur déclare : d'abord l'état exact ; une
+     déclaration sans état retombe sur la première pile de même id (l'état
+     vient TOUJOURS de ce que le joueur possède, jamais de sa déclaration :
+     jamais un outil usé rendu neuf, jamais une usure inventée). Renvoie
+     { n, modele } (modele : la pile réellement prélevée, pour copier l'état). */
+  function retirerDeclare(inv, voulu, n) {
+    var got = retirerExact(inv, voulu, n);
+    if (got > 0 || porteEtat(voulu)) return { n: got, modele: voulu };
+    for (var i = 0; i < inv.slots.length; i++) {
+      var s = inv.slots[i];
+      if (!s || s.id !== voulu.id) continue;
+      var modele = copiePile(s, s.n);
+      return { n: inv.consumeAt(i, n), modele: modele };
+    }
+    return { n: 0, modele: voulu };
+  }
+
   function rendreGrille(ctx) {
     var grille = ctx.joueur.grille, inv = ctx.joueur.inv;
     var reste = [];
     for (var i = 0; i < grille.slots.length; i++) {
       var s = grille.slots[i];
       if (!s) continue;
-      var r = inv.add(s.id, s.n);
-      if (r > 0) reste.push({ id: s.id, n: r });
+      var r = ajouterPile(inv, s, s.n);
+      if (r > 0) reste.push(copiePile(s, r));
       grille.slots[i] = null;
     }
     return { ok: true, modifs: { inv: true, equip: false, grille: true, conteneurs: [] }, effets: { reste: reste } };
@@ -286,26 +330,27 @@
     for (var i = 0; i < cont.slots.length; i++) {
       var actuel = cont.slots[i];
       var voulu = slotsDeclares[i] || null;
-      if (actuel && voulu && actuel.id === voulu.id) {
+      if (actuel && voulu && memeEtat(actuel, voulu)) {
         var delta = voulu.n - actuel.n;
         if (delta > 0) {
-          actuel.n += inv.remove(actuel.id, delta);
+          // une pile porteuse d'état vaut 1 exemplaire : on n'en ajoute pas (rien de même état à fusionner)
+          if (!porteEtat(actuel)) actuel.n += retirerExact(inv, actuel, delta);
         } else if (delta < 0) {
-          var rendu = inv.add(actuel.id, -delta);
+          var rendu = ajouterPile(inv, actuel, -delta);
           actuel.n = voulu.n + rendu;   // ce qui n'a pas pu être rendu reste dans le conteneur
         }
         if (actuel.n <= 0) cont.slots[i] = null;
       } else if (!actuel && voulu) {
-        var pris = inv.remove(voulu.id, voulu.n);
-        cont.slots[i] = pris > 0 ? { id: voulu.id, n: pris } : null;
+        var pris = retirerDeclare(inv, voulu, voulu.n);
+        cont.slots[i] = pris.n > 0 ? copiePile(pris.modele, pris.n) : null;
       } else if (actuel && !voulu) {
-        var r2 = inv.add(actuel.id, actuel.n);
-        cont.slots[i] = r2 > 0 ? { id: actuel.id, n: r2 } : null;
-      } else if (actuel && voulu && actuel.id !== voulu.id) {
-        var r3 = inv.add(actuel.id, actuel.n);
-        var n3 = inv.remove(voulu.id, voulu.n);
-        if (n3 > 0) cont.slots[i] = { id: voulu.id, n: n3 };
-        else cont.slots[i] = r3 > 0 ? { id: actuel.id, n: r3 } : null;
+        var r2 = ajouterPile(inv, actuel, actuel.n);
+        cont.slots[i] = r2 > 0 ? copiePile(actuel, r2) : null;
+      } else if (actuel && voulu) {
+        var r3 = ajouterPile(inv, actuel, actuel.n);
+        var n3 = retirerDeclare(inv, voulu, voulu.n);
+        if (n3.n > 0) cont.slots[i] = copiePile(n3.modele, n3.n);
+        else cont.slots[i] = r3 > 0 ? copiePile(actuel, r3) : null;
       }
     }
     cont.rev = (cont.rev || 0) + 1;
