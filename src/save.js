@@ -237,6 +237,93 @@
     return manquants;
   }
 
+  /* ── Le fichier de MONDE du serveur (SPEC-SAVE-018) ───────────────────────
+     Même règle pour `etatMonde()` de server.js (et pour le fichier qu'écrit
+     l'import d'une partie solo, MC.PartiesFichier.migrerSauvegarde) : chaque
+     champ est classé, porteur d'ids d'objet (avec sa migration) ou sans id.
+     Aucune version de ce fichier n'a porté d'ids d'objet 8 bits (les
+     champs porteurs sont tous apparus après le passage aux 16 bits) :
+     `migrerIdsObjetsMonde` n'est appelée par aucun chargement aujourd'hui,
+     elle est prête pour une future renumérotation, et le classement
+     empêche d'ajouter un porteur que cette renumérotation oublierait. */
+  // enregistrement d'un joueur nommé (MC.Conteneurs.versEnregistrement + server.js)
+  var CHAMPS_ENREGISTREMENT = {
+    v: SANS_ID + 'version de l\'enregistrement',
+    inv: 'objets', equip: 'objets', banque: 'objets',
+    succes: SANS_ID + 'compteurs par identifiant de succès (textes)',
+    etat: SANS_ID + 'position, vie, faim, point de réapparition',
+  };
+  function enregistrementIds(r, conv) {
+    if (!r || typeof r !== 'object') return;
+    pilesIds(r.inv, conv);
+    pilesIds(r.banque, conv);
+    if (r.equip && typeof r.equip === 'object') Object.keys(r.equip).forEach(function (s) { pileIds(r.equip[s], conv); });
+  }
+  var CHAMPS_CONTENEUR = { cle: 1, type: 1, slots: 'objets', four: 'durées (burn, cook)' };
+  var CHAMPS_IDS_MONDE = {
+    v: SANS_ID + 'version du format',
+    graine: SANS_ID + 'graine',
+    heure: SANS_ID + 'heure',
+    overrides: SANS_ID + 'ids de BLOC (inchangés d\'une version à l\'autre)',
+    etats: SANS_ID + 'états de bloc',
+    crops: SANS_ID + 'positions et croissance',
+    donjons: SANS_ID + 'identifiants de donjons (textes)',
+    pilles: SANS_ID + 'clés de coffres pillés (textes)',
+    pnjsMorts: SANS_ID + 'identifiants d\'habitants (textes)',
+    admin: SANS_ID + 'rôles, listes, sanctions ; le journal d\'audit est un historique figé (un id noté, bloc posé ou troc, y reste celui de l\'instant de l\'action)',
+    zones: SANS_ID + 'régions',
+    politique: SANS_ID + 'factions, relations, annonces',
+    guildes: SANS_ID + 'guildes des joueurs',
+    pvp: SANS_ID + 'meurtres, victoires, réputations (noms)',
+    quetes: SANS_ID + 'quêtes actives : la ressource livrée est « or » ou « nourriture », jamais un id',
+    commandes: SANS_ID + 'texte des blocs de commande',
+    importeDe: SANS_ID + 'origine d\'une partie importée',
+    // ── porteurs d'ids d'objet ──
+    joueurs: function (l, conv) { liste(l).forEach(function (e) { if (Array.isArray(e)) enregistrementIds(e[1], conv); }); },
+    soloJoueur: function (r, conv) { enregistrementIds(r, conv); },
+    conteneurs: function (l, conv) { liste(l).forEach(function (c) { if (c && typeof c === 'object') pilesIds(c.slots, conv); }); },
+    economie: CHAMPS_IDS.economie,
+    vehicules: CHAMPS_IDS.vehicules,
+    // récit de chaque joueur nommé : { recit: MC.Recits.serialiser, fin } (RS.exporter),
+    // ou l'ancien format solo tel quel ; seuls les indices d'enquête portent un id
+    histoire: function (h, conv) {
+      if (!h || !Array.isArray(h.recits)) return;
+      h.recits.forEach(function (e) {
+        if (!Array.isArray(e) || !e[1] || typeof e[1] !== 'object') return;
+        CHAMPS_IDS.histoire(e[1].recit && typeof e[1].recit === 'object' ? e[1].recit : e[1], conv);
+      });
+    },
+    // champs d'une partie solo importée que le serveur conserve tels quels :
+    // ce sont des champs de MC.Save.serialize, migrés par leur propre classement
+    extras: function (x, conv) { if (x && typeof x === 'object') migrerIdsObjets(x, conv); },
+  };
+  /* Applique `conv(id)` à chaque id d'objet d'un fichier de monde (en place). */
+  function migrerIdsObjetsMonde(data, conv) {
+    Object.keys(CHAMPS_IDS_MONDE).forEach(function (k) {
+      if (typeof CHAMPS_IDS_MONDE[k] === 'function' && data[k] != null) CHAMPS_IDS_MONDE[k](data[k], conv);
+    });
+    return data;
+  }
+  /* Champs d'un fichier de monde absents du classement, à tous les niveaux
+     qui portent des objets : le fichier, l'enregistrement des joueurs (et du
+     joueur importé), les conteneurs posés, les extras. */
+  function champsMondeNonClasses(data) {
+    var manquants = [];
+    function verifier(o, registre, prefixe) {
+      if (!o || typeof o !== 'object' || Array.isArray(o)) return;
+      Object.keys(o).forEach(function (k) {
+        if (!registre.hasOwnProperty(k) && manquants.indexOf(prefixe + k) < 0) manquants.push(prefixe + k);
+      });
+    }
+    verifier(data, CHAMPS_IDS_MONDE, '');
+    if (!data) return manquants;
+    liste(data.joueurs).forEach(function (e) { if (Array.isArray(e)) verifier(e[1], CHAMPS_ENREGISTREMENT, 'joueurs.'); });
+    verifier(data.soloJoueur, CHAMPS_ENREGISTREMENT, 'soloJoueur.');
+    liste(data.conteneurs).forEach(function (c) { verifier(c, CHAMPS_CONTENEUR, 'conteneurs.'); });
+    verifier(data.extras, CHAMPS_IDS, 'extras.');
+    return manquants;
+  }
+
   /* Version 1 : les objets commençaient à l'id 64. Ils ont été décalés vers
      128 pour laisser la place à de nouveaux blocs. Étape intermédiaire :
      produit une sauvegarde v2 (128..255), que migrerV2 convertit ensuite
@@ -451,5 +538,7 @@
   MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply,
               migrerV1: migrerV1, migrerV2: migrerV2,
               CHAMPS_IDS: CHAMPS_IDS, migrerIdsObjets: migrerIdsObjets, champsNonClasses: champsNonClasses,
+              CHAMPS_IDS_MONDE: CHAMPS_IDS_MONDE, migrerIdsObjetsMonde: migrerIdsObjetsMonde,
+              champsMondeNonClasses: champsMondeNonClasses,
               save: save, load: load, hasSave: hasSave, clear: clear };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

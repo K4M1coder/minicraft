@@ -43,7 +43,9 @@
     // jouabilité / synchro client-serveur (SPEC-JOUABLE-004, 006, 007, 009) : analyse des e2e, jeter, audits
     'spec-jouabilite',
     // L40-bis B : identifiants figés, plages déclarées, état borné (SPEC-SAVE-019 à 021)
-    'spec-ids'];
+    'spec-ids',
+    // L40-bis, lot A : registre des champs porteurs d'ids (SPEC-SAVE-018) et ids de bloc inconnus (SPEC-SAVE-028)
+    'spec-migration-ids'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
   var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true };
 
