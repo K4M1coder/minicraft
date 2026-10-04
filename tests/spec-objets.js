@@ -250,6 +250,9 @@
       C.BLOCKS[B.__TEST_CHANCE__] = garanti;
       A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0.12).length, 1, 'un drop garanti n\'est pas affecté');
       delete C.BLOCKS[B.__TEST_CHANCE__];
+      // le nom de test ne doit pas survivre au test : la table B est comparée
+      // au registre figé des ids (SPEC-SAVE-019, tests/spec-ids.js)
+      delete B.__TEST_CHANCE__;
     });
 
     it('SPEC-OBJET-003 : la chance au butin s\'applique aussi au butin des créatures tuées', function () {

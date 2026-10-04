@@ -41,7 +41,9 @@
     // journal MC.Journal (SPEC-BANC-104 à 110) : module pur, puis vérifications sur disque
     'spec-journal', 'spec-journal-statique',
     // jouabilité / synchro client-serveur (SPEC-JOUABLE-004, 006, 007, 009) : analyse des e2e, jeter, audits
-    'spec-jouabilite'];
+    'spec-jouabilite',
+    // L40-bis B : identifiants figés, plages déclarées, état borné (SPEC-SAVE-019 à 021)
+    'spec-ids'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
   var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true };
 
