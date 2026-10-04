@@ -23,7 +23,8 @@
      et son opacité sans qu'on y repense. */
   var EMISSION = new Uint8Array(C.FIRST_ITEM), OPAQUE = new Uint8Array(C.FIRST_ITEM);
   for (var id = 1; id < C.FIRST_ITEM; id++) {
-    var d = C.BLOCKS[id];
+    // defRendu : un id sans définition (bloc inconnu, SPEC-SAVE-028) est un cube opaque
+    var d = C.defRendu ? C.defRendu(id) : C.BLOCKS[id];
     if (!d) continue;
     EMISSION[id] = Math.min(MAX, d.light || 0);
     // opaque : un bloc plein qui n'est ni plante, ni liquide, ni ajouré (verre, feuillage)

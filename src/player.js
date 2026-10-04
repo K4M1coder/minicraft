@@ -323,7 +323,8 @@
     function aim() {
       return P.raycast(world, eyePos(), lookDir(), REACH, function (id) {
         if (id === 0) return false;
-        var d = C.BLOCKS[id];
+        // defRendu : un bloc inconnu (SPEC-SAVE-028) arrête la visée comme un cube
+        var d = C.defRendu(id);
         return !!d && !d.liquid;       // les plantes sont visables, pas l'eau
       });
     }

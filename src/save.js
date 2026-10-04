@@ -249,17 +249,26 @@
   // enregistrement d'un joueur nommé (MC.Conteneurs.versEnregistrement + server.js)
   var CHAMPS_ENREGISTREMENT = {
     v: SANS_ID + 'version de l\'enregistrement',
-    inv: 'objets', equip: 'objets', banque: 'objets',
     succes: SANS_ID + 'compteurs par identifiant de succès (textes)',
-    etat: SANS_ID + 'position, vie, faim, point de réapparition',
+    etat: SANS_ID + 'position, regard, vie, faim, air, point de réapparition',
+    // ── porteurs d'ids d'objet ──
+    inv: function (l, conv) { pilesIds(l, conv); },
+    banque: function (l, conv) { pilesIds(l, conv); },
+    equip: function (e, conv) { if (e && typeof e === 'object') Object.keys(e).forEach(function (s) { pileIds(e[s], conv); }); },
   };
   function enregistrementIds(r, conv) {
     if (!r || typeof r !== 'object') return;
-    pilesIds(r.inv, conv);
-    pilesIds(r.banque, conv);
-    if (r.equip && typeof r.equip === 'object') Object.keys(r.equip).forEach(function (s) { pileIds(r.equip[s], conv); });
+    Object.keys(CHAMPS_ENREGISTREMENT).forEach(function (k) {
+      if (typeof CHAMPS_ENREGISTREMENT[k] === 'function' && r[k] != null) CHAMPS_ENREGISTREMENT[k](r[k], conv);
+    });
   }
-  var CHAMPS_CONTENEUR = { cle: 1, type: 1, slots: 'objets', four: 'durées (burn, cook)' };
+  // conteneur posé, tel que le persiste MC.ContratsV2.validerConteneurPersiste
+  var CHAMPS_CONTENEUR = {
+    cle: SANS_ID + 'position du conteneur (texte « x,y,z »)',
+    type: SANS_ID + 'type de conteneur (texte : chest, furnace…)',
+    four: SANS_ID + 'durées de combustion et de cuisson (burn, cook) ; les piles du four sont dans slots',
+    slots: function (l, conv) { pilesIds(l, conv); },
+  };
   var CHAMPS_IDS_MONDE = {
     v: SANS_ID + 'version du format',
     graine: SANS_ID + 'graine',
@@ -281,7 +290,9 @@
     // ── porteurs d'ids d'objet ──
     joueurs: function (l, conv) { liste(l).forEach(function (e) { if (Array.isArray(e)) enregistrementIds(e[1], conv); }); },
     soloJoueur: function (r, conv) { enregistrementIds(r, conv); },
-    conteneurs: function (l, conv) { liste(l).forEach(function (c) { if (c && typeof c === 'object') pilesIds(c.slots, conv); }); },
+    conteneurs: function (l, conv) {
+      liste(l).forEach(function (c) { if (c && typeof c === 'object' && c.slots != null) CHAMPS_CONTENEUR.slots(c.slots, conv); });
+    },
     economie: CHAMPS_IDS.economie,
     vehicules: CHAMPS_IDS.vehicules,
     // récit de chaque joueur nommé : { recit: MC.Recits.serialiser, fin } (RS.exporter),
@@ -538,7 +549,8 @@
   MC.Save = { KEY: KEY, VERSION: VERSION, serialize: serialize, apply: apply,
               migrerV1: migrerV1, migrerV2: migrerV2,
               CHAMPS_IDS: CHAMPS_IDS, migrerIdsObjets: migrerIdsObjets, champsNonClasses: champsNonClasses,
-              CHAMPS_IDS_MONDE: CHAMPS_IDS_MONDE, migrerIdsObjetsMonde: migrerIdsObjetsMonde,
+              CHAMPS_IDS_MONDE: CHAMPS_IDS_MONDE, CHAMPS_ENREGISTREMENT: CHAMPS_ENREGISTREMENT,
+              CHAMPS_CONTENEUR: CHAMPS_CONTENEUR, migrerIdsObjetsMonde: migrerIdsObjetsMonde,
               champsMondeNonClasses: champsMondeNonClasses,
               save: save, load: load, hasSave: hasSave, clear: clear };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

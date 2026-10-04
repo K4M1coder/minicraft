@@ -2678,7 +2678,10 @@
           if (r.ok) { ui.toast('Partie sauvegardée par le serveur', ''); audio.play('sauver'); }
           // SPEC-BANC-107 : le détail au journal, le texte lisible au joueur, par la même voie
           else logSave.error('E-SAVE-004 sauvegarde refusée par le serveur', { motif: r.motif || null }, null,
-                             { joueur: 'Sauvegarde refusée' + (r.motif ? ' (' + r.motif + ')' : '') });
+                             { joueur: r.motif === 'ecriture_interdite'
+                                 // SPEC-SAVE-026 : le monde refusé au démarrage n'a pas pu être mis de côté
+                                 ? 'Sauvegarde impossible : le monde illisible du serveur n\'a pas pu être mis de côté'
+                                 : 'Sauvegarde refusée' + (r.motif ? ' (' + r.motif + ')' : '') });
         }
         return r;
       }, function (e) {

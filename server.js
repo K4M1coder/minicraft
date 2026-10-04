@@ -776,15 +776,37 @@ function mettreDeCoteMondeRefuse(fichier, motif) {
   let dest = base;
   for (let k = 2; fs.existsSync(dest); k++) dest = base + '-' + k;
   try {
+    // MC_TEST_ECHEC_RENOMMAGE : simule un renommage impossible (fichier verrouillé), jamais en exploitation
+    if (process.env.MC_TEST_ECHEC_RENOMMAGE) { const e = new Error('EBUSY (simulé)'); e.code = 'EBUSY'; throw e; }
     fs.renameSync(fichier, dest);
   } catch (e) {
     ecritureMondeInterdite = true;
-    journal(`fichier de monde refusé (${motif}) : ${fichier} — impossible de le mettre de côté (${e.message}) ; ` +
-            'nouvelle carte NON sauvegardée pendant cette session, pour ne pas l\'écraser');
+    logServeur.error(`E-SAVE-007 fichier de monde refusé (${motif}) : ${fichier} — impossible de le mettre de côté (${e.message}) ; ` +
+                     'nouvelle carte NON sauvegardée pendant cette session, pour ne pas l\'écraser', { fichier, motif }, e, { code: 'E-SAVE-007' });
     return null;
   }
-  journal(`fichier de monde refusé (${motif}) : conservé tel quel sous ${dest} — nouvelle carte, sauvegardée sous ${fichier}`);
+  logServeur.warn(`E-SAVE-006 fichier de monde refusé (${motif}) : conservé tel quel sous ${dest} — nouvelle carte, sauvegardée sous ${fichier}`,
+                  { fichier, dest, motif }, null, { code: 'E-SAVE-006' });
   return dest;
+}
+/* État du monde AVANT toute reprise (SPEC-SAVE-026) : ce que le démarrage a
+   construit, sans rien du fichier. Une reprise qui lève au milieu de
+   `appliquerEtatMonde` a déjà écrit une partie du fichier (heure, overrides…) :
+   réappliquer cet état vierge remet À ZÉRO tout ce que la reprise touche —
+   y compris ce qu'elle ne réinitialise pas quand le champ est absent
+   (administration, zones, politique, guildes, économie, PvP). Construit sans
+   `clients` (pas encore déclaré à ce stade) : aucun joueur n'est connecté. */
+function etatMondeVierge() {
+  return {
+    v: 2, graine: CONF.graine, heure,
+    overrides: [], etats: [], crops: [], donjons: [], pilles: [], pnjsMorts: [],
+    admin: MC.Admin.serialiser(admin),
+    zones: monde.zonesEtat ? MC.Zones.serialiser(monde.zonesEtat) : null,
+    politique: MC.Politique.serialiser(politique), guildes: MC.Guildes.serialiser(guildes),
+    economie: MC.Economie.serialiser(economie), pvp: MC.PvpEnjeux.serialiser(pvp),
+    quetes: [], joueurs: [], conteneurs: [], commandes: [], vehicules: [],
+    histoire: null, soloJoueur: null, extras: null,
+  };
 }
 const dodo = (ms) => new Promise((r) => setTimeout(r, ms));
 if (CONF.mondeFichier) {
@@ -805,12 +827,34 @@ if (CONF.mondeFichier) {
      de côté tel quel (renommé, donc octet pour octet) avant la première
      sauvegarde, qui écrira la nouvelle carte sous le nom d'origine. */
   if (fs.existsSync(CONF.mondeFichier)) {
+    /* Une erreur d'ENTRÉE/SORTIE (dossier à la place du fichier, fichier
+       verrouillé, droits) n'est PAS un refus de contenu : on ne renomme rien
+       (--monde pointant sur un dossier aurait déplacé le dossier de
+       l'utilisateur) et on s'arrête avec un message clair. */
+    let texte;
+    try { texte = fs.readFileSync(CONF.mondeFichier, 'utf8'); }
+    catch (e) {
+      logLanceur.error(`impossible de lire le fichier de monde ${CONF.mondeFichier} (${e.code || e.message}) : ` +
+                       'vérifiez que --monde désigne un fichier lisible ; rien n\'a été modifié', { fichier: CONF.mondeFichier, code: e.code || null }, e,
+                       { brut: true, code: 'E-SERV-006' });
+      process.exit(1);
+    }
+    const vierge = etatMondeVierge();
     let motifRefus = null;
     try {
-      const data = JSON.parse(fs.readFileSync(CONF.mondeFichier, 'utf8'));
+      const data = JSON.parse(texte);
       if (appliquerEtatMonde(data)) journal(`monde repris depuis ${CONF.mondeFichier} (heure ${heure.toFixed(1)})`);
       else motifRefus = 'version inconnue (v = ' + JSON.stringify(data && typeof data === 'object' ? data.v : data) + ')';
-    } catch (e) { motifRefus = (e instanceof SyntaxError ? 'JSON illisible : ' : 'reprise impossible : ') + e.message; }
+    } catch (e) {
+      motifRefus = (e instanceof SyntaxError ? 'JSON illisible : ' : 'reprise impossible : ') + e.message;
+      // la reprise a pu écrire une partie du fichier refusé : tout revient à l'état vierge
+      try { appliquerEtatMonde(vierge); }
+      catch (e2) {
+        ecritureMondeInterdite = true;
+        logServeur.error('E-SAVE-007 monde vierge impossible à rétablir après une reprise interrompue : aucune sauvegarde pendant cette session',
+                         { fichier: CONF.mondeFichier }, e2, { code: 'E-SAVE-007' });
+      }
+    }
     if (motifRefus) mettreDeCoteMondeRefuse(CONF.mondeFichier, motifRefus);
   } else {
     journal(`aucune sauvegarde à ${CONF.mondeFichier} — nouvelle carte, créée à la première sauvegarde`);
@@ -1929,6 +1973,8 @@ function traiterApiParties(req, res) {
          omise, comme toute sauvegarde événementielle, si le monde n'a pas bougé. */
       case '/sauver': {
         if (!CONF.mondeFichier) { repondreJSON(res, 409, { ok: false, motif: 'pas_de_partie' }); return; }
+        // SPEC-SAVE-026 : le monde refusé n'a pas pu être mis de côté — rien n'est écrit, et on le dit
+        if (ecritureMondeInterdite) { repondreJSON(res, 409, { ok: false, motif: 'ecriture_interdite' }); return; }
         const t = Date.now();
         if (t - derniereDemandeSauvegarde < 1000) { repondreJSON(res, 429, { ok: false, motif: 'trop_frequent' }); return; }
         derniereDemandeSauvegarde = t;

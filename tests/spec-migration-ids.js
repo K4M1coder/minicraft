@@ -212,6 +212,20 @@
              'un champ ni migré ni déclaré neutre fait échouer ce test');
     });
 
+    it('SPEC-SAVE-018 : chaque entrée des registres du fichier de monde est migrée ou motivée', function () {
+      var motive = /^sans id d'objet : .{4,}/;
+      [['CHAMPS_IDS', MC.Save.CHAMPS_IDS], ['CHAMPS_IDS_MONDE', MC.Save.CHAMPS_IDS_MONDE],
+       ['CHAMPS_ENREGISTREMENT', MC.Save.CHAMPS_ENREGISTREMENT], ['CHAMPS_CONTENEUR', MC.Save.CHAMPS_CONTENEUR]].forEach(function (r) {
+        A.ok(r[1] && Object.keys(r[1]).length > 0, r[0] + ' exposé');
+        Object.keys(r[1] || {}).forEach(function (k) {
+          var v = r[1][k];
+          A.ok(typeof v === 'function' || (typeof v === 'string' && motive.test(v)), r[0] + '.' + k + ' : fonction de migration, ou « sans id » et pourquoi');
+        });
+      });
+      A.deep(porteurs(MC.Save.CHAMPS_ENREGISTREMENT), ['banque', 'equip', 'inv'], 'un joueur porte des objets dans inv, equip, banque');
+      A.deep(porteurs(MC.Save.CHAMPS_CONTENEUR), ['slots'], 'un conteneur posé, dans slots');
+    });
+
     it('SPEC-SAVE-018 : migrerIdsObjetsMonde renumérote chaque porteur du fichier de monde, une seule fois', function () {
       var m = mondeForge(X);
       var forges = porteurs(MC.Save.CHAMPS_IDS_MONDE).filter(function (k) { return cheminsDe(m[k], X).length > 0; });
@@ -273,6 +287,27 @@
       e.world.setBlock(P[0], P[1], P[2], INCONNU);
       var hit = MC.Physics.raycast(e.world, { x: P[0] + 0.5, y: P[1] + 3.5, z: P[2] + 0.5 }, { x: 0, y: -1, z: 0 }, 6);
       A.ok(hit && hit.x === P[0] && hit.y === P[1] && hit.z === P[2], 'le rayon s\'arrête sur le bloc inconnu');
+    });
+
+    it('SPEC-SAVE-028 : la visée du joueur (aim) s\'arrête sur le bloc inconnu, sans cibler ce qui est derrière', function () {
+      var e = G.etatMinimal(4242);
+      e.world.getChunk(0, 0, true);
+      e.world.setBlock(P[0], P[1], P[2], INCONNU);
+      e.world.setBlock(P[0], P[1] - 1, P[2], B.STONE);           // derrière lui, dans l'axe
+      var st = e.player.state;
+      st.pos.x = P[0] + 0.5; st.pos.y = P[1] + 1; st.pos.z = P[2] + 0.5;
+      st.yaw = 0; st.pitch = -Math.PI / 2 + 1e-4;                // regard vers le bas
+      var cible = e.player.aim();
+      A.ok(cible, 'un bloc est visé');
+      A.equal(cible && cible.y, P[1], 'la visée s\'arrête sur le bloc inconnu');
+      A.equal(cible && cible.block, INCONNU, 'et le désigne, pas la pierre derrière');
+    });
+
+    it('SPEC-SAVE-028 : le bloc inconnu arrête la lumière comme un cube plein', function () {
+      A.ok(MC.Lumiere.opaque(INCONNU), 'opaque pour la propagation de la lumière');
+      A.ok(MC.Lumiere.opaque(B.STONE), 'la pierre reste opaque');
+      A.notOk(MC.Lumiere.opaque(B.GLASS), 'le verre reste transparent');
+      A.equal(MC.Lumiere.emission(INCONNU), 0, 'et n\'émet aucune lumière');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
