@@ -24,6 +24,12 @@
     if (t.four) cont.four = { burn: 0, cook: 0 };
     return cont;
   }
+  // la taille fixée à la création, ou celle du type (0 si type inconnu : tout indice refusé)
+  function tailleConteneur(cont) {
+    if (typeof cont.taille === 'number') return cont.taille;
+    var t = CV().TYPES_CONTENEUR[cont.type];
+    return t ? t.taille : 0;
+  }
 
   function accepteCase(cont, i, pile) {
     var t = CV().TYPES_CONTENEUR[cont.type];
@@ -75,7 +81,11 @@
      (server.js, défense en profondeur à la persistance). */
   function indiceValide(z, i) {
     if (typeof i !== 'number' || i < 0) return false;
-    var taille = z.cont ? z.cont.taille : z.slots.length;
+    /* SPEC-JOUABLE-008 : un conteneur sans `taille` (le miroir client d'un
+       conteneur en ligne en manquait) prend celle de son TYPE — jamais
+       « undefined », qui refusait en silence tout transfert vers ou depuis
+       un coffre ouvert : rien ne pouvait y entrer ni en sortir. */
+    var taille = z.cont ? tailleConteneur(z.cont) : z.slots.length;
     return i < taille;
   }
   function marquerZone(mods, e) {

@@ -14,6 +14,14 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+- SPEC-JOUABLE-001 à 009 — **tests de jouabilité / synchro client-serveur** (`tests/e2e-jouabilite.js`, `node tests/run.js --preset jouabilite`, ≈ 4 min) : dans la vraie page du jeu, contre un vrai serveur de jeu lancé pour chaque test par le banc (`POST /tests/serveur-jeu`, survie paisible ou créatif aux vraies règles), un joueur immobile au sol ou en vol statique ne bouge pas de 0,001 bloc en 8 s (client à chaque image, serveur à chaque `ETAT`) ; un bloc cassé reste cassé et un bloc posé reste posé 4 s après (créatif et survie, relus par une seconde connexion) ; glisser-déposer, demi-pile, jeter, ramasser et dépôt/retrait dans un coffre ne s'annulent pas, et l'inventaire et le coffre du serveur sont identiques à ceux du client (et à la réouverture). Un échec dit la nature du problème : chaque déplacement erroné avec vecteur, décalage cumulé, intervalle et source probable (serveur, correction `ETAT`, client), ou l'instant du retour arrière et les messages du serveur (`BLOC`, `INV_MAJ` rev/ack/refus, `cont_etat`/`cont_maj`).
+
+### Corrigé
+- SPEC-JOUABLE-006 — jeter un objet (G) n'avait aucun effet : lâché aux pieds et ramassable au bout de 0,4 s, il revenait aussitôt dans l'inventaire du joueur immobile. Il est désormais lancé devant le joueur, dans la direction du regard (≈ 5 blocs sur sol plat), et personne ne peut le ramasser avant 2 s.
+- SPEC-JOUABLE-007 — un objet ramassé apparaissait deux fois côté client (9 planches affichées pour 8 sur le serveur) jusqu'à la mise à jour d'inventaire suivante : `DONNE` l'ajoutait de nouveau après l'`INV_MAJ` qui le portait déjà. Ce n'est plus qu'une annonce.
+- SPEC-JOUABLE-008 — les coffres en ligne étaient inutilisables : le miroir client d'un conteneur ouvert n'avait pas de taille, et tout dépôt ou retrait était refusé en silence par la prédiction. Et un dépôt suivi d'un retrait affichait un coffre faux (vidé, une planche devenue deux) : la mise à jour du serveur s'appliquait au coffre déjà prédit, puis le rejeu rajoutait les mêmes opérations. Le client tient maintenant l'état confirmé du conteneur à part (affiché = confirmé + rejeu, comme l'inventaire).
+- SPEC-JOUABLE-004 — un clic droit utilisait deux fois (l'appui, puis la boucle à l'image suivante) : deux blocs posés, ou un coffre posé puis aussitôt ouvert. Et rejoindre un serveur dans un autre mode que la page (ex. un serveur créatif) laissait l'inventaire vide à jamais : l'équipe recomposée perdait sa prédiction d'inventaire et ignorait chaque `INV_MAJ`.
 
 ## [0.6.0] - 2026-10-03
 ### Ajouté

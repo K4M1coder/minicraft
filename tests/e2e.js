@@ -4573,7 +4573,24 @@
   G.runUnE2EParNom = runUnE2EParNom;
   G.runCampagneE2E = runCampagneE2E;
   G.nettoyerE2E = nettoyer;
-  G.E2E_COUNT = tests.length;
+  /* Un lot d'e2e peut vivre dans son propre fichier, chargé APRÈS celui-ci
+     (tests/index.html ; ex. tests/e2e-jouabilite.js, SPEC-JOUABLE-*) : il
+     enregistre ses tests dans la MÊME liste (donc mêmes campagnes, même
+     instrumentation, mêmes captures début/fin) et réutilise les mêmes
+     outils. `enregistreur(fichier)` rend un `e2e(nom, fiche, fn)` qui porte
+     le fichier d'origine (catalogue, périmètre). tests/run.js lit ce
+     fichier en texte comme celui-ci (FICHIERS_E2E). */
+  G.E2E_API = {
+    enregistreur: function (fichier) {
+      return function (name, ficheOuFn, fn) {
+        tests.push({ name: name, fiche: fn ? ficheOuFn : null, fn: fn || ficheOuFn, fichier: fichier });
+      };
+    },
+    A: A, T: T, fail: fail, frames: frames, wait: wait, key: key, fakeLock: fakeLock,
+    mouseDown: mouseDown, mouseUp: mouseUp, look: look, reset: reset, sonderE2E: sonderE2E,
+    serveurPresent: serveurPresent, capture: capture, initRefs: initRefs,
+  };
+  Object.defineProperty(G, 'E2E_COUNT', { get: function () { return tests.length; }, configurable: true });
   G.E2E_LISTE = tests;
   G.etape = etape;
   G.capture = capture;

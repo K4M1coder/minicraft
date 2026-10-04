@@ -249,6 +249,22 @@
       return e;
     }
 
+    /* SPEC-JOUABLE-006 : un objet JETÉ (touche G) est lancé devant le lanceur,
+       dans la direction du regard, depuis la hauteur des yeux — et personne
+       ne peut le ramasser avant DELAI_RAMASSAGE_JET. Lâché aux pieds et
+       ramassable au bout de 0,4 s (dropItem), il était aussitôt aimanté puis
+       rendu au joueur immobile : jeter n'avait aucun effet. Sur sol plat, à
+       l'horizontale, il retombe à environ 5 blocs, hors de l'aimantation
+       (2,2 blocs). `origine` : l'œil du lanceur ; `dir` : son regard (unitaire). */
+    var VITESSE_JET = 6, ELAN_JET = 1.5, DELAI_RAMASSAGE_JET = 2;
+    function lancerObjet(origine, dir, id, n, data) {
+      var e = spawn('item', origine.x, origine.y - 0.3, origine.z, { item: id, n: n || 1, pickup: DELAI_RAMASSAGE_JET, data: data });
+      e.vel.x = dir.x * VITESSE_JET;
+      e.vel.y = dir.y * VITESSE_JET + ELAN_JET;
+      e.vel.z = dir.z * VITESSE_JET;
+      return e;
+    }
+
     /* Lance un projectile. `tireur` sert a ne pas se blesser soi-meme :
        la fleche part de la tete du joueur et le traverse pendant un instant. */
     /* `genre` : 'fleche' (par défaut), 'neige', 'sortilege', 'feu', 'laser'.
@@ -1318,7 +1334,7 @@
     }
 
     return {
-      list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, remove: remove,
+      list: list, SPECS: SPECS, spawn: spawn, REPRO: REPRO, dropItem: dropItem, lancerObjet: lancerObjet, DELAI_RAMASSAGE_JET: DELAI_RAMASSAGE_JET, remove: remove,
       damage: damage, update: update, mergeItems: mergeItems, aimedAt: aimedAt, rayBox: rayBox,
       tirer: tirer, stepArrow: stepArrow, capVers: capVers,
       separer: separer, separerEntites: separerEntites, cederAuxJoueurs: cederAuxJoueurs, ecarter: ecarter,

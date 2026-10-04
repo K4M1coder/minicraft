@@ -210,8 +210,16 @@ const DOMAINE_PAR_GROUPE_E2E = {
   'HUD': ['HUD'],
   'Performance': ['PERF'],
 };
+/* Fichiers d'e2e, dans l'ordre de chargement de tests/index.html : un lot
+   peut avoir son propre fichier (tests/e2e-jouabilite.js, SPEC-JOUABLE-*),
+   qui enregistre ses tests par G.E2E_API (tests/e2e.js) — même lecture en
+   texte, même forme d'appel e2e(nom, fiche, fn). */
+const FICHIERS_E2E = ['e2e.js', 'e2e-jouabilite.js'];
 function e2eListeDepuisTexte() {
-  const fichier = path.join(root, 'tests', 'e2e.js');
+  return FICHIERS_E2E.reduce((acc, f) => acc.concat(e2eListeDepuisFichier(f)), []);
+}
+function e2eListeDepuisFichier(nomFichier) {
+  const fichier = path.join(root, 'tests', nomFichier);
   if (!fs.existsSync(fichier)) return [];
   const texte = fs.readFileSync(fichier, 'utf8');
   const lignes = texte.split('\n');
@@ -240,7 +248,7 @@ function e2eListeDepuisTexte() {
       while (p < texte.length && /[\s,]/.test(texte[p])) p++;
       const fiche = ficheLitteraleA(texte, p);
       const groupe = dernierGroupe || 'e2e';
-      const entree = { nom: ma[2].replace(/\\(.)/g, '$1'), groupe, fichier: 'tests/e2e.js' };
+      const entree = { nom: ma[2].replace(/\\(.)/g, '$1'), groupe, fichier: 'tests/' + nomFichier };
       if (fiche) entree.fiche = fiche;
       // SPEC-BANC-066 : repli DÉCLARÉ par groupe (voir tests/catalogue.js,
       // e.ficheGroupe) — un domaine honnête pour un test qui n'a ni SPEC-*
