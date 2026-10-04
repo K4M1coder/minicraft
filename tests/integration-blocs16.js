@@ -136,6 +136,32 @@ async function scenarioEtatBorne() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── SPEC-SAVE-024 : un rappel de refus porte l'état réel (le client l'applique, 0 compris) ──
+async function scenarioRefusAvecEtat() {
+  const d = A.dossierTemp('mc-b16-ref-');
+  try {
+    const f = fichierMonde(d);
+    const s = await demarrer(args(f, d), { MC_MODE: 'creatif' });
+    const { client: cl, bienvenue } = await rejoindre(s.port, 'Couvreur', 1);
+    const p = caseLibre(bienvenue, 0);
+    const haute = MC.Formes.packDalle(true);
+    const rep = await poser(cl, p, B.DALLE_PLANKS, haute);
+    eq(rep && rep.id, B.DALLE_PLANKS, 'préparation : dalle posée');
+    eq(rep && rep.etat, haute, 'préparation : dalle haute (état ' + haute + ')');
+    // pose refusée sur la dalle (une pierre ne fusionne pas avec elle) : le rappel porte l'état du serveur
+    const refus = await poser(cl, p, B.STONE, 0);
+    eq(refus && refus.id, B.DALLE_PLANKS, 'SPEC-SAVE-024 : pose refusée — le rappel donne le bloc du serveur');
+    eq(refus && refus.etat, haute, 'SPEC-SAVE-024 : … et son état (dalle haute), que le client réapplique');
+    // un refus sur une case sans état rappelle explicitement l'état 0
+    const p2 = caseLibre(bienvenue, 2);
+    await poser(cl, p2, B.STONE, 0);
+    const refus2 = await poser(cl, p2, B.PLANKS, 0);
+    eq(refus2 && refus2.etat, 0, 'SPEC-SAVE-024 : rappel d\'un bloc sans état : état 0 explicite');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 // ── SPEC-SAVE-025 : version et format d'identifiants à la connexion ──────────
 async function scenarioFormatIds() {
   const d = A.dossierTemp('mc-b16-fmt-');
@@ -189,6 +215,7 @@ async function scenarioFormatIds() {
     'ids-creatif': () => scenarioIdsNonBlocs('créatif', { MC_MODE: 'creatif', MC_TEST_POSE_LIBRE: '' }),
     'ids-pose-libre': () => scenarioIdsNonBlocs('survie, MC_TEST_POSE_LIBRE', { MC_MODE: 'survie', MC_TEST_POSE_LIBRE: '1' }),
     etat: scenarioEtatBorne,
+    'refus-etat': scenarioRefusAvecEtat,
     format: scenarioFormatIds,
   };
   try {

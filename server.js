@@ -2815,7 +2815,7 @@ function traiter(c, m) {
     // corrigé — même mécanisme que le refus de portée, qui rappelle `avant`.
     if (m.t === NP.MSG.BLOC) {
       const avantConnu = monde.getBlock(m.x, m.y, m.z);
-      envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avantConnu });
+      envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avantConnu, etat: monde.getEtat(m.x, m.y, m.z) });   // état compris (SPEC-SAVE-024)
     }
     return;
   }
@@ -3168,14 +3168,14 @@ function traiter(c, m) {
       if (m.etat > C.etatMaxDe(m.id)) m.etat = 0;
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
-        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) });
         break;
       }
       /* SPEC-SYNC-028 : en survie, poser exige l'objet dans l'inventaire SERVEUR
          (retiré ici). Refus : le bloc autoritaire est rappelé et l'inventaire
          renvoyé, la prédiction du client ayant supposé un objet qu'il n'a pas. */
       if (m.id !== 0 && cellulesCompagnes(m).some(cc => !C.isReplaceable(monde.getBlock(cc.x, cc.y, cc.z)))) {
-        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });   // la case voisine est prise : rien ne se pose
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) });   // la case voisine est prise : rien ne se pose
         break;
       }
       // un conteneur généré jamais ouvert (coffre de donjon, bibliothèque) : son contenu se tire AVANT que la case ne change
@@ -3190,7 +3190,7 @@ function traiter(c, m) {
         }
       }
       if (m.id !== 0 && !regles.blocsIllimites && !POSE_LIBRE && !debiterPose(js, m.id, m.i)) {
-        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
+        envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) });
         envoyerInvMaj(c, m.j, {});
         break;
       }
