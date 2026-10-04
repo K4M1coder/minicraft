@@ -79,6 +79,15 @@
       },
     },
     {
+      /* Lot « jouabilité / synchro client-serveur » (SPEC-JOUABLE-001 à 009) :
+         les e2e de tests/e2e-jouabilite.js (vrai navigateur sans fenêtre, vrai
+         serveur de jeu) et leur analyse pure (tests/spec-jouabilite.js). */
+      nom: 'jouabilite',
+      description: 'Jouabilité : le joueur ne bouge pas tout seul, rien ne s\'annule (blocs, inventaire, coffres) — e2e sur un vrai serveur, plus leur analyse',
+      pour: ['testeur', 'developpeur'],
+      criteres: { domaines: ['JOUABLE'] },
+    },
+    {
       nom: 'integration',
       description: 'Tests d\'intégration seulement (vrais sockets, vrai serveur)',
       pour: ['testeur', 'crochet'],

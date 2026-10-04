@@ -365,11 +365,12 @@
         }
       },
       // le butin ramassé côté serveur arrive dans notre inventaire
-      onDonne: function (m) {
-        var j = equipe[m.j] || equipe[0];
-        var reste = j.player.pickUp(m.id, m.n);
-        if (!reste && m.j === 0) { ui.toast('+' + m.n + ' ' + C.nameOf(m.id)); audio.play('ramasser'); }
-      },
+      /* SPEC-JOUABLE-007 : DONNE n'est qu'une annonce. Le ramassage est rangé
+         dans l'inventaire du SERVEUR, qui l'envoie dans l'INV_MAJ qui précède
+         (avec `gain` : toast et son, voir onInvMaj). L'ajouter ici une seconde
+         fois faisait apparaître un objet fantôme (8 planches au serveur, 9
+         affichées) jusqu'au prochain INV_MAJ. */
+      onDonne: function () {},
       onStatut: function (e, info) {
         if (e === 'en ligne') ui.toast('En ligne');
         else if (e === 'erreur') { if (!(poste && attenteTerrain && info === 'poste_deja_connecte')) ui.toast('Reseau : ' + (info || 'erreur'), 'warn'); }
@@ -422,26 +423,15 @@
         if (!j || !j.predInv) return;
         if (typeof j.revInv === 'number' && v.rev <= j.revInv) return;
         j.revInv = v.rev;
-        var st = j.player.state, CV = MC.ContratsV2;
-        st.inv.load(v.inv);
-        // la grille fait partie de l'état confirmé : sans elle, un transfert
-        // inv→grille refusé par le serveur laisse un objet fantôme dans la grille
-        if (st.grille) st.grille.load(v.grille);
-        CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(v.equip[s]); });
+        j.invConfirme = v;
         j.predInv.confirmer(v.ack);
-        // Revue adversariale (item 4) : sans le miroir du conteneur EN LIGNE
-        // actuellement ouvert, une opération encore en attente sur la zone
-        // 'cont' (transfert vers/depuis un coffre) échouait au rejeu
-        // (`conteneur: () => null`) — avec elle aussi, en plus de son côté
-        // inventaire (déjà rejoué avant ce correctif).
-        var conteneursPourRejeu = (conteneurOuvert && j.index === 0)
-          ? (function () { var o = {}; o[conteneurOuvert.cle] = conteneurOuvert.mirror; return o; })() : {};
-        j.predInv.rejouer(st, conteneursPourRejeu, { regles: regles });
-        if (v.gain && j.index === 0) { ui.toast('+' + v.gain.n + ' ' + C.nameOf(v.gain.id)); audio.play('ramasser'); }
         // B1 (étape 8) : le delta d'un conteneur touché par NOTRE propre
         // opération voyage dans CE message (SYNC-015) — jamais un CONTENEUR_MAJ
-        // séparé pour l'auteur, qui clignoterait.
+        // séparé pour l'auteur, qui clignoterait. Il s'applique à l'état
+        // CONFIRMÉ du conteneur, AVANT le rejeu (SPEC-JOUABLE-008).
         (v.conteneurs || []).forEach(appliquerDeltaConteneur);
+        reconstruirePredit(j);
+        if (v.gain && j.index === 0) { ui.toast('+' + v.gain.n + ' ' + C.nameOf(v.gain.id)); audio.play('ramasser'); }
       },
       /* B1 (étape 7-8, SPEC-SYNC-012/013) : le serveur vient d'accepter notre
          CONTENEUR_OUVRIR — état complet, c'est maintenant qu'on ouvre l'écran
@@ -450,10 +440,14 @@
       onConteneurEtat: function (m) {
         var v = MC.ContratsV2.validerConteneurEtat(m);
         if (!v || v.j !== 0) return;
-        var mirror = { cle: v.cle, type: v.type, rev: v.rev,
+        // SPEC-JOUABLE-008 : la même forme que le conteneur du serveur, taille comprise
+        // (sans elle, MC.Conteneurs refusait tout transfert prédit vers ce coffre)
+        var mirror = { cle: v.cle, type: v.type, rev: v.rev, taille: v.slots.length,
                        slots: v.slots.map(MC.ContratsV2.caseVersPile) };
         if (v.four) mirror.four = { burn: v.four.burn, cook: v.four.cook };
-        conteneurOuvert = { cle: v.cle, mirror: mirror };
+        // l'état CONFIRMÉ par le serveur, à part : l'affiché (mirror) = confirmé + rejeu (SPEC-JOUABLE-008)
+        conteneurOuvert = { cle: v.cle, mirror: mirror,
+                            confirme: { rev: v.rev, slots: mirror.slots.map(copiePile), four: mirror.four ? { burn: mirror.four.burn, cook: mirror.four.cook } : null } };
         var kindUi = v.type === 'furnace' ? 'furnace' : v.type === 'distributeur' ? 'distributeur' : 'chest';
         ui.openContainer(kindUi, player.state.inv, null, v.cle, undefined, mirror);
         input.setState('ui');
@@ -462,7 +456,8 @@
       // place dans le miroir déjà affiché par l'UI, jamais un nouvel objet.
       onConteneurMaj: function (m) {
         var v = MC.ContratsV2.validerConteneurMaj(m);
-        if (v) appliquerDeltaConteneur(v);
+        if (!v || !appliquerDeltaConteneur(v)) return;
+        if (equipe[0]) reconstruirePredit(equipe[0]);
       },
       /* P-VEH (SPEC-ARCHI-021) : la réponse du serveur à une demande de pose, de
          montée, de descente ou de réparation. À bord, c'est le relevé d'état
@@ -504,17 +499,48 @@
         }
       },
     });
+    function copiePile(p) { return p ? Object.assign({}, p) : null; }
     /* Applique un delta serveur (`{ cle, rev, maj, four? }`, INV_MAJ.conteneurs
-       ou CONTENEUR_MAJ) au miroir du conteneur EN LIGNE actuellement ouvert —
-       ignoré s'il ne concerne pas ce conteneur, ou si son `rev` est périmé. */
+       ou CONTENEUR_MAJ) à l'état CONFIRMÉ du conteneur EN LIGNE actuellement
+       ouvert — ignoré (false) s'il ne concerne pas ce conteneur, ou si son
+       `rev` est périmé. SPEC-JOUABLE-008 : l'appliquer au miroir AFFICHÉ, déjà
+       porteur des opérations prédites (et de leurs `rev`), le faisait ignorer
+       tandis que le rejeu rajoutait ces opérations une seconde fois : un dépôt
+       puis un retrait vidaient le coffre affiché, une planche devenait deux. */
     function appliquerDeltaConteneur(d) {
-      if (!conteneurOuvert || conteneurOuvert.cle !== d.cle) return;
-      var m = conteneurOuvert.mirror;
-      if (d.rev <= m.rev) return;
-      d.maj.forEach(function (e) { m.slots[e[0]] = MC.ContratsV2.caseVersPile(e[1]); });
-      if (d.four) m.four = d.four;
-      m.rev = d.rev;
-      ui.refreshFurnace();
+      if (!conteneurOuvert || conteneurOuvert.cle !== d.cle) return false;
+      var c = conteneurOuvert.confirme;
+      if (d.rev <= c.rev) return false;
+      d.maj.forEach(function (e) { c.slots[e[0]] = MC.ContratsV2.caseVersPile(e[1]); });
+      if (d.four) c.four = { burn: d.four.burn, cook: d.four.cook };
+      c.rev = d.rev;
+      return true;
+    }
+    /* L'état AFFICHÉ d'un joueur local en ligne = le dernier état confirmé par
+       le serveur (INV_MAJ, et pour le joueur 0 le conteneur ouvert) + le rejeu
+       des opérations encore en attente. Écrit TOUJOURS en place (`inv.load`,
+       cases du miroir) : `ui.js` garde des références (B1.md § 12). */
+    function reconstruirePredit(j) {
+      var v = j.invConfirme, st = j.player.state, CV = MC.ContratsV2;
+      if (v) {
+        st.inv.load(v.inv);
+        // la grille fait partie de l'état confirmé : sans elle, un transfert
+        // inv→grille refusé par le serveur laisse un objet fantôme dans la grille
+        if (st.grille) st.grille.load(v.grille);
+        CV.EQUIP_SLOTS.forEach(function (s) { st.equip[s] = CV.caseVersPile(v.equip[s]); });
+      }
+      // Revue adversariale (item 4) : le rejeu d'une opération en attente sur la
+      // zone 'cont' a besoin du conteneur ouvert — remis d'abord à son état confirmé.
+      var conteneurs = {};
+      if (conteneurOuvert && j.index === 0) {
+        var m = conteneurOuvert.mirror, c = conteneurOuvert.confirme;
+        for (var i = 0; i < m.slots.length; i++) m.slots[i] = copiePile(c.slots[i]);
+        m.rev = c.rev;
+        if (c.four) m.four = { burn: c.four.burn, cook: c.four.cook };
+        conteneurs[conteneurOuvert.cle] = m;
+      }
+      if (j.predInv) j.predInv.rejouer(st, conteneurs, { regles: regles });
+      if (j.index === 0 && conteneurOuvert) ui.refreshFurnace();
     }
 
     // registre d'affichage du HUD (SPEC-HUD-001) : conservé d'une partie à
@@ -1099,6 +1125,16 @@
       g.inventaireSolo = null;
     }
 
+    function preparerEnLigne(j) {
+      j.prediction = MC.Synchro.creerPrediction();
+      // B1 : prédiction inventaire/équipement/grille, une par joueur local ;
+      // le journal de player.js n'est actif qu'en ligne (B1.md § 6)
+      j.predInv = MC.Conteneurs.creerPrediction();
+      j.revInv = 0;
+      j.invConfirme = null;
+      j.player.state.journalInv = [];
+    }
+
     function rejoindreServeur(opts) {
       g.nomJoueur = opts.pseudo;
       // SPEC-ARCHI-039 : un hôte saisi = une AUTRE machine ; vide = le serveur qui sert cette page
@@ -1106,14 +1142,7 @@
       try { window.localStorage.setItem('minicraft.pseudo', opts.pseudo); } catch (e) { /* stockage bloqué */ }
       g.inventaireSolo = serialiserInventaireSolo();
       composerEquipe(opts.joueurs || 1, regles);
-      equipe.forEach(function (j) {
-        j.prediction = MC.Synchro.creerPrediction();
-        // B1 : prédiction inventaire/équipement/grille, une par joueur local ;
-        // le journal de player.js n'est actif qu'en ligne (B1.md § 6)
-        j.predInv = MC.Conteneurs.creerPrediction();
-        j.revInv = 0;
-        j.player.state.journalInv = [];
-      });
+      equipe.forEach(preparerEnLigne);
       entities.list.length = 0;              // en ligne, les créatures sont celles du serveur
       input.setState('playing');
       net.connecter(opts.hote, opts.pseudo, opts.joueurs || 1,
@@ -1716,12 +1745,19 @@
       var centre = { x: col[0] + 0.5, y: world.groundAt(col[0], col[1], true) + 1.2,
                      z: col[1] + 0.5 };
       var nouvelle = MC.Split.creerEquipe(n, world, entities, regles, centre);
+      /* SPEC-JOUABLE-004 : une équipe recomposée EN LIGNE (BIENVENUE d'un serveur
+         dans un autre mode que la page : adopterRegles) reste préparée pour le
+         réseau — sans prédiction d'inventaire, chaque INV_MAJ était ignoré :
+         inventaire vide à jamais, rien à poser. */
+      var etaitEnLigne = !!net && (net.etat === 'en ligne' || net.etat === 'connexion') &&
+        equipe.some(function (j) { return !!j.predInv; });
 
       equipe.length = 0;
       manettes.length = 0;
       nouvelle.forEach(function (j) {
         equipe.push(j);
         j.prediction = MC.Synchro.creerPrediction();     // SPEC-ARCHI-037 : tout joueur local prédit son mouvement
+        if (etaitEnLigne) preparerEnLigne(j);
         if (j.source === 'manette') {
           manettes.push(MC.creerManette(j.manette, function () {
             return (typeof navigator !== 'undefined' && navigator.getGamepads)
@@ -2230,6 +2266,12 @@
 
     function onUse() {
       if (input.state !== 'playing') return;
+      /* SPEC-JOUABLE-004 : l'appui EST la première utilisation ; la boucle
+         (utiliserPour, clic droit maintenu) ne répète qu'au bout du délai.
+         Sans ce délai, la première image suivant l'appui utilisait une
+         seconde fois : un clic droit posait deux blocs, ou posait un coffre
+         puis l'ouvrait aussitôt. */
+      if (equipe[0]) equipe[0].useCd = 0.22;
 
       // une arme a distance tire au clic droit, avant toute autre interaction
       var enMain = player.held();

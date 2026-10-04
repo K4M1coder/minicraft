@@ -2045,6 +2045,102 @@ function traiterServeurHistoireTest(req, res) {
   });
   return true;
 }
+
+/* SPEC-JOUABLE-001 à 008 (banc d'essai de la jouabilité) : les e2e de synchro client-serveur jouent
+   sur un VRAI serveur de jeu, aux VRAIES règles du mode choisi (survie paisible ou créatif) — jamais
+   MC_TEST_POSE_LIBRE : poser se paie sur l'inventaire du serveur, comme en partie. Même principe que
+   /tests/serveur-histoire : réservé à --tests et à la boucle locale, un serveur jetable sur un port
+   libre, arrêté avec son parent. `inv` ([[id, n], …]) donne l'inventaire de départ (MC_TEST_INV) ;
+   le serveur reçoit un jeton d'administration que seul ce parent connaît, pour relire l'inventaire
+   d'un joueur tel que le SERVEUR le tient (GET /tests/serveur-jeu/inventaire?nom=…), indépendamment
+   de ce que le client affiche. */
+let serveurJeuTest = null;
+function arreterServeurJeuTest() {
+  if (serveurJeuTest) { try { serveurJeuTest.enfant.kill(); } catch (e) { /* déjà parti */ } serveurJeuTest = null; }
+}
+function traiterServeurJeuTest(req, res) {
+  if (!PARAMS.tests) return false;
+  const refus = refusRequeteLocale(req);
+  if (refus) { repondreJSON(res, 403, { ok: false, motif: refus }); return true; }
+  const chemin = req.url.split('?')[0];
+  if (chemin === '/tests/serveur-jeu/arreter') {
+    if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+    const avait = !!serveurJeuTest;
+    arreterServeurJeuTest();
+    repondreJSON(res, 200, { ok: true, arrete: avait });
+    return true;
+  }
+  if (chemin === '/tests/serveur-jeu/inventaire') {
+    if (req.method !== 'GET') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+    const sj = serveurJeuTest;
+    if (!sj || !sj.port) { repondreJSON(res, 409, { ok: false, motif: 'aucun_serveur_de_jeu' }); return true; }
+    const nom = new URL(req.url, 'http://localhost').searchParams.get('nom') || '';
+    const rq = require('http').get({ host: '127.0.0.1', port: sj.port, path: '/admin/api/inventaire?nom=' + encodeURIComponent(nom),
+      headers: { Authorization: 'Bearer ' + sj.jeton, Host: '127.0.0.1:' + sj.port }, timeout: 5000 }, (r2) => {
+      let brut = '';
+      r2.on('data', (d) => { brut += d; });
+      r2.on('end', () => {
+        let obj = null;
+        try { obj = JSON.parse(brut); } catch (e) { obj = null; }
+        repondreJSON(res, obj ? 200 : 502, obj || { ok: false, motif: 'reponse_illisible' });
+      });
+    });
+    rq.on('timeout', () => rq.destroy(new Error('délai')));
+    rq.on('error', (e) => repondreJSON(res, 502, { ok: false, motif: 'serveur_de_jeu_injoignable', detail: e.message }));
+    return true;
+  }
+  if (chemin !== '/tests/serveur-jeu') return false;
+  if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+  if (String(req.headers['content-type'] || '').split(';')[0].trim() !== 'application/json') {
+    repondreJSON(res, 415, { ok: false, motif: 'Content-Type attendu : application/json' });
+    return true;
+  }
+  lireCorpsJSON(req, (corps) => {
+    arreterServeurJeuTest();
+    const mode = corps && (corps.mode === 'creatif' || corps.mode === 'survie') ? corps.mode : 'survie';
+    const difficulte = corps && ['paisible', 'facile', 'difficile', 'cauchemar'].indexOf(corps.difficulte) >= 0 ? corps.difficulte : 'paisible';
+    const graine = corps && Number.isInteger(corps.graine) ? corps.graine : CONF.graine;
+    // seuls des objets qui EXISTENT (bloc ou objet défini), en quantités entières bornées
+    const inv = corps && Array.isArray(corps.inv)
+      ? corps.inv.filter(p => Array.isArray(p) && Number.isInteger(p[0]) && p[0] > 0 && !!C.def(p[0]) &&
+          Number.isInteger(p[1]) && p[1] > 0 && p[1] <= C.maxStack(p[0])).slice(0, 36) : [];
+    const jeton = MC.Admin.nouveauJeton('banc-jeu-', crypto.randomBytes);
+    /* Environnement de l'enfant : celui du banc MOINS tout réglage de jeu ou
+       de test hérité (MC_TEST_*, MC_MODE, MC_HISTOIRE…) — l'enfant ne reçoit
+       que ceux voulus ici. `--serveur` + MC_TEST_BOUCLE_LOCALE : règles du mode
+       ouvert (la page et le Témoin, page servie par un autre port) mais écoute
+       sur la boucle locale seulement (voir BOUCLE_LOCALE_TEST). */
+    const env = {};
+    Object.keys(process.env).forEach(k => { if (!/^MC_/.test(k)) env[k] = process.env[k]; });
+    Object.assign(env, {
+      MC_MODE: mode, MC_DIFFICULTE: difficulte, MC_GRAINE: String(graine),
+      MC_TEST_BOUCLE_LOCALE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
+    });
+    if (inv.length) env.MC_TEST_INV = JSON.stringify(inv);
+    const enfant = require('child_process').spawn(process.execPath, [__filename, '--port', '0', '--serveur', '--admin', jeton], {
+      cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env,
+    });
+    const sj = { enfant, port: 0, jeton };
+    serveurJeuTest = sj;
+    let sortie = '', repondu = false;
+    const repondre = (code, obj) => { if (repondu) return; repondu = true; clearTimeout(limite); repondreJSON(res, code, obj); };
+    const limite = setTimeout(() => { arreterServeurJeuTest(); repondre(504, { ok: false, motif: 'demarrage_trop_long' }); }, 90000);
+    const ecouteSortie = (d) => {
+      sortie += d;
+      const m = /MC_PORT=(\d+)/.exec(sortie);
+      if (!m) return;
+      enfant.stdout.removeListener('data', ecouteSortie);
+      enfant.stdout.on('data', () => {});
+      sortie = '';
+      sj.port = parseInt(m[1], 10);
+      repondre(200, { ok: true, port: sj.port, mode, difficulte, graine });
+    };
+    enfant.stdout.on('data', ecouteSortie);
+    enfant.stderr.on('data', () => {});
+    enfant.on('exit', () => { if (serveurJeuTest === sj) serveurJeuTest = null; repondre(500, { ok: false, motif: 'serveur_arrete' }); });
+  });
+  return true;
+}
 function servir(req, res) {
   // rebond DNS : en mode fermé, toute requête HTTP doit viser un nom local
   if (!reseauOuvert && !hoteLocal(req)) { res.writeHead(403); res.end('403 hôte refusé'); return; }
@@ -2053,6 +2149,7 @@ function servir(req, res) {
   if (req.url.split('?')[0] === '/tests/resultats' && traiterResultatsTest(req, res)) return;
   if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
   if (req.url.split('?')[0] === '/tests/serveur-histoire' && traiterServeurHistoireTest(req, res)) return;
+  if (req.url.indexOf('/tests/serveur-jeu') === 0 && traiterServeurJeuTest(req, res)) return;
   if (req.url.indexOf('/tests/cahiers') === 0 && filetErreurTests(traiterCahiers, req, res)) return;
   // /tests et /tests/ : la page du banc (SPEC-BANC-120) — /tests sans barre
   // finale est redirigé, sinon ses chemins relatifs (banc.css, ../src/…)
@@ -3688,7 +3785,11 @@ function refuserOp(c, j, seq, motif) {
 function lacherAuxPieds(js, pile) {
   if (!pile || !pile.n) return;
   const p = js.joueur.state.pos;
-  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n);
+  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n, null, pile.data);
+}
+function lancerDevant(js, pile) {
+  if (!pile || !pile.n) return;
+  entites.lancerObjet(js.joueur.eyePos(), js.joueur.lookDir(), pile.id, pile.n, pile.data);
 }
 // clé(s) de conteneur posé/banque potentiellement concernées par une
 // opération AVANT de savoir si elle réussit (pour capturer l'instantané
@@ -3722,7 +3823,8 @@ function traiterOp(c, m, js, op) {
   });
   const r = MC.Conteneurs.appliquer(ctxJoueur(js), op);
   if (!r.ok) { refuserOp(c, m.j, m.seq, r.motif); return r; }
-  if (r.effets && r.effets.lache) lacherAuxPieds(js, r.effets.lache);
+  // SPEC-JOUABLE-006 : un objet JETÉ part devant le joueur (jamais rendu aussitôt) ; un trop-plein tombe aux pieds
+  if (r.effets && r.effets.lache) (op.k === 'lacher' ? lancerDevant : lacherAuxPieds)(js, r.effets.lache);
   const deltas = [];
   (r.modifs.conteneurs || []).forEach(cle => {
     const cont = conteneurParCle(js, cle);
@@ -4953,10 +5055,18 @@ function adressesReseau() {
   } catch (e) { /* aucune interface lisible */ }
   return out.length ? out : ['0.0.0.0'];
 }
+/* MC_TEST_BOUCLE_LOCALE=1 : réservé au serveur de jeu des e2e de jouabilité
+   (POST /tests/serveur-jeu, SPEC-JOUABLE-001 à 008). Ils ont besoin des règles
+   du mode OUVERT (--serveur : plusieurs postes — la page ET le « Témoin » qui
+   relit le serveur — et une page servie par un AUTRE port, que le mode fermé
+   refuse par son contrôle d'origine), mais sans jamais exposer ce serveur
+   jetable au réseau : il n'écoute alors que la boucle locale. */
+const BOUCLE_LOCALE_TEST = process.env.MC_TEST_BOUCLE_LOCALE === '1';
+if (BOUCLE_LOCALE_TEST) setImmediate(() => journal('ATTENTION : MC_TEST_BOUCLE_LOCALE actif — règles du mode ouvert, écoute sur la boucle locale seulement (réglage de test, jamais en exploitation)'));
 /* Ouvre les écouteurs du mode courant sur `port` (0 = éphémère) et renvoie le
    port réel. Lève l'erreur d'écoute (EADDRINUSE…) sans rien laisser ouvert. */
 async function ouvrirEcoute(port) {
-  if (reseauOuvert) {
+  if (reseauOuvert && !BOUCLE_LOCALE_TEST) {
     const srv = creerEcouteur();
     const p = await ecouterUn(srv, port, null);
     ecouteurs = [srv]; adressesActives = adressesReseau();
@@ -5098,6 +5208,7 @@ async function arreter(signal) {
   journal(`arrêt demandé (${signal})`);
   sauvegardeArretee = true;
   arreterServeurHistoireTest();
+  arreterServeurJeuTest();
   if (minuteurAbsence) { clearTimeout(minuteurAbsence); minuteurAbsence = null; }
   if (CONF.mondeFichier) {
     if (sauvegardeEnCours && sauvegardeEnCoursAttente) {

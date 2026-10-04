@@ -31,6 +31,11 @@ committer et pousser en détaché (`nohup`), surveiller avec un moniteur.
 
 ## Principes de l'ordre
 
+- **La jouabilité avant tout nouveau lot** (demande de l'utilisateur,
+  2026-10-04) : le joueur ne doit ni bouger tout seul, ni voir une action
+  s'annuler (blocs, inventaire, coffres). Le lot JOUABLE (ligne 0.0) en est la
+  garantie ; `node tests/run.js --preset jouabilite` se relance avant de
+  livrer tout lot qui touche au réseau, à l'inventaire ou aux conteneurs.
 - **Débloquer d'abord ce qui bloque** : le format 16 bits de L40 est livré
   (9f92f99, 3 840 identifiants de bloc libres) ; reste sa consolidation (2.1),
   qui corrige des pertes de données à la migration avant d'ajouter des blocs.
@@ -61,6 +66,7 @@ signifie « en grande partie livré, il reste les fiches ⏳ citées ».
 
 | # | Lot | Contenu | Fiches | État | Reprise |
 |---|---|---|---|---|---|
+| 0.0 | **JOUABLE — tests de jouabilité / synchro client-serveur** (priorité haute) | e2e vrai navigateur + vrai serveur de jeu (`tests/e2e-jouabilite.js`) : immobilité 8 s (survie, vol statique créatif), blocs cassés/posés qui le restent 4 s après (créatif et survie, client + serveur + second client), inventaire et coffres jamais annulés (client = serveur, réouverture) ; échecs détaillés (vecteur, décalage, intervalle, source ; instant du retour arrière, messages serveur) ; 6 bogues révélés et corrigés (voir PLAN.md, lot JOUABLE) | JOUABLE-001 à 009 | ◐ | à fusionner après revue/corrections (revue adversariale positive, corrections appliquées) — branche `worktree-agent-a89191c4b2ab18422` ; relancer `node tests/run.js --preset jouabilite` (≈ 4 min) avant chaque lot réseau/inventaire |
 | 0.1 | Banc : tout consulter | correctif banc/historique/cahiers + corrections de revue | BANC-117 à 121 | ☑ | fusionné (8996df2) et poussé (1d1e728), revue adversariale appliquée |
 | 0.2 | L50 : fiches restantes | audits ARCHI-001 et 020 ; SYNC-020 (état du joueur après reconnexion, vérifier), SYNC-024 (factions au join) ; bug des circuits qui referment les portes ouvertes à la main | ARCHI-001, 020 ; SYNC-020, 024 | ☑ | fusionné (86b5545) : ARCHI-001, 020, SYNC-020, 024 ✅ ; bug des circuits corrigé (09c3cfe) |
 | 0.3 | L50 : lot reporté | SYNC-027 (présentoirs/socles tenus par le serveur) → ARCHI-043 ; coffres piégés côté serveur → ARCHI-044 (suit L25 « coffres piégés ») | SYNC-027, ARCHI-043, 044 | ☐ | 044 attend L25 |

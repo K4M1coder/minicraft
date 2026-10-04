@@ -1,6 +1,6 @@
 {
   "version": 2,
-  "commit": "a0141748962c8d2ca84a78f54cc1d72aa546cc7b",
+  "commit": "aa73320eda8476828a8e7509f4c2cac598896191",
   "preset": "pr",
   "fichiers": {
     "src/admin.js": ["MC.Admin.ajouterListe","MC.Admin.appliquer","MC.Admin.authentifier","MC.Admin.canon","MC.Admin.consommerInvitation","MC.Admin.creerEtat","MC.Admin.creerInvitation","MC.Admin.egaliteConstante","MC.Admin.estBanni","MC.Admin.estListeBlanche","MC.Admin.estListeNoire","MC.Admin.estSourdine","MC.Admin.fermerSession","MC.Admin.historiqueSessions","MC.Admin.journaliser","MC.Admin.nommerRole","MC.Admin.noterAdminConnu","MC.Admin.nouveauJeton","MC.Admin.ouvrirSession","MC.Admin.peutAgir","MC.Admin.peutEntrer","MC.Admin.purger","MC.Admin.retirerListe","MC.Admin.revoquerInvitation","MC.Admin.roleDe","MC.Admin.sanctionDe","MC.Admin.sanctionner","MC.Admin.serialiser","MC.Admin.vueJoueurs","MC.Admin.vueJournal","MC.Admin.vueListes","MC.Admin.vueSessions"],
