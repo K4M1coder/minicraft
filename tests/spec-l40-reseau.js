@@ -70,6 +70,39 @@
       A.equal(w.getBlock(40, y, 40), B.STONE, 'le chunk absent est généré et reçoit le bloc');
     });
 
+    it('SPEC-SAVE-027 : des overrides d\'état 0 (multijoueur) ne font allouer aucun tampon d\'états — l\'instantané reste sans état', function () {
+      var cx = 2, cz = -1, CX = C.CHUNK_X, CZ = C.CHUNK_Z;
+      var w = MC.createWorld(555);
+      for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) w.getChunk(cx + dx, cz + dz, true);
+      function partages() {
+        var n = 0;
+        for (var dz2 = -1; dz2 <= 1; dz2++) for (var dx2 = -1; dx2 <= 1; dx2++) if (w.etatsPartagesVides(w.chunkDe(cx + dx2, cz + dz2).etats)) n++;
+        return n;
+      }
+      A.equal(partages(), 9, 'précondition : les 9 chunks partagent le tampon vide');
+      var y = C.WORLD_H - 6, k = 0;
+      for (var dz3 = -1; dz3 <= 1; dz3++) for (var dx3 = -1; dx3 <= 1; dx3++) {
+        // un override par chunk, tel que BIENVENUE / OVERRIDES / BLOC les apporte : [x, y, z, id, 0]
+        MC.Synchro.appliquerBloc(w, [(cx + dx3) * CX + 3, y, (cz + dz3) * CZ + 4, B.STONE, 0]);
+        MC.Synchro.appliquerBloc(w, { x: (cx + dx3) * CX + 5, y: y, z: (cz + dz3) * CZ + 6, id: B.STONE, etat: 0 });
+        k++;
+      }
+      A.equal(partages(), 9, 'après ' + k + ' overrides d\'état 0 : aucun tampon de 32 Kio alloué');
+      // world.setEtat(…, 0) lui-même n'alloue pas sur le tampon partagé
+      A.ok(w.setEtat(cx * CX + 1, y, cz * CZ + 1, 0), 'setEtat(0) accepté');
+      A.ok(w.etatsPartagesVides(w.chunkDe(cx, cz).etats), 'setEtat(0) sur le tampon partagé : rien n\'est alloué');
+      A.equal(w.getEtat(cx * CX + 1, y, cz * CZ + 1), 0);
+      var v = MC.TachesChunks.instantaneVoisins(w, cx, cz);
+      A.ok(v.every(function (x) { return x.etats === null; }), 'instantané : les 9 etats valent null');
+      A.equal(v[4].blocks[C.idx(3, y, 4)], B.STONE, 'instantané : les blocs des overrides y sont');
+      // un état non nul alloue toujours, et un retour à 0 se lit bien
+      w.setEtat(cx * CX + 1, y, cz * CZ + 1, 7);
+      A.ok(!w.etatsPartagesVides(w.chunkDe(cx, cz).etats), 'un état non nul alloue le tampon propre');
+      A.equal(w.getEtat(cx * CX + 1, y, cz * CZ + 1), 7);
+      MC.Synchro.appliquerBloc(w, { x: cx * CX + 1, y: y, z: cz * CZ + 1, id: w.getBlock(cx * CX + 1, y, cz * CZ + 1), etat: 0 });
+      A.equal(w.getEtat(cx * CX + 1, y, cz * CZ + 1), 0, 'puis l\'état 0 reçu s\'applique');
+    });
+
     it('SPEC-SAVE-024 : audit — src/game.js n\'ignore plus aucun état 0 et passe par MC.Synchro.appliquerBloc', function () {
       var src = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
       A.ok(src.indexOf('if (etat) world.setEtat') < 0, 'plus de « if (etat) world.setEtat »');

@@ -840,13 +840,17 @@
       var c = chunks.get(key(cx, cz));
       if (!c || !c.etats) return false;
       var e = Math.max(0, Math.min(255, etat | 0));
+      var k3 = key3(wx, wy, wz);
+      /* Écrire 0 dans le tampon partagé ETATS_VIDE ne change rien : on ne
+         l'alloue pas (sinon chaque override d'état 0 reçu en ligne coûterait
+         32 Kio au chunk et annulerait SPEC-SAVE-027 au maillage). */
+      if (e === 0 && c.etats === ETATS_VIDE) { etatsOverrides.delete(k3); return true; }
       // le chunk partage peut-être encore ETATS_VIDE (copy-on-write) : la
-      // première écriture lui donne son propre tampon.
+      // première écriture non nulle lui donne son propre tampon.
       if (c.etats === ETATS_VIDE) c.etats = new Uint8Array(ETATS_VIDE);
       c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)] = e;
       c.dirty = true;
       c.version = prochaineVersion(cx, cz);
-      var k3 = key3(wx, wy, wz);
       if (e) etatsOverrides.set(k3, e); else etatsOverrides.delete(k3);
       return true;
     }

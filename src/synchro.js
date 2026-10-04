@@ -259,7 +259,10 @@
     else { x = b.x; y = b.y; z = b.z; id = b.id; etat = b.etat; }
     world.getChunk(Math.floor(x / 16), Math.floor(z / 16), true);
     world.setBlock(x, y, z, id);
-    if (etat !== undefined && etat !== null) world.setEtat(x, y, z, etat);
+    if (etat === undefined || etat === null) return;
+    // un 0 sur une case déjà à 0 n'écrit rien (ni tampon alloué, ni chunk à remailler)
+    if (!etat && !world.getEtat(x, y, z)) return;
+    world.setEtat(x, y, z, etat);
   }
 
   MC.Synchro = { appliquerBloc: appliquerBloc, spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
