@@ -1328,6 +1328,8 @@
     return {
       seed: seed, noise: N, chunks: chunks, overrides: overrides, crops: crops,
       etatsOverrides: etatsOverrides, getEtat: getEtat, setEtat: setEtat,
+      // SPEC-SAVE-027 : vrai si ce tampon d'états est le partagé vide (aucune écriture, sans copie possible)
+      etatsPartagesVides: function (etats) { return !etats || etats === ETATS_VIDE; },
       commandesBloc: commandesBloc, getCommande: getCommande, setCommande: setCommande,
       lights: lights, circuits: circuits, tickCircuits: tickCircuits,
       rebuildRegistries: rebuildRegistries, reset: reset,

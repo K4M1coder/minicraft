@@ -238,7 +238,7 @@ function lancer(args, env) {
 /* Rejoint comme joueur : renvoie { client, bienvenue }. */
 async function rejoindre(port, nom, locaux, opts) {
   const client = await connecter(port, opts);
-  client.envoyer({ t: 'rejoindre', nom, locaux: locaux || 1 });
+  client.envoyer({ t: 'rejoindre', formatIds: 4096, nom, locaux: locaux || 1 });
   const bienvenue = await client.attendre('bienvenue', 8000);
   return { client, bienvenue };
 }

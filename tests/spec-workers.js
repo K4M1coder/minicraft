@@ -127,6 +127,44 @@
       }
     });
 
+    it('SPEC-SAVE-027 : le maillage hors thread ne transporte pas d\'état vide (etats: null), maillage identique', function () {
+      function aUnEtat(c) { if (!c.etats) return false; for (var i = 0; i < c.etats.length; i++) if (c.etats[i]) return true; return false; }
+      var cx = 2, cz = -1;
+      var w = mondeAvecVoisinage(555, cx, cz);
+      var sansEtat = [];
+      for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) sansEtat.push(!aUnEtat(w.chunkDe(cx + dx, cz + dz)));
+      A.ok(sansEtat.every(Boolean), 'précondition : aucun des 9 chunks ne porte d\'état');
+      var v0 = MC.TachesChunks.instantaneVoisins(w, cx, cz);
+      A.equal(v0.length, 9);
+      v0.forEach(function (v, i) { A.ok(v.etats === null, 'voisin ' + i + ' sans état : etats null'); });
+
+      // un escalier dans le chunk central : seul ce chunk a un tableau
+      var x = cx * MC.Core.CHUNK_X + 5, z = cz * MC.Core.CHUNK_Z + 6, y = MC.Core.WORLD_H - 10;
+      w.setBlock(x, y, z, MC.Core.B.ESCALIER_STONE);
+      w.setEtat(x, y, z, MC.Formes.packEscalier(1, true, MC.Formes.DROIT));
+      var v1 = MC.TachesChunks.instantaneVoisins(w, cx, cz);
+      v1.forEach(function (v, i) {
+        if (i === 4) {
+          A.ok(v.etats && v.etats.length === v.blocks.length, 'le chunk de l\'escalier transporte ses états');
+          A.ok(v.etats !== w.chunkDe(cx, cz).etats, 'copie, jamais le tampon vivant');
+        } else A.ok(v.etats === null, 'voisin ' + i + ' toujours null');
+      });
+      A.equal(v1.filter(function (v) { return v.etats; }).length, 1, 'un seul tampon d\'états copié et transféré');
+
+      // maillage identique à celui du monde réel
+      var chunk = w.chunkDe(cx, cz);
+      var lumiere = MC.Lumiere.eclairer(w.chunkDe, cx, cz);
+      var r = MC.TachesChunks.executerMaillage({ type: 'maille', epoque: 0, cx: cx, cz: cz, version: chunk.version,
+                                                  simplifie: false, fusion: true, voisins: v1 });
+      MC.ContratsV2.PASSES_MAILLAGE.forEach(function (pass) {
+        var attendu = MC.Mesher.buildChunk(chunk, pass, w.getBlock, lumiere, eauDeSynchrone(w), false, true);
+        var obtenu = r.message.passes[pass];
+        if (!attendu) { A.ok(!obtenu, 'passe ' + pass + ' absente des deux côtés'); return; }
+        A.ok(memeTableau(new Float32Array(attendu.positions), obtenu.positions), 'sommets identiques (' + pass + ')');
+        A.ok(memeTableau(new Uint32Array(attendu.indices), obtenu.indices), 'indices identiques (' + pass + ')');
+      });
+    });
+
     it('SPEC-PERF-008 : versTableauxTypes — types, longueurs par sommet, valeurs par défaut de toGeometry ; transferablesDe liste chaque tampon une fois', function () {
       var w = mondeAvecVoisinage(321, 0, 0);
       var chunk = w.chunkDe(0, 0);

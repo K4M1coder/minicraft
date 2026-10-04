@@ -197,6 +197,18 @@
       A.equal(N.valider({ t: 'rejoindre' }).locaux, 1, 'un joueur par defaut');
     });
 
+    it('SPEC-SAVE-025 : rejoindre conserve la version du jeu et le format d\'identifiants annoncés', function () {
+      var m = N.valider({ t: 'rejoindre', nom: 'Ada', version: '0.6.0', formatIds: 4096 });
+      A.equal(m.version, '0.6.0', 'version conservée');
+      A.equal(m.formatIds, 4096, 'format d\'identifiants conservé');
+      var sans = N.valider({ t: 'rejoindre', nom: 'Ada' });
+      A.equal(sans.formatIds, null, 'aucun format annoncé : null (le serveur refusera)');
+      A.equal(sans.version, null, 'aucune version annoncée : null');
+      A.equal(N.valider({ t: 'rejoindre', formatIds: 'x' }).formatIds, null, 'un format non entier ne passe pas');
+      A.equal(N.valider({ t: 'rejoindre', formatIds: 128 }).formatIds, 128, 'un autre format passe tel quel (c\'est le serveur qui le compare)');
+      A.ok(N.valider({ t: 'rejoindre', version: new Array(100).join('9') }).version.length <= 32, 'version bornée');
+    });
+
     it('SPEC-NET-007 : une pose de bloc exige des entiers valides', function () {
       A.ok(N.valider({ t: 'bloc', x: 1, y: 2, z: 3, id: 5 }), 'valide');
       A.equal(N.valider({ t: 'bloc', x: 1.5, y: 2, z: 3, id: 5 }), null, 'x non entier');

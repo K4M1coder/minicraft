@@ -181,7 +181,7 @@ async function attendrePret(port) {
 }
 async function rejoindre(port, nom, locaux) {
   const cl = await connecter(port);
-  cl.envoyer({ t: 'rejoindre', nom, locaux: locaux || 1 });
+  cl.envoyer({ t: 'rejoindre', formatIds: 4096, nom, locaux: locaux || 1 });
   const bienvenue = await cl.attendre('bienvenue');
   return { cl, bienvenue };
 }
@@ -265,7 +265,7 @@ async function rejoindre(port, nom, locaux) {
 
       // SPEC-SECU-004 : une trame non masquée doit fermer la connexion.
       const nonMasque = await connecter(port);
-      nonMasque.envoyer({ t: 'rejoindre', nom: 'Masque', locaux: 1 });
+      nonMasque.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Masque', locaux: 1 });
       await nonMasque.attendre('bienvenue');
       nonMasque.envoyerNonMasque({ t: 'chat', texte: 'coucou en clair' });
       let fermee = false;
@@ -276,7 +276,7 @@ async function rejoindre(port, nom, locaux) {
       // complétée, ne doit jamais faire grossir indéfiniment le tampon — la
       // connexion doit finir par être fermée par le serveur.
       const gourmand = await connecter(port);
-      gourmand.envoyer({ t: 'rejoindre', nom: 'Gourmand', locaux: 1 });
+      gourmand.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Gourmand', locaux: 1 });
       await gourmand.attendre('bienvenue');
       // en-tête masqué annonçant 200 Mo (127 = longueur 64 bits), jamais suivi du corps
       const enteteEnorme = Buffer.alloc(14);

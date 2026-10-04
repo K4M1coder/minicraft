@@ -107,6 +107,18 @@
      `voisins`. `slice()` copie chaque tampon : un tampon vivant de
      `world.chunks` (ou le partagé ETATS_VIDE) ne doit JAMAIS être transféré
      tel quel, sous peine de rendre le monde réel inutilisable. */
+  /* SPEC-SAVE-027 : un chunk sans état particulier voyage avec `etats: null`
+     (le maillage lit alors 0 partout, comme le monde réel) au lieu d'une
+     copie de 32 Kio de zéros — 9 voisins, 288 Kio par maillage. Le tampon
+     partagé ETATS_VIDE se reconnaît sans le lire ; un tampon propre au chunk
+     (alloué par une écriture, peut-être revenue à 0 depuis) est parcouru,
+     et ne s'arrête qu'au premier état non nul. */
+  function sansEtat(world, etats) {
+    if (!etats) return true;
+    if (world.etatsPartagesVides && world.etatsPartagesVides(etats)) return true;
+    for (var i = 0; i < etats.length; i++) if (etats[i]) return false;
+    return true;
+  }
   function instantaneVoisins(world, cx, cz) {
     var out = [];
     for (var dz = -1; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) {
@@ -114,7 +126,7 @@
       if (!c) { out.push(null); continue; }
       out.push({
         blocks: c.blocks.slice(),
-        etats: c.etats ? c.etats.slice() : null,
+        etats: sansEtat(world, c.etats) ? null : c.etats.slice(),
         eau: c.eau ? { nature: c.eau.nature.slice(), flux: c.eau.flux.slice(), prof: c.eau.prof.slice() } : null,
       });
     }

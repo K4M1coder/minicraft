@@ -245,7 +245,24 @@
     return spawnValide(t.spawn);
   }
 
-  MC.Synchro = { spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
+  /* SPEC-SAVE-024 : applique au monde du client un bloc qui fait foi, reçu du
+     serveur — BLOC `{ x, y, z, id, etat }` ou override `[x, y, z, id, etat]`
+     (BIENVENUE, OVERRIDES). Le chunk absent est généré pour le recevoir (sans
+     quoi la modification serait perdue : blocs fantômes). L'état reçu
+     s'applique TOUJOURS, 0 compris : les circuits diffusent un changement
+     d'état à id constant (batterie vidée, répéteur éteint, piston rentré…) ;
+     seul un état absent (rappel d'un refus, sans état) laisse l'état en place
+     — setBlock l'efface déjà si le bloc change. */
+  function appliquerBloc(world, b) {
+    var x, y, z, id, etat;
+    if (Array.isArray(b)) { x = b[0]; y = b[1]; z = b[2]; id = b[3]; etat = b[4]; }
+    else { x = b.x; y = b.y; z = b.z; id = b.id; etat = b.etat; }
+    world.getChunk(Math.floor(x / 16), Math.floor(z / 16), true);
+    world.setBlock(x, y, z, id);
+    if (etat !== undefined && etat !== null) world.setEtat(x, y, z, etat);
+  }
+
+  MC.Synchro = { appliquerBloc: appliquerBloc, spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
                  peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
                  creerBudget: creerBudget, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,

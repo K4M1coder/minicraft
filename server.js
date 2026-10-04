@@ -2803,6 +2803,7 @@ function snapshotRecits() {
 
 function traiter(c, m) {
   if (!m) return;                                   // message invalide : ignoré
+  if (c.formatRefuse) return;                       // SPEC-SAVE-025 : refusé pour son format d'ids, plus rien ne s'applique
   // SPEC-ARCHI-010 : en pause, ces messages n'ont aucun effet (ping, PAUSE, RESEAU, ARRET, CHAT continuent)
   if (enPause && MESSAGES_GELES.has(m.t)) return;
   if (MC_TEST_PANNE && m.t === NP.MSG.CHAT && m.texte === '__panne_test_secu_001__') {
@@ -2820,6 +2821,19 @@ function traiter(c, m) {
   }
   switch (m.t) {
     case NP.MSG.REJOINDRE: {
+      /* SPEC-SAVE-025 : un client d'un autre format d'identifiants (ou qui n'en
+         annonce aucun : antérieur à cette règle) parle un autre espace d'ids —
+         refusé, motif lisible avec les deux formats, et plus aucun de ses
+         messages n'est appliqué. Une autre VERSION du jeu au même format passe. */
+      if (m.formatIds !== C.FIRST_ITEM) {
+        const motif = `format d'identifiants incompatible : client ${m.formatIds === null ? 'aucun (version antérieure)' : m.formatIds}, serveur ${C.FIRST_ITEM}` +
+          ` — client v${m.version || '?'}, serveur v${C.VERSION_JEU}`;
+        c.formatRefuse = true;
+        envoyer(c, { t: NP.MSG.REFUS, motif, formatIds: C.FIRST_ITEM, version: C.VERSION_JEU });
+        journal(`x ${m.nom} (${c.ip}) refusé — ${motif}`);
+        setTimeout(() => fermer(c, 'format d\'identifiants incompatible'), 50);
+        break;
+      }
       // liste noire, liste blanche, bannissement, e-mail exigé (SPEC-ADMIN-004)
       const decision = MC.Admin.peutEntrer(admin, { nom: m.nom, email: m.email, invitation: m.invitation }, heure);
       if (!decision.ok) {
@@ -2898,6 +2912,7 @@ function traiter(c, m) {
       envoyer(c, {
         t: NP.MSG.BIENVENUE,
         id: c.id, graine: CONF.graine, mode: CONF.mode, difficulte: CONF.difficulte,
+        version: C.VERSION_JEU, formatIds: C.FIRST_ITEM,                     // SPEC-SAVE-025
         histoire: PARAMS_HISTOIRE ? { interactions: PARAMS_HISTOIRE.interactions || null, commerce: PARAMS_HISTOIRE.commerce } : null,
         zone: monde.zonesEtat ? monde.zonesEtat.politique : 'generee',
         heure, blocs,
@@ -3149,6 +3164,8 @@ function traiter(c, m) {
          client — une porte posée part de 0, ses deux moitiés comprises, et le
          tic suivant l'ouvre si un signal la touche déjà. */
       if (m.id && (C.estPorte(m.id) || C.estTrappe(m.id))) m.etat = 0;
+      // SPEC-SAVE-023 : au-delà de C.etatMaxDe du bloc posé (SPEC-SAVE-021 ; 0 pour un bloc sans état), l'état reçu retombe à 0
+      if (m.etat > C.etatMaxDe(m.id)) m.etat = 0;
       if (!blocAutorise(js, m, avant, c)) {
         // refusé : on rappelle au client ce qui s'y trouve vraiment
         envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant });
@@ -4158,6 +4175,9 @@ function blocAutorise(js, m, avant, c) {
   const fusionDalle = !!(defAvant && defAvant.forme === 'dalle' && defAvant.mat === m.id);
   if (!fusionDalle && !C.isReplaceable(avant)) return false;
   const posee = C.BLOCKS[m.id];
+  // SPEC-SAVE-022 : seul un bloc DÉFINI se pose — jamais un id d'objet ni un id libre, en créatif
+  // et avec MC_TEST_POSE_LIBRE comme en survie (où debiterPose l'exclut déjà, SPEC-SYNC-028)
+  if (!posee || m.id >= C.FIRST_ITEM) return false;
   if (posee && posee.circuit && posee.circuit.adminSeul) return blocCommandeAutorise(c);
   if (!MC.Modes.peutPoser(regles, m.id)) return false;      // mode histoire : cet objet n'a pas sa place dans l'aventure (ARCHI-041)
   return true;

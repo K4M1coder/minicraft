@@ -174,7 +174,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     ok(true, 'SPEC-NET-001 : la poignee de main aboutit sur une vraie socket');
 
     // ── SPEC-NET-009 / 010 : bienvenue
-    a.envoyer({ t: 'rejoindre', nom: 'Alice', locaux: 2 });
+    a.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 2 });
     const bienvenueA = await a.attendre('bienvenue');
     ok(typeof bienvenueA.id === 'number', 'SPEC-NET-010 : un identifiant est attribue');
     ok(typeof bienvenueA.graine === 'number', 'SPEC-NET-009 : la graine est transmise');
@@ -185,7 +185,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
     // ── SPEC-NET-011 : pose de bloc diffusee
     const b = await connecter(PORT);
-    b.envoyer({ t: 'rejoindre', nom: 'Bob', locaux: 1 });
+    b.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
     const bienvenueB = await b.attendre('bienvenue');
     ok(bienvenueB.id !== bienvenueA.id, 'SPEC-NET-010 : les identifiants sont distincts');
     ok(bienvenueB.joueurs.some(j => j.nom === 'Alice'),
@@ -252,7 +252,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
 
     // ── SPEC-NET-018 : un nouveau venu recoit le monde deja modifie
     const c2 = await connecter(PORT);
-    c2.envoyer({ t: 'rejoindre', nom: 'Chloe', locaux: 1 });
+    c2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Chloe', locaux: 1 });
     const bienvenueC = await c2.attendre('bienvenue');
     ok(bienvenueC.blocs.some(x => x[0] === BX && x[1] === BY && x[2] === BZ && x[3] === 9),
        'SPEC-NET-018 : le bloc pose avant son arrivee lui est transmis');
@@ -274,7 +274,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     // voir tests/integration-admin.js pour la preuve que BIENVENUE elle-même
     // reste de taille bornée face à un grand nombre de modifications éparses.
     const d2 = await connecter(PORT);
-    d2.envoyer({ t: 'rejoindre', nom: 'Diane', locaux: 1 });
+    d2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Diane', locaux: 1 });
     const bienvenueD = await d2.attendre('bienvenue');
     ok(!!bienvenueD.toi, 'SPEC-SERVEUR-009 : Diane a bien rejoint');
 
@@ -309,7 +309,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     // c'est qu'aucune mise en cache serveur ne fait obstacle à cette
     // redemande — condition nécessaire à ce que le correctif client suffise.
     const fred = await connecter(PORT);
-    fred.envoyer({ t: 'rejoindre', nom: 'Fred', locaux: 1 });
+    fred.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Fred', locaux: 1 });
     const bienvenueFred = await fred.attendre('bienvenue');
     const cxF = Math.floor(BX / 16), czF = Math.floor(BZ / 16);
     fred.envoyer({ t: 'overrides_demande', cx: cxF, cz: czF });
@@ -329,7 +329,7 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
     // Fred se reconnecte — même serveur, donc même graine — et redemande
     // (comme le client corrigé) le chunk qu'il avait déjà chargé
     const fred2 = await connecter(PORT);
-    fred2.envoyer({ t: 'rejoindre', nom: 'Fred', locaux: 1 });
+    fred2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Fred', locaux: 1 });
     const bienvenueFred2 = await fred2.attendre('bienvenue');
     eq(bienvenueFred2.graine, bienvenueFred.graine, 'SPEC-SERVEUR-009 (reconnexion) : même graine qu avant la coupure');
     fred2.envoyer({ t: 'overrides_demande', cx: cxF, cz: czF });

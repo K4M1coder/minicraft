@@ -262,7 +262,7 @@ async function executerPalier(scenario, palier, opts) {
     const clients = await Promise.all(Array.from({ length: palier }, async (_, i) => {
       try {
         const cli = await connecter(port, 'Bot' + i);
-        cli.envoyer({ t: 'rejoindre', nom: 'Bot' + i, locaux: 1 });
+        cli.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bot' + i, locaux: 1 });
         await cli.attendre('bienvenue', 8000);
         return cli;
       } catch (e) { resultat.erreursConnexion++; return null; }

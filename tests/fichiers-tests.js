@@ -45,9 +45,11 @@
     // L40-bis B : identifiants figés, plages déclarées, état borné (SPEC-SAVE-019 à 021)
     'spec-ids',
     // L40-bis, lot A : registre des champs porteurs d'ids (SPEC-SAVE-018) et ids de bloc inconnus (SPEC-SAVE-028)
-    'spec-migration-ids'];
+    'spec-migration-ids',
+    // L40-bis C (SPEC-SAVE-023, 024) : état borné par bloc, état 0 appliqué chez le client, audit de game.js
+    'spec-l40-reseau'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

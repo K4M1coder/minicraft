@@ -362,7 +362,11 @@
         return { t: msg.t, nom: (String(msg.nom || '').replace(CONTROLES, '').trim() || 'Joueur').slice(0, 24),
                  locaux: Math.max(1, Math.min(4, (msg.locaux | 0) || 1)),
                  email: msg.email ? String(msg.email).trim().slice(0, 120) : null,
-                 invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null };
+                 invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null,
+                 // SPEC-SAVE-025 : version du jeu et format d'identifiants (FIRST_ITEM) du client —
+                 // null s'ils manquent ; c'est le serveur qui compare le format au sien
+                 version: msg.version ? (String(msg.version).replace(CONTROLES, '').trim().slice(0, 32) || null) : null,
+                 formatIds: estEntier(msg.formatIds) && msg.formatIds > 0 ? msg.formatIds | 0 : null };
       case MSG.BLOC:
         // SPEC-SECU-008 : bornes absolues AVANT toute logique de jeu — x/z
         // dans ±COORD_MAX, y dans la hauteur réelle du monde.

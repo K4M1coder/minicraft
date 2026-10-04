@@ -99,8 +99,10 @@
 
       socket.onopen = function () {
         if (!courante()) return;
+        // SPEC-SAVE-025 : version du jeu et format d'identifiants, comparés par le serveur
         envoyer({ t: NP.MSG.REJOINDRE, nom: nom || 'Joueur', locaux: locaux || 1,
-                  email: opts2.email || null, invitation: opts2.invitation || null });
+                  email: opts2.email || null, invitation: opts2.invitation || null,
+                  version: MC.Core.VERSION_JEU, formatIds: MC.Core.FIRST_ITEM });
       };
 
       socket.onmessage = function (ev) {
@@ -198,7 +200,8 @@
         }
 
         case NP.MSG.BLOC:
-          hooks.onBloc(m.x, m.y, m.z, m.id, m.etat || 0);
+          // l'état tel quel (SPEC-SAVE-024) : 0 s'applique, absent (rappel d'un refus) laisse l'état en place
+          hooks.onBloc(m.x, m.y, m.z, m.id, m.etat);
           break;
 
         // SPEC-SERVEUR-009 : overrides d'un chunk demandé (demanderOverrides)

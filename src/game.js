@@ -255,12 +255,8 @@
           var sp = MC.Synchro.reprendreRetour(jl.player.state, t);
           if (sp) { jl.spawnPoint = sp; if (i === 0) g.spawnPoint = sp; }
         });
-        (m.blocs || []).forEach(function (b) {
-          var cx = Math.floor(b[0] / 16), cz = Math.floor(b[2] / 16);
-          world.getChunk(cx, cz, true);
-          world.setBlock(b[0], b[1], b[2], b[3]);
-          if (b[4]) world.setEtat(b[0], b[1], b[2], b[4]);
-        });
+        // SPEC-SAVE-024 : chaque override appliqué état compris, 0 aussi
+        (m.blocs || []).forEach(function (b) { MC.Synchro.appliquerBloc(world, b); });
         (m.chat || []).forEach(function (c) { chat.recevoir(c); });
         chat.systeme('Connecte au serveur (' + (m.joueurs || []).length + ' autre(s) joueur(s))');
         // SPEC-ARCHI-029 : l'appartenance de faction est celle du serveur (jamais un état local)
@@ -287,19 +283,14 @@
         /* Chunk absent : on le génère pour y appliquer le bloc. L'ignorer
            perdait la modification — on retrouvait plus tard un terrain qui
            ne correspondait plus à celui du serveur (blocs fantômes). */
-        var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
-        world.getChunk(cx, cz, true);
-        world.setBlock(x, y, z, id);
-        if (etat) world.setEtat(x, y, z, etat);
+        // SPEC-SAVE-024 : l'état reçu s'applique, 0 compris (batterie vidée, piston rentré…)
+        MC.Synchro.appliquerBloc(world, { x: x, y: y, z: z, id: id, etat: etat });
       },
       // SPEC-SERVEUR-009 : overrides d'un chunk demandé (BIENVENUE ne porte
       // plus qu'un voisinage borné) — même application qu'onBloc, un à un.
       onOverridesChunk: function (cx, cz, blocs) {
         world.getChunk(cx, cz, true);
-        blocs.forEach(function (b) {
-          world.setBlock(b[0], b[1], b[2], b[3]);
-          if (b[4]) world.setEtat(b[0], b[1], b[2], b[4]);
-        });
+        blocs.forEach(function (b) { MC.Synchro.appliquerBloc(world, b); });   // SPEC-SAVE-024
       },
       onChat: function (m) { chat.recevoir(m); },
       onArrive: function (m) { chat.systeme(m.nom + ' a rejoint'); },
