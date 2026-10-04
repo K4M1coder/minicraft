@@ -65,6 +65,19 @@
     var der = ech[ech.length - 1];
     out.duree_ms = Math.round(der.t - p0.t);
     out.final = { dx: der.x - p0.x, dy: der.y - p0.y, dz: der.z - p0.z };
+    /* Une dérive LENTE (chaque pas sous `seuilPas`) n'a aucun « déplacement »
+       listé : on date le premier franchissement de la tolérance, on donne
+       l'allure (bloc/s) et une série échantillonnée du décalage cumulé. */
+    out.franchissement = null;
+    for (var k = 1; k < ech.length; k++) {
+      var c = { dx: ech[k].x - p0.x, dy: ech[k].y - p0.y, dz: ech[k].z - p0.z };
+      if (norme(c) >= tol) { out.franchissement = { t_ms: Math.round(ech[k].t - p0.t), cumul: c }; break; }
+    }
+    out.allure_bps = out.duree_ms > 0 ? norme(out.final) / (out.duree_ms / 1000) : 0;
+    out.serie = [];
+    var pas = Math.max(1, Math.floor(ech.length / 8));
+    for (var s = 0; s < ech.length; s += pas) out.serie.push({ t_ms: Math.round(ech[s].t - p0.t), cumul: { dx: ech[s].x - p0.x, dy: ech[s].y - p0.y, dz: ech[s].z - p0.z } });
+    if (out.serie[out.serie.length - 1].t_ms !== out.duree_ms) out.serie.push({ t_ms: out.duree_ms, cumul: out.final });
     return out;
   }
 
@@ -81,6 +94,13 @@
         '  intervalle=' + (d.intervalle_ms === null ? '—' : d.intervalle_ms + ' ms') + '  ← ' + d.source);
     });
     if (a.deplacements.length > max) lignes.push('  … ' + (a.deplacements.length - max) + ' autre(s)');
+    if (!a.ok && a.franchissement) {
+      lignes.push('  tolérance franchie à t=' + a.franchissement.t_ms + ' ms (cumul ' + vec(a.franchissement.cumul) + '), allure ' +
+        a.allure_bps.toFixed(5) + ' bloc/s sur ' + (a.duree_ms / 1000).toFixed(1) + ' s' + (a.deplacements.length ? '' : ' — dérive lente, chaque pas sous ' + SEUIL_PAS + ' bloc'));
+      lignes.push('  série échantillonnée (cumul) : ' + (a.serie || []).map(function (p, i, l) {
+        return 't=' + p.t_ms + ' ms ' + vec(p.cumul) + (i ? ' (+' + (p.t_ms - l[i - 1].t_ms) + ' ms)' : '');
+      }).join(' ; '));
+    }
     return lignes.join('\n');
   }
 

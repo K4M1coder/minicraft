@@ -1080,6 +1080,11 @@
 
     /* Fusionne les piles d'objets proches : évite qu'un arbre abattu ne laisse
        trente entités distinctes au même endroit. */
+    // deux délais de ramassage « identiques » : tous deux écoulés, ou à moins d'une image d'écart
+    function memeDelai(a, b) {
+      a = a || 0; b = b || 0;
+      return (a <= 0 && b <= 0) || Math.abs(a - b) < 1 / 60;
+    }
     function mergeItems() {
       var merged = 0;
       for (var i = 0; i < list.length; i++) {
@@ -1092,6 +1097,12 @@
           if (d > 0.9) continue;
           var max = C.maxStack(a.item);
           if (a.n + b.n > max) continue;
+          /* SPEC-JOUABLE-006 : jamais deux objets de délais de ramassage
+             différents (un objet jeté, 2 s, près d'un objet déjà ramassable
+             héritait de son délai écoulé et revenait aussitôt au lanceur), ni
+             deux données différentes (livre écrit, batterie chargée…). */
+          if (!memeDelai(a.pickup, b.pickup) || JSON.stringify(a.data) !== JSON.stringify(b.data)) continue;
+          a.pickup = Math.max(a.pickup || 0, b.pickup || 0);
           a.n += b.n; remove(b); merged++; j--;
         }
       }

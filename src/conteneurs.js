@@ -248,9 +248,12 @@
     var inv = ctx.joueur.inv;
     var S = inv.slots[op.i];
     if (!S || S.n < op.n) return { ok: false, motif: 'absent' };
-    var id = S.id;
+    var id = S.id, data = S.data;
     var removed = inv.consumeAt(op.i, op.n);
-    return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: { lache: { id: id, n: removed } } };
+    // SPEC-JOUABLE-006 : la donnée de la pile (livre écrit, niveau d'une batterie…) part avec l'objet jeté
+    var lache = { id: id, n: removed };
+    if (data !== undefined) lache.data = data;
+    return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: { lache: lache } };
   }
 
   function creatif(ctx, op) {

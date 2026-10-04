@@ -16,7 +16,7 @@
   var J = require('./jouabilite-analyse.js');
   var RACINE = path.join(__dirname, '..');
   var C = MC.Core, B = C.B;
-  var flatWorld = G.flatWorld;
+  var flatWorld = G.flatWorld, seededRand = G.seededRand;
 
   function serie(n, f) { var out = []; for (var i = 0; i < n; i++) out.push(f(i)); return out; }
 
@@ -55,6 +55,18 @@
       A.ok(/3 déplacement\(s\) erroné\(s\)/.test(msg) && /t=300 ms/.test(msg) && /intervalle=300 ms/.test(msg) && /cumul=\(\+0\.0000, -0\.0400, \+0\.0000\)/.test(msg),
         'le message cite la série : ' + msg);
       A.ok(/correction serveur ×2/.test(msg) && /serveur ×1/.test(msg), 'et le compte par source');
+    });
+
+    it('SPEC-JOUABLE-009 : une dérive lente (chaque pas sous le seuil) est datée, avec son allure et une série échantillonnée', function () {
+      // 0,00005 bloc par image vers le bas pendant 480 images (8 s) : 0,024 bloc au total
+      var a = J.analyserPositions(serie(481, function (i) { return { t: i * 16.67, x: 0, y: -i * 5e-5, z: 0, etats: 1 }; }));
+      A.notOk(a.ok, 'la tolérance est franchie');
+      A.equal(a.deplacements.length, 0, 'aucun pas au-dessus du seuil');
+      A.ok(a.franchissement && a.franchissement.t_ms >= 300 && a.franchissement.t_ms <= 360, 'franchissement daté (' + JSON.stringify(a.franchissement) + ')');
+      A.close(a.allure_bps, 0.003, 2e-4, 'allure en bloc/s');
+      A.ok(a.serie.length >= 8, 'série échantillonnée (' + a.serie.length + ' points)');
+      var msg = J.messagePositions('client', a);
+      A.ok(/tolérance franchie à t=\d+ ms/.test(msg) && /allure 0\.00\d+ bloc\/s sur 8\.0 s/.test(msg) && /dérive lente/.test(msg) && /série échantillonnée/.test(msg) && /\(\+\d+ ms\)/.test(msg), msg);
     });
 
     it('SPEC-JOUABLE-009 : un pas sans aucun ETAT reçu est attribué au client', function () {
@@ -127,6 +139,59 @@
       for (var k = 0; k < 60 && !pris.length; k++) pris = pris.concat(ents.update(1 / 60, pl.state, { joueurs: [pl.state] }).picked);
       A.equal(pris.length, 1, 'ramassé');
       A.equal(pris[0].id, B.COBBLE);
+    });
+
+    it('SPEC-JOUABLE-006 : un objet jeté ne fusionne pas avec un objet identique déjà ramassable (son délai de 2 s tient)', function () {
+      var w = flatWorld(10);
+      var ents = MC.createEntities(w);
+      var pret = ents.dropItem(0.5, 11, 0.5, B.COBBLE, 1, seededRand(1));
+      pret.vel.x = pret.vel.y = pret.vel.z = 0; pret.pickup = 0;          // déjà ramassable
+      var jete = ents.lancerObjet({ x: 0.5, y: 11.2, z: 0.5 }, { x: 0, y: 0, z: 0 }, B.COBBLE, 1);
+      jete.vel.x = jete.vel.y = jete.vel.z = 0;
+      A.equal(ents.mergeItems(), 0, 'pas de fusion : délais différents');
+      A.ok(jete.pickup >= 2 && !jete.dead, 'l\'objet jeté garde son délai');
+      // deux objets au délai écoulé fusionnent ; le délai le plus long l'emporte
+      var autre = ents.dropItem(0.5, 11, 0.5, B.COBBLE, 1, seededRand(2));
+      autre.vel.x = autre.vel.y = autre.vel.z = 0; autre.pickup = -0.5;
+      A.equal(ents.mergeItems(), 1, 'deux objets ramassables fusionnent');
+      A.equal(pret.n, 2);
+      // jamais deux données différentes (livre écrit, batterie…)
+      var d1 = ents.dropItem(5.5, 11, 5.5, B.COBBLE, 1, seededRand(3)), d2 = ents.dropItem(5.5, 11, 5.5, B.COBBLE, 1, seededRand(4));
+      d1.vel.x = d1.vel.z = d2.vel.x = d2.vel.z = 0; d1.pos.x = d2.pos.x; d1.pos.z = d2.pos.z;
+      d1.data = { titre: 'A' }; d2.data = { titre: 'B' };
+      A.equal(ents.mergeItems(), 0, 'données différentes : pas de fusion');
+      d2.data = { titre: 'A' };
+      A.equal(ents.mergeItems(), 1, 'données identiques et même délai : fusion');
+    });
+
+    it('SPEC-JOUABLE-006 : un objet jeté garde sa donnée (lâcher → lancer → ramasser)', function () {
+      var joueur = { inv: MC.Inventory.create(36), grille: MC.Inventory.create(9), equip: {} };
+      joueur.inv.addStack(B.COBBLE, 1, { note: 'x' });
+      var r = MC.Conteneurs.appliquer({ joueur: joueur, conteneur: function () { return null; }, regles: MC.Modes.regles('survie', 'facile') },
+        { k: 'lacher', i: 0, n: 1 });
+      A.ok(r.ok, 'lâcher accepté');
+      A.equal(JSON.stringify(r.effets.lache.data), '{"note":"x"}', 'la donnée part avec l\'objet lâché');
+      var w = flatWorld(10), ents = MC.createEntities(w);
+      var e = ents.lancerObjet({ x: 0.5, y: 12, z: 0.5 }, { x: 0, y: 0, z: -1 }, B.COBBLE, 1, r.effets.lache.data);
+      var pl = { pos: { x: 0.5, y: 11, z: 0.5 } };
+      for (var i = 0; i < 200; i++) ents.update(1 / 60, { pos: { x: 99, y: 11, z: 99 } });
+      pl.pos = { x: e.pos.x, y: 11, z: e.pos.z };
+      var pris = [];
+      for (var k = 0; k < 60 && !pris.length; k++) pris = ents.update(1 / 60, pl).picked;
+      A.equal(pris.length, 1, 'ramassé');
+      A.equal(JSON.stringify(pris[0].data), '{"note":"x"}', 'la donnée revient au ramassage');
+      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data\)/.test(src), 'le serveur transmet la donnée au jet');
+    });
+
+    it('SPEC-JOUABLE-001 : le serveur de jeu de test n\'hérite d\'aucun réglage MC_*, valide l\'inventaire de départ et n\'écoute que la boucle locale', function () {
+      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var i = src.indexOf('function traiterServeurJeuTest(');
+      var corps = src.slice(i, src.indexOf('function servir(', i));
+      A.ok(/if \(!\/\^MC_\/\.test\(k\)\) env\[k\] = process\.env\[k\]/.test(corps), 'aucun MC_* hérité du banc');
+      A.ok(/MC_TEST_BOUCLE_LOCALE: '1'/.test(corps) && corps.indexOf('MC_TEST_POSE_LIBRE') < 0, 'boucle locale, jamais de pose libre');
+      A.ok(/!!C\.def\(p\[0\]\)/.test(corps) && /p\[1\] <= C\.maxStack\(p\[0\]\)/.test(corps), 'objets définis, quantités bornées');
+      A.ok(/if \(reseauOuvert && !BOUCLE_LOCALE_TEST\)/.test(src), 'ouvert, mais écoute locale en mode test');
     });
 
     it('SPEC-JOUABLE-006 : le serveur lance l\'objet d\'un INV_LACHER devant le joueur (lancerDevant), un trop-plein tombe toujours aux pieds', function () {

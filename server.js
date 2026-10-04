@@ -1998,16 +1998,25 @@ function traiterServeurJeuTest(req, res) {
     const mode = corps && (corps.mode === 'creatif' || corps.mode === 'survie') ? corps.mode : 'survie';
     const difficulte = corps && ['paisible', 'facile', 'difficile', 'cauchemar'].indexOf(corps.difficulte) >= 0 ? corps.difficulte : 'paisible';
     const graine = corps && Number.isInteger(corps.graine) ? corps.graine : CONF.graine;
+    // seuls des objets qui EXISTENT (bloc ou objet défini), en quantités entières bornées
     const inv = corps && Array.isArray(corps.inv)
-      ? corps.inv.filter(p => Array.isArray(p) && Number.isInteger(p[0]) && Number.isInteger(p[1]) && p[1] > 0).slice(0, 36) : [];
+      ? corps.inv.filter(p => Array.isArray(p) && Number.isInteger(p[0]) && p[0] > 0 && !!C.def(p[0]) &&
+          Number.isInteger(p[1]) && p[1] > 0 && p[1] <= C.maxStack(p[0])).slice(0, 36) : [];
     const jeton = MC.Admin.nouveauJeton('banc-jeu-', crypto.randomBytes);
+    /* Environnement de l'enfant : celui du banc MOINS tout réglage de jeu ou
+       de test hérité (MC_TEST_*, MC_MODE, MC_HISTOIRE…) — l'enfant ne reçoit
+       que ceux voulus ici. `--serveur` + MC_TEST_BOUCLE_LOCALE : règles du mode
+       ouvert (la page et le Témoin, page servie par un autre port) mais écoute
+       sur la boucle locale seulement (voir BOUCLE_LOCALE_TEST). */
+    const env = {};
+    Object.keys(process.env).forEach(k => { if (!/^MC_/.test(k)) env[k] = process.env[k]; });
+    Object.assign(env, {
+      MC_MODE: mode, MC_DIFFICULTE: difficulte, MC_GRAINE: String(graine),
+      MC_TEST_BOUCLE_LOCALE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
+    });
+    if (inv.length) env.MC_TEST_INV = JSON.stringify(inv);
     const enfant = require('child_process').spawn(process.execPath, [__filename, '--port', '0', '--serveur', '--admin', jeton], {
-      cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true,
-      env: Object.assign({}, process.env, {
-        MC_MODE: mode, MC_DIFFICULTE: difficulte, MC_GRAINE: String(graine),
-        MC_TEST_INV: inv.length ? JSON.stringify(inv) : '', MC_TEST_POSE_LIBRE: '', MC_RELANCE: '',
-        MC_TEST_ARRET_SI_MORT: String(process.pid),
-      }),
+      cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env,
     });
     const sj = { enfant, port: 0, jeton };
     serveurJeuTest = sj;
@@ -3660,11 +3669,11 @@ function refuserOp(c, j, seq, motif) {
 function lacherAuxPieds(js, pile) {
   if (!pile || !pile.n) return;
   const p = js.joueur.state.pos;
-  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n);
+  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n, null, pile.data);
 }
 function lancerDevant(js, pile) {
   if (!pile || !pile.n) return;
-  entites.lancerObjet(js.joueur.eyePos(), js.joueur.lookDir(), pile.id, pile.n);
+  entites.lancerObjet(js.joueur.eyePos(), js.joueur.lookDir(), pile.id, pile.n, pile.data);
 }
 // clé(s) de conteneur posé/banque potentiellement concernées par une
 // opération AVANT de savoir si elle réussit (pour capturer l'instantané
@@ -4930,10 +4939,18 @@ function adressesReseau() {
   } catch (e) { /* aucune interface lisible */ }
   return out.length ? out : ['0.0.0.0'];
 }
+/* MC_TEST_BOUCLE_LOCALE=1 : réservé au serveur de jeu des e2e de jouabilité
+   (POST /tests/serveur-jeu, SPEC-JOUABLE-001 à 008). Ils ont besoin des règles
+   du mode OUVERT (--serveur : plusieurs postes — la page ET le « Témoin » qui
+   relit le serveur — et une page servie par un AUTRE port, que le mode fermé
+   refuse par son contrôle d'origine), mais sans jamais exposer ce serveur
+   jetable au réseau : il n'écoute alors que la boucle locale. */
+const BOUCLE_LOCALE_TEST = process.env.MC_TEST_BOUCLE_LOCALE === '1';
+if (BOUCLE_LOCALE_TEST) setImmediate(() => journal('ATTENTION : MC_TEST_BOUCLE_LOCALE actif — règles du mode ouvert, écoute sur la boucle locale seulement (réglage de test, jamais en exploitation)'));
 /* Ouvre les écouteurs du mode courant sur `port` (0 = éphémère) et renvoie le
    port réel. Lève l'erreur d'écoute (EADDRINUSE…) sans rien laisser ouvert. */
 async function ouvrirEcoute(port) {
-  if (reseauOuvert) {
+  if (reseauOuvert && !BOUCLE_LOCALE_TEST) {
     const srv = creerEcouteur();
     const p = await ecouterUn(srv, port, null);
     ecouteurs = [srv]; adressesActives = adressesReseau();

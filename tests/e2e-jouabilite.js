@@ -83,16 +83,60 @@
   }
 
   // ─── partie sur un vrai serveur de jeu ────────────────────────────────────
+  /* Graines FIXES, essayées dans l'ordre : le monde de jeu ne dépend jamais de
+     l'état laissé par les tests précédents (la graine de la page change au fil
+     d'une campagne). Une graine dont le point d'apparition n'est pas sur la
+     terre ferme (eau à proximité) est écartée, avec la raison. */
+  var GRAINES = [20260921, 20261004, 4242, 777777, 13579];
+
+  /* `preparer` : une attente de PRÉPARATION (sondage borné) qui échoue avec
+     un message explicite, jamais en silence. */
+  async function preparer(cond, ms, quoi) {
+    A.ok(await sonder(cond, ms), 'préparation : ' + quoi + ' (non atteint en ' + (ms / 1000) + ' s)');
+  }
+
   async function demarrerPartie(g, mode, inv) {
-    var graineAvant = g.world.seed;
+    var graineAvant = g.world.seed, ecartees = [];
+    for (var k = 0; k < GRAINES.length; k++) {
+      var p = await connecterServeurJeu(g, mode, inv, GRAINES[k], graineAvant);
+      var terrain = await terrainSousJoueur(g, p);
+      if (terrain.ok) return p;
+      ecartees.push(GRAINES[k] + ' : ' + terrain.motif);
+      await quitterPartie(g, p);
+    }
+    A.ok(false, 'préparation : aucune graine de la liste fixe ne fait apparaître sur la terre ferme — ' + ecartees.join(' ; '));
+  }
+
+  /* Le point d'apparition donné par le serveur est sur la terre ferme : sol
+     solide sous les pieds (terrain chargé), aucun liquide à 4 blocs autour. */
+  async function terrainSousJoueur(g, p) {
+    var st = g.player.state, verdict = null;
+    await sonder(function () {
+      if (!p.sp.dernierEtat()) return false;
+      var fx = Math.floor(st.pos.x), fy = Math.floor(st.pos.y), fz = Math.floor(st.pos.z), sol = false;
+      for (var y = fy; y >= fy - 6 && !sol; y--) if (Cr().isSolid(g.world.getBlock(fx, y, fz))) sol = true;
+      if (!sol) return false;                                   // terrain pas encore chargé : on attend
+      for (var dx = -4; dx <= 4; dx++) for (var dz = -4; dz <= 4; dz++) for (var dy = -3; dy <= 1; dy++) {
+        if (liquide(g.world.getBlock(fx + dx, fy + dy, fz + dz))) {
+          verdict = { ok: false, motif: 'liquide près du point d\'apparition (' + (fx + dx) + ',' + (fy + dy) + ',' + (fz + dz) + ')' };
+          return true;
+        }
+      }
+      verdict = { ok: true };
+      return true;
+    }, 20000);
+    return verdict || { ok: false, motif: 'terrain non chargé sous le joueur en 20 s' };
+  }
+
+  async function connecterServeurJeu(g, mode, inv, graine, graineAvant) {
     await reset(g);
     var rep = null;
     try {
       var r = await fetch('/tests/serveur-jeu', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: mode, difficulte: 'paisible', graine: graineAvant, inv: inv || [] }) });
+        body: JSON.stringify({ mode: mode, difficulte: 'paisible', graine: graine, inv: inv || [] }) });
       rep = await r.json();
     } catch (e) { rep = { ok: false, motif: String(e && e.message || e) }; }
-    var p = { g: g, mode: mode, graineAvant: graineAvant, port: rep && rep.port, sp: null, temoin: null };
+    var p = { g: g, mode: mode, graine: graine, graineAvant: graineAvant, port: rep && rep.port, sp: null, temoin: null };
     if (!rep || !rep.ok) {
       A.ok(false, 'serveur de jeu de test indisponible (POST /tests/serveur-jeu, banc lancé avec server.js --tests) : ' + JSON.stringify(rep));
     }
@@ -186,7 +230,13 @@
   function chercherSol(g, exclus) {
     var C = Cr(), st = g.player.state, w = g.world;
     var fx = Math.floor(st.pos.x), fy = Math.floor(st.pos.y), fz = Math.floor(st.pos.z);
-    var dirs = [[2, 0], [0, 2], [-2, 0], [0, -2], [2, 1], [1, 2], [-2, 1], [1, -2], [3, 0], [0, 3], [-3, 0], [0, -3]];
+    // toutes les colonnes à 2 à 4 blocs du joueur (hors de son corps, à portée de la visée), les plus proches d'abord
+    var dirs = [];
+    for (var ax = -4; ax <= 4; ax++) for (var az = -4; az <= 4; az++) {
+      var dh = Math.hypot(ax, az);
+      if (dh >= 2 && dh <= 4) dirs.push([ax, az, dh]);
+    }
+    dirs.sort(function (a, b) { return a[2] - b[2]; });
     var terre = [C.B.GRASS, C.B.DIRT, C.B.SAND, C.B.RED_SAND];
     // d'abord de la terre ou du sable (rien qui pousse ni ne tombe), sinon tout bloc plein et tendre
     for (var passe = 0; passe < 2; passe++) {
@@ -350,7 +400,7 @@
     var p = await demarrerPartie(g, 'creatif', []);
     try {
       var st = g.player.state;
-      await sonder(function () { var e = p.sp.dernierEtat(); return !!e; }, 10000);
+      await preparer(function () { return !!p.sp.dernierEtat(); }, 10000, 'le serveur envoie l\'état du joueur (ETAT)');
       if (!st.flying) MC.Synchro.basculerVol(st);
       T.etape('montée');
       key('Space');
@@ -381,7 +431,7 @@
     var p = await demarrerPartie(g, mode, mode === 'survie' ? [[C.I.IRON_SHOVEL, 1]] : []);
     try {
       var st = g.player.state;
-      await attendreRepos(g, p, mode === 'survie');
+      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
       st.selected = 0;
       var b = await solVise(g);
       A.ok(b, 'un bloc de surface tendre, sec, à portée, que la visée du jeu touche');
@@ -433,9 +483,9 @@
     var p = await demarrerPartie(g, mode, [[C.B.PLANKS, 16]]);
     try {
       var st = g.player.state;
-      await attendreRepos(g, p, mode === 'survie');
+      A.ok(await attendreRepos(g, p, mode === 'survie'), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
       st.selected = 0;
-      await sonder(function () { return st.inv.count(C.B.PLANKS) === 16; }, 10000);
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 16; }, 10000, 'les 16 planches de départ données par le serveur sont à l\'inventaire');
       var b = await solVise(g);
       A.ok(b, 'un bloc de surface sec, à portée, avec de l\'air au-dessus');
       var x = b.x, y = b.y + 1, z = b.z;
@@ -518,8 +568,8 @@
     var p = await demarrerPartie(g, 'survie', [[C.B.COBBLE, 10], [C.B.PLANKS, 8]]);
     try {
       var st = g.player.state;
-      await attendreRepos(g, p, true);
-      await sonder(function () { return st.inv.count(C.B.PLANKS) === 8 && st.inv.count(C.B.COBBLE) === 10; }, 10000);
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8 && st.inv.count(C.B.COBBLE) === 10; }, 10000, 'pierre ×10 et planches ×8 de départ à l\'inventaire');
       key('KeyE');
       await frames(2);
       A.equal(g.input.state, 'ui', 'l\'inventaire est ouvert');
@@ -570,8 +620,8 @@
     var p = await demarrerPartie(g, 'survie', [[C.B.PLANKS, 8]]);
     try {
       var st = g.player.state;
-      await attendreRepos(g, p, true);
-      await sonder(function () { return st.inv.count(C.B.PLANKS) === 8; }, 10000);
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
+      await preparer(function () { return st.inv.count(C.B.PLANKS) === 8; }, 10000, 'planches ×8 de départ à l\'inventaire');
       st.selected = 0;
       var yaw = directionDegagee(g);
       A.ok(yaw !== null, 'une direction dégagée sur 6 blocs');
@@ -610,8 +660,8 @@
     var p = await demarrerPartie(g, 'survie', [[C.B.CHEST, 1], [C.B.COBBLE, 10], [C.B.PLANKS, 8]]);
     try {
       var st = g.player.state;
-      await attendreRepos(g, p, true);
-      await sonder(function () { return st.inv.count(C.B.CHEST) === 1 && st.inv.count(C.B.PLANKS) === 8; }, 10000);
+      A.ok(await attendreRepos(g, p, true), 'préparation : joueur au repos (au sol en survie, en vol en créatif), corps immobile côté serveur depuis 0,5 s — non atteint en 20 s');
+      await preparer(function () { return st.inv.count(C.B.CHEST) === 1 && st.inv.count(C.B.PLANKS) === 8; }, 10000, 'coffre, pierre et planches de départ à l\'inventaire');
       st.selected = 0;
       var b = await solVise(g);
       A.ok(b, 'un bloc de surface sec, à portée, pour poser le coffre');
@@ -672,7 +722,7 @@
       // nouvelle ouverture : même contenu
       T.etape('rouvrir');
       key('Escape'); fakeLock(g, true); g.input.setState('playing');
-      await sonder(function () { return !g.ui.isContainerOpen(); }, 3000);
+      await preparer(function () { return !g.ui.isContainerOpen(); }, 3000, 'Échap referme le coffre');
       await frames(3);
       await ouvrir();
       A.equal(contenuCoffre(), JSON.stringify(coffreAttendu), 'SPEC-JOUABLE-008 : à la réouverture, le coffre montre le même contenu');
