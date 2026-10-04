@@ -20,9 +20,11 @@
   // ─── espace d'ids unifié ───────────────────────────────────────────────────
   // 0 = air, 1..4095 = blocs (posables), 4096+ = objets (non posables).
   // Les blocs tiennent désormais sur 16 bits (Uint16Array des chunks,
-  // SPEC-SAVE-017) : la marge entre les derniers blocs définis (127) et
-  // FIRST_ITEM laisse de la place à de nouveaux blocs sans jamais plus
-  // toucher à l'id des objets. Un seul espace d'ids permet à l'inventaire,
+  // SPEC-SAVE-017) : chaque famille de blocs a sa plage (PLAGES_IDS plus bas,
+  // SPEC-SAVE-020), et la marge restante sous FIRST_ITEM laisse de la place à
+  // de nouveaux blocs sans jamais plus toucher à l'id des objets. Chaque id est
+  // figé par le registre tests/donnees/ids.json (SPEC-SAVE-019) : ne jamais
+  // renuméroter. Un seul espace d'ids permet à l'inventaire,
   // au craft et aux drops de manipuler indifféremment un bloc ou un objet.
   var B = {
     AIR: 0, GRASS: 1, DIRT: 2, STONE: 3, SAND: 4, LOG: 5, LEAVES: 6,
@@ -62,8 +64,9 @@
     PORTE_FERMEE_N: 109, PORTE_FERMEE_E: 110, PORTE_FERMEE_S: 111, PORTE_FERMEE_O: 112,
     PORTE_OUVERTE_N: 113, PORTE_OUVERTE_E: 114, PORTE_OUVERTE_S: 115, PORTE_OUVERTE_O: 116,
     TRAPPE_FERMEE: 117, TRAPPE_OUVERTE: 118,
-    // minerais (SPEC-MINERAI-001) : le dernier bloc libre est 127 (128 = premier
-    // objet). Neuf identifiants pour dix matières : cuivre et étain partagent un
+    // minerais (SPEC-MINERAI-001), déclarés quand 127 était le dernier id de
+    // bloc (avant SPEC-SAVE-017) et gardés tels quels depuis (décision L40-bis).
+    // Neuf identifiants pour dix matières : cuivre et étain partagent un
     // même filon commun, de même que rubis et saphir avec l'émeraude, et que le
     // quartz avec le soufre — chaque bloc lâche l'une ou l'autre matière au
     // hasard plutôt que de dépenser un identifiant par matière.
@@ -180,6 +183,29 @@
   })();
   function isBlock(id) { return id > 0 && id < FIRST_ITEM; }
   function isItem(id) { return id >= FIRST_ITEM; }
+
+  /* Plages d'identifiants (SPEC-SAVE-020) : chaque famille de contenu a la
+     sienne, disjointe des autres, entièrement d'un côté de FIRST_ITEM. Un
+     bloc ou un objet nouveau prend un id libre dans la plage de sa famille
+     (ou dans une plage nouvelle, déclarée ici), puis s'inscrit au registre
+     figé des ids (tests/donnees/ids.json, SPEC-SAVE-019). Les objets sont
+     donnés dans le NOUVEL espace ; entre parenthèses, l'ancien (8 bits) dans
+     lequel les définitions plus bas les écrivent avant décalage.
+     Libres aujourd'hui : blocs 128-199 (ancienne plage des objets), 900-949,
+     1100-4095 ; objets 4568-4667 et au-delà de 4767. */
+  var PLAGES_IDS = [
+    { nom: 'blocs-origine',     genre: 'bloc',  premier: 1,    dernier: 127 },   // terrain, végétation, mer, minerais, portes
+    { nom: 'formes-l24',        genre: 'bloc',  premier: 200,  dernier: 399 },   // escaliers, dalles, clôture, muret, vitre, rambarde
+    { nom: 'materiaux-l24',     genre: 'bloc',  premier: 400,  dernier: 599 },   // verres teintés, bétons, laines, terres cuites, poutres, feu
+    { nom: 'coffres-l25',       genre: 'bloc',  premier: 600,  dernier: 649 },   // coffres piégé et surprise
+    { nom: 'mecanismes-l29',    genre: 'bloc',  premier: 650,  dernier: 849 },   // circuits et énergie
+    { nom: 'flore-marine-l35',  genre: 'bloc',  premier: 850,  dernier: 899 },   // anémones, algues, éponges, corail blanc
+    { nom: 'interieur',         genre: 'bloc',  premier: 950,  dernier: 1099 },  // mobilier
+    { nom: 'objets-origine',    genre: 'objet', premier: 4096, dernier: 4189 },  // (128-221) outils, nourriture, matières, véhicules…
+    { nom: 'objets-l25',        genre: 'objet', premier: 4190, dernier: 4467 },  // (222-499) armures, armes, bijoux, cuisine
+    { nom: 'objets-l24',        genre: 'objet', premier: 4468, dernier: 4567 },  // (500-599) teintures, briquet
+    { nom: 'objets-interieur',  genre: 'objet', premier: 4668, dernier: 4767 },  // (700-799) livre, note
+  ];
 
   // ─── définitions des blocs ─────────────────────────────────────────────────
   // tiles : [dessus, côté, dessous] dans l'atlas.
@@ -444,7 +470,8 @@
                          needsTool: true, minTier: 4 });
 
   // ─── minerais (SPEC-MINERAI-001) ───────────────────────────────────────────
-  /* Faute d'identifiants de bloc libres (127 au plus, voir B), plusieurs
+  /* Conçu quand les ids de bloc s'arrêtaient à 127 (voir B) et conservé
+     depuis (décision L40-bis : minerais mutualisés), plusieurs
      matières partagent un même filon : casser le bloc lâche l'une ou l'autre
      au hasard (parfois les deux), plutôt que de réserver un identifiant par
      matière. Chaque matière garde son propre outil minimal et sa propre
@@ -1229,7 +1256,7 @@
     VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
-    FIRST_ITEM: FIRST_ITEM, ANCIEN_FIRST_ITEM: ANCIEN_FIRST_ITEM,
+    FIRST_ITEM: FIRST_ITEM, ANCIEN_FIRST_ITEM: ANCIEN_FIRST_ITEM, PLAGES_IDS: PLAGES_IDS,
     DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,

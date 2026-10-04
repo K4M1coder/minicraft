@@ -143,4 +143,60 @@
       A.ok(/"961": "NOUVEAU_BLOC"/.test(e5[0]), 'la ligne exacte à ajouter est proposée : ' + e5[0]);
     });
   });
+
+  // ─── SPEC-SAVE-020 : plages d'identifiants déclarées ───────────────────────
+  describe('Specs — SPEC-SAVE-020 : plages d\'identifiants (MC.Core.PLAGES_IDS)', function () {
+    function plages() { return C.PLAGES_IDS || []; }
+    function plagesDe(id) { return plages().filter(function (p) { return id >= p.premier && id <= p.dernier; }); }
+
+    it('SPEC-SAVE-020 : chaque plage déclare nom, premier et dernier, du bon côté de FIRST_ITEM', function () {
+      A.ok(Array.isArray(C.PLAGES_IDS) && C.PLAGES_IDS.length > 0, 'MC.Core.PLAGES_IDS est une liste non vide');
+      var noms = {};
+      plages().forEach(function (p) {
+        A.ok(typeof p.nom === 'string' && p.nom.length > 0, 'nom de plage');
+        A.notOk(noms[p.nom], 'nom unique : ' + p.nom);
+        noms[p.nom] = true;
+        A.ok(Number.isInteger(p.premier) && Number.isInteger(p.dernier), p.nom + ' : bornes entières');
+        A.ok(p.premier >= 1 && p.premier <= p.dernier && p.dernier <= 65535, p.nom + ' : 1 ≤ premier ≤ dernier ≤ 65535');
+        // une plage est entièrement de blocs (sous FIRST_ITEM) ou entièrement d'objets
+        var deBlocs = p.dernier < C.FIRST_ITEM, dObjets = p.premier >= C.FIRST_ITEM;
+        A.ok(deBlocs || dObjets, p.nom + ' ne chevauche pas FIRST_ITEM (' + p.premier + '..' + p.dernier + ')');
+        A.equal(p.genre, deBlocs ? 'bloc' : 'objet', p.nom + ' : genre conforme à sa position');
+      });
+    });
+
+    it('SPEC-SAVE-020 : les plages sont deux à deux disjointes', function () {
+      var l = plages().slice().sort(function (a, b) { return a.premier - b.premier; });
+      for (var i = 1; i < l.length; i++) {
+        A.ok(l[i].premier > l[i - 1].dernier, l[i - 1].nom + ' (' + l[i - 1].premier + '..' + l[i - 1].dernier + ') et ' +
+             l[i].nom + ' (' + l[i].premier + '..' + l[i].dernier + ') se chevauchent');
+      }
+    });
+
+    it('SPEC-SAVE-020 : chaque bloc défini est sous FIRST_ITEM et dans exactement une plage de blocs', function () {
+      var n = 0;
+      C.BLOCKS.forEach(function (d, id) {
+        if (!d) return;
+        n++;
+        A.ok(id >= 1 && id < C.FIRST_ITEM, d.name + ' (' + id + ') sous FIRST_ITEM');
+        var p = plagesDe(id);
+        A.equal(p.length, 1, d.name + ' (' + id + ') dans exactement une plage (' + p.map(function (x) { return x.nom; }).join(', ') + ')');
+        if (p.length === 1) A.equal(p[0].genre, 'bloc', d.name + ' (' + id + ') dans une plage de blocs');
+      });
+      A.ok(n >= 255, 'balayage de tous les blocs (' + n + ')');
+    });
+
+    it('SPEC-SAVE-020 : chaque objet défini est entre FIRST_ITEM et 65535, dans exactement une plage d\'objets', function () {
+      var n = 0;
+      C.ITEMS.forEach(function (d, id) {
+        if (!d) return;
+        n++;
+        A.ok(id >= C.FIRST_ITEM && id <= 65535, d.name + ' (' + id + ') entre FIRST_ITEM et 65535');
+        var p = plagesDe(id);
+        A.equal(p.length, 1, d.name + ' (' + id + ') dans exactement une plage');
+        if (p.length === 1) A.equal(p[0].genre, 'objet', d.name + ' (' + id + ') dans une plage d\'objets');
+      });
+      A.ok(n >= 177, 'balayage de tous les objets (' + n + ')');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);
