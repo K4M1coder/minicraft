@@ -706,7 +706,7 @@ function apresSauvegarde(raison, ms, octets) {
 }
 let dureeJeu = 0;                      // secondes de jeu réellement écoulées (hors pause, avec un joueur), pour l'index des parties
 function sauvegarderMondeAsync(raison, evenement) {
-  if (!CONF.mondeFichier || sauvegardeArretee) return;
+  if (!CONF.mondeFichier || sauvegardeArretee || ecritureMondeInterdite) return;
   /* La cible est figée ICI : `/api/parties/supprimer` peut mettre CONF.mondeFichier
      à null pendant l'écriture (rename(…, null) levait, et écrivait « null.tmp »). */
   const cible = CONF.mondeFichier;
@@ -755,7 +755,7 @@ function sauvegarderMondeAsync(raison, evenement) {
    du processus et aux gestionnaires de panne, où il n'y a plus de prochain
    tour de boucle d'évènements pour attendre une écriture asynchrone. */
 function sauvegarderMondeSync() {
-  if (!CONF.mondeFichier) return false;
+  if (!CONF.mondeFichier || ecritureMondeInterdite) return false;
   try {
     fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true });
     fs.writeFileSync(FICHIER_TMP_SYNC(), JSON.stringify(etatMonde()));
@@ -763,6 +763,28 @@ function sauvegarderMondeSync() {
     if (partieActive) MC.Saves.majMeta(stockageParties, partieActive.id, { duree: Math.round(dureeJeu) });
     return true;
   } catch (e) { journal('échec de la sauvegarde du monde : ' + e.message); return false; }
+}
+/* SPEC-SAVE-026 : met de côté un fichier de monde refusé au démarrage, sous
+   `<fichier>.refuse-<horodatage>` (AAAAMMJJ-HHMMSS, heure locale ; suffixe
+   -2, -3… si ce nom existe déjà). Si le renommage échoue, plus AUCUNE
+   sauvegarde n'est écrite pendant cette session : la nouvelle carte serait
+   perdue à l'arrêt, mais le fichier refusé, lui, ne l'est jamais. */
+let ecritureMondeInterdite = false;
+function mettreDeCoteMondeRefuse(fichier, motif) {
+  const d = new Date(), z = (n) => String(n).padStart(2, '0');
+  const base = `${fichier}.refuse-${d.getFullYear()}${z(d.getMonth() + 1)}${z(d.getDate())}-${z(d.getHours())}${z(d.getMinutes())}${z(d.getSeconds())}`;
+  let dest = base;
+  for (let k = 2; fs.existsSync(dest); k++) dest = base + '-' + k;
+  try {
+    fs.renameSync(fichier, dest);
+  } catch (e) {
+    ecritureMondeInterdite = true;
+    journal(`fichier de monde refusé (${motif}) : ${fichier} — impossible de le mettre de côté (${e.message}) ; ` +
+            'nouvelle carte NON sauvegardée pendant cette session, pour ne pas l\'écraser');
+    return null;
+  }
+  journal(`fichier de monde refusé (${motif}) : conservé tel quel sous ${dest} — nouvelle carte, sauvegardée sous ${fichier}`);
+  return dest;
 }
 const dodo = (ms) => new Promise((r) => setTimeout(r, ms));
 if (CONF.mondeFichier) {
@@ -778,15 +800,21 @@ if (CONF.mondeFichier) {
       catch (e) { /* déjà disparu, ou permission : tant pis, non bloquant */ }
     });
   } catch (e) { /* dossier pas encore créé : rien à nettoyer */ }
-  try {
-    if (fs.existsSync(CONF.mondeFichier)) {
+  /* SPEC-SAVE-026 : un fichier refusé (JSON illisible, `v` inconnu ou futur,
+     reprise qui échoue) n'est JAMAIS écrasé par la nouvelle carte. Il est mis
+     de côté tel quel (renommé, donc octet pour octet) avant la première
+     sauvegarde, qui écrira la nouvelle carte sous le nom d'origine. */
+  if (fs.existsSync(CONF.mondeFichier)) {
+    let motifRefus = null;
+    try {
       const data = JSON.parse(fs.readFileSync(CONF.mondeFichier, 'utf8'));
       if (appliquerEtatMonde(data)) journal(`monde repris depuis ${CONF.mondeFichier} (heure ${heure.toFixed(1)})`);
-      else journal(`fichier de monde illisible ou d'une autre version : ${CONF.mondeFichier} — nouvelle carte`);
-    } else {
-      journal(`aucune sauvegarde à ${CONF.mondeFichier} — nouvelle carte, créée à la première sauvegarde`);
-    }
-  } catch (e) { journal('échec de la reprise du monde : ' + e.message); }
+      else motifRefus = 'version inconnue (v = ' + JSON.stringify(data && typeof data === 'object' ? data.v : data) + ')';
+    } catch (e) { motifRefus = (e instanceof SyntaxError ? 'JSON illisible : ' : 'reprise impossible : ') + e.message; }
+    if (motifRefus) mettreDeCoteMondeRefuse(CONF.mondeFichier, motifRefus);
+  } else {
+    journal(`aucune sauvegarde à ${CONF.mondeFichier} — nouvelle carte, créée à la première sauvegarde`);
+  }
   // sauvegarde régulière : toutes les deux minutes par défaut, comme un
   // compromis entre sécurité (peu de perte en cas d'arrêt brutal) et coût
   // disque négligeable. Réglable (MC_SAUVEGARDE_MS) : les tests d'intégration
