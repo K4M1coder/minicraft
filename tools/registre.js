@@ -107,7 +107,7 @@ function ecrireEntreeFichier(dossierRegistre, entree) {
   const base = nomFichierEntree(entree);
   let nom = base, n = 1;
   while (fs.existsSync(path.join(dEntrees, nom))) { n++; nom = base.replace(/\.jsonl$/, '') + '-' + n + '.jsonl'; }
-  fs.writeFileSync(path.join(dEntrees, nom), lignes.join('\n') + '\n');
+  ecrireAtomique(path.join(dEntrees, nom), lignes.join('\n') + '\n');
   return nom;
 }
 function lireEntreeFichier(cheminFichier) {
@@ -117,8 +117,10 @@ function lireEntreeFichier(cheminFichier) {
   if (!lignes.length) return null;
   let meta;
   try { meta = JSON.parse(lignes[0]); } catch (e) { return null; }
-  const tests = lignes.slice(1).map((l) => { try { return JSON.parse(l); } catch (e) { return null; } }).filter(Boolean);
-  return Object.assign({}, meta, { tests: tests, _fichier: path.basename(cheminFichier) });
+  const brutes = lignes.slice(1).map((l) => { try { return JSON.parse(l); } catch (e) { return null; } });
+  const tests = brutes.filter(t => t !== null && typeof t === 'object' && !Array.isArray(t));
+  // lignes de test illisibles : comptées, JAMAIS ignorées en silence (la rétention ne réécrit pas un tel fichier)
+  return Object.assign({}, meta, { tests: tests, _fichier: path.basename(cheminFichier), _rejets: brutes.length - tests.length });
 }
 function listerFichiersEntrees(dossierRegistre) {
   const d = dossierEntreesDe(dossierRegistre);
@@ -133,7 +135,7 @@ function lireEntrees(dossierRegistre) { return listerFichiersEntrees(dossierRegi
 
 // ── accès git (best-effort : hors dépôt, ou dépôt superficiel, rend null) ──
 function git(dossierRepo, args) {
-  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8', env: envGitPour(dossierRepo || RACINE) }).trim(); }
+  try { return execFileSync('git', args, { cwd: dossierRepo || RACINE, encoding: 'utf8', env: envGitPour(dossierRepo || RACINE), stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
   catch (e) { return null; }
 }
 function commitPlein(dossierRepo, refOuCourt) { return git(dossierRepo, ['rev-parse', refOuCourt || 'HEAD']); }
@@ -455,7 +457,7 @@ function marquerEnAttenteCommitees(dossierRegistre) {
     if (meta.statut !== 'en_attente') return;
     meta.statut = 'ok';
     lignes[0] = JSON.stringify(meta);
-    fs.writeFileSync(chemin, lignes.join('\n') + '\n');
+    ecrireAtomique(chemin, lignes.join('\n') + '\n');
     n++;
   });
   return n;
@@ -719,6 +721,443 @@ function commiterRegistre(dossierRepo) {
   return { ok: true };
 }
 
+// ── rétention du registre (SPEC-BANC-090, 091) ──────────────────────────
+/* Le registre ne conserve en DÉTAIL que : les runs des commits de merge et de
+   PR depuis la dernière release, et, pour chaque release, la VALIDATION du
+   commit étiqueté (le run le plus récent de chacun des préréglages `pr` et
+   `e2e-fumee` sur ce commit — les images vivent dans le run e2e), gardée en
+   détail pour toujours. Tout le reste est COMPACTÉ : on garde le résumé du
+   run (méta, et par test : identité, état, durée, raison, erreur, libellés de
+   capture), on retire l'instantané de fiche (sauf, par test, celui de son
+   DERNIER passage, sous forme réduite), les fonctions observées, la sélection
+   de périmètre et les images — sauf celles d'un témoin encore épinglé
+   (temoins.json). Les images qu'AUCUNE entrée ne référence plus sont ensuite
+   supprimées de images/.
+
+   Un « cycle » = les commits qui séparent deux étiquettes de version
+   (`v[0-9]*`). Les runs retenus pour une release sont marqués
+   `release: 'vX.Y.Z'` dans la méta : un run marqué n'est JAMAIS compacté, par
+   aucune compaction ultérieure. Un run `en_attente` (pont pre-push →
+   pre-commit) n'est jamais compacté non plus. Les runs manuels inscrits
+   suivent la même règle que les autres.
+
+   Le run de référence d'une release doit être FIABLE : ni interrompu, ni
+   restreint par un périmètre, ni lancé sur un arbre modifié (les compagnons
+   du même commit tolèrent un arbre modifié, jamais un run interrompu ou
+   restreint). Un cycle sans run fiable n'est NI marqué NI compacté
+   (avertissement) : on ne perd jamais le détail faute de pouvoir choisir.
+
+   SÛRETÉ : sans résolution git fiable (référence inconnue, dépôt illisible)
+   RIEN n'est modifié ; un fichier d'entrée dont une ligne est illisible n'est
+   jamais réécrit et interdit toute suppression d'image (la ligne rejetée
+   pourrait en référencer) ; chaque fichier est réécrit via un fichier
+   temporaire puis renommé (réessais bornés : EPERM/EBUSY sous Windows) ; un
+   verrou (`.compaction.lock`, PID + péremption) interdit deux compactions
+   simultanées ; les images ne sont supprimées qu'APRÈS la réécriture complète
+   des entrées, qu'après relecture fraîche des références, et seulement si
+   elles sont plus anciennes que le début de la compaction (une inscription
+   concurrente n'est jamais touchée) ; `sauvegarde` copie tout ce qui va être
+   réécrit ou supprimé pour une restauration complète (`restaurerCompaction`) ;
+   `aBlanc` calcule le plan et les tailles sans rien écrire. */
+const PRESETS_DE_RELEASE = new Set(['pr', 'e2e-fumee']);
+const PEREMPTION_VERROU_MS = 10 * 60 * 1000;
+function compacterTest(t, epingles, garderFiche) {
+  const out = {
+    id: t.id === undefined ? null : t.id, nom: t.nom, categorie: t.categorie || { type: null, groupe: null },
+    domaines: t.domaines || [], specs: t.specs || [], etiquettes: t.etiquettes || [],
+    debut: t.debut || null, duree_ms: t.duree_ms, etat: t.etat,
+    raison: t.raison === undefined ? null : t.raison, erreur: t.erreur === undefined ? null : t.erreur,
+    captures: (t.captures || []).map((c) => Object.assign({}, c, { image: c.image && epingles.has(c.image) ? c.image : null })),
+  };
+  if (t.metriques) out.metriques = t.metriques;
+  if (t.trou_perimetre) out.trou_perimetre = true;
+  // dernier passage connu du test : sa fiche survit sous forme réduite (testsConnus, panneau)
+  if (garderFiche && t.fiche) {
+    const court = (v) => (typeof v === 'string' ? v.slice(0, 400) : (v === undefined ? null : v));
+    out.fiche = { teste: court(t.fiche.teste), pourquoi: court(t.fiche.pourquoi), attendu: court(t.fiche.attendu), source: t.fiche.source === undefined ? null : t.fiche.source };
+  }
+  return out;
+}
+function cleDeTest(t) { const c = t.categorie || {}; return (c.type === 'e2e' ? 'e2e' : (c.groupe === undefined || c.groupe === null ? '' : c.groupe)) + ' › ' + t.nom; }
+function serialiserEntree(meta, tests) { return [JSON.stringify(meta)].concat(tests.map(t => JSON.stringify(t))).join('\n') + '\n'; }
+function metaDe(entree) { const m = Object.assign({}, entree); delete m.tests; delete m._fichier; delete m._rejets; return m; }
+function dormir(ms) { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* tant pis : réessai immédiat */ } }
+/* Écriture atomique : fichier temporaire du même dossier, puis renommage ;
+   sous Windows le renommage peut échouer (EPERM/EBUSY/EACCES : antivirus,
+   indexeur, lecteur concurrent) — quelques réessais bornés. */
+function ecrireAtomique(chemin, texte) {
+  const tmp = chemin + '.tmp-' + process.pid;
+  fs.writeFileSync(tmp, texte);
+  let derniere = null;
+  for (let i = 0; i < 6; i++) {
+    try { fs.renameSync(tmp, chemin); return; }
+    catch (e) { derniere = e; if (!/^(EPERM|EBUSY|EACCES)$/.test(e.code)) break; dormir(25 * (i + 1)); }
+  }
+  try { fs.unlinkSync(tmp); } catch (e) { /* rien */ }
+  throw derniere;
+}
+function pidVivant(pid) { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } }
+/* Supprime les fichiers temporaires orphelins (`*.tmp-<pid>`) : processus
+   mort, ou plus vieux que la péremption. Rend le nombre retiré. */
+function nettoyerTemporaires(dossierRegistre, aBlanc) {
+  let n = 0;
+  [dossierRegistre, dossierEntreesDe(dossierRegistre), path.join(dossierRegistre, 'images')].forEach((d) => {
+    let noms = [];
+    try { noms = fs.readdirSync(d); } catch (e) { return; }
+    noms.forEach((nom) => {
+      const m = /\.tmp-(\d+)$/.exec(nom);
+      if (!m) return;
+      const p = path.join(d, nom);
+      let vieux = false;
+      try { vieux = Date.now() - fs.statSync(p).mtimeMs > PEREMPTION_VERROU_MS; } catch (e) { return; }
+      if (pidVivant(parseInt(m[1], 10)) && !vieux) return;
+      if (!aBlanc) { try { fs.unlinkSync(p); } catch (e) { return; } }
+      n++;
+    });
+  });
+  return n;
+}
+/* Verrou de compaction : { pid, debut } ; refusé si un autre processus VIVANT le
+   tient depuis moins de la péremption. Rend une fonction de libération. */
+function prendreVerrou(dossierRegistre) {
+  const chemin = path.join(dossierRegistre, '.compaction.lock');
+  const existant = lireJSON(chemin, null);
+  if (existant && existant.pid !== process.pid && pidVivant(existant.pid) && Date.now() - (existant.debut || 0) < PEREMPTION_VERROU_MS) {
+    return { ok: false, motif: 'une compaction est déjà en cours (PID ' + existant.pid + ')' };
+  }
+  fs.mkdirSync(dossierRegistre, { recursive: true });
+  fs.writeFileSync(chemin, JSON.stringify({ pid: process.pid, debut: Date.now() }));
+  return { ok: true, liberer: () => { try { fs.unlinkSync(chemin); } catch (e) { /* rien */ } } };
+}
+function imagesDe(entree) {
+  const s = new Set();
+  (entree.tests || []).forEach(t => (t.captures || []).forEach((c) => { if (c && c.image) s.add(c.image); }));
+  return s;
+}
+function derniereEtiquetteDe(rd) { return git(rd, ['describe', '--tags', '--abbrev=0', '--match', 'v[0-9]*']); }
+/* Les cycles à considérer, du plus ancien au plus récent : chaque étiquette de
+   version ancêtre de `ref` (ou égale), puis `version` elle-même au commit de
+   `ref` si elle n'existe pas encore comme étiquette (le cas de --publier :
+   la compaction précède la pose de l'étiquette, pour entrer dans le commit
+   de release). Chaque cycle porte l'ensemble de ses commits et leur rang
+   topologique (0 = le plus récent). */
+function cyclesDeRelease(rd, ref, version) {
+  const commitRef = commitPlein(rd, ref + '^{commit}');
+  if (!commitRef) return { ok: false, motif: 'référence git introuvable : ' + ref };
+  const tags = (git(rd, ['tag', '--list', 'v[0-9]*', '--sort=creatordate']) || '').split('\n').filter(Boolean);
+  const cycles = [];
+  tags.forEach((nom) => {
+    if (nom === version) return;
+    const c = commitPlein(rd, nom + '^{commit}');
+    if (c && git(rd, ['merge-base', '--is-ancestor', c, commitRef]) !== null) cycles.push({ nom, commit: c });
+  });
+  if (!version) {
+    const t = tags.find(n => commitPlein(rd, n + '^{commit}') === commitRef);
+    if (!t) return { ok: false, motif: 'version de la release non précisée et ' + ref + ' n\'est pas une étiquette' };
+    version = t;
+  }
+  if (!cycles.some(c => c.nom === version)) cycles.push({ nom: version, commit: commitRef });
+  // du plus ancien au plus récent : par nombre de commits qui précèdent, la release finale en dernier
+  cycles.forEach((c) => { c._n = parseInt(git(rd, ['rev-list', '--count', c.commit]) || '0', 10); });
+  cycles.sort((a, b) => a._n - b._n || (a.nom === version ? 1 : b.nom === version ? -1 : 0));
+  const precedents = new Set();
+  for (const c of cycles) {
+    const liste = git(rd, ['rev-list', '--topo-order', c.commit]);
+    if (liste === null) return { ok: false, motif: 'historique git illisible pour ' + c.nom };
+    const ordre = liste.split('\n').filter(Boolean);
+    c.rang = new Map(); c.commits = new Set();
+    ordre.forEach((sha, i) => { if (!precedents.has(sha)) { c.commits.add(sha); c.rang.set(sha, i); } });
+    ordre.forEach(sha => precedents.add(sha));
+  }
+  return { ok: true, version, commitRef, cycles, tousLesCommits: precedents, etiquettes: new Set(tags) };
+}
+/* Fiabilité d'un run comme référence de release : ni interrompu, ni
+   restreint par un périmètre, ni lancé sur un arbre modifié. Un compagnon du
+   même commit (l'autre préréglage de la validation) tolère un arbre modifié
+   — tous les runs e2e du registre en portent un — mais jamais un run
+   interrompu ou restreint. */
+const perimetreComplet = e => !e.perimetre || e.perimetre === 'complet';
+const runFiable = e => !e.interrompu && !e.arbre_modifie && perimetreComplet(e);
+const runCompagnon = e => !e.interrompu && perimetreComplet(e);
+/* Les runs qui représentent une release : la VALIDATION du commit étiqueté,
+   sinon celle du commit officiel le plus récent du cycle ; le plus récent de
+   chaque préréglage de PRESETS_DE_RELEASE sur ce commit. Rend [] si aucun run
+   fiable n'existe dans le cycle. */
+function choisirRunsDeRelease(candidats, cycle) {
+  const officiel = e => (ORIGINES_OFFICIELLES.has(e.origine) ? 0 : 1);
+  const exact = e => (e.commit === cycle.commit ? 0 : 1);
+  const eligibles = candidats.filter(e => PRESETS_DE_RELEASE.has(e.preset));
+  const bases = eligibles.filter(runFiable).sort((a, b) =>
+    officiel(a) - officiel(b) || exact(a) - exact(b) ||
+    (cycle.rang.get(a.commit) - cycle.rang.get(b.commit)) ||
+    String(b.date).localeCompare(String(a.date)));
+  if (!bases.length) return [];
+  const meilleur = bases[0];
+  const parPreset = new Map();
+  eligibles.filter(e => e.commit === meilleur.commit && officiel(e) === officiel(meilleur) && runCompagnon(e))
+    .sort((a, b) => (runFiable(a) ? 0 : 1) - (runFiable(b) ? 0 : 1) || String(b.date).localeCompare(String(a.date)))
+    .forEach((e) => { const k = String(e.preset); if (!parPreset.has(k)) parPreset.set(k, e); });
+  return Array.from(parPreset.values());
+}
+function copierSauvegarde(dossierRegistre, sauvegarde, relatifs) {
+  fs.mkdirSync(sauvegarde, { recursive: true });
+  relatifs.forEach((rel) => {
+    const src = path.join(dossierRegistre, rel), dst = path.join(sauvegarde, 'fichiers', rel);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst);
+  });
+  fs.writeFileSync(path.join(sauvegarde, 'manifeste.json'), JSON.stringify({ fichiers: relatifs }));
+}
+/* Remet en place, octet pour octet, ce qu'une compaction avait sauvegardé
+   (entrées réécrites, images supprimées). Rend le nombre de fichiers remis. */
+function restaurerCompaction(dossierRegistre, sauvegarde) {
+  const m = lireJSON(path.join(sauvegarde, 'manifeste.json'), null);
+  if (!m || !Array.isArray(m.fichiers)) return { ok: false, motif: 'sauvegarde illisible : ' + sauvegarde };
+  let n = 0;
+  m.fichiers.forEach((rel) => {
+    const src = path.join(sauvegarde, 'fichiers', rel), dst = path.join(dossierRegistre, rel);
+    fs.mkdirSync(path.dirname(dst), { recursive: true });
+    fs.copyFileSync(src, dst); n++;
+  });
+  return { ok: true, restaures: n };
+}
+function compacter(opts) {
+  const o = opts || {};
+  const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
+  const rd = o.dossierRepo || RACINE;
+  const aBlanc = !!o.aBlanc;
+  const jusquA = o.jusquA || derniereEtiquetteDe(rd);
+  if (!jusquA) return { ok: false, motif: 'aucune étiquette de version dans le dépôt : rien à compacter (précisez jusquA)' };
+  const cy = cyclesDeRelease(rd, jusquA, o.version || null);
+  if (!cy.ok) return cy;
+  let verrou = null;
+  if (!aBlanc) {
+    verrou = prendreVerrou(dossierRegistre);
+    if (!verrou.ok) return verrou;
+  }
+  try { return compacterVerrouille(o, dossierRegistre, rd, aBlanc, jusquA, cy); }
+  finally { if (verrou) verrou.liberer(); }
+}
+function compacterVerrouille(o, dossierRegistre, rd, aBlanc, jusquA, cy) {
+  const debut = Date.now();
+  const fichiers = listerFichiersEntrees(dossierRegistre);
+  const entrees = fichiers.map(lireEntreeFichier).filter(Boolean);
+  const avertissements = [];
+  if (entrees.length !== fichiers.length) avertissements.push((fichiers.length - entrees.length) + ' fichier(s) d\'entrée illisible(s) : aucune image ne sera supprimée');
+  const rejets = entrees.filter(e => e._rejets > 0);
+  if (rejets.length) avertissements.push(rejets.length + ' fichier(s) d\'entrée avec des lignes de test illisibles (' + rejets.slice(0, 3).map(e => e._fichier).join(', ') + (rejets.length > 3 ? '…' : '') + ') : non réécrits, aucune image ne sera supprimée');
+  const sains = entrees.filter(e => !(e._rejets > 0));
+  const temoins = lireTemoins(dossierRegistre);
+  const epingles = new Set(Object.keys(temoins).map(k => (temoins[k] || {}).image).filter(Boolean));
+
+  // un marqueur de release dont l'étiquette n'existe pas (encore) est PROVISOIRE
+  // (publication interrompue) : il ne compte pas comme « déjà fait »
+  const marqueValide = e => e.release && (e.release !== cy.version || cy.etiquettes.has(cy.version));
+  const aMarquer = new Map();      // fichier → nom de release
+  const garde = new Set();         // fichiers jamais compactés
+  const cyclesSansRef = new Set(); // commits de cycles sans run de référence fiable
+  sains.forEach((e) => { if (marqueValide(e)) garde.add(e._fichier); });
+  entrees.filter(e => e._rejets > 0).forEach((e) => { garde.add(e._fichier); });
+  cy.cycles.forEach((cycle) => {
+    const dansCycle = sains.filter(e => cycle.commits.has(e.commit));
+    if (dansCycle.some(e => e.release === cycle.nom && marqueValide(e))) return;   // déjà fait
+    const candidats = dansCycle.filter(e => !marqueValide(e) && !e.compacte);
+    const choisis = candidats.length ? choisirRunsDeRelease(candidats, cycle) : [];
+    if (!choisis.length) {
+      if (candidats.length) {
+        cycle.commits.forEach(c => cyclesSansRef.add(c));
+        avertissements.push('cycle ' + cycle.nom + ' : aucun run de référence fiable (non interrompu, périmètre complet, arbre propre) parmi ' + candidats.length + ' run(s) — ni marqué ni compacté');
+      }
+      return;
+    }
+    choisis.forEach((c) => { garde.add(c._fichier); if (c.release !== cycle.nom) aMarquer.set(c._fichier, cycle.nom); });
+  });
+
+  // dernier passage de chaque test (tous runs confondus) : sa fiche survit, réduite
+  const dernierPassage = new Map();
+  sains.forEach((e) => (e.tests || []).forEach((t) => {
+    const k = cleDeTest(t), d = dernierPassage.get(k);
+    if (!d || String(e.date) > String(d)) dernierPassage.set(k, e.date);
+  }));
+  const compacteDe = e => (e.tests || []).map(t => compacterTest(t, epingles, dernierPassage.get(cleDeTest(t)) === e.date));
+
+  const aCompacter = sains.filter(e => cy.tousLesCommits.has(e.commit) && !cyclesSansRef.has(e.commit) && !garde.has(e._fichier) && !e.compacte && e.statut !== 'en_attente');
+  const parFichier = new Map(entrees.map(e => [e._fichier, e]));
+  const dEntrees = dossierEntreesDe(dossierRegistre);
+  const taille = (p) => { try { return fs.statSync(p).size; } catch (e) { return 0; } };
+  const reecritures = [];
+  aCompacter.forEach((e) => {
+    reecritures.push({ chemin: path.join(dEntrees, e._fichier), rel: DOSSIER_ENTREES_REL + '/' + e._fichier, texte: serialiserEntree(Object.assign(metaDe(e), { compacte: true }), compacteDe(e)) });
+  });
+  aMarquer.forEach((nom, f) => {
+    const e = parFichier.get(f);
+    reecritures.push({ chemin: path.join(dEntrees, f), rel: DOSSIER_ENTREES_REL + '/' + f, texte: serialiserEntree(Object.assign(metaDe(e), { release: nom }), e.tests || []) });
+  });
+  const octetsAvant = fichiers.reduce((s, p) => s + taille(p), 0);
+  const octetsApres = octetsAvant - reecritures.reduce((s, r) => s + taille(r.chemin), 0) + reecritures.reduce((s, r) => s + Buffer.byteLength(r.texte), 0);
+
+  // images référencées APRÈS compaction (un run compacté ne garde que les épinglées)
+  const apres = new Map(entrees.map(e => [e._fichier, e]));
+  aCompacter.forEach((e) => { apres.set(e._fichier, { tests: compacteDe(e) }); });
+  const referencees = new Set(epingles);
+  apres.forEach(e => imagesDe(e).forEach(i => referencees.add(i)));
+  const dImages = path.join(dossierRegistre, 'images');
+  let presentes = [];
+  try { presentes = fs.readdirSync(dImages).filter(f => { try { return fs.statSync(path.join(dImages, f)).isFile() && !/\.tmp-\d+$/.test(f); } catch (e) { return false; } }); } catch (e) { /* pas d'images */ }
+  let orphelines = avertissements.length ? [] : presentes.filter(f => !referencees.has(f) && taille(path.join(dImages, f)) >= 0);
+
+  const resultat = {
+    ok: true, aBlanc, jusquA, version: cy.version,
+    entreesCompactees: aCompacter.length, entreesRelease: aMarquer.size, entreesTotal: entrees.length,
+    octetsEntreesAvant: octetsAvant, octetsEntreesApres: octetsApres,
+    imagesAvant: presentes.length, octetsImagesAvant: presentes.reduce((s, f) => s + taille(path.join(dImages, f)), 0),
+    imagesSupprimees: orphelines.length, octetsImagesLiberes: orphelines.reduce((s, f) => s + taille(path.join(dImages, f)), 0),
+    avertissements, fichiersTouches: [], temporairesRetires: 0,
+  };
+  if (aBlanc) { resultat.temporairesRetires = nettoyerTemporaires(dossierRegistre, true); return resultat; }
+  resultat.temporairesRetires = nettoyerTemporaires(dossierRegistre, false);
+  if (o.sauvegarde) {
+    try { copierSauvegarde(dossierRegistre, o.sauvegarde, reecritures.map(r => r.rel).concat(orphelines.map(f => 'images/' + f))); }
+    catch (e) { return Object.assign(resultat, { ok: false, motif: 'sauvegarde impossible (' + e.message + ') : rien n\'a été modifié', imagesSupprimees: 0, octetsImagesLiberes: 0 }); }
+  }
+  try {
+    reecritures.forEach((r) => { ecrireAtomique(r.chemin, r.texte); resultat.fichiersTouches.push(r.rel); });
+  } catch (e) {
+    return Object.assign(resultat, { ok: false, motif: 'écriture interrompue (' + e.message + ') : aucune image supprimée', imagesSupprimees: 0, octetsImagesLiberes: 0 });
+  }
+  if (typeof o.apresReecriture === 'function') o.apresReecriture();   // (tests : simule une inscription concurrente)
+  // relecture FRAÎCHE des références (une inscription a pu arriver depuis) ; une image plus récente
+  // que le début de la compaction n'est jamais supprimée
+  const fraiches = new Set(epingles);
+  const lectureFraiche = listerFichiersEntrees(dossierRegistre).map(lireEntreeFichier);
+  if (lectureFraiche.some(e => !e) || lectureFraiche.some(e => e._rejets > 0)) orphelines = [];
+  lectureFraiche.filter(Boolean).forEach(e => imagesDe(e).forEach(i => fraiches.add(i)));
+  let supprimees = 0, liberes = 0;
+  orphelines.forEach((f) => {
+    const p = path.join(dImages, f);
+    let st;
+    try { st = fs.statSync(p); } catch (e) { return; }
+    if (fraiches.has(f) || st.mtimeMs >= debut) return;
+    try { fs.unlinkSync(p); supprimees++; liberes += st.size; resultat.fichiersTouches.push('images/' + f); } catch (e) { /* rien */ }
+  });
+  resultat.imagesSupprimees = supprimees; resultat.octetsImagesLiberes = liberes;
+  return resultat;
+}
+
+// ── score d'instabilité (SPEC-BANC-088) ─────────────────────────────────
+/* Un test qui ALTERNE réussite/échec sans que rien de ce qu'il touche n'ait
+   changé entre les deux runs est instable. Score = nombre de ces alternances
+   sur les `fenetre` derniers runs officiels du test (10 par défaut) ; étiqueté
+   `instable` à partir de `seuil` alternances (2 par défaut : échec, réussite,
+   échec). Ne fait JAMAIS échouer une porte à lui seul — c'est une étiquette.
+
+   Les runs interrompus et ceux lancés sur un arbre modifié ne comptent pas
+   (leur résultat ne dit rien du commit).
+
+   « Ce qu'il touche » :
+   - test DANS la carte d'impact (tests/registre/impact.json, SPEC-BANC-067) :
+     les fichiers src/ qui définissent ses fonctions (grain du FICHIER : plus
+     grossier que la fonction, donc il compte plus souvent un changement — le
+     biais va dans le bon sens, jamais d'étiquette à tort) ET son fichier de
+     test (retrouvé par git à partir de son groupe ; introuvable = changé) ;
+   - test HORS carte (intégration, e2e : leurs appels ne sont pas observés) :
+     repli plus prudent — son fichier de test (intégration : tests/<groupe> ;
+     e2e : tests/e2e.js) ET tout src/*.js, server.js, index.html et le
+     harnais de tests ; une alternance n'est donc comptée que sur un même
+     commit (ou des commits qui ne touchent que des documents). Marqué
+     `horsCarte: true` dans le résultat. C'est ce qui détecte une intégration
+     (integration-archi-*) qui bascule d'un passage à l'autre sans rien changer.
+   Un commit que git ne sait pas comparer compte comme un changement.
+   Faux négatif connu : un test hors carte dont le fichier ne change pas mais
+   dont le comportement dépend d'un fichier hors de cette liste n'est pas
+   détecté ; et un test e2e/intégration qui bascule entre deux commits qui
+   touchent src/ n'est jamais étiqueté, même s'il est réellement instable. */
+const FENETRE_INSTABILITE_DEFAUT = 10;
+const SEUIL_INSTABILITE_ALTERNANCES_DEFAUT = 2;
+function calculerInstabilites(opts) {
+  const o = opts || {};
+  const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
+  const rd = o.dossierRepo || RACINE;
+  const P = require('./perimetre.js');
+  const carte = o.carte || P.lireCarte(o.cheminCarte || path.join(dossierRegistre, 'impact.json'));
+  const fenetre = o.fenetre || FENETRE_INSTABILITE_DEFAUT, seuil = o.seuil || SEUIL_INSTABILITE_ALTERNANCES_DEFAUT;
+  const entrees = (o.entrees || lireEntrees(dossierRegistre))
+    .filter(e => (o.inclureManuels || ORIGINES_OFFICIELLES.has(e.origine)) && !e.interrompu && !e.arbre_modifie)
+    .sort((a, b) => String(a.date).localeCompare(String(b.date)));
+
+  // test (id de carte) → fichiers src/ qui définissent ses fonctions
+  const fichiersDe = {};
+  if (carte) {
+    const fonctionsDe = {};
+    Object.keys(carte.fonctions).forEach(q => carte.fonctions[q].forEach((id) => { (fonctionsDe[id] = fonctionsDe[id] || new Set()).add(q); }));
+    Object.keys(fonctionsDe).forEach((id) => {
+      const f = new Set();
+      Object.keys(carte.fichiers).forEach((chemin) => { if (carte.fichiers[chemin].some(q => fonctionsDe[id].has(q))) f.add(chemin); });
+      fichiersDe[id] = f;
+    });
+  }
+
+  const suites = {};   // cle → [{ commit, echec, groupe, type, id }]
+  entrees.forEach((e) => {
+    (e.tests || []).forEach((t) => {
+      if (!t || t.etat === 'ignore') return;
+      const cat = t.categorie || {};
+      const cle = P.cleTest(cat.type, cat.groupe, t.nom);
+      (suites[cle] = suites[cle] || []).push({ commit: e.commit, echec: t.etat === 'echec', groupe: cat.groupe || null, type: cat.type || null, id: P.idTestCarte(cle) });
+    });
+  });
+
+  const cacheDiff = new Map(), cacheFichier = new Map();
+  function fichiersChanges(a, b) {
+    const k = a + '..' + b;
+    if (!cacheDiff.has(k)) {
+      const sortie = git(rd, ['diff', '--name-only', '--no-renames', a, b]);
+      cacheDiff.set(k, sortie === null ? null : new Set(sortie.split('\n').filter(Boolean)));
+    }
+    return cacheDiff.get(k);
+  }
+  /* fichiers de test qui définissent ce test, à ce commit ; null = introuvable */
+  function fichiersDeTest(x, commit) {
+    if (x.type === 'e2e') return ['tests/e2e.js'];
+    if (x.type === 'integration' && /^integration-[\w.-]+\.js$/.test(x.groupe || '')) return ['tests/' + x.groupe];
+    if (!x.groupe) return null;
+    const k = commit + '|' + x.groupe;
+    if (!cacheFichier.has(k)) {
+      const s = git(rd, ['grep', '-l', '-F', '-e', x.groupe, commit, '--', 'tests/*.js']);
+      cacheFichier.set(k, s ? s.split('\n').filter(Boolean).map(l => l.replace(/^[0-9a-f]{40}:/, '')) : null);
+    }
+    return cacheFichier.get(k);
+  }
+  const SOURCES = f => /^src\/[^/]+\.js$/.test(f) || f === 'server.js' || f === 'index.html' || /^tests\/(harness|run|catalogue|presets|fichiers-tests|sources-node)\.js$/.test(f);
+  const res = {};
+  Object.keys(suites).forEach((cle) => {
+    const suite = suites[cle].slice(-fenetre);
+    if (suite.length < 2) return;
+    const id = suite[suite.length - 1].id;
+    const dansCarte = !!(fichiersDe[id] && fichiersDe[id].size);
+    let score = 0, brutes = 0;
+    for (let i = 1; i < suite.length; i++) {
+      const p = suite[i - 1], c = suite[i];
+      if (p.echec === c.echec) continue;
+      brutes++;
+      let change = false;
+      if (p.commit !== c.commit) {
+        const diff = fichiersChanges(p.commit, c.commit);
+        if (diff === null) change = true;
+        else {
+          const tests = fichiersDeTest(c, c.commit);
+          if (!tests || tests.some(f => diff.has(f))) change = true;
+          else if (dansCarte) change = Array.from(fichiersDe[id]).some(f => diff.has(f));
+          else change = Array.from(diff).some(SOURCES);
+        }
+      }
+      if (!change) score++;
+    }
+    res[cle] = { score, alternances: brutes, runs: suite.length, instable: score >= seuil, horsCarte: !dansCarte };
+  });
+  return res;
+}
+
 // ── CLI ──────────────────────────────────────────────────────────────────
 if (require.main === module) {
   const args = process.argv.slice(2);
@@ -760,11 +1199,35 @@ if (require.main === module) {
     const r = marquerTemoin(args[1], args[2], args[3]);
     console.log(JSON.stringify(r));
     process.exit(r.ok ? 0 : 1);
+  } else if (sous === 'compacter') {
+    const r = compacter({ aBlanc: drapeau('--a-blanc'), jusquA: option('--jusqu-a') || undefined, version: option('--version') || undefined, sauvegarde: option('--sauvegarde') || undefined });
+    if (drapeau('--json')) { console.log(JSON.stringify(r)); process.exit(r.ok ? 0 : 1); }
+    const mo = n => (n / 1024 / 1024).toFixed(1) + ' Mo';
+    if (!r.ok) console.log('compaction refusée : ' + r.motif);
+    else {
+      console.log((r.aBlanc ? '[à blanc] ' : '') + 'registre, release ' + r.version + ' : ' + r.entreesCompactees + ' entrée(s) compactée(s), ' + r.entreesRelease + ' run(s) de release marqué(s) ; entrées ' + mo(r.octetsEntreesAvant) + ' -> ' + mo(r.octetsEntreesApres) +
+        ' ; images ' + r.imagesAvant + ' (' + mo(r.octetsImagesAvant) + ') -> ' + (r.imagesAvant - r.imagesSupprimees) + ' (' + r.imagesSupprimees + ' supprimée(s), ' + mo(r.octetsImagesLiberes) + ' libérés)');
+      r.avertissements.forEach(a => console.log('  attention : ' + a));
+    }
+    process.exit(r.ok ? 0 : 1);
+  } else if (sous === 'restaurer') {
+    const r = restaurerCompaction(DOSSIER_REGISTRE, args[1] || '');
+    console.log(JSON.stringify(r));
+    process.exit(r.ok ? 0 : 1);
+  } else if (sous === 'instables') {
+    const res = calculerInstabilites({});
+    const liste = Object.keys(res).filter(k => res[k].instable).sort((a, b) => res[b].score - res[a].score);
+    if (drapeau('--json')) console.log(JSON.stringify(res, null, 2));
+    else console.log(liste.length ? liste.map(k => res[k].score + ' alternance(s) sur ' + res[k].runs + ' runs : ' + k).join('\n') : 'aucun test instable');
+    process.exit(0);
   } else {
     console.log('Usage : node tools/registre.js inscrire [cahier] [--origine pre-push|manuel] [--statut ok|en_attente] [--motif texte]\n' +
       '                        | commit\n' +
       '                        | historique <testId> [--manuel] [--tri lancement|commit] [--exporter [--sortie f]]\n' +
-      '                        | temoin <testId> <commit> <image>');
+      '                        | temoin <testId> <commit> <image>\n' +
+      '                        | compacter [--a-blanc] [--jusqu-a ref] [--version vX.Y.Z] [--sauvegarde dossier] [--json]   (rétention, SPEC-BANC-090/091)\n' +
+      '                        | restaurer <dossier-de-sauvegarde>\n' +
+      '                        | instables [--json]   (score d\'instabilité, SPEC-BANC-088)');
     process.exit(sous ? 1 : 0);
   }
 }
@@ -774,6 +1237,6 @@ module.exports = {
   lireEntrees, lireEntreeFichier, listerFichiersEntrees, lireTemoins, ecrireTemoins, sha1,
   commitPlein, brancheCourante, ordreCommits, rangCommit, etatRegistre, raisonRegistre, SEUIL_LENT_DEFAUT_MS,
   moteurRenduDe, memeMoteur, SEUIL_INSTABILITE_PIXELS_DEFAUT,
-  inscrire, dejaInscrit, aDesEntreesEnAttente, marquerEnAttenteCommitees,
+  inscrire, dejaInscrit, aDesEntreesEnAttente, compacter, compacterTest, restaurerCompaction, ecrireAtomique, calculerInstabilites, FENETRE_INSTABILITE_DEFAUT, SEUIL_INSTABILITE_ALTERNANCES_DEFAUT, marquerEnAttenteCommitees,
   historiqueTest, runsUnifies, marquerTemoin, temoinDe, exporterHistoriqueHTML, commiterRegistre,
 };

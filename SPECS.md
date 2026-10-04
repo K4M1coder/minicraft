@@ -920,7 +920,7 @@ par sous-thème, dans l'ordre des sections du document de conception.
 
 ### Score d'instabilité des tests (§3.10)
 
-| SPEC-BANC-088 | Un test qui alterne réussite/échec alors qu'aucune des fonctions qu'il touche (carte d'impact, SPEC-BANC-067) n'a changé entre les runs est étiqueté automatiquement `instable`, avec un score (nombre d'alternances sur les N derniers runs) ; affiché dans le rapport et filtrable ; ne fait pas échouer la porte à lui seul, mais son échec reste un échec | un test qui échoue puis réussit puis échoue sur trois runs consécutifs, sans que les fonctions qu'il touche n'aient changé, est étiqueté `instable` avec un score de 2 alternances, visible et filtrable dans le rapport | ⏳ |
+| SPEC-BANC-088 | Un test qui alterne réussite/échec alors qu'aucune des fonctions qu'il touche (carte d'impact, SPEC-BANC-067) n'a changé entre les runs est étiqueté automatiquement `instable`, avec un score (nombre d'alternances sur les N derniers runs) ; affiché dans le rapport et filtrable ; ne fait pas échouer la porte à lui seul, mais son échec reste un échec | un test qui échoue puis réussit puis échoue sur trois runs consécutifs, sans que les fonctions qu'il touche n'aient changé, est étiqueté `instable` avec un score de 2 alternances, visible et filtrable dans le rapport | ✅ |
 
 ### Raison obligatoire (§3.11)
 
@@ -928,8 +928,8 @@ par sous-thème, dans l'ordre des sections du document de conception.
 
 ### Rétention du registre (§3.12)
 
-| SPEC-BANC-090 | Le registre ne conserve en détail que les runs des commits de merge et de PR depuis la dernière release, et un run par release (le run de validation du commit étiqueté par `tools/version.js --publier`), gardé en détail pour toujours | après une publication, les entrées de merge/PR du cycle qui se termine n'apparaissent plus en détail dans le registre, sauf celle du commit de release, conservée intégralement | ⏳ |
-| SPEC-BANC-091 | À chaque publication, `tools/version.js --publier` appelle `node tools/registre.js compacter` : les runs de merge/PR du cycle qui se termine sont compactés (résumé gardé : états, durées, métriques, raisons, commit ; images retirées, sauf témoins encore épinglés) ; les images qui ne sont plus référencées par aucune entrée sont supprimées du stockage ; les runs manuels inscrits suivent la même règle ; les cahiers locaux gardent leur propre limite des N derniers | après `tools/version.js --publier`, une entrée de merge du cycle qui se termine garde son résumé mais n'a plus d'images sauf sa capture témoin épinglée ; une image non référencée par aucune entrée restante disparaît du dossier `tests/registre/images/` | ⏳ |
+| SPEC-BANC-090 | Le registre ne conserve en détail que les runs des commits de merge et de PR depuis la dernière release, et un run par release (le run de validation du commit étiqueté par `tools/version.js --publier`), gardé en détail pour toujours | après une publication, les entrées de merge/PR du cycle qui se termine n'apparaissent plus en détail dans le registre, sauf celle du commit de release, conservée intégralement | ✅ |
+| SPEC-BANC-091 | À chaque publication, `tools/version.js --publier` appelle `node tools/registre.js compacter` : les runs de merge/PR du cycle qui se termine sont compactés (résumé gardé : états, durées, métriques, raisons, commit ; images retirées, sauf témoins encore épinglés) ; les images qui ne sont plus référencées par aucune entrée sont supprimées du stockage ; les runs manuels inscrits suivent la même règle ; les cahiers locaux gardent leur propre limite des N derniers | après `tools/version.js --publier`, une entrée de merge du cycle qui se termine garde son résumé mais n'a plus d'images sauf sa capture témoin épinglée ; une image non référencée par aucune entrée restante disparaît du dossier `tests/registre/images/` | ✅ |
 
 ### Diagnostics joints aux échecs et aux lenteurs (§3.13)
 

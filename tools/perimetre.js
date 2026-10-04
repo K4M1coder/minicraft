@@ -860,6 +860,14 @@ function plagesDuDiff(sortie) {
 function nameStatus(sortie) {
   return (sortie || '').split('\n').filter(Boolean).map(l => { const p = l.split('\t'); return { chemin: p[1], statut: p[0][0] }; });
 }
+/* Liste de fichiers pour un message : les `max` premiers puis « … N autres »
+   (un commit de release touche des centaines de fichiers du registre). */
+function resumerFichiers(liste, max) {
+  const l = Array.isArray(liste) ? liste : [];
+  const n = max || 10;
+  if (!l.length) return 'aucun';
+  return l.slice(0, n).join(', ') + (l.length > n ? ', … ' + (l.length - n) + ' autres' : '');
+}
 function perimetreDepuisGit(o) {
   const racine = o.racine || RACINE;
   const carte = lireCarte(o.cheminCarte);
@@ -1086,7 +1094,7 @@ module.exports = {
   jetons, decouper, identifiants, analyserFichierSource, propager, chargerModules,
   cleTest, idTestCarte, construireCarte, serialiserCarte, ecrireCarte, lireCarte, testsDeCarte, appelantsDe,
   reconstruireCarte, cahierPourCarte, dernierCahierPourCarte,
-  classerFichier, symbolesExportesTest, domainesDuFichier, calculerPerimetre, trousDePerimetre, controlerTrous, plagesDuDiff, perimetreDepuisGit,
+  classerFichier, symbolesExportesTest, domainesDuFichier, calculerPerimetre, trousDePerimetre, controlerTrous, plagesDuDiff, perimetreDepuisGit, resumerFichiers,
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1113,7 +1121,7 @@ if (require.main === module) {
   let p;
   try { p = JSON.parse(r.stdout); } catch (e) { console.error('sortie illisible de tests/run.js'); process.exit(2); }
   console.log('Périmètre ' + (p.mode === 'depuis' ? 'depuis ' + p.depuis : 'du commit (fichiers indexés)'));
-  console.log('fichiers touchés : ' + (p.fichiers.join(', ') || '(aucun)'));
+  console.log('fichiers touchés : ' + resumerFichiers(p.fichiers));
   if (p.repli) console.log('REPLI sur la suite complète : ' + p.repli);
   else {
     console.log('fonctions touchées : ' + (p.fonctions.join(', ') || '(aucune)'));

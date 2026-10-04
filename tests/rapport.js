@@ -91,6 +91,8 @@
     if (t.specs && t.specs.length) champs.push('specs : ' + t.specs.join(', '));
     if (t.fonctions && t.fonctions.length) champs.push('fonctions : ' + t.fonctions.join(', '));
     if (t.etiquettes && t.etiquettes.length) champs.push('étiquettes : ' + t.etiquettes.join(', '));
+    // SPEC-BANC-088 : score d'instabilité (alternances sans changement de ce que le test touche)
+    if (t.instabilite && t.instabilite.score) champs.push((t.instabilite.instable ? '⚠ instable — ' : '') + 'instabilité : ' + t.instabilite.score + ' alternance(s) réussite/échec sur ' + (t.instabilite.runs || '?') + ' runs, sans changement de ce que le test touche' + (t.instabilite.horsCarte ? ' (hors carte d\'impact : repli prudent)' : ''));
     // SPEC-BANC-070 : pourquoi le périmètre a retenu ce test (run restreint)
     if (t.raison_selection && t.raison_selection.length && !(t.raison_selection.length === 1 && t.raison_selection[0] === 'complet')) {
       champs.push('raison de sélection : ' + t.raison_selection.join(', '));

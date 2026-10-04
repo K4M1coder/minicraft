@@ -45,6 +45,8 @@ diffs git minimaux, lisible ligne à ligne).
 | `motif` | texte ou `null` | raison humaine facultative d'avoir promu CE run précis |
 | `arbre_modifie` | booléen | capturé au DÉBUT de la campagne locale (`tests/run.js`), jamais recalculé après coup |
 | `interrompu` | booléen | la campagne locale a été arrêtée manuellement |
+| `release` | texte (`vX.Y.Z`), absent sinon | run retenu pour une release (SPEC-BANC-090) : gardé en détail pour toujours, jamais compacté |
+| `compacte` | `true`, absent sinon | run compacté (SPEC-BANC-091) : résumé seulement, voir « Rétention » |
 
 ## Schéma d'un test (lignes suivantes)
 
@@ -126,6 +128,58 @@ repasse à `ok` (`marquerEnAttenteCommitees()`) et les ajoute à l'index
 (`git add tests/registre`) — l'entrée reste exacte (elle cite le hash
 qu'elle a réellement testé), seul le commit qui la PORTE diffère de celui
 qu'elle DÉCRIT.
+
+## Rétention (SPEC-BANC-090, 091)
+
+`node tools/registre.js compacter [--a-blanc] [--jusqu-a <ref>] [--version vX.Y.Z]`
+(appelé par `node tools/version.js --publier`, avant le commit de release).
+Sans option : jusqu'à la dernière étiquette `v*`. `--a-blanc` : calcule et
+affiche le plan et les tailles, n'écrit ni ne supprime rien.
+
+- **Cycle** = les commits entre deux étiquettes de version. Pour chaque cycle,
+  la VALIDATION du commit étiqueté est gardée en détail pour toujours : le
+  run le plus récent de chaque préréglage `pr` et `e2e-fumee` (pas les autres)
+  sur ce commit, ou à défaut sur le commit officiel le plus récent du cycle
+  (le commit `chore(release)` n'est jamais validé lui-même). Ces runs portent
+  `release: vX.Y.Z`. Le run de référence doit être fiable (ni interrompu, ni
+  restreint par un périmètre, ni sur arbre modifié ; le compagnon e2e tolère
+  un arbre modifié) : sans run fiable, le cycle n'est ni marqué ni compacté.
+- **Tout autre run** des commits couverts (merge, PR, manuels inscrits) est
+  compacté : la méta (+ `compacte: true`) ; par test `id`, `nom`,
+  `categorie`, `domaines`, `specs`, `etiquettes`, `debut`, `duree_ms`, `etat`,
+  `raison`, `erreur`, `metriques`, et les captures sans leur image (libellé,
+  rôle, `t_ms`, nombres de triplet) — sauf l'image d'un témoin épinglé
+  (`temoins.json`). Retirés : `fiche` (l'essentiel du poids), `fonctions`,
+  `raison_selection`. Seule la fiche du DERNIER passage de chaque test est
+  conservée, réduite (`teste`, `pourquoi`, `attendu`, `source`, 400 caractères
+  au plus).
+- **Images** : celles qu'aucune entrée (ni `temoins.json`) ne référence sont
+  supprimées de `images/`.
+- **Jamais compactés** : un run `release`, un run `en_attente`, un run d'un
+  commit hors de l'historique de la release. Sans résolution git fiable rien
+  n'est modifié ; un fichier d'entrée illisible interdit toute suppression
+  d'image ; un fichier à ligne de test illisible n'est jamais réécrit. Écriture
+  atomique, verrou `.compaction.lock`, aucune image plus récente que le début
+  de la compaction supprimée. Idempotent. `--sauvegarde <dossier>` copie ce qui
+  va être touché ; `node tools/registre.js restaurer <dossier>` le remet en
+  place (utilisé par `--publier` si le commit ou l'étiquette échoue).
+- Les cahiers locaux (`tests/resultats/`) gardent leur propre limite.
+
+## Score d'instabilité (SPEC-BANC-088)
+
+`calculerInstabilites()` : sur les 10 derniers runs officiels d'un test, compte
+les alternances réussite/échec entre deux runs consécutifs sans qu'aucun des
+fichiers définissant ses fonctions (carte d'impact `impact.json`) n'ait changé
+entre les deux commits (même commit : rien n'a changé). Les runs interrompus et sur arbre modifié sont écartés ; un changement du
+fichier de test du test compte aussi. Un test hors carte (intégration, e2e)
+est évalué par un repli prudent : une alternance ne compte que si ni son
+fichier de test, ni aucun `src/*.js`, `server.js`, `index.html` ni le harnais
+n'a changé (typiquement : même commit). Faux négatif connu : un test hors carte
+qui bascule entre deux commits touchant `src/` n'est jamais étiqueté. Score ≥ 2 : étiquette
+`instable` (colonne `instabilite` et étiquette du tableau d'historique ;
+`node tools/registre.js instables`). Un test absent de la carte, ou un commit
+que git ne sait pas comparer, n'est jamais étiqueté. Limite connue : « changé »
+est évalué au grain du fichier source.
 
 ## Fonctions exportées de `tools/registre.js` (points d'accroche)
 

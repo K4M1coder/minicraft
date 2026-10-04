@@ -5,7 +5,8 @@
    node tools/version.js --prevoir     quelle publication donneraient les commits
                                        depuis la dernière étiquette (sans rien écrire)
    node tools/version.js --publier     publie : calcule le cran, monte VERSION_JEU,
-                                       date la section « Non publié », commite
+                                       date la section « Non publié », compacte le
+                                       registre du cycle (SPEC-BANC-091), commite
                                        « chore(release): vX.Y.Z » et pose l'étiquette
    node tools/version.js --publier y   impose le cran (x, y ou z) au lieu de le calculer
    node tools/version.js --verifier    contrôle seulement (porte G10, crochet pre-commit)
@@ -23,7 +24,8 @@
 'use strict';
 const fs = require('fs');
 const path = require('path');
-const { execSync } = require('child_process');
+const os = require('os');
+const { execSync, execFileSync } = require('child_process');
 const RACINE = path.join(__dirname, '..');
 const CORE = path.join(RACINE, 'src', 'core.js');
 const JOURNAL = path.join(RACINE, 'CHANGELOG.md');
@@ -118,10 +120,56 @@ if (require.main === module) {
   if (action === '--publier') {
     if (!cran) { console.log('Rien à publier : aucun feat, fix, perf ni rupture depuis ' + (etiquette || 'le début')); process.exit(0); }
     const apres = monter(avant, cran);
-    ecrire(avant, apres);
-    git('add src/core.js CHANGELOG.md');
-    git('commit -q -m "chore(release): v' + apres + '"');
-    git('tag -a v' + apres + ' -m "v' + apres + '"');
+    /* Publication TRANSACTIONNELLE : la version, le journal et le registre
+       compacté entrent dans UN commit ; si le commit ou l'étiquette échoue, tout
+       est remis comme avant (version, journal, registre — y compris ses fichiers
+       non suivis, qu'aucun git ne rendrait). */
+    const registreJs = path.join(__dirname, 'registre.js');
+    const sauvegardeRegistre = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-registre-'));
+    const avantCore = fs.readFileSync(CORE, 'utf8'), avantJournal = fs.readFileSync(JOURNAL, 'utf8');
+    let commite = false;
+    const restaurerRegistre = () => {
+      if (!fs.existsSync(path.join(sauvegardeRegistre, 'manifeste.json'))) return true;
+      try { execFileSync(process.execPath, [registreJs, 'restaurer', sauvegardeRegistre], { cwd: RACINE, encoding: 'utf8' }); return true; }
+      catch (e) { console.error('  ⚠ restauration du registre impossible (' + String(e.message).split('\n')[0] + ') : sauvegarde conservée dans ' + sauvegardeRegistre); return false; }
+    };
+    const annuler = (e) => {
+      if (commite) { try { git('reset -q HEAD~1'); } catch (x) { /* rien */ } }
+      const ok = restaurerRegistre();
+      fs.writeFileSync(CORE, avantCore); fs.writeFileSync(JOURNAL, avantJournal);
+      try { git('reset -q -- src/core.js CHANGELOG.md tests/registre'); } catch (x) { /* rien */ }
+      if (ok) fs.rmSync(sauvegardeRegistre, { recursive: true, force: true });
+      console.error('Publication annulée, tout est remis comme avant : ' + String(e.stderr || e.message).trim().split('\n')[0]);
+      process.exit(1);
+    };
+    try {
+      ecrire(avant, apres);
+      git('add src/core.js CHANGELOG.md');
+      // SPEC-BANC-091 : rétention du registre. AVANT le commit, pour que la
+      // compaction entre dans le commit de release (l'étiquette en porte l'état) ;
+      // `--version` : l'étiquette n'existe pas encore, les runs validés de ce cycle
+      // sont marqués `release: vX.Y.Z`. Jamais bloquant : un registre qui ne se
+      // compacte pas ne remet pas en cause la publication.
+      try {
+        const sortie = execFileSync(process.execPath, [registreJs, 'compacter', '--jusqu-a', 'HEAD', '--version', 'v' + apres, '--sauvegarde', sauvegardeRegistre, '--json'],
+          { cwd: RACINE, encoding: 'utf8' }).trim();
+        const r = JSON.parse(sortie.split('\n').pop());
+        const mo = n => (n / 1024 / 1024).toFixed(1) + ' Mo';
+        console.log('  registre : ' + r.entreesCompactees + ' entrée(s) compactée(s), ' + r.entreesRelease + ' run(s) de release marqué(s) ; entrées ' + mo(r.octetsEntreesAvant) + ' → ' + mo(r.octetsEntreesApres) + ' ; ' + r.imagesSupprimees + ' image(s) retirée(s)');
+        (r.avertissements || []).forEach(a => console.log('  ⚠ registre : ' + a));
+        // SEULS les fichiers que la compaction a touchés (jamais impact.json, notes locales, *.tmp)
+        const suivis = new Set(git('ls-files -- tests/registre').split('\n').filter(Boolean));
+        const liste = r.fichiersTouches.map(f => 'tests/registre/' + f).filter(f => suivis.has(f) || fs.existsSync(path.join(RACINE, f)));
+        if (liste.length) execFileSync('git', ['add', '-A', '--pathspec-from-file=-'], { cwd: RACINE, input: liste.join('\n') + '\n', encoding: 'utf8' });
+      } catch (e) {
+        restaurerRegistre();
+        console.log('  ⚠ registre non compacté : ' + String(e.stdout || e.message).trim().split('\n')[0] + ' — la publication continue ; à rejouer : node tools/registre.js compacter');
+      }
+      git('commit -q -m "chore(release): v' + apres + '"');
+      commite = true;
+      git('tag -a v' + apres + ' -m "v' + apres + '"');
+    } catch (e) { annuler(e); }
+    fs.rmSync(sauvegardeRegistre, { recursive: true, force: true });
     console.log(avant + ' → ' + apres + ' (cran ' + cran + ', ' + commits.length + ' commit(s)) — étiquette v' + apres);
     // SPEC-PACK-004 : un paquet testable/partageable pour CHAQUE publication,
     // sans étape manuelle — jamais commité (dist/, voir .gitignore), jamais
