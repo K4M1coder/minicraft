@@ -704,7 +704,10 @@
       // portait sur sa pile (0 si elle n'en portait pas — batterie neuve).
       if (bdef && bdef.circuit && bdef.circuit.type === 'batterie') {
         var stPose = held();
-        world.setEtat(bx, by, bz, (stPose && stPose.data && stPose.data.niveau) || 0);
+        // borné à l'etatMax du bloc (SPEC-SAVE-021) : une pile forgée ou
+        // abîmée ne pose jamais un état hors de la disposition de la batterie
+        var niveauPose = Math.floor(Number(stPose && stPose.data && stPose.data.niveau)) || 0;
+        world.setEtat(bx, by, bz, Math.max(0, Math.min(C.etatMaxDe(id), niveauPose)));
       }
       if (!R.blocsIllimites) consommerCase(pl.selected, 1);
       return 'place';

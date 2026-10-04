@@ -238,21 +238,24 @@
     it('SPEC-OBJET-003 : un bijou d\'émeraude porte chance au butin (minage, C.dropsOf)', function () {
       var bloc = { drops: [{ id: I.DIAMOND, n: 1, chance: 0.45 }] };
       B.__TEST_CHANCE__ = 9001;
-      C.BLOCKS[B.__TEST_CHANCE__] = bloc;
-      // rand() fixe à 0.5 : sans bonus, 0.5 > 0.45 → rien ; un bonus de chance
-      // (celui d'un bijou d'émeraude, ~0.12) resserre le tirage vers 0 et
-      // suffit à faire passer un tirage qui ratait de peu.
-      var rFixe = function () { return 0.5; };
-      A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0).length, 0, 'sans bijou : le tirage rate');
-      A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0.12).length, 1, 'bijou d\'émeraude (0.12) : ça passe');
-      // un drop déjà garanti (chance 1, ou pas de chance du tout) reste inchangé
-      var garanti = { drops: [{ id: I.STONE, n: 1 }] };
-      C.BLOCKS[B.__TEST_CHANCE__] = garanti;
-      A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0.12).length, 1, 'un drop garanti n\'est pas affecté');
-      delete C.BLOCKS[B.__TEST_CHANCE__];
-      // le nom de test ne doit pas survivre au test : la table B est comparée
-      // au registre figé des ids (SPEC-SAVE-019, tests/spec-ids.js)
-      delete B.__TEST_CHANCE__;
+      try {
+        C.BLOCKS[B.__TEST_CHANCE__] = bloc;
+        // rand() fixe à 0.5 : sans bonus, 0.5 > 0.45 → rien ; un bonus de chance
+        // (celui d'un bijou d'émeraude, ~0.12) resserre le tirage vers 0 et
+        // suffit à faire passer un tirage qui ratait de peu.
+        var rFixe = function () { return 0.5; };
+        A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0).length, 0, 'sans bijou : le tirage rate');
+        A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0.12).length, 1, 'bijou d\'émeraude (0.12) : ça passe');
+        // un drop déjà garanti (chance 1, ou pas de chance du tout) reste inchangé
+        var garanti = { drops: [{ id: I.STONE, n: 1 }] };
+        C.BLOCKS[B.__TEST_CHANCE__] = garanti;
+        A.equal(C.dropsOf(B.__TEST_CHANCE__, true, rFixe, 0.12).length, 1, 'un drop garanti n\'est pas affecté');
+      } finally {
+        // ni le bloc ni le nom de test ne survivent au test, même en échec : la
+        // table B est comparée au registre figé des ids (SPEC-SAVE-019, tests/spec-ids.js)
+        delete C.BLOCKS[B.__TEST_CHANCE__];
+        delete B.__TEST_CHANCE__;
+      }
     });
 
     it('SPEC-OBJET-003 : la chance au butin s\'applique aussi au butin des créatures tuées', function () {

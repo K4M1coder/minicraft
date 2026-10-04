@@ -191,10 +191,14 @@
      figé des ids (tests/donnees/ids.json, SPEC-SAVE-019). Les objets sont
      donnés dans le NOUVEL espace ; entre parenthèses, l'ancien (8 bits) dans
      lequel les définitions plus bas les écrivent avant décalage.
-     Libres aujourd'hui : blocs 128-199 (ancienne plage des objets), 900-949,
-     1100-4095 ; objets 4568-4667 et au-delà de 4767. */
+     Réservée (`reservee: true`, aucun bloc ne s'y définit) : 128-199, les
+     anciens ids d'objets du format 8 bits — une vieille sauvegarde mal
+     migrée y laisserait des objets qu'il ne faut jamais confondre avec des
+     blocs. Libres aujourd'hui : blocs 900-949 et 1100-4095 ; objets
+     4568-4667 et au-delà de 4767. */
   var PLAGES_IDS = [
     { nom: 'blocs-origine',     genre: 'bloc',  premier: 1,    dernier: 127 },   // terrain, végétation, mer, minerais, portes
+    { nom: 'reserve-anciens-objets', genre: 'bloc', premier: 128, dernier: 199, reservee: true },  // anciens ids d'objets (format 8 bits)
     { nom: 'formes-l24',        genre: 'bloc',  premier: 200,  dernier: 399 },   // escaliers, dalles, clôture, muret, vitre, rambarde
     { nom: 'materiaux-l24',     genre: 'bloc',  premier: 400,  dernier: 599 },   // verres teintés, bétons, laines, terres cuites, poutres, feu
     { nom: 'coffres-l25',       genre: 'bloc',  premier: 600,  dernier: 649 },   // coffres piégé et surprise
@@ -1266,9 +1270,9 @@
     // clôture, muret, vitre, rambarde : raccords recalculés depuis les voisins, rien de stocké
   };
   var ETAT_MAX_CIRCUIT = {           // dispositions lues par circuits.js (tick, forceDe)
-    fil: 15, cable: 15,              // force du signal / de l'énergie, 4 bits
+    fil: 14, cable: 14,              // force reçue (≤ 15) moins 1 par bloc : 14 au plus
     levier: 1, bouton: 1, plaque: 1, // bit 0 = actionné (forceDe)
-    repeteur: 255,                   // sortie 1 bit | compte 7 bits : l'octet entier
+    // repeteur : sortie 1 bit | compte (≤ délai) dans les bits 1-7 — calculé plus bas
     non: 1, et: 1, ou: 1, xor: 1, nand: 1, nor: 1, xnor: 1, comparateur: 1,
     bascule: 3,                      // mémoire 1 bit | set précédent 1 bit
     compteur: 31,                    // valeur 4 bits | entrée précédente 1 bit
@@ -1284,12 +1288,15 @@
     if (!d || d.etatMax !== undefined) return;
     var m = 0;
     if (d.forme && ETAT_MAX_FORME[d.forme] !== undefined) m = ETAT_MAX_FORME[d.forme];
-    else if (d.circuit) m = ETAT_MAX_CIRCUIT[d.circuit.type];   // type absent de la table : indéfini, le test le signale
+    else if (d.circuit && d.circuit.type === 'repeteur') {
+      // compte borné par le délai (circuits.js : pasRepeteur) : 1 | (délai << 1), 3 au délai 1 par défaut
+      m = 1 | (Math.max(1, d.circuit.delai || 1) << 1);
+    } else if (d.circuit) m = ETAT_MAX_CIRCUIT[d.circuit.type];   // type absent de la table : indéfini, le test le signale
     /* Portes et trappes : orientation et ouverture restent dans l'id (10 ids,
        décision L40-bis) ; seul le bit 0 mémorise le dernier signal vu par les
        circuits (SPEC-MECA-006, circuits.js). */
     else if (d.porte || d.trappe) m = 1;
-    else if (d.id === B.FEU) m = 31;   // âge en pas de simulation (< MC.Feu.AGE_MAX = 30)
+    else if (d.id === B.FEU) m = 29;   // âge en pas de simulation : < MC.Feu.AGE_MAX (30), donc 29 au plus
     d.etatMax = m;
   });
   function etatMaxDe(id) { var d = BLOCKS[id]; return (d && !isItem(id) && d.etatMax) || 0; }
@@ -1299,7 +1306,8 @@
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
     FIRST_ITEM: FIRST_ITEM, ANCIEN_FIRST_ITEM: ANCIEN_FIRST_ITEM, PLAGES_IDS: PLAGES_IDS,
-    etatMaxDe: etatMaxDe,
+    // `etatMaxDe` est l'API ; `etatMax` n'en est qu'un alias (même fonction)
+    etatMaxDe: etatMaxDe, etatMax: etatMaxDe,
     DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,

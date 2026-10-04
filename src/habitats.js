@@ -347,7 +347,12 @@
       if (denivele > def.denivele * 2 || h0 <= SEA + 1 || h0 > WH - 40) return null;
       if (occupePar(kind, x, z)) return null;
       var urbain = kind === 'ville' || kind === 'megapole';
-      var st = stylePour(bio.id, urbain);
+      return fabriquer(kind, rx, rz, x, z, demi, h0, denivele, lotsN, bio, stylePour(bio.id, urbain), graineK);
+    }
+    /* Le lieu lui-même, une fois son emplacement, son terrain et son style
+       décidés par `construire` (seul appelant en jeu). Séparé pour que les
+       tests puissent bâtir n'importe quel style partout (`batirPourEssai`). */
+    function fabriquer(kind, rx, rz, x, z, demi, h0, denivele, lotsN, bio, st, graineK) {
       var l = {
         id: kind + ':' + rx + ',' + rz, kind: kind, nom: kind === 'maison' ? 'Maison de ' + PRENOMS[Math.floor(N.hash2(rx, rz * 7) * PRENOMS.length) % PRENOMS.length]
                                                         : nomDe(N.hash2(rx * 3, rz * 5 + graineK), N.hash2(rx * 11 + graineK, rz * 17)),
@@ -1113,8 +1118,34 @@
         .map(function (e2) { return e2.lieu; });
     }
 
+    /* Pour les tests (SPEC-SAVE-021 : balayage de tous les états posés par la
+       génération) : bâtir un lieu d'un genre et d'un style imposés, sans
+       passer par les filtres de terrain, de biome et de répartition — le
+       lieu n'entre dans aucun cache et n'apparaît jamais en jeu. Même
+       emplacement, même taille et mêmes tirages que `construire`. */
+    function batirPourEssai(kind, styleCle, urbain, rx, rz) {
+      var def = LIEUX[kind], R = def.region;
+      var graineK = kind === 'ville' ? 7 : kind === 'village' ? 13 : kind === 'megapole' ? 41 : 29;
+      var lotsN = kind === 'ville' ? tailleVille(rx, rz) : def.lots;
+      var demi = Math.floor((lotsN * def.pas) / 2) + def.marge, m = demi + 8;
+      var x = rx * R + m + Math.floor(N.hash2(rx * 131 + graineK, rz * 977) * (R - 2 * m));
+      var z = rz * R + m + Math.floor(N.hash2(rx * 419, rz * 263 + graineK) * (R - 2 * m));
+      return fabriquer(kind, rx, rz, x, z, demi, 64, 0, lotsN, { id: styleCle }, stylePour(styleCle, urbain), graineK);
+    }
+    /* Un seul bâtiment (`BATISSEURS[type]`) sur une parcelle de côté L, avec
+       une orientation et une variante (`sous` : artisan, loisirs) imposées. */
+    function batirBatimentPourEssai(type, styleCle, urbain, rot, sous, ox, oz, L) {
+      var st = stylePour(styleCle, urbain);
+      var l = { id: 'essai:' + type, kind: 'essai', nom: 'Essai', biome: styleCle, style: st.nom, x: ox, z: oz, demi: L,
+                h0: 64, denivele: 0, lots: 1, batiments: [], pnjs: [], lampes: 0, blocs: new Map(),
+                plateforme: { x0: ox, z0: oz, x1: ox + L, z1: oz + L, h0: 64, surface: B.GRASS, sousSol: B.DIRT, routes: [] } };
+      BATISSEURS[type](l, st, outilsPour(l, st), ox, oz, L, rot, 65, urbain, sous);
+      return l;
+    }
+
     return { lieuDeRegion: lieuDeRegion, lieuxDansZone: lieuxDansZone, appliquer: appliquer, lieuA: lieuA,
-             batimentA: batimentA, lieuxProches: lieuxProches, surfaceEn: surfaceEn };
+             batimentA: batimentA, lieuxProches: lieuxProches, surfaceEn: surfaceEn,
+             batirPourEssai: batirPourEssai, batirBatimentPourEssai: batirBatimentPourEssai };
   }
 
   /* Les habitants qu'il faut faire apparaître : ceux des lieux proches qui ne
