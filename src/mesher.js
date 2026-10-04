@@ -285,7 +285,7 @@
     function occupied(x, y, z) {
       var b = blockAt(x, y, z);
       if (b === 0) return false;
-      var dd = C.BLOCKS[b];
+      var dd = C.defRendu(b);
       return !!dd && !dd.plant && !dd.liquid && !dd.transparent;
     }
 
@@ -294,7 +294,7 @@
     for (var x = 0; x < CX; x++) {
       var b = blocks[idx(x, y, z)];
       if (b === 0) continue;
-      var d = C.BLOCKS[b];
+      var d = C.defRendu(b);
       if (!d) continue;
       if (C.passOf(b) !== wantPass) continue;
 
@@ -488,7 +488,7 @@
     function celluleFace(bx, by, bz, f, fi, U, V) {
       var b = blocks[idx(bx, by, bz)];
       if (b === 0) return null;
-      var d = C.BLOCKS[b];
+      var d = C.defRendu(b);
       if (!d || C.passOf(b) !== wantPass) return null;
       if (d.plant || d.plat || d.panneau || d.forme || d.liquid) return null;
       var nx = bx + f.dir[0], ny = by + f.dir[1], nz = bz + f.dir[2];

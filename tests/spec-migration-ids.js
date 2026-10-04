@@ -226,4 +226,53 @@
       A.deep(MC.Save.migrerIdsObjetsMonde(copie(une), conv), une, 'migrer deux fois = migrer une fois');
     });
   });
+
+  describe('Specs — SPEC-SAVE-028 : un id de bloc inconnu est conservé', function () {
+    var INCONNU = 3999;
+    var P = [5, 120, 5];                         // en plein ciel : ses six faces se voient
+
+    it('SPEC-SAVE-028 : 3999 n\'est pas défini (bloc d\'une version plus récente)', function () {
+      A.notOk(C.BLOCKS[INCONNU], 'aucun bloc 3999 dans cette version');
+      A.ok(C.isBlock(INCONNU), 'mais il est dans l\'espace des blocs');
+    });
+
+    it('SPEC-SAVE-028 : un override d\'id inconnu se charge, se lit, se dessine en cube neutre et survit à la sauvegarde', function () {
+      var data = copie(MC.Save.serialize(etatComplet()));
+      data.overrides.push([P[0], P[1], P[2], INCONNU]);
+      var e = etatComplet();
+      A.ok(MC.Save.apply(data, e), 'chargé sans erreur');
+      e.world.getChunk(0, 0, true);
+      A.equal(e.world.getBlock(P[0], P[1], P[2]), INCONNU, 'getBlock vaut 3999');
+      A.equal(e.world.overrides.get(P.join(',')), INCONNU, 'conservé tel quel dans overrides');
+      // le maillage : un cube plein, identique à celui du bloc de substitution posé au même endroit
+      var ch = e.world.getChunk(0, 0, true);
+      var mi = MC.Mesher.buildChunk(ch, 'opaque', e.world.getBlock);
+      var ref = G.etatMinimal(4242);
+      ref.world.getChunk(0, 0, true);
+      ref.world.setBlock(P[0], P[1], P[2], C.BLOC_INCONNU.substitut);
+      var mr = MC.Mesher.buildChunk(ref.world.getChunk(0, 0, true), 'opaque', ref.world.getBlock);
+      A.equal(mi.positions.length, mr.positions.length, 'autant de sommets qu\'un cube du bloc de substitution');
+      A.deep(mi.uvs, mr.uvs, 'mêmes faces, même texture neutre');
+      var vide2 = G.etatMinimal(4242);
+      var mv = MC.Mesher.buildChunk(vide2.world.getChunk(0, 0, true), 'opaque', vide2.world.getBlock);
+      A.equal(mi.positions.length - mv.positions.length, 6 * 4 * 3, 'le bloc inconnu ajoute exactement six faces');
+      // physique : un cube qu'on ne traverse pas, que la visée touche sans erreur
+      A.ok(C.isSolid(INCONNU), 'solide comme un cube');
+      A.ok(C.defRendu(INCONNU) === C.BLOC_INCONNU, 'rendu par le bloc neutre');
+      A.equal(C.defRendu(I.COAL), undefined, 'un objet n\'a pas de rendu de bloc');
+      A.equal(C.defRendu(B.STONE), C.BLOCKS[B.STONE], 'un bloc défini garde sa définition');
+      // la sauvegarde le réécrit tel quel
+      var s = MC.Save.serialize(e);
+      A.ok(s.overrides.some(function (o) { return o[0] === P[0] && o[1] === P[1] && o[2] === P[2] && o[3] === INCONNU; }),
+           'l\'override 3999 est toujours dans la sauvegarde réécrite');
+    });
+
+    it('SPEC-SAVE-028 : la visée d\'un bloc inconnu ne lève pas d\'erreur', function () {
+      var e = G.etatMinimal(4242);
+      e.world.getChunk(0, 0, true);
+      e.world.setBlock(P[0], P[1], P[2], INCONNU);
+      var hit = MC.Physics.raycast(e.world, { x: P[0] + 0.5, y: P[1] + 3.5, z: P[2] + 0.5 }, { x: 0, y: -1, z: 0 }, 6);
+      A.ok(hit && hit.x === P[0] && hit.y === P[1] && hit.z === P[2], 'le rayon s\'arrête sur le bloc inconnu');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

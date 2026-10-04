@@ -934,8 +934,18 @@
     return !!d && (!!d.aquatique || !!d.eauCourante);
   }
 
+  /* SPEC-SAVE-028 : un id de bloc inconnu de cette version (monde écrit par
+     une version plus récente) est conservé tel quel dans le monde et ses
+     sauvegardes ; il se dessine et se comporte comme un cube neutre — plein,
+     incassable, à l'aspect du socle (`substitut`) — au lieu d'être invisible
+     et traversable. Hors de BLOCKS : aucun balayage des blocs définis ne le voit. */
+  var BLOC_INCONNU = { name: 'Bloc inconnu', substitut: B.BEDROCK, tiles: BLOCKS[B.BEDROCK].tiles.slice(),
+                       hardness: -1, drops: [], inconnu: true };
+  // définition servant au rendu et à la collision : celle du bloc, ou le bloc neutre
+  function defRendu(id) { return BLOCKS[id] || (isBlock(id) ? BLOC_INCONNU : undefined); }
+
   function isSolid(id) {
-    var d = BLOCKS[id];
+    var d = defRendu(id);
     return !!d && !d.liquid && !d.plant && !d.panneau && !d.forme;
   }
   /* Boîte(s) de collision LOCALE(s) (dans le cube unité) d'un bloc qui n'est
@@ -981,7 +991,7 @@
   // une face est-elle cachée par le voisin ?
   function occludes(self, nb) {
     if (nb === 0) return false;
-    var d = BLOCKS[nb];
+    var d = defRendu(nb);
     if (!d) return false;
     // une plante marine baigne dans l'eau : pas de surface entre les deux
     if (self === B.WATER && d.aquatique) return true;
@@ -1316,6 +1326,7 @@
     TUILES_VARIABLES: TUILES_VARIABLES, INDEX_VARIANTES: INDEX_VARIANTES, tuileVariante: tuileVariante,
     PREMIERE_VARIANTE: PREMIERE_VARIANTE,
     isSolid: isSolid, isReplaceable: isReplaceable, occludes: occludes,
+    BLOC_INCONNU: BLOC_INCONNU, defRendu: defRendu,
     breakTime: breakTime, dropsOf: dropsOf, TIER_SPEED: TIER_SPEED,
     boiteDe: boiteDe, estPorte: estPorte, estTrappe: estTrappe, bascule: bascule,
     orientDeRegard: orientDeRegard, PORTE_FERMEE_LIST: PORTE_FERMEE_LIST,

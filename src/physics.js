@@ -193,7 +193,7 @@
     var tmZ = stepZ ? (stepZ > 0 ? z + 1 - origin.z : origin.z - z) * tdZ : Infinity;
 
     var nx = 0, ny = 0, nz = 0, t = 0;
-    var test = hits || function (id) { return id !== 0 && !C.BLOCKS[id].liquid; };
+    var test = hits || function (id) { var d = C.defRendu(id); return id !== 0 && !(d && d.liquid); };   // SPEC-SAVE-028 : un id inconnu ne lève plus
     var guard = 0;
     while (t <= reach && guard++ < 512) {
       var b = world.getBlock(x, y, z);
