@@ -201,7 +201,7 @@ async function mesurer(o) {
     cl = await connecter(port);
     const NP = MC.NetProtocol;
     const pBienvenue = cl.attendre(NP.MSG.BIENVENUE, 30000);
-    cl.envoyer({ t: NP.MSG.REJOINDRE, nom: 'Marcheur', locaux: 1 });
+    cl.envoyer({ t: NP.MSG.REJOINDRE, nom: 'Marcheur', locaux: 1, formatIds: require('../tests/format-ids.js').FIRST_ITEM });   // SPEC-SAVE-025 : un serveur d'avant ce champ l'ignore
     const bienvenue = await pBienvenue;
     const t0 = bienvenue.toi[0];
     const monde = MC.createWorld(bienvenue.graine);
