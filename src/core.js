@@ -1252,11 +1252,54 @@
   defItem(I.LIVRE, { name: 'Livre', tile: 917, livre: true, maxStack: 1 });
   defItem(I.NOTE, { name: 'Note', tile: 918, livre: true, maxStack: 1 });
 
+  /* ─── état de bloc : `etatMax` (SPEC-SAVE-021) ─────────────────────────────
+     L'état d'un bloc tient sur un octet (world.getEtat/setEtat). Chaque bloc
+     déclare la plus grande valeur qu'il peut porter : 0 = bloc sans état (le
+     cas général). La borne suit la disposition des bits de chaque famille ;
+     tests/spec-ids.js balaie tous les producteurs d'état (MC.Formes,
+     MC.Circuits.tick, MC.Feu, bâtiments générés) et échoue si l'un d'eux
+     dépasse. Un bloc peut aussi déclarer `etatMax` dans sa définition. */
+  var ETAT_MAX_FORME = {
+    escalier: 63,   // orientation 2 bits | inversé 1 bit | forme d'angle 3 bits (formes.js)
+    dalle: 1,       // moitié haute
+    meuble: 7,      // orientation 2 bits | variante 1 bit (pied/tête du lit)
+    // clôture, muret, vitre, rambarde : raccords recalculés depuis les voisins, rien de stocké
+  };
+  var ETAT_MAX_CIRCUIT = {           // dispositions lues par circuits.js (tick, forceDe)
+    fil: 15, cable: 15,              // force du signal / de l'énergie, 4 bits
+    levier: 1, bouton: 1, plaque: 1, // bit 0 = actionné (forceDe)
+    repeteur: 255,                   // sortie 1 bit | compte 7 bits : l'octet entier
+    non: 1, et: 1, ou: 1, xor: 1, nand: 1, nor: 1, xnor: 1, comparateur: 1,
+    bascule: 3,                      // mémoire 1 bit | set précédent 1 bit
+    compteur: 31,                    // valeur 4 bits | entrée précédente 1 bit
+    lampe: 0,                        // allumée ou non : c'est l'id (LAMPE_ALLUMEE)
+    tapis: 1, ascenseur: 1, alarme: 1,
+    presence: 1, lumiere: 1, journuit: 1, meteo: 1, horloge: 1, eau: 1,
+    eolienne: 15, hydraulique: 15, thermique: 15, batterie: 15,   // puissance / niveau 0..15
+    distributeur: 1, commande: 1,    // dernier signal vu (front montant)
+    piston: 15,                      // orientation 3 bits | sorti 1 bit
+    'tete-piston': 0,
+  };
+  BLOCKS.forEach(function (d) {
+    if (!d || d.etatMax !== undefined) return;
+    var m = 0;
+    if (d.forme && ETAT_MAX_FORME[d.forme] !== undefined) m = ETAT_MAX_FORME[d.forme];
+    else if (d.circuit) m = ETAT_MAX_CIRCUIT[d.circuit.type];   // type absent de la table : indéfini, le test le signale
+    /* Portes et trappes : orientation et ouverture restent dans l'id (10 ids,
+       décision L40-bis) ; seul le bit 0 mémorise le dernier signal vu par les
+       circuits (SPEC-MECA-006, circuits.js). */
+    else if (d.porte || d.trappe) m = 1;
+    else if (d.id === B.FEU) m = 31;   // âge en pas de simulation (< MC.Feu.AGE_MAX = 30)
+    d.etatMax = m;
+  });
+  function etatMaxDe(id) { var d = BLOCKS[id]; return (d && !isItem(id) && d.etatMax) || 0; }
+
   MC.Core = {
     VERSION_JEU: VERSION_JEU, VERSION_GENERATION: VERSION_GENERATION,
     CHUNK_X: CHUNK_X, CHUNK_Z: CHUNK_Z, WORLD_H: WORLD_H, SEA_LEVEL: SEA_LEVEL,
     idx: idx, B: B, I: I, BLOCKS: BLOCKS, ITEMS: ITEMS, WHEAT_STAGES: WHEAT_STAGES,
     FIRST_ITEM: FIRST_ITEM, ANCIEN_FIRST_ITEM: ANCIEN_FIRST_ITEM, PLAGES_IDS: PLAGES_IDS,
+    etatMaxDe: etatMaxDe,
     DECALAGE_OBJETS_V1: DECALAGE_OBJETS_V1, isBlock: isBlock, isItem: isItem,
     def: def, nameOf: nameOf, maxStack: maxStack, passOf: passOf,
     lightOf: lightOf, lampeDe: lampeDe, durabilityOf: durabilityOf, TIER_DURABILITY: TIER_DURABILITY,
