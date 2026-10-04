@@ -345,7 +345,15 @@
        qu'un worker, qui n'a ni l'un ni l'autre, peut calculer seul à partir
        de la seule graine. `genererBrut` (public, transférable) et
        `generateChunk` (thread principal, chunk complet) s'appuient dessus. */
-    function genererBrutInterne(cx, cz) {
+    /* Génération par tranches (serveur : file de chunks budgétée par tic) : la
+       MÊME génération que `genererBrutInterne`, découpée entre colonnes. Les
+       colonnes s'écrivent dans l'ordre d'origine (x puis z) dans un tampon
+       propre au chunk, puis les arbres, les vagues, les donjons, les lieux et
+       les routes en une étape finale : le chunk obtenu est identique, octet
+       pour octet, quelle que soit la découpe. `avancer(echeance, horloge)`
+       traite des colonnes tant que `horloge() < echeance` (au moins une), puis
+       l'étape finale ; rend true quand le chunk brut est prêt (`resultat()`). */
+    function tacheGenerationBrute(cx, cz) {
       // 16 bits par bloc (SPEC-SAVE-017) : la génération elle-même ne pose
       // encore que des ids < 128, mais rien ne plafonne plus la suite.
       var blocks = new Uint16Array(CX * WH * CZ);
@@ -363,7 +371,7 @@
          profondeur. Le mailleur en tire les ondulations. */
       var eauNature = new Uint8Array(CX * CZ), eauFlux = new Int8Array(CX * CZ * 2), eauProf = new Uint8Array(CX * CZ);
 
-      for (var x = 0; x < CX; x++) for (var z = 0; z < CZ; z++) {
+      function colonne(x, z) {
         var wx = cx * CX + x, wz = cz * CZ + z;
         var ech = Bio.echantillon(wx, wz);
         var h = Math.max(1, Math.min(WH - 14, ech.h));
@@ -419,14 +427,14 @@
         }
         // lave du cratère
         for (var yl = h + 1; yl <= ech.lave; yl++) blocks[idx(x, yl, z)] = B.LAVA;
-        if (ech.lave) continue;
-        if (fondRavin) continue;
+        if (ech.lave) return;
+        if (fondRavin) return;
 
         if (bio.marin || h < niveau) {
           fondMarin(blocks, x, z, wx, wz, h, bio, niveau);
-          continue;
+          return;
         }
-        if (beach) continue;
+        if (beach) return;
         // arbres : le tronc reste à 3 blocs du bord, la couronne tient dans le chunk
         var arbre = tirer(bioVege.arbres, N.hash2(wx * 7, wz * 13));
         var etroit = arbre && arbre.type === 'cactus';
@@ -435,7 +443,7 @@
           if (arbre.type !== 'cactus' || sf[0] === B.SAND || sf[0] === B.RED_SAND) {
             trees.push([x, h + 1, z, arbre.type]);
           }
-          continue;
+          return;
         }
         // buissons et prairies fleuries (SPEC-VENT-004), sur l'herbe seulement
         var cb = sf[0] === B.GRASS && Bio.couvertBas ? Bio.couvertBas(wx, wz, bioVege.id) : null;
@@ -444,9 +452,9 @@
           if (blocks[idx(x, h + 1, z)] === 0) blocks[idx(x, h + 1, z)] = fe;
           if (bt >= 2 && blocks[idx(x + 1, h + 1, z)] === 0 && blocks[idx(x + 1, h, z)] !== 0) blocks[idx(x + 1, h + 1, z)] = fe;
           if (bt >= 3 && blocks[idx(x, h + 2, z)] === 0) blocks[idx(x, h + 2, z)] = fe;
-          continue;
+          return;
         }
-        if (cb && cb.fleur && blocks[idx(x, h + 1, z)] === 0) { blocks[idx(x, h + 1, z)] = cb.fleur; continue; }
+        if (cb && cb.fleur && blocks[idx(x, h + 1, z)] === 0) { blocks[idx(x, h + 1, z)] = cb.fleur; return; }
         // végétation basse : un tirage indépendant de celui des arbres
         var plante = tirer(bioVege.plantes, N.hash2(wx * 29 + 3, wz * 23 - 11));
         if (plante && blocks[idx(x, h + 1, z)] === 0 && plantePousseSur(plante.id, sf[0])) {
@@ -454,62 +462,88 @@
         }
       }
 
-      function put(x, y, z, b, overwrite) {
-        if (x < 0 || x >= CX || z < 0 || z >= CZ || y < 0 || y >= WH) return;
-        var i = idx(x, y, z);
-        // un feuillage ne remplace que l'air ou une plante basse
-        if (overwrite || blocks[i] === 0 || (C.BLOCKS[blocks[i]] && C.BLOCKS[blocks[i]].plant)) {
-          blocks[i] = b;
-        }
-      }
-      for (var t = 0; t < trees.length; t++) {
-        poserArbre(put, trees[t][0], trees[t][1], trees[t][2], trees[t][3]);
-      }
-
-      /* Vagues de rivage : là où la mer est peu profonde, le sens des vagues est
-         celui où le fond remonte (vers la plage), d'après les colonnes voisines. */
-      if (MC.Eau) {
-        for (var ex = 0; ex < CX; ex++) for (var ez = 0; ez < CZ; ez++) {
-          var ec = ez * CX + ex, en = eauNature[ec];
-          if ((en !== MC.Eau.TYPES.mer && en !== MC.Eau.TYPES.ocean && en !== MC.Eau.TYPES.lac) || eauProf[ec] > 8) continue;
-          function pr(a, b) {
-            a = Math.max(0, Math.min(CX - 1, a)); b = Math.max(0, Math.min(CZ - 1, b));
-            var k = b * CX + a;
-            return eauNature[k] ? eauProf[k] : 0;                // la terre : profondeur nulle
+      function finir() {
+        function put(x, y, z, b, overwrite) {
+          if (x < 0 || x >= CX || z < 0 || z >= CZ || y < 0 || y >= WH) return;
+          var i = idx(x, y, z);
+          // un feuillage ne remplace que l'air ou une plante basse
+          if (overwrite || blocks[i] === 0 || (C.BLOCKS[blocks[i]] && C.BLOCKS[blocks[i]].plant)) {
+            blocks[i] = b;
           }
-          // pente du fond sur quatre colonnes de part et d'autre : les hauts-fonds plats trouvent aussi leur rivage
-          var gx = 0, gz = 0;
-          for (var rr = 1; rr <= 4; rr++) { gx += (pr(ex + rr, ez) - pr(ex - rr, ez)) / rr; gz += (pr(ex, ez + rr) - pr(ex, ez - rr)) / rr; }
-          var gn = Math.hypot(gx, gz);
-          if (gn > 0) { eauFlux[ec * 2] = Math.round(-gx / gn * 127); eauFlux[ec * 2 + 1] = Math.round(-gz / gn * 127); }
         }
+        for (var t = 0; t < trees.length; t++) {
+          poserArbre(put, trees[t][0], trees[t][1], trees[t][2], trees[t][3]);
+        }
+
+        /* Vagues de rivage : là où la mer est peu profonde, le sens des vagues est
+           celui où le fond remonte (vers la plage), d'après les colonnes voisines. */
+        if (MC.Eau) {
+          for (var ex = 0; ex < CX; ex++) for (var ez = 0; ez < CZ; ez++) {
+            var ec = ez * CX + ex, en = eauNature[ec];
+            if ((en !== MC.Eau.TYPES.mer && en !== MC.Eau.TYPES.ocean && en !== MC.Eau.TYPES.lac) || eauProf[ec] > 8) continue;
+            function pr(a, b) {
+              a = Math.max(0, Math.min(CX - 1, a)); b = Math.max(0, Math.min(CZ - 1, b));
+              var k = b * CX + a;
+              return eauNature[k] ? eauProf[k] : 0;                // la terre : profondeur nulle
+            }
+            // pente du fond sur quatre colonnes de part et d'autre : les hauts-fonds plats trouvent aussi leur rivage
+            var gx = 0, gz = 0;
+            for (var rr = 1; rr <= 4; rr++) { gx += (pr(ex + rr, ez) - pr(ex - rr, ez)) / rr; gz += (pr(ex, ez + rr) - pr(ex, ez - rr)) / rr; }
+            var gn = Math.hypot(gx, gz);
+            if (gn > 0) { eauFlux[ec * 2] = Math.round(-gx / gn * 127); eauFlux[ec * 2 + 1] = Math.round(-gz / gn * 127); }
+          }
+        }
+
+        // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
+        donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
+          if (by <= 0 || by >= WH) return;                  // le socle reste intact
+          blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+        });
+        // villes, villages et maisons : terrain nivelé, rues, bâtiments
+        // SPEC-CONSTR-003 : un 5e argument optionnel porte l'état du bloc
+        // (orientation d'un escalier de toiture, moitié d'une dalle de
+        // faîtage…), posé dans le même tampon que les blocs générés — copié à
+        // la volée (aucun autre contenu de génération n'en a besoin encore).
+        if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id, etat) {
+          if (by <= 0 || by >= WH) return;
+          blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+          if (etat) {
+            if (etats === ETATS_VIDE) etats = new Uint8Array(ETATS_VIDE);
+            etats[idx(bx - cx * CX, by, bz - cz * CZ)] = etat;
+          }
+        });
+        // routes de commerce et de tourisme entre les lieux
+        if (routes) routes.appliquer(cx, cz, function (bx, by, bz, id) {
+          if (by <= 0 || by >= WH) return;
+          blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+        });
+
       }
 
-      // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
-      donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
-        if (by <= 0 || by >= WH) return;                  // le socle reste intact
-        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
-      });
-      // villes, villages et maisons : terrain nivelé, rues, bâtiments
-      // SPEC-CONSTR-003 : un 5e argument optionnel porte l'état du bloc
-      // (orientation d'un escalier de toiture, moitié d'une dalle de
-      // faîtage…), posé dans le même tampon que les blocs générés — copié à
-      // la volée (aucun autre contenu de génération n'en a besoin encore).
-      if (habitats) habitats.appliquer(cx, cz, function (bx, by, bz, id, etat) {
-        if (by <= 0 || by >= WH) return;
-        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
-        if (etat) {
-          if (etats === ETATS_VIDE) etats = new Uint8Array(ETATS_VIDE);
-          etats[idx(bx - cx * CX, by, bz - cz * CZ)] = etat;
-        }
-      });
-      // routes de commerce et de tourisme entre les lieux
-      if (routes) routes.appliquer(cx, cz, function (bx, by, bz, id) {
-        if (by <= 0 || by >= WH) return;
-        blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
-      });
-
-      return { blocks: blocks, etats: etats, eau: { nature: eauNature, flux: eauFlux, prof: eauProf } };
+      var col = 0, fini = false;
+      return {
+        cx: cx, cz: cz,
+        avancer: function (echeance, horloge) {
+          if (fini) return true;
+          while (col < CX * CZ) {
+            colonne((col / CZ) | 0, col % CZ);
+            col++;
+            if (echeance !== undefined && horloge() >= echeance) return false;
+          }
+          finir();
+          fini = true;
+          return true;
+        },
+        resultat: function () {
+          return fini ? { blocks: blocks, etats: etats === ETATS_VIDE ? null : etats, eau: { nature: eauNature, flux: eauFlux, prof: eauProf } } : null;
+        },
+        brut: function () { return { blocks: blocks, etats: etats, eau: { nature: eauNature, flux: eauFlux, prof: eauProf } }; },
+      };
+    }
+    function genererBrutInterne(cx, cz) {
+      var t = tacheGenerationBrute(cx, cz);
+      t.avancer();
+      return t.brut();
     }
 
     /* SPEC-PERF-004 : chunk brut, transférable (etats normalisé à `null` si
@@ -525,24 +559,40 @@
        pour le chunk (cx, cz) : factorise les deux boucles qu'un chunk généré
        localement (`generateChunk`) et un chunk reçu d'un worker
        (`integrerChunk`) doivent toutes deux traverser. */
+    /* Index facultatif des modifications par chunk (le serveur en tient un : voir
+       `definirIndexOverrides`) : `clesDuChunk(cx, cz, 'blocs'|'etats')` rend les
+       clés « x,y,z » de ce chunk (ou rien). Sans lui, chaque chunk parcourait
+       TOUTES les modifications du monde — 10⁵ blocs modifiés coûtaient des
+       dizaines de millisecondes par chunk généré. Même résultat : une clé par
+       position, appliquée avec la même valeur. */
+    var clesDuChunk = null;
+    function definirIndexOverrides(fn) { clesDuChunk = typeof fn === 'function' ? fn : null; }
     function appliquerOverridesSur(cx, cz, blocks, etats) {
-      overrides.forEach(function (id, k) {
+      function bloc(id, k) {
         var p = k.split(',');
         var ox = +p[0], oy = +p[1], oz = +p[2];
         if (Math.floor(ox / CX) === cx && Math.floor(oz / CZ) === cz) {
           blocks[idx(ox - cx * CX, oy, oz - cz * CZ)] = id;
         }
-      });
+      }
       // et les états qui allaient avec (orientation, niveau…) — on ne clone
       // le tampon partagé que si ce chunk en a effectivement besoin
-      etatsOverrides.forEach(function (etat, k) {
+      function etat(e, k) {
         var p = k.split(',');
         var ox = +p[0], oy = +p[1], oz = +p[2];
         if (Math.floor(ox / CX) === cx && Math.floor(oz / CZ) === cz) {
           if (etats === ETATS_VIDE) etats = new Uint8Array(ETATS_VIDE);
-          etats[idx(ox - cx * CX, oy, oz - cz * CZ)] = etat;
+          etats[idx(ox - cx * CX, oy, oz - cz * CZ)] = e;
         }
-      });
+      }
+      if (clesDuChunk) {
+        var kb = clesDuChunk(cx, cz, 'blocs'), ke = clesDuChunk(cx, cz, 'etats');
+        if (kb) kb.forEach(function (k) { if (overrides.has(k)) bloc(overrides.get(k), k); });
+        if (ke) ke.forEach(function (k) { if (etatsOverrides.has(k)) etat(etatsOverrides.get(k), k); });
+      } else {
+        overrides.forEach(bloc);
+        etatsOverrides.forEach(etat);
+      }
       return { blocks: blocks, etats: etats };
     }
 
@@ -1079,6 +1129,10 @@
       var c = chunks.get(cles[gelCurseur % cles.length]);
       gelCurseur++;
       if (!c) return;
+      /* La colonne se lit dans le tampon du chunk (le même que getBlock lirait) :
+         jusqu'à 256 × 128 appels de getBlock par seconde pesaient 30 à 90 ms
+         d'un seul tic serveur (mesuré, tools/mesure-tics.js). */
+      var bl = c.blocks;
       for (var col = 0; col < CX * CZ; col++) {
         var lx = col % CX, lz = (col / CX) | 0;
         var wx = c.cx * CX + lx, wz = c.cz * CZ + lz;
@@ -1086,8 +1140,8 @@
         if (MC.Eau && nat === MC.Eau.TYPES.lac) {
           if (Bio.climat(wx, wz).t >= GEL_CLIMAT_SEUIL) continue;
           var y = WH - 1;
-          while (y > 0 && getBlock(wx, y, wz) === 0) y--;
-          var id = getBlock(wx, y, wz);
+          while (y > 0 && bl[idx(lx, y, lz)] === 0) y--;
+          var id = bl[idx(lx, y, lz)];
           var k3 = key3(wx, y, wz);
           if (hiver) {
             if (id === B.WATER && getBlock(wx, y + 1, wz) === 0) {
@@ -1102,8 +1156,8 @@
           var cl = Bio.climat(wx, wz).t;
           if (cl < NEIGE_CLIMAT_MIN || cl > NEIGE_CLIMAT_MAX) continue;
           var y2 = WH - 1;
-          while (y2 > 0 && getBlock(wx, y2, wz) === 0) y2--;
-          var id2 = getBlock(wx, y2, wz);
+          while (y2 > 0 && bl[idx(lx, y2, lz)] === 0) y2--;
+          var id2 = bl[idx(lx, y2, lz)];
           var k3n = key3(wx, y2, wz);
           if (hiver) {
             if (id2 === B.GRASS) {
@@ -1338,7 +1392,8 @@
       lights: lights, circuits: circuits, tickCircuits: tickCircuits,
       rebuildRegistries: rebuildRegistries, reset: reset,
       hasSupport: hasSupport, dropUnsupported: dropUnsupported,
-      genererBrut: genererBrut, integrerChunk: integrerChunk,
+      genererBrut: genererBrut, integrerChunk: integrerChunk, tacheGenerationBrute: tacheGenerationBrute,
+      definirIndexOverrides: definirIndexOverrides,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,

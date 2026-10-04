@@ -1039,6 +1039,21 @@
 
     // ─── lecture ─────────────────────────────────────────────────────────────
     /* Les lieux dont l'emprise touche le rectangle [x0,x1] × [z0,z1]. */
+    /* Les régions que `lieuxDansZone` consulte pour cette zone, dans le même
+       ordre : [genre, rx, rz]. Sert à préparer les lieux d'une grande zone par
+       petites étapes (serveur : `lieuDeRegion` une région à la fois, sous un
+       budget de temps par tic) — les lieux construits sont les mêmes, en
+       cache, que ceux qu'un appel direct aurait construits d'un coup. */
+    function regionsDansZone(x0, z0, x1, z1) {
+      var res = [];
+      ORDRE_LIEUX.forEach(function (kind) {
+        var R = LIEUX[kind].region, P = PORTEE[kind] + 12;
+        var rx0 = Math.floor((x0 - P) / R), rx1 = Math.floor((x1 + P) / R);
+        var rz0 = Math.floor((z0 - P) / R), rz1 = Math.floor((z1 + P) / R);
+        for (var rx = rx0; rx <= rx1; rx++) for (var rz = rz0; rz <= rz1; rz++) res.push([kind, rx, rz]);
+      });
+      return res;
+    }
     function lieuxDansZone(x0, z0, x1, z1) {
       var res = [];
       ORDRE_LIEUX.forEach(function (kind) {
@@ -1143,7 +1158,7 @@
       return l;
     }
 
-    return { lieuDeRegion: lieuDeRegion, lieuxDansZone: lieuxDansZone, appliquer: appliquer, lieuA: lieuA,
+    return { lieuDeRegion: lieuDeRegion, lieuxDansZone: lieuxDansZone, regionsDansZone: regionsDansZone, appliquer: appliquer, lieuA: lieuA,
              batimentA: batimentA, lieuxProches: lieuxProches, surfaceEn: surfaceEn,
              batirPourEssai: batirPourEssai, batirBatimentPourEssai: batirBatimentPourEssai };
   }

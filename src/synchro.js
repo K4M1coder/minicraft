@@ -245,6 +245,16 @@
   /* Borne du rattrapage : au plus MAX_REJEUX_PAR_TIC rejeux par joueur et par
      tic (la file entière ; mesuré ≈ 5,5 ms pour 600 entrées à pied). */
   var MAX_REJEUX_PAR_TIC = MAX_EN_ATTENTE;
+  /* Un joueur dont le sol n'est pas encore généré côté serveur ATTEND : ses
+     entrées restent dans la file (rien n'est rejoué, il ne tombe pas dans le
+     vide) mais le temps réel écoulé lui est crédité, borné par la durée des
+     entrées qui attendent — à la reprise il rattrape exactement ce retard,
+     sans pouvoir en gagner davantage (même plafond que `avancerEntrees`). */
+  function patienterEntrees(file, budget, dtReel) {
+    var attente = 0;
+    for (var i = 0; i < file.length; i++) if (dureeValide(file[i].dt)) attente += file[i].dt;
+    return budget.crediter(dtReel, attente);
+  }
   function avancerEntrees(joueur, file, budget, dtReel, dernier) {
     var st = joueur.state, avance = 0, n = 0;
     /* Un joueur qui ne peut rien rejouer (mort) : ses entrées sont jetées et son
@@ -338,6 +348,6 @@
   MC.Synchro = { appliquerBloc: appliquerBloc, spawnValide: spawnValide, reprendreRetour: reprendreRetour, TOUCHES: TOUCHES, encoderTouches: encoderTouches, decoderTouches: decoderTouches,
                  creerPrediction: creerPrediction, rejouer: rejouer, reconcilier: reconcilier,
                  peutVoler: peutVoler, basculerVol: basculerVol, creerHorloge: creerHorloge, SAUT_HEURE: SAUT_HEURE,
-                 creerBudget: creerBudget, empilerEntree: empilerEntree, avancerEntrees: avancerEntrees, MAX_EN_ATTENTE: MAX_EN_ATTENTE, MAX_REJEUX_PAR_TIC: MAX_REJEUX_PAR_TIC, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
+                 creerBudget: creerBudget, empilerEntree: empilerEntree, avancerEntrees: avancerEntrees, patienterEntrees: patienterEntrees, MAX_EN_ATTENTE: MAX_EN_ATTENTE, MAX_REJEUX_PAR_TIC: MAX_REJEUX_PAR_TIC, etatJoueur: etatJoueur, ajusterMonture: ajusterMonture, appliquerStats: appliquerStats,
                  DT_MAX: DT_MAX, RESERVE: RESERVE, arrondi: arrondi };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

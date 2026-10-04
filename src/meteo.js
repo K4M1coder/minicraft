@@ -239,30 +239,52 @@
        l'instant d'appel — seule la dynamique (position, force) dépend de
        `temps`. */
     var genesesCyclones = new Map();
-    function genesesEpoch(e) {
-      var l = genesesCyclones.get(e);
-      if (l) return l;
-      l = [];
-      for (var cx = -CYCL_PORTEE; cx <= CYCL_PORTEE; cx++) for (var cz = -CYCL_PORTEE; cz <= CYCL_PORTEE; cz++) {
-        var base = e * 1000003 + cx * 9176 + cz * 6971;
-        var roll = N.hash3(cx, cz, e * 7 + 13);
-        var centreX = cx * CYCL_REGION + CYCL_REGION / 2, centreZ = cz * CYCL_REGION + CYCL_REGION / 2;
-        if (roll >= CYCL_PROB || !estMerChaude(centreX, centreZ)) continue;
-        var tBirth = e * CYCL_EPOCH + N.hash3(cx, cz, e * 7 + 91) * CYCL_EPOCH;
-        l.push({
-          id: 'cy' + base,
-          tBirth: tBirth,
-          vie: CYCL_VIE_MIN + N.hash3(cx, cz, e * 7 + 17) * (CYCL_VIE_MAX - CYCL_VIE_MIN),
-          x0: centreX + (N.hash3(cx, cz, e * 7 + 23) - 0.5) * CYCL_REGION * 0.6,
-          z0: centreZ + (N.hash3(cx, cz, e * 7 + 29) - 0.5) * CYCL_REGION * 0.6,
-          forcePic: 0.6 + N.hash3(cx, cz, e * 7 + 5) * 0.4,
-          sens: N.hash3(cx, cz, e * 7 + 3) < 0.5 ? 1 : -1,
-          rayonMax: CYCL_RAYON_MIN + N.hash3(cx, cz, e * 7 + 41) * (CYCL_RAYON_MAX - CYCL_RAYON_MIN),
-          oeilFrac: 0.12 + N.hash3(cx, cz, e * 7 + 47) * 0.08,
-        });
+    var CYCL_CELLULES = (2 * CYCL_PORTEE + 1) * (2 * CYCL_PORTEE + 1);
+    /* Une cellule (cx, cz) de la fenêtre `e` : sa naissance éventuelle, ajoutée à `l`.
+       Chaque cellule interroge le relief (mer chaude ?) : la fenêtre entière coûte
+       plus de 100 ms — d'où `preparerGenesesCyclones`, la même boucle par tranches. */
+    function celluleCyclone(e, i, l) {
+      var cx = -CYCL_PORTEE + Math.floor(i / (2 * CYCL_PORTEE + 1)), cz = -CYCL_PORTEE + i % (2 * CYCL_PORTEE + 1);
+      var base = e * 1000003 + cx * 9176 + cz * 6971;
+      var roll = N.hash3(cx, cz, e * 7 + 13);
+      var centreX = cx * CYCL_REGION + CYCL_REGION / 2, centreZ = cz * CYCL_REGION + CYCL_REGION / 2;
+      if (roll >= CYCL_PROB || !estMerChaude(centreX, centreZ)) return;
+      var tBirth = e * CYCL_EPOCH + N.hash3(cx, cz, e * 7 + 91) * CYCL_EPOCH;
+      l.push({
+        id: 'cy' + base,
+        tBirth: tBirth,
+        vie: CYCL_VIE_MIN + N.hash3(cx, cz, e * 7 + 17) * (CYCL_VIE_MAX - CYCL_VIE_MIN),
+        x0: centreX + (N.hash3(cx, cz, e * 7 + 23) - 0.5) * CYCL_REGION * 0.6,
+        z0: centreZ + (N.hash3(cx, cz, e * 7 + 29) - 0.5) * CYCL_REGION * 0.6,
+        forcePic: 0.6 + N.hash3(cx, cz, e * 7 + 5) * 0.4,
+        sens: N.hash3(cx, cz, e * 7 + 3) < 0.5 ? 1 : -1,
+        rayonMax: CYCL_RAYON_MIN + N.hash3(cx, cz, e * 7 + 41) * (CYCL_RAYON_MAX - CYCL_RAYON_MIN),
+        oeilFrac: 0.12 + N.hash3(cx, cz, e * 7 + 47) * 0.08,
+      });
+    }
+    var genesesEnCours = new Map();      // e -> { i, l } : fenêtre préparée en partie
+    function preparerGenesesCyclones(e, echeance, horloge) {
+      if (genesesCyclones.has(e)) return true;
+      var p = genesesEnCours.get(e) || { i: 0, l: [] };
+      while (p.i < CYCL_CELLULES) {
+        celluleCyclone(e, p.i, p.l);
+        p.i++;
+        if (echeance !== undefined && p.i < CYCL_CELLULES && horloge() >= echeance) { genesesEnCours.set(e, p); return false; }
       }
-      genesesCyclones.set(e, l);
-      return l;
+      genesesEnCours.delete(e);
+      genesesCyclones.set(e, p.l);
+      return true;
+    }
+    function genesesEpoch(e) {
+      if (!genesesCyclones.has(e)) preparerGenesesCyclones(e);
+      return genesesCyclones.get(e);
+    }
+    /* Les fenêtres de naissance que `cyclones(temps)` consulte, plus la suivante
+       (pour la préparer avant d'en avoir besoin). */
+    function epoquesCyclones(temps) {
+      var out = [], e0 = Math.floor((temps - CYCL_VIE_MAX) / CYCL_EPOCH), e1 = Math.floor(temps / CYCL_EPOCH);
+      for (var e = e0; e <= e1 + 1; e++) out.push(e);
+      return out;
     }
     function positionCyclone(g, temps) {
       var d0 = derive(g.tBirth), d1 = derive(temps);
@@ -585,7 +607,8 @@
              eclairs: eclairs, lieuEclair: lieuEclair,
              ventEn: ventEn, ventCouche: ventCouche, deriveCouche: deriveCouche,
              cyclones: cyclones, influenceCyclone: influenceCyclone,
-             tornades: tornades, pousseeTornade: pousseeTornade, brume: brume, deriveBrume: deriveBrume };
+             tornades: tornades, pousseeTornade: pousseeTornade,
+             preparerGenesesCyclones: preparerGenesesCyclones, epoquesCyclones: epoquesCyclones, brume: brume, deriveBrume: deriveBrume };
   }
 
   /* Ressenti d'une température, pour l'interface et la survie. */

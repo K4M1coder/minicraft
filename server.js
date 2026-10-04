@@ -28,7 +28,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 // ── chargement des modules de logique pure ───────────────────────────────────
 const MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
-                 'entities', 'player', 'synchro', 'daycycle', 'succes', 'save', 'saves', 'parties-fichier', 'modes',
+                 'entities', 'player', 'synchro', 'travaux-serveur', 'daycycle', 'succes', 'save', 'saves', 'parties-fichier', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres', 'recit-serveur'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
@@ -273,20 +273,33 @@ const entites = MC.createEntities(monde);
    OVERRIDES_DEMANDE coûte le nombre d'overrides DU CHUNK et non celui du monde
    entier (à 100 joueurs, des dizaines de demandes par seconde chacun). */
 const indexOverrides = new Map();
+/* Même index pour les états de bloc (SPEC-SAVE-017) : la génération d'un chunk n'y
+   relit que les siens (monde.definirIndexOverrides plus bas) au lieu de parcourir
+   toutes les modifications du monde à chaque chunk. */
+const indexEtatsOverrides = new Map();
 function cleChunkDe(k) { const p = k.split(','); return Math.floor(+p[0] / 16) + ',' + Math.floor(+p[2] / 16); }
-(function () {
-  const ov = monde.overrides, set0 = ov.set.bind(ov), del0 = ov.delete.bind(ov), clr0 = ov.clear.bind(ov);
+/* Une sauvegarde en cours de sérialisation (par tranches) doit apprendre toute
+   modification AVANT qu'elle n'ait lieu, pour écrire l'instantané de son début
+   (voir sauvegarderMondeAsync). `nom` : 'overrides' ou 'etats'. */
+let crochetModification = null;
+function indexerParChunk(ov, index, nom) {
+  const set0 = ov.set.bind(ov), del0 = ov.delete.bind(ov), clr0 = ov.clear.bind(ov);
   ov.set = function (k, v) {
-    if (!ov.has(k)) { const c = cleChunkDe(k); let e = indexOverrides.get(c); if (!e) indexOverrides.set(c, e = new Set()); e.add(k); }
+    if (crochetModification) crochetModification(nom, k);
+    if (!ov.has(k)) { const c = cleChunkDe(k); let e = index.get(c); if (!e) index.set(c, e = new Set()); e.add(k); }
     return set0(k, v) && ov;
   };
   ov.delete = function (k) {
-    if (ov.has(k)) { const c = cleChunkDe(k), e = indexOverrides.get(c); if (e) { e.delete(k); if (!e.size) indexOverrides.delete(c); } }
+    if (crochetModification) crochetModification(nom, k);
+    if (ov.has(k)) { const c = cleChunkDe(k), e = index.get(c); if (e) { e.delete(k); if (!e.size) index.delete(c); } }
     return del0(k);
   };
-  ov.clear = function () { indexOverrides.clear(); return clr0(); };
-  ov.forEach((v, k) => { const c = cleChunkDe(k); let e = indexOverrides.get(c); if (!e) indexOverrides.set(c, e = new Set()); e.add(k); });
-})();
+  ov.clear = function () { if (crochetModification) crochetModification(nom, null); index.clear(); return clr0(); };
+  ov.forEach((v, k) => { const c = cleChunkDe(k); let e = index.get(c); if (!e) index.set(c, e = new Set()); e.add(k); });
+}
+indexerParChunk(monde.overrides, indexOverrides, 'overrides');
+if (monde.etatsOverrides) indexerParChunk(monde.etatsOverrides, indexEtatsOverrides, 'etats');
+monde.definirIndexOverrides((cx, cz, quoi) => (quoi === 'etats' ? indexEtatsOverrides : indexOverrides).get(cx + ',' + cz));
 const chat = MC.Chat.creer({ max: 120 });
 // SPEC-FACTION-006 à 013 : factions PNJ (royaumes, guildes marchandes, ordres,
 // bandits, cultes) et factions de joueurs — le serveur fait foi sur les deux.
@@ -420,14 +433,21 @@ const PURGE_ADMIN_OPTS = {
    format est délibérément indépendant de MC.Save (pensé pour UN joueur local) :
    ici il n'y a ni joueur ni inventaire à sauver, seulement le monde partagé
    et l'état d'administration (rôles, listes, invitations, journal). */
-function etatMonde() {
-  const overrides = [];
-  monde.overrides.forEach((id, k) => { const p = k.split(','); overrides.push([+p[0], +p[1], +p[2], id]); });
-  // États de bloc (SPEC-SAVE-017) : à part des overrides — poser un état ne
-  // pose pas forcément un bloc, le coupler aux overrides en perdrait au chargement.
-  const etats = [];
-  if (monde.etatsOverrides) {
-    monde.etatsOverrides.forEach((etat, k) => { const p = k.split(','); etats.push([+p[0], +p[1], +p[2], etat]); });
+/* `sansBlocs` : les deux grandes listes (blocs modifiés, états) sont remplacées par
+   une marque (MC.TravauxServeur.MARQUE + nom), à leur place dans l'ordre des clés :
+   la sauvegarde périodique les sérialise ensuite par tranches (sauvegarderMondeAsync). */
+function etatMonde(sansBlocs) {
+  let overrides = [], etats = [];
+  if (sansBlocs) {
+    overrides = MC.TravauxServeur.MARQUE + 'overrides';
+    etats = MC.TravauxServeur.MARQUE + 'etats';
+  } else {
+    monde.overrides.forEach((id, k) => { const p = k.split(','); overrides.push([+p[0], +p[1], +p[2], id]); });
+    // États de bloc (SPEC-SAVE-017) : à part des overrides — poser un état ne
+    // pose pas forcément un bloc, le coupler aux overrides en perdrait au chargement.
+    if (monde.etatsOverrides) {
+      monde.etatsOverrides.forEach((etat, k) => { const p = k.split(','); etats.push([+p[0], +p[1], +p[2], etat]); });
+    }
   }
   const crops = [];
   monde.crops.forEach(c => crops.push([c.x, c.y, c.z, +c.t.toFixed(2)]));
@@ -529,9 +549,10 @@ function appliquerEtatPersonnage(js, etat) {
   if (fini(etat.hp) && etat.hp > 0) {
     if (fini(etat.x) && fini(etat.y) && fini(etat.z) && Math.abs(etat.x) < 1e7 && Math.abs(etat.z) < 1e7 && etat.y >= -64 && etat.y < 400) {
       st.pos.x = etat.x; st.pos.y = etat.y; st.pos.z = etat.z;
-      for (let cx = -2; cx <= 2; cx++) for (let cz = -2; cz <= 2; cz++) {
-        monde.getChunk(Math.floor(etat.x / 16) + cx, Math.floor(etat.z / 16) + cz, true);
-      }
+      /* Son terrain n'est PAS généré ici (25 chunks d'un coup : jusqu'à une seconde
+         de boucle bloquée avant même BIENVENUE) : la file de chunks du tic le génère
+         par tranches, le sol sous ses pieds d'abord, et ses entrées attendent ce sol
+         (voir solPret dans la boucle). */
     }
     if (fini(etat.yaw)) st.yaw = etat.yaw;
     if (fini(etat.pitch)) st.pitch = Math.max(-1.6, Math.min(1.6, etat.pitch));
@@ -699,12 +720,31 @@ let derniereEmpreinte = null;
 let derniereHeureSauvee = null;
 let nbEcritures = 0;                   // écritures réussies depuis le démarrage (« /sauver » compare avant/après)
 let sauvegardeRedemandee = null;       // raison d'une sauvegarde événementielle demandée pendant une écriture en vol
-function empreinteEtat(json) { return json.replace(/"heure":[-0-9.eE+]+/, '"heure":0'); }
-function apresSauvegarde(raison, ms, octets) {
-  journal('sauvegarde du monde (' + raison + ')' + (ms !== undefined ? ' — sérialisation ' + ms.toFixed(1) + ' ms, ' + Math.round(octets / 1024) + ' Ko' : ''));
+/* Empreinte de l'état sérialisé SANS l'heure du monde : condensat SHA-1 calculé
+   morceau par morceau (jamais une copie du texte entier). L'heure est la
+   troisième clé de la tête (`v`, `graine`, `heure`) : seule sa première
+   occurrence est neutralisée, comme le faisait le remplacement d'origine. */
+function empreinteMorceaux(morceaux) {
+  const h = crypto.createHash('sha1');
+  morceaux.forEach((m, i) => h.update(i === 0 ? m.replace(/"heure":[-0-9.eE+]+/, '"heure":0') : m));
+  return h.digest('hex');
+}
+function apresSauvegarde(raison, ms, octets, detail) {
+  journal('sauvegarde du monde (' + raison + ')' + (ms !== undefined ? ' — sérialisation ' + ms.toFixed(1) + ' ms, ' + Math.round(octets / 1024) + ' Ko' + (detail || '') : ''));
   if (partieActive) MC.Saves.majMeta(stockageParties, partieActive.id, { duree: Math.round(dureeJeu) });
 }
 let dureeJeu = 0;                      // secondes de jeu réellement écoulées (hors pause, avec un joueur), pour l'index des parties
+/* Sauvegarde périodique et événementielle (SPEC-SERVEUR-003/004, SPEC-ARCHI-012) :
+   écriture atomique (fichier temporaire puis renommage) et ASYNCHRONE, et — depuis
+   la mesure des tics (tools/mesure-tics.js) — sérialisation par TRANCHES : la tête
+   (joueurs, conteneurs, politique… quelques Ko à quelques centaines de Ko) d'un
+   coup, puis les blocs modifiés et leurs états par tranches de
+   BUDGETS.TRANCHE_SAUVEGARDE_MS, entre deux tics (setImmediate). Le texte écrit
+   est celui de l'état à l'instant où la sauvegarde COMMENCE (instantané : toute
+   modification ultérieure d'un bloc est annoncée au sérialiseur avant d'avoir
+   lieu, voir crochetModification) et il est identique, octet pour octet, à
+   JSON.stringify(etatMonde()) — la sauvegarde synchrone de l'arrêt, inchangée. */
+let serialisationEnCours = null;
 function sauvegarderMondeAsync(raison, evenement) {
   if (!CONF.mondeFichier || sauvegardeArretee || ecritureMondeInterdite) return;
   /* La cible est figée ICI : `/api/parties/supprimer` peut mettre CONF.mondeFichier
@@ -716,39 +756,92 @@ function sauvegarderMondeAsync(raison, evenement) {
     if (evenement) sauvegardeRedemandee = raison;
     return;
   }
-  let data;
+  let ser;
   const t0 = process.hrtime.bigint();
-  try { data = JSON.stringify(etatMonde()); }
-  catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
-  const msSerialisation = Number(process.hrtime.bigint() - t0) / 1e6;     // SPEC-ARCHI-012 : banc tests/bench-sauvegarde.js
-  const emp = empreinteEtat(data);
-  if (derniereEmpreinte !== null && emp === derniereEmpreinte && (!evenement || heure === derniereHeureSauvee)) {
-    journal('sauvegarde omise (' + raison + ') : rien n a change depuis la précédente');
-    return;
-  }
+  const ecoule = () => Number(process.hrtime.bigint() - t0) / 1e6;
+  try {
+    ser = MC.TravauxServeur.creerSerialiseur(etatMonde(true), [
+      { nom: 'overrides', map: monde.overrides },
+      { nom: 'etats', map: monde.etatsOverrides || new Map() },
+    ]);
+  } catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
+  let msMax = ecoule(), msTotal = msMax, tranches = 1;
+  const heureEcrite = heure;
   sauvegardeEnCours = true;
   let finAttente;
   sauvegardeEnCoursAttente = new Promise((resolve) => { finAttente = resolve; });
-  const heureEcrite = heure;
+  let emp = null, octets = 0;
   const fin = (ok) => {
+    if (serialisationEnCours === ser) { serialisationEnCours = null; crochetModification = null; }
     sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
     // la partie a été supprimée pendant l'écriture : ne rien laisser derrière
     if (ok && CONF.mondeFichier !== cible) { try { fs.unlinkSync(cible); } catch (e) { /* déjà absent */ } ok = false; }
-    if (ok) { nbEcritures++; derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite; apresSauvegarde(raison, msSerialisation, data.length); }
+    if (ok) {
+      nbEcritures++; derniereEmpreinte = emp; derniereHeureSauvee = heureEcrite;
+      apresSauvegarde(raison, msMax, octets, ' (' + tranches + ' tranche' + (tranches > 1 ? 's' : '') + ', ' + msTotal.toFixed(1) + ' ms au total)');
+    }
     if (sauvegardeRedemandee) { const r = sauvegardeRedemandee; sauvegardeRedemandee = null; sauvegarderMondeAsync(r, true); }
   };
-  try { fs.mkdirSync(path.dirname(cible), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
-  const ecrire = () => fs.writeFile(tmp, data, (err) => {
-    if (err) { journal('échec de la sauvegarde du monde (écriture) : ' + err.message); fin(false); return; }
-    fs.rename(tmp, cible, (err2) => {
-      if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); try { fs.unlinkSync(tmp); } catch (e) { /* rien */ } fin(false); return; }
-      fin(true);
+  serialisationEnCours = ser;
+  /* Instantané : une écriture de bloc (overrides/états) pendant la sérialisation
+     annonce d'abord la valeur qu'elle va remplacer ; un vidage complet (chargement
+     d'une autre partie) abandonne cette sauvegarde. */
+  crochetModification = (nom, k) => {
+    if (k === null) { ser.abandonnee = true; return; }
+    ser.avantModification(nom, k);
+  };
+  const ecrire = (morceaux) => {
+    try { fs.mkdirSync(path.dirname(cible), { recursive: true }); } catch (e) { /* remonté par l'écriture */ }
+    const flux = fs.createWriteStream(tmp);
+    let echoue = false;
+    flux.on('error', (err) => {
+      if (echoue) return;
+      echoue = true;
+      journal('échec de la sauvegarde du monde (écriture) : ' + err.message); try { fs.unlinkSync(tmp); } catch (e) { /* rien */ } fin(false);
     });
-  });
-  // MC_TEST_SAUVEGARDE_LENTE_MS : retarde l'écriture disque (tests de course avec /supprimer), jamais en exploitation
-  const lente = parseInt(process.env.MC_TEST_SAUVEGARDE_LENTE_MS, 10) || 0;
-  if (lente) setTimeout(ecrire, lente); else ecrire();
+    flux.on('finish', () => {
+      if (echoue) return;
+      fs.rename(tmp, cible, (err2) => {
+        if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); try { fs.unlinkSync(tmp); } catch (e) { /* rien */ } fin(false); return; }
+        fin(true);
+      });
+    });
+    morceaux.forEach(m => flux.write(m));
+    flux.end();
+  };
+  const tranche = () => {
+    // arrêt du processus (sauvegarde synchrone finale) ou partie vidée : cette sauvegarde n'écrit rien
+    if (sauvegardeArretee || ser.abandonnee) { fin(false); return; }
+    const t1 = process.hrtime.bigint();
+    let fini;
+    try { fini = ser.avancer(performance.now() + MC.TravauxServeur.BUDGETS.TRANCHE_SAUVEGARDE_MS, horlogeSauvegarde); }
+    catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); fin(false); return; }
+    let ms = Number(process.hrtime.bigint() - t1) / 1e6;
+    tranches++;
+    if (!fini) { msMax = Math.max(msMax, ms); msTotal += ms; setImmediate(tranche); return; }
+    // fin de la sérialisation : plus aucune modification à intercepter
+    serialisationEnCours = null; crochetModification = null;
+    const t2 = process.hrtime.bigint();
+    const morceaux = ser.morceaux();
+    emp = empreinteMorceaux(morceaux);
+    octets = morceaux.reduce((a, m) => a + m.length, 0);
+    ms += Number(process.hrtime.bigint() - t2) / 1e6;
+    msMax = Math.max(msMax, ms); msTotal += ms;
+    if (profilTics) profilTics.tache('sauvegarde ' + raison + ' (tranche la plus longue)', msMax);
+    if (derniereEmpreinte !== null && emp === derniereEmpreinte && (!evenement || heureEcrite === derniereHeureSauvee)) {
+      journal('sauvegarde omise (' + raison + ') : rien n a change depuis la précédente');
+      const r = sauvegardeRedemandee; sauvegardeRedemandee = null;
+      sauvegardeEnCours = false; sauvegardeEnCoursAttente = null; finAttente();
+      if (r) sauvegarderMondeAsync(r, true);
+      return;
+    }
+    // MC_TEST_SAUVEGARDE_LENTE_MS : retarde l'écriture disque (tests de course avec /supprimer), jamais en exploitation
+    const lente = parseInt(process.env.MC_TEST_SAUVEGARDE_LENTE_MS, 10) || 0;
+    if (lente) setTimeout(() => ecrire(morceaux), lente); else ecrire(morceaux);
+  };
+  setImmediate(tranche);
 }
+const horlogeSauvegarde = () => performance.now();
 
 /* Version synchrone (toujours atomique elle aussi, mêmes tmp+rename, mais
    dans SON PROPRE fichier temporaire — voir plus haut) : réservée à l'arrêt
@@ -1009,22 +1102,45 @@ function avancerCatastrophes() {
       if (catastrophesAppliquees.has(cle)) return;
       catastrophesAppliquees.add(cle);
       if (catastrophesAppliquees.size > 5000) catastrophesAppliquees.clear();
-      const entry = MC.Habitats.endommagerLieu(l, [{ x: evt.x, z: evt.z, rayon: evt.rayon, force: evt.force }],
-                                                CONF.graine, heure, evt.genre);
-      if (!entry || !entry.blocs) return;
-      const voisins = monde.habitats.lieuxProches(l.x, l.z, 3000).filter(v => v.id !== l.id && v.pnjs && v.pnjs.length);
-      if (voisins.length) MC.Habitats.migrerPopulation(l, voisins[0], entry.ampleur, CONF.graine);
-      const q = MC.Habitats.queteCatastrophe(l, entry);
-      if (q && !quetesCatastrophe.some(x => x.id === q.id)) {
-        quetesCatastrophe.push(q);
-        if (quetesCatastrophe.length > 40) quetesCatastrophe.shift();
-        const m = chat.systeme(l.nom + ' a été frappé par ' + (evt.genre === 'cyclone' ? 'un cyclone' : 'une tornade') +
-                                ' : une quête de secours est proposée (/quete lister).');
-        if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
-      }
+      catastrophesEnAttente.push({ l, evt });
     });
   });
   quetesCatastrophe = quetesCatastrophe.filter(q => MC.Habitats.queteActive(q, heure));
+}
+/* Le voisin le plus proche d'un lieu frappé (celui qui recueille ses habitants)
+   se cherche à 3000 blocs : des milliers de régions de lieux, bien plus que les
+   caches n'en gardent — plusieurs centaines de millisecondes d'un coup (mesuré).
+   La recherche se fait donc une région à la fois, dans le budget des tics
+   (prepCatastrophes), dans l'ordre exact de habitats.lieuxProches : même
+   voisin retenu (le plus proche ; à égalité, le premier rencontré), puis les
+   mêmes effets, appliqués quelques tics plus tard. */
+const RAYON_MIGRATION = 3000;
+const catastrophesEnAttente = [];
+function etapesCatastrophe(l, evt) {
+  const x0 = l.x - RAYON_MIGRATION, z0 = l.z - RAYON_MIGRATION, x1 = l.x + RAYON_MIGRATION, z1 = l.z + RAYON_MIGRATION;
+  let voisin = null, dVoisin = Infinity;
+  const etapes = monde.habitats.regionsDansZone(x0, z0, x1, z1).map(r => () => {
+    const v = monde.habitats.lieuDeRegion(r[0], r[1], r[2]);
+    if (!v || v.x + v.demi < x0 || v.x - v.demi > x1 || v.z + v.demi < z0 || v.z - v.demi > z1) return;
+    const d = Math.hypot(v.x - l.x, v.z - l.z);
+    if (d > RAYON_MIGRATION || v.id === l.id || !v.pnjs || !v.pnjs.length) return;
+    if (d < dVoisin) { dVoisin = d; voisin = v; }
+  });
+  etapes.push(() => {
+    const entry = MC.Habitats.endommagerLieu(l, [{ x: evt.x, z: evt.z, rayon: evt.rayon, force: evt.force }],
+                                              CONF.graine, heure, evt.genre);
+    if (!entry || !entry.blocs) return;
+    if (voisin) MC.Habitats.migrerPopulation(l, voisin, entry.ampleur, CONF.graine);
+    const q = MC.Habitats.queteCatastrophe(l, entry);
+    if (q && !quetesCatastrophe.some(x => x.id === q.id)) {
+      quetesCatastrophe.push(q);
+      if (quetesCatastrophe.length > 40) quetesCatastrophe.shift();
+      const m = chat.systeme(l.nom + ' a été frappé par ' + (evt.genre === 'cyclone' ? 'un cyclone' : 'une tornade') +
+                              ' : une quête de secours est proposée (/quete lister).');
+      if (m) diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+    }
+  });
+  return etapes;
 }
 /* SPEC-ARCHI-022 : les tornades POUSSENT et ARRACHENT côté serveur — seul le
    serveur modifie vitesse et blocs ; le client ne fait que le rendu. Même
@@ -1403,6 +1519,48 @@ function sauvegarderAuDepart() {
 /* Le journal historique du serveur : une ligne `[HH:MM:SS] texte` — désormais
    MC.Journal, domaine SERVEUR, niveau info (même sortie, plus le fichier). */
 function journal(txt) { logServeur.info(txt); }
+
+/* MC_TEST_PROFIL_TICS=<fichier> : profil des tics du serveur, réservé aux bancs et aux
+   suites d'intégration (tools/mesure-tics.js, tests/integration-archi-tics.js), jamais
+   en exploitation. Relève la durée de chaque tic et de ses sections (génération de
+   chunks, entretien du monde, entités, ETAT…), toute autre tâche longue de la boucle
+   d'évènements (traitement d'un message, sérialisation d'une sauvegarde) et le retard
+   de la boucle (perf_hooks.monitorEventLoopDelay), puis l'écrit toutes les 500 ms
+   dans le fichier (JSON). Désactivé : aucun coût (un `if` par section). */
+const profilTics = (function () {
+  const fichier = process.env.MC_TEST_PROFIL_TICS;
+  if (!fichier) return null;
+  setImmediate(() => journal('ATTENTION : MC_TEST_PROFIL_TICS actif — durée de chaque tic relevée dans ' + fichier + ' (réglage de test, jamais en exploitation)'));
+  const { performance: perf, monitorEventLoopDelay } = require('perf_hooks');
+  const h = monitorEventLoopDelay({ resolution: 5 });
+  h.enable();
+  const p = { tics: [], longs: [], taches: [], sections: null, t0: 0, marque: 0, chunks: 0 };
+  p.debutTic = () => { p.sections = {}; p.t0 = p.marque = perf.now(); };
+  // ferme la section en cours (depuis la marque précédente) sous ce nom
+  p.section = (nom) => { const n = perf.now(); p.sections[nom] = (p.sections[nom] || 0) + (n - p.marque); p.marque = n; };
+  p.finTic = (ecartMs) => {
+    const ms = perf.now() - p.t0;
+    if (p.tics.length < 200000) p.tics.push([Date.now(), +ms.toFixed(2), +ecartMs.toFixed(1)]);
+    if (ms > 10 && p.longs.length < 20000) {
+      const s = {};
+      Object.keys(p.sections).forEach(k => { if (p.sections[k] >= 0.5) s[k] = +p.sections[k].toFixed(1); });
+      p.longs.push({ t: Date.now(), ms: +ms.toFixed(1), sections: s });
+    }
+  };
+  // une tâche hors tic (message, sauvegarde…) : gardée si elle dure plus de 5 ms
+  p.tache = (nom, ms) => { if (ms > 5 && p.taches.length < 5000) p.taches.push({ t: Date.now(), nom, ms: +ms.toFixed(1) }); };
+  p.maintenant = () => perf.now();
+  const getChunkOrig = monde.getChunk;
+  monde.getChunk = function (cx, cz, create) { if (create && !monde.chunkDe(cx, cz)) p.chunks++; return getChunkOrig.apply(this, arguments); };
+  const ecrire = () => {
+    const boucle = { p50: h.percentile(50) / 1e6, p99: h.percentile(99) / 1e6, max: h.max / 1e6 };
+    try { fs.writeFileSync(fichier, JSON.stringify({ pid: process.pid, tics: p.tics, longs: p.longs, taches: p.taches, boucle, chunksGeneres: p.chunks })); } catch (e) { /* tant pis */ }
+  };
+  const t = setInterval(ecrire, 500);
+  if (t.unref) t.unref();
+  process.on('exit', ecrire);
+  return p;
+})();
 // SPEC-BANC-106 : filtre des erreurs remontées par les clients, partagé par toutes les connexions
 const filtreRemontees = J.filtreRemontee();
 
@@ -2375,7 +2533,8 @@ function surUpgrade(req, socket) {
       // QUE cette connexion fautive — jamais arrêter le processus ni couper
       // les autres clients déjà connectés.
       try {
-        traiter(c, NP.valider(msg));
+        if (profilTics) { const t0p = profilTics.maintenant(); traiter(c, NP.valider(msg)); profilTics.tache('message ' + msg.t, profilTics.maintenant() - t0p); }
+        else traiter(c, NP.valider(msg));
       } catch (e) {
         journal(`x exception en traitant un message de ${c.nom} (#${c.id}) : ${(e && e.stack) || e}`);
         fermer(c, 'exception de traitement');
@@ -2911,6 +3070,7 @@ function traiter(c, m) {
       }
       c.joueurs.forEach((js, j) => preparerRecit(js, j));     // avant BIENVENUE : le héros peut être déplacé sur sa place de village
       c.pos = c.joueurs[0].joueur.state.pos;
+      majChunksVoulus();                                // son terrain entre aussitôt dans la file de génération
       // SPEC-SERVEUR-009 : seul un voisinage borné des overrides accompagne
       // BIENVENUE — plus loin, le client les demande chunk par chunk au fur
       // et à mesure qu'il charge son terrain (case OVERRIDES_DEMANDE
@@ -4685,6 +4845,92 @@ let accSpawn = 0, rotationSpawn = 0, accDonjons = 0;
 const SPAWN_JOUEURS_PAR_TIC = 8;
 let accChunks = 1;         // premier passage immédiat
 
+/* ── travaux budgétés du tic : génération des chunks, préparation des lieux ──
+   Le serveur a besoin du terrain autour de chaque joueur (sol, créatures,
+   habitants) et des lieux (villages, villes, routes) jusqu'à RAYON_LIEUX pour
+   l'entretien du monde (politique, caravanes, catastrophes). Les produire d'un
+   coup bloquait la boucle (mesuré, tools/mesure-tics.js : 0,6 à 0,9 s à
+   l'arrivée d'un joueur, des tics de 100 à 600 ms en marchant) : ils le sont
+   désormais par petites tranches, sous un budget de temps par tic
+   (MC.TravauxServeur.BUDGETS), le sol sous un joueur avant tout le reste. */
+const TS = MC.TravauxServeur;
+const horlogeTic = () => performance.now();
+const fileChunks = TS.creerFileChunks(monde);
+const prepLieux = TS.creerPreparateur();
+const prepCatastrophes = TS.creerPreparateur();
+const RAYON_CHUNKS_JOUEUR = 3, RAYON_DECHARGE = 5;
+const RAYON_LIEUX = 1500;                // le plus grand rayon que consulte l'entretien du monde (avancerCatastrophes)
+const RAYON_VILLES_CARAVANES = 900;      // celui d'avancerCaravanes
+function centresChunks() {
+  const centres = [[Math.floor(SPAWN.x / 16), Math.floor(SPAWN.z / 16)]];
+  clients.forEach(c => {
+    if (c.rejoint && c.joueurs) c.joueurs.forEach(js => centres.push([Math.floor(js.joueur.state.pos.x / 16), Math.floor(js.joueur.state.pos.z / 16)]));
+  });
+  return centres;
+}
+function majChunksVoulus() { fileChunks.vouloir(monde.chunksVoulus(centresChunks(), RAYON_CHUNKS_JOUEUR)); }
+/* Les étapes qui mettent en cache tout ce que l'entretien du monde va lire : une
+   région de lieux à la fois (même ordre que habitats.lieuxDansZone), puis, une
+   route à la fois, les trajets des villes que les caravanes consultent. Les lieux
+   et les routes obtenus sont ceux qu'un appel direct aurait construits. */
+function etapesEntretien() {
+  const vues = new Set(), etapes = [];
+  /* Les naissances de cyclones d'une fenêtre de temps (150 ms d'un coup : le relief
+     de 225 cellules) — celles que l'entretien consulte, et la suivante, d'avance. */
+  if (monde.meteo && monde.meteo.preparerGenesesCyclones) {
+    monde.meteo.epoquesCyclones(heure).forEach(e => {
+      const etape = () => (monde.meteo.preparerGenesesCyclones(e, horlogeTic() + 2, horlogeTic) ? null : [etape]);
+      etapes.push(etape);
+    });
+  }
+  if (!monde.habitats || !monde.habitats.regionsDansZone) return etapes;
+  const positions = tousLesJoueurs().map(({ js }) => js.joueur.state.pos);
+  positions.forEach(p => {
+    monde.habitats.regionsDansZone(p.x - RAYON_LIEUX, p.z - RAYON_LIEUX, p.x + RAYON_LIEUX, p.z + RAYON_LIEUX).forEach(r => {
+      const k = r.join(',');
+      if (vues.has(k)) return;
+      vues.add(k);
+      etapes.push(() => { monde.habitats.lieuDeRegion(r[0], r[1], r[2]); });
+    });
+  });
+  if (monde.routes && monde.routes.connexionsDe && monde.routes.cheminEntre) {
+    etapes.push(() => {
+      const villes = [];
+      positions.forEach(p => monde.habitats.lieuxProches(p.x, p.z, RAYON_VILLES_CARAVANES).forEach(l => {
+        if ((l.kind === 'ville' || l.kind === 'megapole') && villes.indexOf(l) < 0) villes.push(l);
+      }));
+      return villes.map(v => () => monde.routes.connexionsDe(v).map(c2 => () => { monde.routes.cheminEntre(v, c2); }));
+    });
+  }
+  return etapes;
+}
+/* Une fois par cadence d'entretien : relance la préparation pour les positions du
+   moment ; vrai si tout est déjà prêt (le cas courant : tout est en cache), et
+   alors seulement l'entretien qui en dépend s'exécute à cette cadence. Sinon la
+   préparation continue dans le budget des tics suivants. */
+function entretienPret() {
+  if (prepLieux.actif) return false;
+  prepLieux.lancer(etapesEntretien());
+  return prepLieux.avancer(performance.now() + TS.BUDGETS.FOND_MS, horlogeTic);
+}
+/* Le sol sous un joueur : ses 3×3 chunks existent côté serveur. */
+function solPret(js) {
+  return fileChunks.manquants(TS.chunksDuSol(js.joueur.state.pos.x, js.joueur.state.pos.z)) === 0;
+}
+function travauxDuTic(joueurs) {
+  const urgents = [];
+  joueurs.forEach(({ js }) => TS.chunksDuSol(js.joueur.state.pos.x, js.joueur.state.pos.z).forEach(c => urgents.push(c)));
+  const urgence = fileChunks.manquants(urgents) > 0;
+  const echeance = performance.now() + (urgence ? TS.BUDGETS.URGENT_MS : TS.BUDGETS.FOND_MS);
+  fileChunks.travailler(urgents, echeance, horlogeTic);
+  if (profilTics) profilTics.section('chunks: generation');
+  if (prepLieux.actif && performance.now() < echeance) prepLieux.avancer(echeance, horlogeTic);
+  if (profilTics) profilTics.section('lieux: preparation');
+  if (!prepCatastrophes.actif && catastrophesEnAttente.length) { const c = catastrophesEnAttente.shift(); prepCatastrophes.lancer(etapesCatastrophe(c.l, c.evt)); }
+  if (prepCatastrophes.actif && performance.now() < echeance) prepCatastrophes.avancer(echeance, horlogeTic);
+  if (profilTics) profilTics.section('catastrophes: voisins');
+}
+
 // SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
 // coffre marqué dans monde.coffresPilles (posé par la section conteneurs,
 // jamais modifiée ici) — pas l'instant exact du pillage, mais borné à la
@@ -4737,6 +4983,7 @@ setInterval(() => {
   const dt = Math.min(dtReel, 0.25);
   dernier = now;
   const __t0 = MESURES_ACTIVES ? performance.now() : 0;
+  if (profilTics) profilTics.debutTic();
 
   heure += dt;
   if (clients.size > 0) dureeJeu += dt;
@@ -4747,6 +4994,7 @@ setInterval(() => {
   monde.tick(dt, 14, null, { temps: heure, circuits: false, eau: false,
     surBloc: noterBlocMonde });
   diffuserBlocsMonde();
+  if (profilTics) profilTics.section('monde.tick');
 
   // SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
   accPurge += dt;
@@ -4762,19 +5010,26 @@ setInterval(() => {
   accChunks += dt;
   if (accChunks >= 1) {
     accChunks = 0;
-    const centres = [[Math.floor(SPAWN.x / 16), Math.floor(SPAWN.z / 16)]];
-    clients.forEach(c => {
-      if (c.rejoint) centres.push([Math.floor(c.pos.x / 16), Math.floor(c.pos.z / 16)]);
-    });
-    monde.chunksVoulus(centres, 3).forEach(v => monde.getChunk(v[1], v[2], true));
-    monde.unloadLoin(centres, 5);
+    if (profilTics) profilTics.section('avant entretien');
+    // le terrain voulu autour des joueurs : généré par la file, tic après tic (travauxDuTic)
+    majChunksVoulus();
+    monde.unloadLoin(centresChunks(), RAYON_DECHARGE);
+    if (profilTics) profilTics.section('chunks: dechargement');
     peuplerLieux();
-    avancerPolitique();
-    diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
+    if (profilTics) profilTics.section('peuplerLieux');
+    const lieuxPrets = entretienPret();
+    if (profilTics) profilTics.section('lieux: preparation');
+    if (lieuxPrets) {
+      avancerPolitique();
+      diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
+    }
+    if (profilTics) profilTics.section('politique');
     avancerEconomie();
-    avancerCaravanes();
-    avancerCatastrophes();
+    if (lieuxPrets) avancerCaravanes();
+    if (profilTics) profilTics.section('economie+caravanes');
+    if (lieuxPrets) avancerCatastrophes();
     verifierSommeil();
+    if (profilTics) profilTics.section('catastrophes+sommeil');
     // B4 : propositions de duel caduques (silencieuses) et duels terminés
     // (SPEC-PVP-005) — les deux participants en sont avertis, s'ils sont
     // encore connectés.
@@ -4784,6 +5039,7 @@ setInterval(() => {
       if (jb) envoyer(jb.c, { t: NP.MSG.PVP, evt: 'duel_fin', contre: a });
     });
     regenererCoffresDonjon();
+    if (profilTics) profilTics.section('pvp+donjons');
   }
   // l'eau coule : le serveur, qui fait foi sur les blocs, diffuse chaque changement
   accEau += dt;
@@ -4837,6 +5093,7 @@ setInterval(() => {
     }));
   }
 
+  if (profilTics) profilTics.section('eau+circuits');
   /* B1 (étape 7) : les fourneaux posés cuisent à CHAQUE tic (SPEC-SYNC-016 —
      ils n'attendent pas qu'un joueur regarde), mais un CONTENEUR_MAJ n'est
      émis qu'à un rythme limité (≤ 2 Hz) et SEULEMENT s'il existe un abonné
@@ -4860,15 +5117,36 @@ setInterval(() => {
     });
   }
 
+  if (profilTics) profilTics.section('fourneaux');
+  const joueurs = tousLesJoueurs();
+  travauxDuTic(joueurs);
   /* Chaque joueur avance selon SES entrées, dans la limite du temps écoulé :
      c'est le serveur qui décide de la position et des statistiques. */
-  const joueurs = tousLesJoueurs();
   joueurs.forEach(({ js }) => {
     js.attaqueCd = Math.max(0, js.attaqueCd - dt);
     js.tirCd = Math.max(0, js.tirCd - dt);
     const st = js.joueur.state;
-    // SPEC-SYNC-004 : temps réel crédité, entrées invalides écartées (MC.Synchro.avancerEntrees)
-    const pas = SY.avancerEntrees(js.joueur, js.entrees, js.budget, dtReel, js.dernier);
+    /* Sans son sol côté serveur (arrivée loin du point d'apparition, terrain encore
+       en génération), le joueur ATTEND : ses entrées restent en file, le temps lui
+       est crédité (MC.Synchro.patienterEntrees) et il rattrape tout dès que le sol
+       existe — jamais de chute dans le vide. Attente bornée : au-delà de
+       ATTENTE_SOL_MAX_S, son sol est généré d'un coup. */
+    let pas;
+    if (!solPret(js)) {
+      js.attenteSol = (js.attenteSol || 0) + dtReel;
+      if (js.attenteSol > TS.BUDGETS.ATTENTE_SOL_MAX_S) {
+        TS.chunksDuSol(st.pos.x, st.pos.z).forEach(c => monde.getChunk(c[0], c[1], true));
+        journal('sol d un joueur généré d un coup après ' + js.attenteSol.toFixed(1) + ' s d attente');
+      }
+    }
+    if (solPret(js)) {
+      js.attenteSol = 0;
+      // SPEC-SYNC-004 : temps réel crédité, entrées invalides écartées (MC.Synchro.avancerEntrees)
+      pas = SY.avancerEntrees(js.joueur, js.entrees, js.budget, dtReel, js.dernier);
+    } else {
+      SY.patienterEntrees(js.entrees, js.budget, dtReel);
+      pas = { dernier: js.dernier, avance: 0 };
+    }
     js.dernier = pas.dernier;
     const avance = pas.avance;
     entretenirMonture(js, dt, avance);                    // P-VEH : engin détruit, mort, client muet
@@ -4894,6 +5172,7 @@ setInterval(() => {
     }
   });
 
+  if (profilTics) profilTics.section('joueurs');
   /* La foudre : mêmes éclairs, aux mêmes instants et aux mêmes lieux que
      chez les clients (la météo est une fonction de la graine et de l'heure) ;
      le serveur seul en tire les dégâts. */
@@ -4930,6 +5209,7 @@ setInterval(() => {
   // ARCHI-041 : le récit de chaque joueur évalue où il est et ce qu'il porte (temps de jeu : gelé en pause avec toute la boucle)
   if (regles.histoire) joueurs.forEach(({ c, j, js }) => sonderRecit(c, j, js, dt));
 
+  if (profilTics) profilTics.section('meteo+tornades+recit');
   liberSoutesDetruites();
   const etats = joueurs.map(x => x.js.joueur.state);
   const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
@@ -5017,6 +5297,7 @@ setInterval(() => {
     envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: pris > 0 ? pris : p.n });
   });
   entites.mergeItems();
+  if (profilTics) profilTics.section('entites');
 
   /* SPEC-ARCHI-034 : apparitions autour des joueurs, à tour de rôle (un seul
      joueur par tic d'apparition : la cadence totale ne dépend pas du nombre
@@ -5040,6 +5321,7 @@ setInterval(() => {
   }
   accDonjons += dt;
   if (accDonjons >= 0.25) { accDonjons = 0; surveillerDonjonsServeur(); }
+  if (profilTics) profilTics.section('apparitions+donjons');
 
   /* Diffusion d'état à cadence réduite : simuler à 20 Hz et n'envoyer qu'à
      10 Hz divise le trafic par deux sans que l'on voie la différence, les
@@ -5119,6 +5401,7 @@ setInterval(() => {
     }
   }
   if (MESURES_ACTIVES) enregistrerTic(performance.now() - __t0);
+  if (profilTics) { profilTics.section('etat'); profilTics.finTic(dtReel * 1000); }
 }, 4);
 
 // ── ouverture automatique du navigateur (SPEC-PACK-001) ─────────────────────

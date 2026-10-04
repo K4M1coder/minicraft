@@ -47,7 +47,9 @@
     // L40-bis, lot A : registre des champs porteurs d'ids (SPEC-SAVE-018) et ids de bloc inconnus (SPEC-SAVE-028)
     'spec-migration-ids',
     // L40-bis C (SPEC-SAVE-023, 024) : état borné par bloc, état 0 appliqué chez le client, audit de game.js
-    'spec-l40-reseau'];
+    'spec-l40-reseau',
+    // travaux du serveur sous budget par tic : génération par tranches, lieux, sauvegarde, attente du sol
+    'spec-travaux-serveur'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
   var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true };
 
