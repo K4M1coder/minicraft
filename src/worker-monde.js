@@ -13,7 +13,7 @@
   })();
   // ordre de src/world.js dans index.html (sous-ensemble) — voir
   // docs/vague-2/B3.md § 10 « pièges connus »
-  var MODULES = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs',
+  var MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs',
                  'donjons', 'habitats', 'routes', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits',
                  'lumiere', 'factions', 'inventory', 'daycycle', 'contrats-vague2', 'taches-chunks'];
   importScripts.apply(self, MODULES.map(function (m) { return m + '.js' + suffixe; }));

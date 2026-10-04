@@ -35,7 +35,7 @@ const C = { r: '\x1b[31m', g: '\x1b[32m', y: '\x1b[33m', d: '\x1b[2m', b: '\x1b[
 
 /* Modules de logique pure : ils doivent tourner sous Node, donc ne jamais
    toucher au navigateur. C'est la porte qui protège toute la stratégie de test. */
-const PURS = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'metiers', 'economie',
+const PURS = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'metiers', 'economie',
               'entities', 'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes',
               'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'pvp-enjeux', 'livre', 'livres', 'ambiance'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net', 'workers', 'worker-monde', 'worker-maillage'];
@@ -463,6 +463,19 @@ porte('G15', 'Chaque test e2e du cahier produit ≥ 2 captures réelles, début 
   }
   const ko = testsE2E.length ? Math.round(octetsCaptures / 1024) : 0;
   return { ok: true, detail: testsE2E.length + ' test(s) e2e, tous ≥ 2 captures (' + ko + ' Ko de captures pour ce cahier)' };
+});
+
+// ── G16 : tout passe par le journal (SPEC-BANC-110) ─────────────────────────
+/* Aucun console.* direct dans src/ ni server.js hors de src/journal.js : un
+   message écrit à côté de MC.Journal échappe au tampon, au fichier du serveur,
+   à la remontée et au rapport de test. Détection partagée avec son test
+   (tools/console-directe.js, tests/spec-journal-statique.js). */
+porte('G16', 'Aucun console.* direct dans src/ et server.js hors de src/journal.js (SPEC-BANC-110)', () => {
+  const CD = require('../tools/console-directe.js');
+  const fautes = CD.verifier(root);
+  return fautes.length
+    ? { ok: false, detail: fautes.length + ' appel(s) direct(s) — passer par MC.Journal : ' + fautes.slice(0, 5).join(' · ') }
+    : { ok: true, detail: CD.fichiersSurveilles(root).length + ' fichiers vérifiés, tout passe par MC.Journal' };
 });
 
 // ── G7/G8/G9 : rappel des portes manuelles ──────────────────────────────────

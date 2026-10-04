@@ -27,6 +27,7 @@
    plus domaines des fichiers src/ modifiés depuis la dernière étiquette,
    par correspondance de nom best-effort) avant l'appel à MC_TESTS.selection. */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const fs = require('fs');
 const path = require('path');
 const vm = require('vm');
@@ -263,6 +264,7 @@ function e2eListeDepuisTexte() {
    Un domaine honnête par script, cohérent avec ce que dit sa fiche
    ci-dessus (network/admin/paquet/pvp/charge/banc/sécurité/sync). */
 const FICHE_INTEGRATION = {
+  'integration-journal.js': { teste: "SPEC-BANC-104, 106, 108, 109 et 110 : le journal MC.Journal dans un vrai processus server.js — formats historiques de la sortie standard conservés après la migration des console.* (« [HH:MM:SS] écoute : … », MC_PORT= brut, messages bruts d'erreur de lancement), fichier serveur-<date>.log avec les codes d'erreur, erreurs remontées par un client à débit limité et sur une seule ligne, --journal RESEAU:debug.", pourquoi: "Les lanceurs et les autres tests d'intégration lisent la sortie du serveur ligne à ligne : seule une exécution réelle prouve que la migration vers le journal n'a rien changé pour eux, et que la remontée client et le fichier fonctionnent de bout en bout.", attendu: "le script se termine sans échec (code de sortie 0) — une quinzaine de secondes.", domaines: ['BANC'] },
   'integration-net.js': { teste: 'Le protocole réseau (WebSocket, autorité serveur) sur de vraies sockets.', pourquoi: 'La logique réseau est testée unitairement ailleurs (src/net-protocol.js) ; ici, un vrai serveur et de vrais clients TCP vérifient qu\'elle fonctionne réellement en bout en bout.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['RESEAU'] },
   'integration-admin.js': { teste: 'L\'administration et la persistance du serveur, sur un vrai processus server.js.', pourquoi: 'Rôles, jetons et sauvegarde du monde ne peuvent se vérifier qu\'avec un vrai serveur qui démarre, tourne et s\'arrête.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['ADMIN'] },
   'integration-capacite.js': { teste: 'SPEC-SERVEUR-010 : maxJoueurs compte les JOUEURS réellement admis (écran partagé compris), pas les connexions, sur un vrai serveur.', pourquoi: 'server.js a des effets de bord au chargement (écoute immédiate) : jamais require() directement, comme le reste de la suite — seul un vrai processus lancé via spawn peut vérifier le refus/l\'admission d\'une équipe complète face à la capacité.', attendu: 'le script se termine sans échec (code de sortie 0) — voir son propre journal pour le détail par test.', domaines: ['SERVEUR'] },
@@ -593,6 +595,15 @@ function envelopperFonctions(vmCtx) {
       // fabriques n'est jamais observé (constaté : tests du bruit procédural).
       if (typeof val === 'function') {
         const env = enveloppeDe('MC.' + cle, val);
+        // une fonction qui porte aussi une API (MC.Journal('X') ET MC.Journal.niveau…) la garde,
+        // et ses statiques fonctions sont observées comme celles d'un espace `MC.X.f`
+        Object.keys(val).forEach((k) => {
+          const st = val[k];
+          if (typeof st !== 'function') { env[k] = st; return; }
+          const envSt = enveloppeDe('MC.' + cle + '.' + k, st);
+          env[k] = envSt;
+          entrees.push({ obj: env, cle: k, orig: st, enveloppe: envSt });
+        });
         MCns[cle] = env;
         entrees.push({ obj: MCns, cle, orig: val, enveloppe: env });
         return;
@@ -685,6 +696,8 @@ const res = ctx.T.run(nomsAExecuter, {
       etat: ok ? 'ok' : (detail && detail.delai ? 'delai' : 'echec'), debut: detail && detail.debut, duree_ms: Math.round(ms),
       etapes: detail ? detail.etapes : [], assertions: detail ? detail.assertions : { ok: 0, ko: 0 },
       message: detail && detail.message, attendu: detail && detail.attendu, obtenu: detail && detail.obtenu, pile: detail && detail.pile,
+      // SPEC-BANC-106 : sortie « rapport de test » du journal (entrées warn et plus de ce test, codes d'erreur compris)
+      ...(detail && detail.journal ? { journal: detail.journal } : {}),
     });
   },
   finGroupe: (nom, p, f, ms) => { ecrire((f ? '  ✗ ' : '  ✓ ') + p + '/' + (p + f) + ' en ' + secondes(ms) +

@@ -18,6 +18,7 @@
 
    Usage : node tests/integration-quetes.js [port] */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
 const crypto = require('crypto');

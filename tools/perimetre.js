@@ -433,7 +433,16 @@ function chargerModules(lireSource, sources) {
     Object.keys(MC).forEach((cle) => {
       let val;
       try { val = MC[cle]; } catch (e) { return; }
-      if (typeof val === 'function') { out.set('MC.' + cle, val); return; }
+      if (typeof val === 'function') {
+        out.set('MC.' + cle, val);
+        // fabrique qui porte aussi une API (MC.Journal.niveau…) : ses statiques sont rattachées au même fichier
+        Object.keys(val).forEach((f) => {
+          let fn;
+          try { fn = val[f]; } catch (e) { return; }
+          if (typeof fn === 'function') out.set('MC.' + cle + '.' + f, fn);
+        });
+        return;
+      }
       if (!val || typeof val !== 'object') return;
       Object.keys(val).forEach((f) => {
         let fn;

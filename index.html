@@ -36,7 +36,7 @@
    Le chargement sequentiel preserve l'ordre de dependance. */
 window.MC_VERSION = String(Date.now());
 (function () {
-  var SRC = ['core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'entities', 'metiers', 'economie',
+  var SRC = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'entities', 'metiers', 'economie',
              'player', 'synchro', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'livre', 'livres', 'net', 'ambiance', 'audio', 'qualite', 'atlas', 'workers', 'render',
              'ui', 'input', 'game', 'debug'];
   var boot = document.getElementById('boot');
@@ -105,8 +105,17 @@ window.MC_VERSION = String(Date.now());
     'ou l&rsquo;exécutable fourni), puis ouvrez l&rsquo;adresse qu&rsquo;il affiche (par défaut ' +
     '<code>http://localhost:8080</code>).';
 
+  /* Journal (SPEC-BANC-106/109) : ?dev passe la console au seuil info,
+     ?journal=RENDU:debug,SYNC:trace règle des domaines, sans redémarrage. */
+  function reglerJournal() {
+    // ne lève jamais : un ?journal=% mal encodé est refusé, le chargement continue
+    var r = MC.Journal.reglerDepuisUrl(location.search);
+    if (!r.ok) MC.Journal('JEU').warn('réglage ?journal= ignoré en partie : ' + r.erreurs.join(', '));
+  }
+
   function start() {
     etape('chargement', 'ok');
+    reglerJournal();
     if (typeof THREE === 'undefined') {
       return echec('chargement', 'Three.js indisponible',
         "<b>Three.js n'a pas pu &ecirc;tre charg&eacute;.</b><br>V&eacute;rifiez la connexion, ou placez " +

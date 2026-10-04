@@ -37,9 +37,11 @@
     // périmètre d'exécution des tests (SPEC-BANC-067 à 076) : carte d'impact, calcul, repli, crochets
     'spec-perimetre',
     // rétention du registre et score d'instabilité (SPEC-BANC-088, 090, 091)
-    'spec-retention'];
+    'spec-retention',
+    // journal MC.Journal (SPEC-BANC-104 à 110) : module pur, puis vérifications sur disque
+    'spec-journal', 'spec-journal-statique'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

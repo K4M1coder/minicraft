@@ -341,6 +341,9 @@
     // (MC.Guildes, sans candidatures ni invitations) ; envoyé juste après
     // BIENVENUE puis à chaque changement. Jamais accepté d'un client.
     POLITIQUE: 'politique',
+    // SPEC-BANC-106 (c→s) : erreur error/fatal du journal d'un client, remontée
+    // au journal du serveur avec un débit limité (MC.Journal.REMONTEE)
+    JOURNAL_CLIENT: 'journal_client',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
@@ -355,7 +358,8 @@
     switch (msg.t) {
       case MSG.REJOINDRE:
         // e-mail et jeton d'invitation : facultatifs, lus par SPEC-ADMIN-004/005
-        return { t: msg.t, nom: String(msg.nom || 'Joueur').slice(0, 24),
+        // le nom finit dans le journal du serveur : ni saut de ligne ni caractère de contrôle (revue SPEC-BANC-110)
+        return { t: msg.t, nom: (String(msg.nom || '').replace(CONTROLES, '').trim() || 'Joueur').slice(0, 24),
                  locaux: Math.max(1, Math.min(4, (msg.locaux | 0) || 1)),
                  email: msg.email ? String(msg.email).trim().slice(0, 120) : null,
                  invitation: msg.invitation ? String(msg.invitation).trim().slice(0, 80) : null };
@@ -443,7 +447,7 @@
         return { t: msg.t, x: msg.x | 0, y: msg.y | 0, z: msg.z | 0, j: joueurLocal(msg.j), slots: slots };
       }
       case MSG.CHAT:
-        var txt = String(msg.texte === undefined ? '' : msg.texte).trim();
+        var txt = String(msg.texte === undefined ? '' : msg.texte).replace(CONTROLES_SUITE, ' ').trim();
         if (!txt) return null;
         return { t: msg.t, texte: txt.slice(0, 160) };
 
@@ -456,12 +460,21 @@
             Math.abs(msg.cx) > COORD_MAX || Math.abs(msg.cz) > COORD_MAX) return null;
         return { t: msg.t, cx: msg.cx | 0, cz: msg.cz | 0 };
 
+      // SPEC-BANC-106 : niveau, domaine, longueurs bornés par le journal lui-même
+      case MSG.JOURNAL_CLIENT:
+        return MC.Journal ? MC.Journal.validerRemontee(msg) : null;
+
       default:
         if (MC.ContratsArchi && MC.ContratsArchi.SENS[msg.t] === 'c>s') return MC.ContratsArchi.valider(msg);
         return MC.ContratsV2 ? MC.ContratsV2.valider(msg) : null;
     }
   }
 
+  /* Caractères de contrôle C0, DEL, C1 et séparateurs de ligne Unicode : un
+     nom ou un message de chat qui en porterait écrirait des lignes à lui
+     dans le journal du serveur (un faux `MC_PORT=` lu par un lanceur). */
+  var CONTROLES = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  var CONTROLES_SUITE = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]+/g;
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
   // indice du joueur local sur le poste (écran partagé) : 0 à 3
   function joueurLocal(j) { return estEntier(j) && j >= 0 && j < 4 ? j : 0; }

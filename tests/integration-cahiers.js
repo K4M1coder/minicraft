@@ -6,6 +6,7 @@
 
    Usage : node tests/integration-cahiers.js [port] */
 'use strict';
+require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const http = require('http');
 const path = require('path');
 const fs = require('fs');
