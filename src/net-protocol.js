@@ -366,7 +366,9 @@
                  // SPEC-SAVE-025 : version du jeu et format d'identifiants (FIRST_ITEM) du client —
                  // null s'ils manquent ; c'est le serveur qui compare le format au sien
                  version: msg.version ? (String(msg.version).replace(CONTROLES, '').trim().slice(0, 32) || null) : null,
-                 formatIds: estEntier(msg.formatIds) && msg.formatIds > 0 ? msg.formatIds | 0 : null };
+                 formatIds: estEntier(msg.formatIds) && msg.formatIds > 0 ? msg.formatIds | 0 : null,
+                 // absent (client d'avant la règle) ou annoncé mais invalide : le motif de refus le distingue
+                 formatIdsAnnonce: msg.formatIds !== undefined && msg.formatIds !== null };
       case MSG.BLOC:
         // SPEC-SECU-008 : bornes absolues AVANT toute logique de jeu — x/z
         // dans ±COORD_MAX, y dans la hauteur réelle du monde.

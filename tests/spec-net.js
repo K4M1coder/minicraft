@@ -198,9 +198,16 @@
     });
 
     it('SPEC-SAVE-025 : rejoindre conserve la version du jeu et le format d\'identifiants annoncés', function () {
-      var m = N.valider({ t: 'rejoindre', nom: 'Ada', version: '0.6.0', formatIds: 4096 });
+      var m = N.valider({ t: 'rejoindre', nom: 'Ada', version: '0.6.0', formatIds: MC.Core.FIRST_ITEM });
       A.equal(m.version, '0.6.0', 'version conservée');
-      A.equal(m.formatIds, 4096, 'format d\'identifiants conservé');
+      A.equal(m.formatIds, MC.Core.FIRST_ITEM, 'format d\'identifiants conservé');
+      A.equal(m.formatIdsAnnonce, true, 'format annoncé');
+      // absent et invalide se distinguent (le motif de refus le dit)
+      A.equal(N.valider({ t: 'rejoindre' }).formatIdsAnnonce, false, 'aucun format : non annoncé');
+      [0, -5, 4096.5, 'x', true, {}].forEach(function (v) {
+        var r = N.valider({ t: 'rejoindre', formatIds: v });
+        A.ok(r.formatIds === null && r.formatIdsAnnonce === true, 'format invalide ' + JSON.stringify(v) + ' : null mais annoncé');
+      });
       var sans = N.valider({ t: 'rejoindre', nom: 'Ada' });
       A.equal(sans.formatIds, null, 'aucun format annoncé : null (le serveur refusera)');
       A.equal(sans.version, null, 'aucune version annoncée : null');

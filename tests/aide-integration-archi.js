@@ -4,6 +4,7 @@
    lancement/arrêt d'un vrai `server.js` (jamais require()d) et de petits
    assertions. Chaque suite lance ET arrête ses serveurs. */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
@@ -238,7 +239,7 @@ function lancer(args, env) {
 /* Rejoint comme joueur : renvoie { client, bienvenue }. */
 async function rejoindre(port, nom, locaux, opts) {
   const client = await connecter(port, opts);
-  client.envoyer({ t: 'rejoindre', formatIds: 4096, nom, locaux: locaux || 1 });
+  client.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom, locaux: locaux || 1 });
   const bienvenue = await client.attendre('bienvenue', 8000);
   return { client, bienvenue };
 }

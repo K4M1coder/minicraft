@@ -18,6 +18,7 @@
 
    Usage : node tests/integration-quetes.js [port] */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
@@ -175,7 +176,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
     ok(await attendreDemarrage(PORT), 'le serveur démarre');
 
     a = await connecter(PORT);
-    a.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1 });
+    a.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1 });
     await a.attendre('bienvenue');
 
     // /quete lister ne plante jamais, même sans quête proposée
@@ -247,7 +248,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
   try {
     ok(await attendreDemarrage(PORT2), 'le second serveur (MC_TEST_INV=25 émeraudes) démarre');
     b = await connecter(PORT2);
-    b.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
+    b.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1 });
     await b.attendre('bienvenue');
 
     const proposeB = await chat(b, '/quete lister', m => /Proposée/.test(m.texte || '') && /test:quete-e2e/.test(m.texte || ''));
@@ -317,7 +318,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
   try {
     ok(await attendreDemarrage(PORT3), 'le troisième serveur (MC_TEST_CATASTROPHE) démarre');
     d3 = await connecter(PORT3);
-    d3.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Diane', locaux: 1 });
+    d3.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Diane', locaux: 1 });
     await d3.attendre('bienvenue');
 
     // avancerCatastrophes tourne toutes les ~1 s (voir la boucle de jeu,

@@ -20,6 +20,7 @@
 
    Usage : node tests/integration-troc.js [port] */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
@@ -237,7 +238,7 @@ async function marcherVers(client, depart, cible, proche, msMax) {
     ok(await attendreDemarrage(PORT), 'le serveur démarre');
 
     const a = await connecter(PORT);
-    a.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Marchande', locaux: 1 });
+    a.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Marchande', locaux: 1 });
     const bienvenue = await a.attendre('bienvenue');
     ok(!!bienvenue, 'connexion acceptée');
 
@@ -323,7 +324,7 @@ async function marcherVers(client, depart, cible, proche, msMax) {
     try {
       ok(await attendreDemarrage(PORT), 'le serveur relancé reprend le monde (--monde)');
       const a2 = await connecter(PORT);
-      a2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Verif', locaux: 1 });
+      a2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Verif', locaux: 1 });
       const bienvenue2 = await a2.attendre('bienvenue');
       const pnj2 = await attendrePnjDeMetier(a2, 10000);
       if (pnj2 && dernierPrix !== null) {

@@ -13,6 +13,7 @@
    Usage : node tests/integration-inventaire.js [port]
    Le serveur est démarré et arrêté par le test lui-même. */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
@@ -169,7 +170,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     // enregistrement démarre avec l'inventaire de MC_TEST_INV, appris par un
     // INV_MAJ envoyé juste après la bienvenue.
     const a = await connecter(PORT);
-    a.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1 });
+    a.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1 });
     const bienvenueA = await a.attendre('bienvenue');
     const majInit = await a.attendre('inv_maj');
     eq(compte(majInit.inv, B.LOG), 2, 'SPEC-SYNC-007 : MC_TEST_INV peuple l\'inventaire (bois)');
@@ -207,7 +208,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     // vraiment » est déjà apportée par le module pur (tests/spec-conteneurs.js),
     // ici on prouve que le serveur vérifie réellement contre SON inventaire.
     const b = await connecter(PORT);
-    b.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
+    b.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1 });
     await b.attendre('bienvenue');
     await b.attendre('inv_maj');   // inventaire initial de Bob (MC_TEST_INV s'applique à tout nouvel enregistrement)
 
@@ -279,7 +280,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     a.fermer();
     await dodo(300);
     const a2 = await connecter(PORT);
-    a2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1 });
+    a2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1 });
     await a2.attendre('bienvenue');
     const majReco = await a2.attendre('inv_maj');
     eq(compte(majReco.inv, I.CUIR_CASQUE), 0, 'reconnexion : le casque équipé n\'est pas dans l\'inventaire');
@@ -292,7 +293,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     // tronqué à sa possession, et une redéclaration identique ne débite rien
     // de plus (idempotent par construction : la cible, pas un delta).
     const dana = await connecter(PORT);
-    dana.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Dana', locaux: 1 });
+    dana.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Dana', locaux: 1 });
     const bienvenueDana = await dana.attendre('bienvenue');
     const majDana = await dana.attendre('inv_maj');
     const posDana = bienvenueDana.toi[0];
@@ -350,7 +351,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
         if (sonde.code === 200) break;
       }
       const zoe = await connecter(portMonde);
-      zoe.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Zoe', locaux: 1 });
+      zoe.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Zoe', locaux: 1 });
       const bvZoe = await zoe.attendre('bienvenue');
       const majZoe = await zoe.attendre('inv_maj');
       const iCasqueZoe = trouverIndex(majZoe.inv, I.CUIR_CASQUE);
@@ -427,7 +428,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
           if (sonde.code === 200) break;
         }
         const zoe2 = await connecter(portMonde);
-        zoe2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Zoe', locaux: 1 });
+        zoe2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Zoe', locaux: 1 });
         await zoe2.attendre('bienvenue');
         const majZoe2 = await zoe2.attendre('inv_maj');
         ok(majZoe2.equip && pile(majZoe2.equip.casque) && pile(majZoe2.equip.casque).id === I.CUIR_CASQUE,
@@ -509,7 +510,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
       // concurrents (aucun `await` entre les deux envois), conservation de
       // la somme totale (aucun objet dupliqué, aucun perdu).
       const eve = await connecter(portCont);
-      eve.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Eve', locaux: 1 });
+      eve.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Eve', locaux: 1 });
       const bvEve = await eve.attendre('bienvenue');
       const majEve0 = await eve.attendre('inv_maj');
       const posEve = bvEve.toi[0];
@@ -519,7 +520,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
       const cleCoffre = `${bx},${by},${bz}`;
 
       const faye = await connecter(portCont);
-      faye.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Faye', locaux: 1 });
+      faye.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Faye', locaux: 1 });
       const bvFaye = await faye.attendre('bienvenue');
       const majFaye0 = await faye.attendre('inv_maj');
 
@@ -596,7 +597,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
       eve.fermer();
       await dodo(300);
       const eve2 = await connecter(portCont);
-      eve2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Eve', locaux: 1 });
+      eve2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Eve', locaux: 1 });
       const bvEve2 = await eve2.attendre('bienvenue');
       const majEve2 = await eve2.attendre('inv_maj');
       eve2.envoyer({ t: 'cont_ouvrir', j: 0, x: bx2, y: by2, z: bz2 });
@@ -659,7 +660,7 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
       // d'abonné (la cuisson n'attend pas un spectateur), mais ne diffuse un
       // CONTENEUR_MAJ qu'à qui l'a ouvert — jamais dans le vide.
       const ivan = await connecter(portCont);
-      ivan.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Ivan', locaux: 1 });
+      ivan.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Ivan', locaux: 1 });
       const bvIvan = await ivan.attendre('bienvenue');
       const majIvan0 = await ivan.attendre('inv_maj');
       const posIvan = bvIvan.toi[0];

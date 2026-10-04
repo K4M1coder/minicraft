@@ -26,6 +26,7 @@
 
    Sort en code 1 si un seuil (tic serveur, latence, erreurs) est dépassé. */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
@@ -262,7 +263,7 @@ async function executerPalier(scenario, palier, opts) {
     const clients = await Promise.all(Array.from({ length: palier }, async (_, i) => {
       try {
         const cli = await connecter(port, 'Bot' + i);
-        cli.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bot' + i, locaux: 1 });
+        cli.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bot' + i, locaux: 1 });
         await cli.attendre('bienvenue', 8000);
         return cli;
       } catch (e) { resultat.erreursConnexion++; return null; }

@@ -8,6 +8,7 @@
    Chaque serveur lancé par ce test est arrêté (`kill()`) dans un `finally`,
    même si une assertion échoue ou qu'une exception est levée. */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
@@ -181,7 +182,7 @@ async function attendrePret(port) {
 }
 async function rejoindre(port, nom, locaux) {
   const cl = await connecter(port);
-  cl.envoyer({ t: 'rejoindre', formatIds: 4096, nom, locaux: locaux || 1 });
+  cl.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom, locaux: locaux || 1 });
   const bienvenue = await cl.attendre('bienvenue');
   return { cl, bienvenue };
 }
@@ -265,7 +266,7 @@ async function rejoindre(port, nom, locaux) {
 
       // SPEC-SECU-004 : une trame non masquée doit fermer la connexion.
       const nonMasque = await connecter(port);
-      nonMasque.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Masque', locaux: 1 });
+      nonMasque.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Masque', locaux: 1 });
       await nonMasque.attendre('bienvenue');
       nonMasque.envoyerNonMasque({ t: 'chat', texte: 'coucou en clair' });
       let fermee = false;
@@ -276,7 +277,7 @@ async function rejoindre(port, nom, locaux) {
       // complétée, ne doit jamais faire grossir indéfiniment le tampon — la
       // connexion doit finir par être fermée par le serveur.
       const gourmand = await connecter(port);
-      gourmand.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Gourmand', locaux: 1 });
+      gourmand.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Gourmand', locaux: 1 });
       await gourmand.attendre('bienvenue');
       // en-tête masqué annonçant 200 Mo (127 = longueur 64 bits), jamais suivi du corps
       const enteteEnorme = Buffer.alloc(14);

@@ -7,6 +7,7 @@
 
    Usage : node tests/integration-capacite.js [port] */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 const net = require('net');
 const http = require('http');
@@ -140,28 +141,28 @@ const dodo = (ms) => new Promise(r => setTimeout(r, ms));
   try {
     // Alice arrive en écran partagé à 2 joueurs locaux : 2/3 places occupées.
     const alice = await connecter(PORT);
-    alice.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 2 });
+    alice.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 2 });
     const bienvenueAlice = await alice.attendre('bienvenue', 5000);
     ok(!!bienvenueAlice, 'Alice (2 locaux) est admise — 2/3 places occupées');
 
     // Bob arrive à son tour à 2 joueurs locaux : 2+2=4 > 3, refusé EN BLOC —
     // jamais une partie de son équipe admise pendant que l'autre est rejetée.
     const bob = await connecter(PORT);
-    bob.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 2 });
+    bob.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 2 });
     const refusBob = await bob.attendre('refus', 5000);
     eq(refusBob.motif, 'serveur_complet', 'Bob (2 locaux) refusé en bloc — dépasserait 3 (2+2)');
     bob.fermer();
 
     // Chloé arrive seule (1 local) : 2+1=3, la place exacte restante.
     const chloe = await connecter(PORT);
-    chloe.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Chloe', locaux: 1 });
+    chloe.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Chloe', locaux: 1 });
     const bienvenueChloe = await chloe.attendre('bienvenue', 5000);
     ok(!!bienvenueChloe, 'Chloé (1 local) est admise — comble exactement 3/3');
 
     // Une place de plus, même minime (1 local), est refusée : le serveur
     // est bien plein (3 vrais joueurs, pas « 2 connexions »).
     const dan = await connecter(PORT);
-    dan.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Dan', locaux: 1 });
+    dan.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Dan', locaux: 1 });
     const refusDan = await dan.attendre('refus', 5000);
     eq(refusDan.motif, 'serveur_complet', 'Dan (1 local) refusé — 3/3 déjà occupées par 2 connexions');
     dan.fermer();

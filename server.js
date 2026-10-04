@@ -2826,7 +2826,8 @@ function traiter(c, m) {
          refusé, motif lisible avec les deux formats, et plus aucun de ses
          messages n'est appliqué. Une autre VERSION du jeu au même format passe. */
       if (m.formatIds !== C.FIRST_ITEM) {
-        const motif = `format d'identifiants incompatible : client ${m.formatIds === null ? 'aucun (version antérieure)' : m.formatIds}, serveur ${C.FIRST_ITEM}` +
+        const formatClient = m.formatIds !== null ? m.formatIds : (m.formatIdsAnnonce ? 'invalide' : 'aucun (version antérieure)');
+        const motif = `format d'identifiants incompatible : client ${formatClient}, serveur ${C.FIRST_ITEM}` +
           ` — client v${m.version || '?'}, serveur v${C.VERSION_JEU}`;
         c.formatRefuse = true;
         envoyer(c, { t: NP.MSG.REFUS, motif, formatIds: C.FIRST_ITEM, version: C.VERSION_JEU });

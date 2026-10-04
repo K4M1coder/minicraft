@@ -188,6 +188,13 @@ async function scenarioFormatIds() {
     ok(sans.cl.fermee, 'SPEC-SAVE-025 : la connexion refusée est fermée');
     ok(!sans.cl.messages.some(m => m.t === 'bienvenue' || m.t === 'bloc'), 'SPEC-SAVE-025 : aucun BIENVENUE, aucun message de jeu pour le client refusé');
 
+    const invalide = await essai('FormatInvalide', { version: C.VERSION_JEU, formatIds: 0 });
+    ok(!!invalide.refus, 'SPEC-SAVE-025 : un format d\'identifiants invalide (0) → REFUS');
+    const motifI = (invalide.refus && invalide.refus.motif) || '';
+    ok(/invalide/i.test(motifI) && !/aucun|antérieure/i.test(motifI) && motifI.indexOf(String(C.FIRST_ITEM)) >= 0,
+       'SPEC-SAVE-025 : le motif dit « invalide », pas « aucun », et donne le format du serveur', motifI);
+    ok(invalide.cl.fermee, 'SPEC-SAVE-025 : connexion fermée');
+
     const autreFmt = await essai('AutreFormat', { version: C.VERSION_JEU, formatIds: 128 });
     ok(!!autreFmt.refus, 'SPEC-SAVE-025 : un format d\'identifiants différent (128) → REFUS');
     const motif2 = (autreFmt.refus && autreFmt.refus.motif) || '';
@@ -204,7 +211,7 @@ async function scenarioFormatIds() {
     eq(bv && bv.version, C.VERSION_JEU, 'SPEC-SAVE-025 : BIENVENUE porte la version du serveur');
     eq(bv && bv.formatIds, C.FIRST_ITEM, 'SPEC-SAVE-025 : BIENVENUE porte le format d\'identifiants du serveur');
     eq(p0.bienvenue.formatIds, C.FIRST_ITEM, 'SPEC-SAVE-025 : un client au même format et à la même version est admis');
-    cl3.fermer(); p0.client.fermer(); sans.cl.fermer(); autreFmt.cl.fermer();
+    cl3.fermer(); p0.client.fermer(); sans.cl.fermer(); autreFmt.cl.fermer(); invalide.cl.fermer();
     await s.arreter();
   } finally { A.supprimerDossier(d); }
 }

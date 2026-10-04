@@ -19,6 +19,7 @@
 
    Usage : node tests/integration-pvp.js [port] */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
@@ -156,10 +157,10 @@ async function attendreDemarrage(port) {
     ok(await attendreDemarrage(PORT), 'le serveur (sans --pvp) démarre');
 
     const a1 = await connecter(PORT);
-    a1.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1 });
+    a1.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1 });
     const bA1 = await a1.attendre('bienvenue');
     const b1 = await connecter(PORT);
-    b1.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
+    b1.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1 });
     const bB1 = await b1.attendre('bienvenue');
     ok(!!bB1.zone, 'SPEC-ZONE-004 : la bienvenue transmet la politique de zones du serveur');
 
@@ -225,10 +226,10 @@ async function attendreDemarrage(port) {
     ok(await attendreDemarrage(PORT2), 'le serveur (--pvp on) démarre');
 
     const a = await connecter(PORT2);
-    a.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1 });
+    a.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1 });
     const bA = await a.attendre('bienvenue');
     const b = await connecter(PORT2);
-    b.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
+    b.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1 });
     const bB = await b.attendre('bienvenue');
 
     // les joueurs naissent au point d'apparition, qui reste TOUJOURS sûr :
@@ -241,7 +242,7 @@ async function attendreDemarrage(port) {
 
     // un administrateur redéfinit la région où se tiennent les deux joueurs en zone PvP
     const admin = await connecter(PORT2);
-    admin.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Admin', locaux: 1 });
+    admin.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Admin', locaux: 1 });
     await admin.attendre('bienvenue');
     admin.envoyer({ t: 'admin', action: 'auth', args: { secret: 'secret2' } });
     const auth = await admin.attendre('admin_rep', 3000, m => m.action === 'auth');

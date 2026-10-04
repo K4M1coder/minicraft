@@ -4,6 +4,7 @@
 
    Usage : node tests/integration-admin.js [port] */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 require('./journal-temp.js');   // journal des serveurs lancés : dossier temporaire (SPEC-BANC-106)
 process.env.MC_TEST_POSE_LIBRE = '1';   // SPEC-SYNC-028 : cette suite n'éprouve pas l'inventaire (les serveurs qu'elle lance héritent du réglage)
 const net = require('net');
@@ -174,7 +175,7 @@ async function attendrePret(port) {
 
     // ── SPEC-ADMIN-004 : liste blanche activée refuse un joueur non inscrit ──
     const bloque = await connecter(PORT1);
-    bloque.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Etranger', locaux: 1 });
+    bloque.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Etranger', locaux: 1 });
     const refus = await bloque.attendre('refus');
     eq(refus.motif, 'liste_blanche', 'SPEC-ADMIN-004 : refusé faute d\'inscription');
     bloque.fermer();
@@ -187,13 +188,13 @@ async function attendrePret(port) {
     ok(!!jeton, 'SPEC-ADMIN-005 : un jeton d\'invitation est renvoyé');
 
     const alice = await connecter(PORT1);
-    alice.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice', locaux: 1, invitation: jeton });
+    alice.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice', locaux: 1, invitation: jeton });
     const bienvenue = await alice.attendre('bienvenue');
     ok(typeof bienvenue.id === 'number', 'SPEC-ADMIN-005 : l\'invitation fait entrer malgré la liste blanche');
 
     // une seconde invitée avec le même jeton (déjà épuisé, usagesMax=1) est refusée
     const bob = await connecter(PORT1);
-    bob.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1, invitation: jeton });
+    bob.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1, invitation: jeton });
     const refusBob = await bob.attendre('refus');
     ok(refusBob.motif.indexOf('invitation') >= 0, 'SPEC-ADMIN-005 : un jeton épuisé est refusé à un second usage');
     bob.fermer();
@@ -275,7 +276,7 @@ async function attendrePret(port) {
       ok(repriseOk, 'SPEC-SERVEUR-001 : le serveur redémarre en reprenant le même fichier de monde');
       if (repriseOk) {
         const alice2 = await connecter(PORT2);
-        alice2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Alice2', locaux: 1 });
+        alice2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Alice2', locaux: 1 });
         const bienvenue2 = await alice2.attendre('bienvenue');
         blocRepris = (bienvenue2.blocs || []).length > 0;
         ok(blocRepris, 'SPEC-SERVEUR-001 : le bloc posé avant l\'arrêt est repris au démarrage suivant',
@@ -304,13 +305,13 @@ async function attendrePret(port) {
 
     // une session qui reste ouverte tout du long
     const ouverte = await connecter(PORT3);
-    ouverte.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'RestéConnecté', locaux: 1 });
+    ouverte.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'RestéConnecté', locaux: 1 });
     await ouverte.attendre('bienvenue');
 
     // plusieurs sessions FERMÉES, largement au-delà du seuil (sessionsMax=2)
     for (let i = 0; i < 5; i++) {
       const cli = await connecter(PORT3);
-      cli.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Passager' + i, locaux: 1 });
+      cli.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Passager' + i, locaux: 1 });
       await cli.attendre('bienvenue');
       cli.fermer();
       await dodo(30);
@@ -365,7 +366,7 @@ async function attendrePret(port) {
   try {
     ok(await attendrePret(PORT4), 'SPEC-SERVEUR-009 : le serveur démarre avec un monde à 4000 overrides épars');
     const eve = await connecter(PORT4);
-    eve.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Eve', locaux: 1 });
+    eve.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Eve', locaux: 1 });
     const bienvenueEve = await eve.attendre('bienvenue');
     const tailleBienvenue = JSON.stringify(bienvenueEve).length;
     ok(tailleBienvenue < 50000,
@@ -416,7 +417,7 @@ async function attendrePret(port) {
     const cleCoffre = `${COFFRE.x},${COFFRE.y},${COFFRE.z}`;
 
     const explorateur = await connecter(PORT5);
-    explorateur.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Explorateur', locaux: 1 });
+    explorateur.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Explorateur', locaux: 1 });
     await explorateur.attendre('bienvenue');
 
     // première ouverture : pille RÉELLEMENT le coffre (remplirConteneurNeuf,

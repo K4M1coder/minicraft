@@ -11,6 +11,7 @@
 
    Usage : node tests/integration-archi-serveur.js */
 'use strict';
+const FORMAT_IDS = require('./format-ids.js').FIRST_ITEM;   // SPEC-SAVE-025 : annoncé par REJOINDRE
 const A = require('./aide-integration-archi.js');
 const { CA, dodo, connecter, requete, sonde, lancer, rejoindre, attendreClients, dossierTemp, supprimerDossier } = A;
 const R = A.creerRapport('Intégration ARCHI — serveur local fermé au réseau (SPEC-ARCHI-001 à 011)');
@@ -110,7 +111,7 @@ async function scenarioReseauAChaud() {
     const a = await rejoindre(P, 'Alice', 2);
     eq(a.bienvenue.toi.length, 2, 'SPEC-ARCHI-007 : un poste de 2 joueurs locaux est admis (2/3)');
     const b = await connecter(P);
-    b.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Bob', locaux: 1 });
+    b.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Bob', locaux: 1 });
     const refus = await b.attendre('refus', 3000).catch(() => null);
     eq(refus && refus.motif, 'poste_deja_connecte', 'SPEC-ARCHI-007 : en fermé, un second poste est refusé (poste_deja_connecte)');
     b.fermer();
@@ -131,7 +132,7 @@ async function scenarioReseauAChaud() {
 
     // ── 007 (ouvert) : mêmes règles de capacité que SPEC-SERVEUR-010
     const c2 = await connecter(P);
-    c2.envoyer({ t: 'rejoindre', formatIds: 4096, nom: 'Carl', locaux: 2 });
+    c2.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Carl', locaux: 2 });
     const plein = await c2.attendre('refus', 3000).catch(() => null);
     eq(plein && plein.motif, 'serveur_complet', 'SPEC-ARCHI-007 : ouvert, un poste à 2 refusé quand il ne reste qu\'une place (serveur_complet)');
     c2.fermer();
