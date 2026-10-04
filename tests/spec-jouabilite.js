@@ -301,6 +301,29 @@
       A.equal((src.match(/r\.effets\.reste\.forEach\(p => lacherAuxPieds\(js, p\)\)/g) || []).length, 1, 'reliquat de la grille lâché aux pieds');
     });
 
+    it('SPEC-JOUABLE-001 : un blocage de 5 s du serveur à l\'arrivée du joueur (génération du terrain) est rattrapé aussitôt, sans retard permanent ni entrée perdue', function () {
+      // cas mesuré par les e2e sous charge : boucle bloquée 1,5 à 9 s juste après la connexion
+      // (spec-horizon couvre des blocages répétés de 0,9 s ; ici, un seul blocage long)
+      var SY = MC.Synchro, w = flatWorld(10), ents = MC.createEntities(w);
+      function joueur() { var p = MC.createPlayer(w, ents, MC.Modes.regles('survie', 'facile')); p.state.pos = { x: 0.5, y: 11, z: 0.5 }; p.state.onGround = true; return p; }
+      var client = joueur(), serveur = joueur(), pred = SY.creerPrediction(), file = [], budget = SY.creerBudget(), dernier = 0;
+      function envoyer(n) {
+        for (var k = 0; k < n; k++) {
+          var e = pred.enregistrer(1 / 60, { forward: k % 120 < 60 ? 1 : 0 }, 0.3, 0, false);
+          SY.rejouer(client, [e]);
+          SY.empilerEntree(file, JSON.parse(JSON.stringify(e)));
+        }
+      }
+      envoyer(300);                                                           // 5 s d'entrées pendant le blocage
+      dernier = SY.avancerEntrees(serveur, file, budget, 5, dernier).dernier;  // un seul tic, 5 s après
+      for (var t = 0; t < 30; t++) { envoyer(1); dernier = SY.avancerEntrees(serveur, file, budget, 1 / 60, dernier).dernier; }
+      A.ok(pred.suivant - 1 - dernier <= 1, 'le serveur a rattrapé le client (' + (pred.suivant - 1 - dernier) + ' entrée(s) d\'écart, celle de l\'image en cours)');
+      dernier = SY.avancerEntrees(serveur, file, budget, 1 / 60, dernier).dernier;
+      A.equal(dernier, pred.suivant - 1, 'toutes les entrées sont acquittées');
+      var a = client.state.pos, b = serveur.state.pos;
+      A.ok(Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) < 1e-9, 'aucune entrée perdue : serveur et client au même endroit (' + Math.hypot(a.x - b.x, a.y - b.y, a.z - b.z) + ')');
+    });
+
     it('SPEC-JOUABLE-001 : le serveur de jeu de test n\'hérite d\'aucun réglage MC_*, valide l\'inventaire de départ et n\'écoute que la boucle locale', function () {
       var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
       var i = src.indexOf('function traiterServeurJeuTest(');

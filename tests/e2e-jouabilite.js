@@ -206,13 +206,17 @@
     /* Un serveur figé (charge de la machine) n'envoie plus rien : « aucun ETAT
        nouveau » ressemblerait à de l'immobilité. Le repos n'est donc admis que
        si les relevés ARRIVENT (au moins 3 dans la dernière demi-seconde, le
-       dernier frais) et que le serveur traite les entrées du client (son
-       acquittement progresse d'au moins 10 entrées par demi-seconde). */
+       dernier frais), que le serveur traite les entrées du client (son
+       acquittement progresse d'au moins 10 entrées par demi-seconde) et qu'il
+       les a RATTRAPÉES (au plus 15 entrées derrière la dernière envoyée : un
+       retard qui ne se résorbe pas est un défaut de synchro, SPEC-SYNC-004). */
     st = null;
     var stable = await sonder(function () {
       st = g.player.state;
       var e = sp.dernierEtat(), t = maintenant();
       if (!e || t - e.t > 250) return false;
+      // le serveur a RATTRAPÉ le client : à peine plus que les entrées en vol (≈ 0,25 s)
+      if (sp.dernierEnvoye && e.s < sp.dernierEnvoye - 15) return false;
       if (auSol && !(e.sol === 1 && st.onGround)) return false;
       if (!auSol && !(e.vol === 1 && st.flying)) return false;
       var depuis = e.t - 500, ref = null, ok = true, n = 0, sMin = e.s;
