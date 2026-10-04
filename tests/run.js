@@ -472,7 +472,7 @@ if (MODE_PERIMETRE || drapeau('--perimetre-json')) {
   }
   if (perimetreCalcule.repli) fs.writeSync(2, '(périmètre : REPLI sur la sélection complète — ' + perimetreCalcule.repli + ')\n');
   else fs.writeSync(2, '(périmètre ' + (MODE_PERIMETRE === 'depuis' ? 'depuis ' + option('--depuis') : 'du commit') + ' : ' + selection.length +
-    ' test(s) retenu(s), ' + perimetreCalcule.exclus + ' exclu(s) ; fichiers : ' + (perimetreCalcule.fichiers.join(', ') || 'aucun') +
+    ' test(s) retenu(s), ' + perimetreCalcule.exclus + ' exclu(s) ; fichiers : ' + P.resumerFichiers(perimetreCalcule.fichiers) +
     ' ; fonctions : ' + (perimetreCalcule.fonctions.slice(0, 8).join(', ') || 'aucune') + (perimetreCalcule.fonctions.length > 8 ? '…' : '') + ')\n');
 }
 /* Colonne `perimetre` de l'historique (SPEC-BANC-070) : 'commit' quand le
@@ -883,6 +883,20 @@ if (NATURE_PERIMETRE === 'complet' && !MODE_PERIMETRE && (nomPreset === 'pr' || 
     if (trousPerimetre.trous.length) fs.writeSync(2, '\n⚠ trou de périmètre : ' + trousPerimetre.trous.length + ' échec(s) que le périmètre du commit n\'aurait PAS retenu(s) — ' +
       trousPerimetre.trous.slice(0, 5).map(x => x.nom).join(' ; ') + (trousPerimetre.trous.length > 5 ? '…' : '') + '\n');
   } catch (e) { trousPerimetre = { verifie: false, motif: 'calcul impossible : ' + e.message, trous: [] }; }
+}
+/* SPEC-BANC-088 : score d'instabilité des tests, affiché dans le rapport — sur un run complet seulement
+   (la relecture du registre et les comparaisons git ne se paient pas à chaque commit) ; best-effort :
+   sans carte, sans git ou sans registre, rien n'est ajouté et rien n'échoue. */
+if (NATURE_PERIMETRE === 'complet' && !MODE_PERIMETRE && (nomPreset === 'pr' || nomPreset === 'regression')) {
+  try {
+    const inst = require('../tools/registre.js').calculerInstabilites({});
+    testsResultats.forEach((t) => {
+      const i = inst[P.cleTest(t.type, t.groupe, t.nom)];
+      if (!i || !i.score) return;
+      t.instabilite = { score: i.score, instable: i.instable, runs: i.runs, horsCarte: i.horsCarte };
+      if (i.instable) t.etiquettes = (t.etiquettes || []).concat(t.etiquettes && t.etiquettes.indexOf('instable') >= 0 ? [] : ['instable']);
+    });
+  } catch (e) { /* le rapport se passe de l'instabilité */ }
 }
 const resultatsFinaux = {
   schema: 1,

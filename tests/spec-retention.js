@@ -38,7 +38,7 @@
   }
   /* écrit une entrée comme le fait tools/registre.js (une méta, une ligne par test) */
   function ecrireEntree(reg, o) {
-    var meta = { id: o.id, commit: o.commit, branche: 'master', date: o.date, preset: o.preset || 'pr', origine: o.origine || 'pre-push', inscrit: true, statut: o.statut || 'ok', motif: null };
+    var meta = Object.assign({ id: o.id, commit: o.commit, branche: 'master', date: o.date, preset: o.preset || 'pr', origine: o.origine || 'pre-push', inscrit: true, statut: o.statut || 'ok', motif: null }, o.meta || {});
     var nom = o.date.replace(/[-:]/g, '').slice(0, 15).replace('T', '-') + '_' + o.commit.slice(0, 10) + '_' + meta.preset + '-' + o.id + '.jsonl';
     fs.mkdirSync(path.join(reg, 'entrees'), { recursive: true });
     fs.writeFileSync(path.join(reg, 'entrees', nom), [JSON.stringify(meta)].concat(o.tests.map(function (t) { return JSON.stringify(t); })).join('\n') + '\n');
@@ -238,17 +238,23 @@
       };
     }
     /* un dépôt avec src/a.js, src/b.js et une suite de runs : etats[i] à commits[i] */
-    function runs(etats, modifs) {
+    /* opts : metas[i] (méta du run i), memeCommit (tous les runs sur un seul commit),
+       test(etat) (le test du run, 'G › t' unitaire par défaut) */
+    function runs(etats, modifs, opts) {
+      var o = opts || {};
       var d = depot();
       var reg = path.join(d, 'tests', 'registre');
-      var commits = [];
+      var c = null;
       etats.forEach(function (etat, i) {
-        var m = (modifs && modifs[i]) || { 'src/b.js': 'v' + i };   // par défaut : un fichier SANS rapport avec le test
-        Object.keys(m).forEach(function (f) { fs.mkdirSync(path.join(d, 'src'), { recursive: true }); fs.writeFileSync(path.join(d, f), m[f]); });
-        git(d, ['add', '-A']); git(d, ['commit', '-q', '-m', 'c' + i]);
-        var c = git(d, ['rev-parse', 'HEAD']);
-        commits.push(c);
-        ecrireEntree(reg, { id: 'i' + i, commit: c, date: '2026-02-0' + (i + 1) + 'T10:00:00.000Z', tests: [testEntree('t', etat)] });
+        if (!c || !o.memeCommit) {
+          // fichier de test qui définit le groupe 'G' (retrouvé par git à partir du groupe)
+          var m = (modifs && modifs[i]) || { 'src/b.js': 'v' + i };   // par défaut : un fichier SANS rapport avec le test
+          m = Object.assign({ 'tests/spec-g.js': "describe('G', function () {});\n" }, m);
+          Object.keys(m).forEach(function (f) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), m[f]); });
+          git(d, ['add', '-A']); git(d, ['commit', '-q', '-m', 'c' + i]);
+          c = git(d, ['rev-parse', 'HEAD']);
+        }
+        ecrireEntree(reg, { id: 'i' + i, commit: c, date: '2026-02-0' + (i + 1) + 'T10:00:00.000Z', meta: (o.metas || [])[i], tests: [o.test ? o.test(etat) : testEntree('t', etat)] });
       });
       return { d: d, reg: reg };
     }
@@ -324,6 +330,266 @@
       A.equal(filtrees.length, 1, 'filtrable par étiquette');
       var autre = lignes.filter(function (x) { return x.nom === 'autre'; })[0];
       A.ok(autre.etiquettes.indexOf('instable') < 0, 'un test stable n\'est pas étiqueté');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  describe('Specs — rétention (revue adversariale) : pertes de données et reprise', function () {
+    function compacter(s, extra) { return REG.compacter(Object.assign({ dossierRegistre: s.reg, dossierRepo: s.d, jusquA: 'v0.1.0', version: 'v0.1.0' }, extra || {})); }
+    function octets(reg) {
+      var out = {};
+      ['entrees', 'images'].forEach(function (sd) { fs.readdirSync(path.join(reg, sd)).forEach(function (f) { out[sd + '/' + f] = fs.readFileSync(path.join(reg, sd, f)).toString('base64'); }); });
+      return JSON.stringify(out);
+    }
+
+    it('SPEC-BANC-091 : une ligne de test illisible → le fichier n\'est PAS réécrit, aucune image supprimée, avertissement explicite', function () {
+      var s = scenario();
+      try {
+        var f = path.join(s.reg, 'entrees', REG.lireEntrees(s.reg).filter(function (e) { return e.id === 'r1m'; })[0]._fichier);
+        fs.appendFileSync(f, '{"id":"N-cassé","nom":"x","captures":[{"image":"bbb.jpg"\n');
+        var avant = fs.readFileSync(f, 'utf8');
+        var r = compacter(s);
+        A.equal(fs.readFileSync(f, 'utf8'), avant, 'le fichier à ligne rejetée est intact');
+        A.equal(r.imagesSupprimees, 0, 'aucune image supprimée');
+        A.ok(existeImage(s.reg, 'bbb.jpg') && existeImage(s.reg, 'orph.jpg'), 'images toujours là');
+        A.ok(r.avertissements.some(function (a) { return /lignes de test illisibles/.test(a); }), 'avertissement explicite : ' + JSON.stringify(r.avertissements));
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-091 : une inscription concurrente n\'est jamais touchée (image récente, entrée apparue en cours de route)', function () {
+      var s = scenario();
+      try {
+        var r = compacter(s, { apresReecriture: function () {
+          ecrireImage(s.reg, 'neuve.jpg');                                               // image écrite pendant la compaction, pas encore référencée
+          ecrireEntree(s.reg, { id: 'tard', commit: s.c4, date: '2026-01-05T10:00:00.000Z', tests: [testEntree('t', 'reussi', 'orph.jpg')] }); // une entrée qui adopte une « orpheline »
+        } });
+        A.ok(r.ok, JSON.stringify(r));
+        A.ok(existeImage(s.reg, 'neuve.jpg'), 'image plus récente que le début de la compaction : conservée');
+        A.ok(existeImage(s.reg, 'orph.jpg'), 'image référencée par une entrée apparue entre-temps : conservée');
+        A.ok(!existeImage(s.reg, 'bbb.jpg'), 'le reste est supprimé normalement');
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-091 : verrou de compaction (PID + péremption) et nettoyage des fichiers temporaires orphelins', function () {
+      var s = scenario();
+      try {
+        fs.writeFileSync(path.join(s.reg, '.compaction.lock'), JSON.stringify({ pid: process.ppid, debut: Date.now() }));
+        var refus = compacter(s);
+        A.ok(!refus.ok && /déjà en cours/.test(refus.motif), 'verrou tenu par un processus vivant : refus ' + JSON.stringify(refus));
+        fs.writeFileSync(path.join(s.reg, '.compaction.lock'), JSON.stringify({ pid: process.ppid, debut: Date.now() - 3600 * 1000 }));
+        fs.writeFileSync(path.join(s.reg, 'entrees', 'x.jsonl.tmp-999999'), 'reste d\'un processus mort');
+        var r = compacter(s);
+        A.ok(r.ok, 'verrou périmé : repris ' + JSON.stringify(r));
+        A.ok(!fs.existsSync(path.join(s.reg, '.compaction.lock')), 'verrou libéré à la fin');
+        A.ok(!fs.existsSync(path.join(s.reg, 'entrees', 'x.jsonl.tmp-999999')), 'temporaire orphelin retiré');
+        A.equal(fs.readdirSync(path.join(s.reg, 'entrees')).filter(function (n) { return /\.tmp-/.test(n); }).length, 0, 'aucun temporaire laissé');
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-090 : un run interrompu, restreint ou lancé sur un arbre modifié n\'est jamais choisi comme run de release', function () {
+      var s = scenario();
+      try {
+        // r2 (commit étiqueté) devient interrompu, r2f restreint : le choix retombe sur r1 (commit précédent, propre)
+        var r2 = REG.lireEntrees(s.reg).filter(function (e) { return e.id === 'r2'; })[0];
+        var f2 = path.join(s.reg, 'entrees', r2._fichier);
+        var l = fs.readFileSync(f2, 'utf8').split('\n'); var m = JSON.parse(l[0]); m.interrompu = true; l[0] = JSON.stringify(m); fs.writeFileSync(f2, l.join('\n'));
+        var r2f = REG.lireEntrees(s.reg).filter(function (e) { return e.id === 'r2f'; })[0];
+        var ff = path.join(s.reg, 'entrees', r2f._fichier);
+        l = fs.readFileSync(ff, 'utf8').split('\n'); m = JSON.parse(l[0]); m.perimetre = 'commit'; l[0] = JSON.stringify(m); fs.writeFileSync(ff, l.join('\n'));
+        var r = compacter(s);
+        A.ok(r.ok, JSON.stringify(r));
+        A.equal(entreeDe(s.reg, 'r1').release, 'v0.1.0', 'le run propre du commit précédent porte la release');
+        A.ok(!entreeDe(s.reg, 'r2').release && !entreeDe(s.reg, 'r2f').release, 'ni l\'interrompu ni le restreint');
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-090 : un cycle sans aucun run fiable n\'est ni marqué ni compacté (avertissement)', function () {
+      var s = scenario();
+      try {
+        ['r1', 'r1m', 'r2', 'r2f'].forEach(function (id) {
+          var e = entreeDe(s.reg, id); var f = path.join(s.reg, 'entrees', e._fichier);
+          var l = fs.readFileSync(f, 'utf8').split('\n'); var m = JSON.parse(l[0]); m.arbre_modifie = true; l[0] = JSON.stringify(m); fs.writeFileSync(f, l.join('\n'));
+        });
+        var avant = octets(s.reg);
+        var r = compacter(s);
+        A.ok(r.ok, JSON.stringify(r));
+        A.equal(octets(s.reg), avant, 'rien n\'a changé : le détail des runs du cycle est conservé');
+        A.ok(r.avertissements.some(function (a) { return /aucun run de référence fiable/.test(a); }), 'avertissement : ' + JSON.stringify(r.avertissements));
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-090 : seuls les préréglages pr et e2e-fumee entrent dans le run de release (écart avec « un run par release » documenté)', function () {
+      var s = scenario();
+      try {
+        ecrireEntree(s.reg, { id: 'r2x', commit: s.c2, date: '2026-01-02T10:02:00.000Z', preset: 'regression', tests: [testEntree('t', 'reussi', 'ccc.jpg')] });
+        compacter(s);
+        A.ok(entreeDe(s.reg, 'r2x').compacte, 'un autre préréglage du même commit est compacté');
+        A.equal(entreeDe(s.reg, 'r2').release, 'v0.1.0');
+        A.equal(entreeDe(s.reg, 'r2f').release, 'v0.1.0');
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-091 : un run compacté garde, par test, la fiche réduite de son DERNIER passage (testsConnus, panneau)', function () {
+      var s = scenario();
+      try {
+        // un test qui n'existe que dans r1 (commit ancien) : sa fiche doit survivre
+        var e = entreeDe(s.reg, 'r1'); var f = path.join(s.reg, 'entrees', e._fichier);
+        var seul = testEntree('disparu', 'reussi'); seul.fiche = { teste: 'x'.repeat(2000), pourquoi: 'p', attendu: 'a', source: 'declaree' };
+        fs.appendFileSync(f, JSON.stringify(seul) + '\n');
+        compacter(s);
+        var apres = entreeDe(s.reg, 'r1');
+        var t = apres.tests.filter(function (x) { return x.nom === 'disparu'; })[0];
+        var commun = apres.tests.filter(function (x) { return x.nom === 't'; })[0];
+        A.ok(t.fiche && t.fiche.teste.length <= 400 && t.fiche.pourquoi === 'p', 'fiche réduite conservée pour le test disparu');
+        A.ok(!commun.fiche, 'un test encore présent dans un run plus récent n\'a plus de fiche dans le run compacté');
+      } finally { nettoyer(s.d); }
+    });
+
+    it('SPEC-BANC-091 : une compaction sauvegardée se restaure octet pour octet (restaurerCompaction)', function () {
+      var s = scenario(); var sauv = tmp('sauv');
+      try {
+        var avant = octets(s.reg);
+        var r = compacter(s, { sauvegarde: sauv });
+        A.ok(r.ok && r.fichiersTouches.length > 2, 'des fichiers touchés listés : ' + JSON.stringify(r.fichiersTouches));
+        A.ok(octets(s.reg) !== avant, 'le registre a bien changé');
+        var rr = REG.restaurerCompaction(s.reg, sauv);
+        A.ok(rr.ok, JSON.stringify(rr));
+        A.equal(octets(s.reg), avant, 'registre restauré à l\'identique');
+      } finally { nettoyer(s.d); nettoyer(sauv); }
+    });
+
+    function depotVersion() {
+      var d = depot();
+      fs.mkdirSync(path.join(d, 'tools'), { recursive: true });
+      fs.readdirSync(path.join(RACINE, 'tools')).filter(function (f) { return /\.js$/.test(f); }).forEach(function (f) { fs.copyFileSync(path.join(RACINE, 'tools', f), path.join(d, 'tools', f)); });
+      fs.mkdirSync(path.join(d, 'src'), { recursive: true });
+      fs.writeFileSync(path.join(d, 'src', 'core.js'), "var VERSION_JEU = '0.1.0';\n");
+      fs.writeFileSync(path.join(d, 'CHANGELOG.md'), '# Journal\n\n## [Non publié]\n\n## [0.1.0] - 2026-01-01\n\n[Non publié]: #\n[0.1.0]: #\n');
+      commiter(d, 'README.md', 'x', 'chore: base');
+      git(d, ['tag', '-a', 'v0.1.0', '-m', 'v0.1.0']);
+      var c1 = commiter(d, 'f.txt', '1', 'feat: une fonction');
+      var c2 = commiter(d, 'f.txt', '2', 'fix: un correctif');
+      var reg = path.join(d, 'tests', 'registre');
+      ecrireImage(reg, 'aaa.jpg'); ecrireImage(reg, 'ccc.jpg');
+      ecrireEntree(reg, { id: 'r1', commit: c1, date: '2026-01-01T10:00:00.000Z', tests: [testEntree('t', 'reussi', 'aaa.jpg')] });
+      ecrireEntree(reg, { id: 'r2', commit: c2, date: '2026-01-02T10:00:00.000Z', tests: [testEntree('t', 'reussi', 'ccc.jpg')] });
+      git(d, ['add', '-A']); git(d, ['commit', '-q', '-m', 'test(registre): runs']);
+      return { d: d, reg: reg };
+    }
+
+    it('SPEC-BANC-091 : --publier qui échoue au commit restaure le registre à l\'identique (fichiers non suivis compris), sans marqueur de release', function () {
+      var v = depotVersion();
+      try {
+        fs.mkdirSync(path.join(v.d, 'hooks-ko'), { recursive: true });
+        fs.writeFileSync(path.join(v.d, 'hooks-ko', 'pre-commit'), '#!/bin/sh\nexit 1\n', { mode: 493 });
+        git(v.d, ['config', 'core.hooksPath', path.join(v.d, 'hooks-ko').replace(/\\/g, '/')]);
+        ecrireImage(v.reg, 'locale.jpg');                                       // image non suivie, référencée par rien : serait supprimée
+        ecrireEntree(v.reg, { id: 'loc', commit: git(v.d, ['rev-parse', 'HEAD~1']), date: '2026-01-01T09:00:00.000Z', tests: [testEntree('t', 'reussi', 'locale.jpg')] }); // entrée non suivie
+        var avant = octets(v.reg);
+        var echec = null;
+        try { cp.execFileSync(process.execPath, [path.join(v.d, 'tools', 'version.js'), '--publier'], { cwd: v.d, encoding: 'utf8', env: ENV, stdio: ['ignore', 'pipe', 'pipe'] }); }
+        catch (e) { echec = e; }
+        A.ok(echec, 'la publication échoue (crochet refusant)');
+        A.equal(octets(v.reg), avant, 'registre (suivi ET non suivi) restauré à l\'identique');
+        A.ok(!REG.lireEntrees(v.reg).some(function (e) { return e.release || e.compacte; }), 'aucun marqueur de release ni compactage résiduel');
+        A.equal(git(v.d, ['tag', '--list', 'v0.2.0']), '', 'pas d\'étiquette');
+        A.ok(/0\.1\.0/.test(fs.readFileSync(path.join(v.d, 'src', 'core.js'), 'utf8')), 'la version du jeu n\'a pas bougé');
+      } finally { nettoyer(v.d); }
+    });
+
+    it('SPEC-BANC-091 : --publier n\'ajoute au commit de release que les fichiers du registre réellement touchés (pas impact.json ni les notes locales)', function () {
+      var v = depotVersion();
+      try {
+        fs.writeFileSync(path.join(v.reg, 'impact.json'), '{}\n');
+        git(v.d, ['add', '-A']); git(v.d, ['commit', '-q', '-m', 'test(registre): carte']);
+        fs.writeFileSync(path.join(v.reg, 'impact.json'), '{"modif":"locale"}\n');            // modif locale non commitée
+        fs.writeFileSync(path.join(v.reg, 'notes.txt'), 'notes locales');                      // non suivi
+        cp.execFileSync(process.execPath, [path.join(v.d, 'tools', 'version.js'), '--publier'], { cwd: v.d, encoding: 'utf8', env: ENV });
+        var fichiers = git(v.d, ['show', '--name-only', '--format=', 'HEAD']).split('\n');
+        A.ok(fichiers.indexOf('tests/registre/impact.json') < 0, 'impact.json local hors du commit : ' + fichiers.join(','));
+        A.ok(fichiers.indexOf('tests/registre/notes.txt') < 0, 'notes locales hors du commit');
+        A.ok(fichiers.some(function (f) { return /entrees\/.*r1/.test(f); }), 'mais les entrées compactées y sont');
+        A.ok(/impact\.json/.test(git(v.d, ['status', '--porcelain'])), 'la modif locale reste dans l\'arbre');
+      } finally { nettoyer(v.d); }
+    });
+
+    it('SPEC-BANC-091 : le crochet n\'énumère pas des centaines de fichiers (resumerFichiers : 10 puis « … N autres »)', function () {
+      var liste = []; for (var i = 0; i < 340; i++) liste.push('tests/registre/entrees/f' + i);
+      var txt = P.resumerFichiers(liste);
+      A.equal(txt.split(', ').length, 11, 'dix noms puis un reste');
+      A.ok(/… 330 autres$/.test(txt), 'le reste est compté : ' + txt.slice(-30));
+      A.equal(P.resumerFichiers(['a', 'b']), 'a, b', 'une liste courte est intacte');
+      A.equal(P.resumerFichiers([]), 'aucun', 'liste vide');
+      var run = fs.readFileSync(path.join(RACINE, 'tests', 'run.js'), 'utf8');
+      A.ok(/resumerFichiers\(perimetreCalcule\.fichiers\)/.test(run), 'tests/run.js l\'utilise pour la ligne de périmètre');
+    });
+  });
+
+  // ══════════════════════════════════════════════════════════════════════
+  describe('Specs — instabilité (revue adversariale) : runs fiables et tests hors carte', function () {
+    function carte() {
+      var cle = 'G › t', id = P.idTestCarte(cle), o = {}; o[id] = cle;
+      var fn = {}; fn['MC.A.f'] = [id];
+      return { version: 2, commit: 'x'.repeat(40), preset: 'pr', fichiers: { 'src/a.js': ['MC.A.f'] }, tests: o, fonctions: fn };
+    }
+    function runsI(etats, modifs, opts) {
+      var o = opts || {}; var d = depot(); var reg = path.join(d, 'tests', 'registre'); var c = null;
+      etats.forEach(function (etat, i) {
+        if (!c || !o.memeCommit) {
+          var m = (modifs && modifs[i]) || { 'src/b.js': 'v' + i };
+          m = Object.assign({ 'tests/spec-g.js': "describe('G', function () {});\n", 'tests/integration-x.js': '// i\n' }, m);
+          Object.keys(m).forEach(function (f) { fs.mkdirSync(path.dirname(path.join(d, f)), { recursive: true }); fs.writeFileSync(path.join(d, f), m[f]); });
+          git(d, ['add', '-A']); git(d, ['commit', '-q', '-m', 'c' + i]); c = git(d, ['rev-parse', 'HEAD']);
+        }
+        ecrireEntree(reg, { id: 'i' + i, commit: c, date: '2026-02-0' + (i + 1) + 'T10:00:00.000Z', meta: (o.metas || [])[i], tests: [o.test ? o.test(etat) : testEntree('t', etat)] });
+      });
+      return { d: d, reg: reg };
+    }
+    function sc(r, c, opts) { return REG.calculerInstabilites(Object.assign({ dossierRegistre: r.reg, dossierRepo: r.d, carte: c }, opts || {})); }
+    function integ(etat) { var t = testEntree('integration-x.js (intégration)', etat); t.categorie = { type: 'integration', groupe: 'integration-x.js' }; return t; }
+
+    it('SPEC-BANC-088 : les runs interrompus et ceux lancés sur un arbre modifié ne comptent pas', function () {
+      var r = runsI(['echec', 'reussi', 'echec'], null, { metas: [null, { arbre_modifie: true }, null] });
+      try { A.ok(!sc(r, carte())['G › t'] || !sc(r, carte())['G › t'].instable, 'le run du milieu (arbre modifié) est écarté : plus d\'alternance'); } finally { nettoyer(r.d); }
+      var r2 = runsI(['echec', 'reussi', 'echec'], null, { metas: [null, { interrompu: true }, null] });
+      try { A.ok(!sc(r2, carte())['G › t'] || !sc(r2, carte())['G › t'].instable, 'idem pour un run interrompu'); } finally { nettoyer(r2.d); }
+    });
+
+    it('SPEC-BANC-088 : un changement du fichier de test du test compte comme un changement', function () {
+      var r = runsI(['echec', 'reussi', 'echec'], [{}, { 'tests/spec-g.js': "describe('G', function () { /* corrigé */ });\n" }, { 'tests/spec-g.js': "describe('G', function () { /* encore */ });\n" }]);
+      try {
+        var res = sc(r, carte())['G › t'];
+        A.equal(res.score, 0, 'chaque bascule suit une modification du fichier de test');
+        A.ok(!res.instable, 'pas instable');
+      } finally { nettoyer(r.d); }
+    });
+
+    it('SPEC-BANC-088 : repli pour un test hors carte (intégration) : alternances sur un même commit détectées, instable, marqué horsCarte', function () {
+      var r = runsI(['echec', 'reussi', 'echec'], null, { memeCommit: true, test: integ });
+      try {
+        var res = sc(r, carte())['integration-x.js › integration-x.js (intégration)'];
+        A.ok(res, 'évalué malgré son absence de la carte');
+        A.equal(res.score, 2, 'deux alternances sans rien changer');
+        A.ok(res.instable && res.horsCarte, 'instable, repli signalé');
+      } finally { nettoyer(r.d); }
+    });
+
+    it('SPEC-BANC-088 : repli hors carte prudent : un src/ ou le fichier du test modifié entre deux commits annule l\'alternance (faux négatif documenté)', function () {
+      var r = runsI(['echec', 'reussi', 'echec'], [{ 'src/a.js': '1' }, { 'src/a.js': '2' }, { 'src/a.js': '3' }], { test: integ });
+      try { A.ok(!sc(r, carte())['integration-x.js › integration-x.js (intégration)'].instable, 'src/ change à chaque commit : pas d\'étiquette'); } finally { nettoyer(r.d); }
+      var r2 = runsI(['echec', 'reussi', 'echec'], [{}, { 'tests/integration-x.js': '// 2\n' }, { 'tests/integration-x.js': '// 3\n' }], { test: integ });
+      try { A.ok(!sc(r2, carte())['integration-x.js › integration-x.js (intégration)'].instable, 'son fichier de test change : pas d\'étiquette'); } finally { nettoyer(r2.d); }
+      var src = fs.readFileSync(path.join(RACINE, 'tools', 'registre.js'), 'utf8');
+      A.ok(/Faux négatif connu/.test(src), 'le faux négatif est documenté dans le code');
+    });
+
+    it('SPEC-BANC-088 : la colonne instabilite existe côté client (tests/historique.js), filtrable, et le rapport affiche la ligne d\'instabilité', function () {
+      var cli = fs.readFileSync(path.join(RACINE, 'tests', 'historique.js'), 'utf8');
+      A.ok(/id: 'instabilite', label: [^,]+, type: 'nombre'/.test(cli), 'colonne client de type nombre (donc filtrable)');
+      var H = require(path.join(RACINE, 'tools', 'historique.js'));
+      A.equal(H.TYPES_COLONNES.instabilite, 'nombre', 'même type côté serveur');
+      var html = G.MC_RAPPORT.html({ campagne: { preset: 'x', debut: '2026-01-01T00:00:00Z', totaux: {} }, tests: [{ nom: 'n', etat: 'ok', duree_ms: 1, type: 'unitaire', groupe: 'G', instabilite: { score: 2, instable: true, runs: 5 } }] });
+      A.ok(/instabilité : 2 alternance/.test(html), 'ligne d\'instabilité dans le rapport');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

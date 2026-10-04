@@ -78,6 +78,8 @@
     { id: 'perimetre', label: 'Périmètre', type: 'enum', defaut: true },
     { id: 'raison_selection', label: 'Raison de sélection', type: 'liste', defaut: false },
     { id: 'trou_perimetre', label: 'Trou de périmètre', type: 'enum', defaut: false },
+    // score d'instabilité (SPEC-BANC-088) : alternances réussite/échec sans changement de ce que le test touche
+    { id: 'instabilite', label: 'Instabilité', type: 'nombre', defaut: false },
   ];
   var PAR_ID = {}; COLONNES.forEach(function (c) { PAR_ID[c.id] = c; });
 
