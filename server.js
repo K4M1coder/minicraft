@@ -3171,7 +3171,7 @@ function traiter(c, m) {
           const contCasse = conteneursPoses.get(kc) || contNeuf;
           if (contCasse) {
             fermerConteneurPourAbonnes(kc);
-            contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n); });
+            contCasse.slots.forEach(s => { if (s) entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, s.id, s.n, null, s.data, s.dmg); });
             conteneursPoses.delete(kc);
             derniereEmissionFour.delete(kc);
           }
@@ -3716,7 +3716,7 @@ function normaliserTailleConteneur(cle, cont) {
   excedent.forEach(s => {
     if (!s) return;
     lachees++;
-    if (p.length === 3) entites.dropItem(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s.id, s.n);
+    if (p.length === 3) entites.dropItem(+p[0] + 0.5, +p[1] + 0.5, +p[2] + 0.5, s.id, s.n, null, s.data, s.dmg);
   });
   journal(`avertissement : conteneur ${cle} (${cont.type}) mal formé — ` +
           `${cont.slots.length + excedent.length} case(s) au lieu de ${cont.taille}, tronqué` +
@@ -3785,11 +3785,11 @@ function refuserOp(c, j, seq, motif) {
 function lacherAuxPieds(js, pile) {
   if (!pile || !pile.n) return;
   const p = js.joueur.state.pos;
-  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n, null, pile.data);
+  entites.dropItem(p.x, p.y + 1, p.z, pile.id, pile.n, null, pile.data, pile.dmg);
 }
 function lancerDevant(js, pile) {
   if (!pile || !pile.n) return;
-  entites.lancerObjet(js.joueur.eyePos(), js.joueur.lookDir(), pile.id, pile.n, pile.data);
+  entites.lancerObjet(js.joueur.eyePos(), js.joueur.lookDir(), pile.id, pile.n, pile.data, pile.dmg);
 }
 // clé(s) de conteneur posé/banque potentiellement concernées par une
 // opération AVANT de savoir si elle réussit (pour capturer l'instantané
@@ -4225,7 +4225,7 @@ function liberSoutesDetruites() {
     vehiculesSoute.delete(e);
     fermerConteneurPourAbonnes('v' + e.eid);
     e.soute.slots.forEach((s, i) => {
-      if (s) entites.dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.id, s.n, null, s.data);
+      if (s) entites.dropItem(e.pos.x, e.pos.y + 0.5, e.pos.z, s.id, s.n, null, s.data, s.dmg);
       e.soute.slots[i] = null;
     });
   });
@@ -4905,10 +4905,10 @@ setInterval(() => {
   ev.picked.forEach(p => {
     const x = joueurs.find(y => y.js.joueur.state === p.joueur);
     if (!x) return;
-    const reste = x.js.joueur.pickUp(p.id, p.n, p.data);
+    const reste = x.js.joueur.pickUp(p.id, p.n, p.data, p.dmg);
     const pris = p.n - reste;
     if (pris > 0) envoyerInvMaj(x.c, x.j, { gain: { id: p.id, n: pris } });
-    if (reste > 0) entites.dropItem(p.joueur.pos.x, p.joueur.pos.y + 1, p.joueur.pos.z, p.id, reste, null, p.data);
+    if (reste > 0) entites.dropItem(p.joueur.pos.x, p.joueur.pos.y + 1, p.joueur.pos.z, p.id, reste, null, p.data, p.dmg);
     envoyer(x.c, { t: NP.MSG.DONNE, j: x.j, id: p.id, n: pris > 0 ? pris : p.n });
   });
   entites.mergeItems();

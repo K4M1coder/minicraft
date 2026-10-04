@@ -770,7 +770,7 @@
       return { entity: e, munition: d.sansMunition ? 0 : munId, toolBroke: casse };
     }
 
-    function pickUp(id, n, data) { return data !== undefined ? pl.inv.addStack(id, n, data) : pl.inv.add(id, n); }
+    function pickUp(id, n, data, dmg) { return (data !== undefined || dmg) ? pl.inv.addStack(id, n, data, dmg) : pl.inv.add(id, n); }
 
     /* Jette `n` exemplaires de la case selectionnee, devant le joueur.
        Sans ca, un inventaire plein condamne a perdre tout nouveau butin. */
@@ -778,11 +778,11 @@
       var st = pl.inv.slots[pl.selected];
       if (!st) return null;
       var take = Math.min(st.n, n === undefined ? 1 : n);
-      var id = st.id;
+      var id = st.id, data = st.data, dmg = st.dmg;
       pl.inv.consumeAt(pl.selected, take);
       var d = lookDir();
       var e = entities.dropItem(pl.pos.x + d.x * 0.8, pl.pos.y + 1.2, pl.pos.z + d.z * 0.8,
-                                id, take, rand);
+                                id, take, rand, data, dmg);
       // on lance l'objet devant soi et on l'empeche d'etre repris aussitot
       e.vel.x = d.x * 5; e.vel.y = 2.2; e.vel.z = d.z * 5;
       e.pickup = 1.0;

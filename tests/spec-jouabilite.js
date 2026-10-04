@@ -181,7 +181,66 @@
       A.equal(pris.length, 1, 'ramassé');
       A.equal(JSON.stringify(pris[0].data), '{"note":"x"}', 'la donnée revient au ramassage');
       var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
-      A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data\)/.test(src), 'le serveur transmet la donnée au jet');
+      A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/.test(src), 'le serveur transmet la donnée et l\'usure au jet');
+    });
+
+    it('SPEC-JOUABLE-006 : un outil usé jeté puis ramassé garde exactement son usure (lâcher → lancer → ramasser → inventaire)', function () {
+      var I = C.I, OUTIL = I.BRONZE_PIOCHE;
+      var joueur = { inv: MC.Inventory.create(36), grille: MC.Inventory.create(9), equip: {} };
+      joueur.inv.slots[0] = { id: OUTIL, n: 1, dmg: 7 };
+      var r = MC.Conteneurs.appliquer({ joueur: joueur, conteneur: function () { return null; }, regles: MC.Modes.regles('survie', 'facile') },
+        { k: 'lacher', i: 0, n: 1 });
+      A.ok(r.ok, 'lâcher accepté');
+      A.equal(r.effets.lache.dmg, 7, 'l\'usure part avec l\'outil lâché');
+      var w = flatWorld(10), ents = MC.createEntities(w);
+      var e = ents.lancerObjet({ x: 0.5, y: 12, z: 0.5 }, { x: 0, y: 0, z: -1 }, OUTIL, 1, r.effets.lache.data, r.effets.lache.dmg);
+      A.equal(e.dmg, 7, 'l\'objet au sol porte l\'usure');
+      for (var i = 0; i < 200; i++) ents.update(1 / 60, { pos: { x: 99, y: 11, z: 99 } });
+      var pl = { pos: { x: e.pos.x, y: 11, z: e.pos.z } };
+      var pris = [];
+      for (var k = 0; k < 60 && !pris.length; k++) pris = ents.update(1 / 60, pl).picked;
+      A.equal(pris.length, 1, 'ramassé');
+      A.equal(pris[0].dmg, 7, 'le ramassage rapporte l\'usure');
+      var inv2 = MC.Inventory.create(36);
+      A.equal(inv2.addStack(pris[0].id, pris[0].n, pris[0].data, pris[0].dmg), 0, 'rangé');
+      A.equal(inv2.slots[0].dmg, 7, 'revient dans l\'inventaire avec la même usure (pas neuf)');
+      // la même chose par le joueur (pickUp) et par dropSelected
+      var g = MC.createPlayer(flatWorld(10), MC.createEntities(flatWorld(10)), MC.Modes.regles('survie', 'facile'));
+      g.state.inv.slots[0] = { id: OUTIL, n: 1, dmg: 5 }; g.state.selected = 0;
+      var d = g.dropSelected(1, seededRand(1));
+      A.equal(d.entity.dmg, 5, 'dropSelected transmet l\'usure');
+      A.equal(g.pickUp(OUTIL, 1, undefined, 5), 0);
+      A.equal(g.state.inv.slots[0].dmg, 5, 'pickUp range l\'usure');
+    });
+
+    it('SPEC-JOUABLE-006 : mergeItems ne fusionne pas deux objets d\'usure différente, et fusionne ceux d\'usure égale', function () {
+      var ents = MC.createEntities(flatWorld(10));
+      var a = ents.dropItem(5.5, 11, 5.5, B.COBBLE, 1, seededRand(3), undefined, 3), b = ents.dropItem(5.5, 11, 5.5, B.COBBLE, 1, seededRand(4), undefined, 9);
+      a.vel.x = a.vel.z = b.vel.x = b.vel.z = 0; a.pos.x = b.pos.x; a.pos.z = b.pos.z;
+      A.equal(ents.mergeItems(), 0, 'usures différentes : pas de fusion');
+      b.dmg = 3;
+      A.equal(ents.mergeItems(), 1, 'usures égales : fusion');
+    });
+
+    it('SPEC-JOUABLE-006 : le butin PvP, les coffres cassés et les véhicules détruits gardent l\'usure ; le serveur la transmet partout', function () {
+      var I = C.I, PV = MC.PvpEnjeux;
+      var perdant = MC.Inventory.create(36), gagnant = MC.Inventory.create(36);
+      perdant.slots[0] = { id: I.BRONZE_PIOCHE, n: 1, dmg: 11 };
+      var r = PV.resoudreButin(perdant, gagnant, 'graine-usure');
+      A.equal(r.perte[0].dmg, 11, 'la perte porte l\'usure');
+      A.equal(gagnant.slots[0].dmg, 11, 'le gagnant reçoit l\'outil avec son usure');
+      var plein = MC.Inventory.create(36);
+      for (var i = 0; i < 36; i++) plein.slots[i] = { id: B.COBBLE, n: 64 };
+      var p2 = MC.Inventory.create(36); p2.slots[0] = { id: I.BRONZE_PIOCHE, n: 1, dmg: 11 };
+      var r2 = PV.resoudreButin(p2, plein, 'graine-usure');
+      A.equal(r2.reste.length, 1, 'inventaire plein : reliquat');
+      A.equal(r2.reste[0].dmg, 11, 'le reliquat (lâché au sol) porte l\'usure');
+      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/.test(src), 'jet : usure transmise');
+      A.ok(/dropItem\(p\.x, p\.y \+ 1, p\.z, pile\.id, pile\.n, null, pile\.data, pile\.dmg\)/.test(src), 'trop-plein aux pieds : usure transmise');
+      A.ok(/pickUp\(p\.id, p\.n, p\.data, p\.dmg\)/.test(src), 'ramassage : usure transmise');
+      A.ok(/pris, null, p\.data, p\.dmg\)|reste, null, p\.data, p\.dmg\)/.test(src), 'reliquat au sol : usure transmise');
+      A.ok(/s\.id, s\.n, null, s\.data, s\.dmg\)/.test(src), 'soute / coffre cassé : usure transmise');
     });
 
     it('SPEC-JOUABLE-001 : le serveur de jeu de test n\'hérite d\'aucun réglage MC_*, valide l\'inventaire de départ et n\'écoute que la boucle locale', function () {

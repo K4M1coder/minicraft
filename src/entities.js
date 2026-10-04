@@ -239,9 +239,10 @@
     // `data` : donnée générique optionnelle portée par l'objet au sol (ex.
     // SPEC-MECA-003, le niveau d'une batterie cassée) — reprise telle quelle
     // sur la pile d'inventaire au ramassage (voir events.picked plus bas).
-    function dropItem(x, y, z, id, n, rand, data) {
+    // `dmg` : l'usure d'un outil, transmise de la même façon (jamais neuf).
+    function dropItem(x, y, z, id, n, rand, data, dmg) {
       var r = rand || Math.random;
-      var e = spawn('item', x, y, z, { item: id, n: n || 1, pickup: 0.4, data: data });
+      var e = spawn('item', x, y, z, { item: id, n: n || 1, pickup: 0.4, data: data, dmg: dmg || 0 });
       // petite impulsion pour que les drops ne s'empilent pas exactement
       e.vel.x = (r() - 0.5) * 2.2;
       e.vel.z = (r() - 0.5) * 2.2;
@@ -257,8 +258,8 @@
        l'horizontale, il retombe à environ 5 blocs, hors de l'aimantation
        (2,2 blocs). `origine` : l'œil du lanceur ; `dir` : son regard (unitaire). */
     var VITESSE_JET = 6, ELAN_JET = 1.5, DELAI_RAMASSAGE_JET = 2;
-    function lancerObjet(origine, dir, id, n, data) {
-      var e = spawn('item', origine.x, origine.y - 0.3, origine.z, { item: id, n: n || 1, pickup: DELAI_RAMASSAGE_JET, data: data });
+    function lancerObjet(origine, dir, id, n, data, dmg) {
+      var e = spawn('item', origine.x, origine.y - 0.3, origine.z, { item: id, n: n || 1, pickup: DELAI_RAMASSAGE_JET, data: data, dmg: dmg || 0 });
       e.vel.x = dir.x * VITESSE_JET;
       e.vel.y = dir.y * VITESSE_JET + ELAN_JET;
       e.vel.z = dir.z * VITESSE_JET;
@@ -946,7 +947,7 @@
             e.vel.z += (dz / d) * pull * dt * 6;
           }
           if (e.pickup <= 0 && d < 0.85) {
-            events.picked.push({ id: e.item, n: e.n, entity: e, joueur: pi, data: e.data });
+            events.picked.push({ id: e.item, n: e.n, entity: e, joueur: pi, data: e.data, dmg: e.dmg || 0 });
             remove(e);
           }
           if (e.age > 300) remove(e);       // les objets oubliés disparaissent
@@ -1101,7 +1102,7 @@
              différents (un objet jeté, 2 s, près d'un objet déjà ramassable
              héritait de son délai écoulé et revenait aussitôt au lanceur), ni
              deux données différentes (livre écrit, batterie chargée…). */
-          if (!memeDelai(a.pickup, b.pickup) || JSON.stringify(a.data) !== JSON.stringify(b.data)) continue;
+          if (!memeDelai(a.pickup, b.pickup) || JSON.stringify(a.data) !== JSON.stringify(b.data) || (a.dmg || 0) !== (b.dmg || 0)) continue;
           a.pickup = Math.max(a.pickup || 0, b.pickup || 0);
           a.n += b.n; remove(b); merged++; j--;
         }

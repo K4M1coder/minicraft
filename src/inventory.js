@@ -66,14 +66,17 @@
     function setAt(i, stack) { slots[i] = stack || null; }
 
     /* Ajoute une pile porteuse de `data` (SPEC-MECA-003) : chaque pile ayant
-       sa propre donnée, on ne la fusionne jamais avec une pile existante
+       sa propre donnée (ou son usure `dmg` : un outil jeté puis ramassé garde
+       exactement la sienne, jamais neuf), on ne la fusionne jamais avec une pile existante
        (même id) — juste une case vide. Renvoie le reliquat, comme `add`. */
-    function addStack(id, n, data) {
-      if (data === undefined) return add(id, n);
+    function addStack(id, n, data, dmg) {
+      if (data === undefined && !dmg) return add(id, n);
       if (!id || n <= 0) return 0;
       var i = firstEmpty();
       if (i < 0) return n;
-      slots[i] = { id: id, n: n, data: data };
+      slots[i] = { id: id, n: n };
+      if (dmg) slots[i].dmg = dmg;
+      if (data !== undefined) slots[i].data = data;
       return 0;
     }
 

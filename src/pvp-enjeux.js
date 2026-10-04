@@ -67,13 +67,11 @@
   }
   /* Ajoute une pile déjà retirée du perdant à l'inventaire du gagnant.
      Renvoie le reliquat non casé (0 si tout est rentré) — même convention que
-     MC.Inventory.add/addStack. Le `dmg` d'un outil n'est PAS préservé au
-     passage (limitation connue, documentée : MC.Inventory.remove elle-même
-     ne le préserve pas davantage lors d'un retrait par id — B4.md ne demande
-     que la conservation des QUANTITÉS, pas de l'usure). */
+     MC.Inventory.add/addStack. Le `dmg` (usure) et le `data` d'une pile
+     suivent l'outil jusque dans le reliquat (SPEC-JOUABLE-006). */
   function ajouterButin(inv, pile) {
     if (!inv) return pile.n;
-    if (pile.data !== undefined && inv.addStack) return inv.addStack(pile.id, pile.n, pile.data);
+    if ((pile.data !== undefined || pile.dmg) && inv.addStack) return inv.addStack(pile.id, pile.n, pile.data, pile.dmg);
     return inv.add ? inv.add(pile.id, pile.n) : pile.n;
   }
   /* SPEC-PVP-001 : prélève une fraction bornée (10 à 25 %) du nombre total
@@ -113,7 +111,12 @@
     var reste = [];
     perte.forEach(function (p) {
       var r = ajouterButin(invGagnant, p);
-      if (r > 0) reste.push({ id: p.id, n: r });
+      if (r > 0) {
+        var q = { id: p.id, n: r };
+        if (p.dmg) q.dmg = p.dmg;
+        if (p.data !== undefined) q.data = p.data;
+        reste.push(q);
+      }
     });
     return { perte: perte, reste: reste };
   }

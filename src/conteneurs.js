@@ -248,11 +248,12 @@
     var inv = ctx.joueur.inv;
     var S = inv.slots[op.i];
     if (!S || S.n < op.n) return { ok: false, motif: 'absent' };
-    var id = S.id, data = S.data;
+    var id = S.id, data = S.data, dmg = S.dmg;
     var removed = inv.consumeAt(op.i, op.n);
     // SPEC-JOUABLE-006 : la donnée de la pile (livre écrit, niveau d'une batterie…) part avec l'objet jeté
     var lache = { id: id, n: removed };
     if (data !== undefined) lache.data = data;
+    if (dmg) lache.dmg = dmg;   // l'usure d'un outil part avec lui : jamais de réparation gratuite
     return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: { lache: lache } };
   }
 
