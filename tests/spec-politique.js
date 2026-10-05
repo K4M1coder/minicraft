@@ -81,6 +81,211 @@
       A.equal(e3.jour, avantJour);
     });
 
+    /* ── SPEC-FACTION-006 : les objectifs ÉVOLUENT avec ce qui arrive ──────────
+       Factions fabriquées à la main pour piloter la situation (ressources,
+       guerres, raids subis) : chaque règle d'évolution est vérifiée sur un
+       état connu, puis l'ensemble sur une vraie simulation (déterminisme). */
+    function fTest(id, type, caractere, objectif, ress, territoire, x, z) {
+      return { id: id, type: type, nom: 'F ' + id, caractere: caractere,
+               siege: { x: x || 0, z: z || 0, site: id }, territoire: territoire || 120,
+               ressources: { or: ress[0], nourriture: ress[1] }, objectif: objectif,
+               objectifs: P.TYPES[type].objectifs.slice(), naissance: 0 };
+    }
+    function cleR(a, b) { return a < b ? a + '~' + b : b + '~' + a; }
+    it('SPEC-FACTION-006 : l\'objectif d\'une faction évolue selon ce qui lui arrive (raid subi → défendre, ruine → commercer ou piller, richesse en paix → s\'étendre, guerre et force → piller, longue paix d\'un ordre → convertir)', function () {
+      // raid subi : la victime passe à « défendre » dès le lendemain
+      var e = P.creer(11);
+      var v = fTest('t:victime', 'royaume', 'pragmatique', 'commercer', [60, 60], 150, 0, 0);
+      var a = fTest('t:pillard', 'royaume', 'belliqueux', 'piller', [90, 90], 150, 200, 0);
+      e.factions.set(v.id, v); e.factions.set(a.id, a);
+      e.relations.set(cleR(v.id, a.id), 'guerre');
+      var jourGagne = null;
+      for (var j = 0; j < 300 && jourGagne === null; j++) if (P.h01(11, a.id, v.id, 'raid', j) < 0.3) jourGagne = j;
+      e.jour = jourGagne;
+      P.appliquerAction(e, a, 'raid', jourGagne);
+      A.ok(v.subis && v.subis.indexOf(jourGagne) >= 0, 'le raid subi est mémorisé par la victime');
+      A.equal(P.objectifSelon(e, v, jourGagne + 1), 'defendre', 'un raid subi récent oriente vers la défense');
+      A.equal(P.objectifSelon(e, v, jourGagne + 30), P.objectifSelon(e, fTest('t:victime', 'royaume', 'pragmatique', 'commercer', [60, 60], 150, 0, 0), jourGagne + 30),
+              'un raid ancien ne compte plus');
+
+      // ruine : une guilde marchande commerce, des bandits pillent leurs ennemis
+      var e2 = P.creer(3);
+      var pauvre = fTest('t:pauvre', 'guilde', 'avare', 'explorer', [5, 40], 100);
+      var band = fTest('t:band', 'bandits', 'belliqueux', 'etendre', [4, 4], 60, 300, 0);
+      var riche = fTest('t:riche', 'royaume', 'pragmatique', 'defendre', [120, 90], 150, 3000, 3000);
+      [pauvre, band, riche].forEach(function (f) { e2.factions.set(f.id, f); });
+      e2.relations.set(cleR(band.id, pauvre.id), 'guerre');
+      A.equal(P.objectifSelon(e2, pauvre, 10), 'commercer', 'une faction ruinée (non pillarde) cherche à commercer');
+      A.equal(P.objectifSelon(e2, band, 10), 'piller', 'des bandits ruinés pillent leurs ennemis');
+      A.equal(P.objectifSelon(e2, riche, 10), 'etendre', 'riche et en paix : elle s\'étend');
+      riche.territoire = 400;
+      A.equal(P.objectifSelon(e2, riche, 10), 'explorer', 'riche, en paix, territoire au maximum : elle explore');
+
+      // guerre + force + caractère belliqueux : piller ; un ordre en longue paix : convertir
+      var e3 = P.creer(5);
+      var fort = fTest('t:fort', 'royaume', 'belliqueux', 'commercer', [70, 70], 200, 0, 0);
+      var rival = fTest('t:rival', 'royaume', 'pacifique', 'commercer', [30, 30], 100, 2500, 0);
+      var lointain = fTest('t:lointain', 'royaume', 'pacifique', 'commercer', [30, 30], 100, 40000, 0);
+      e3.factions.set(lointain.id, lointain);
+      var ordre = fTest('t:ordre', 'ordre', 'fanatique', 'defendre', [40, 40], 120, 9000, 9000);
+      [fort, rival, ordre].forEach(function (f) { e3.factions.set(f.id, f); });
+      e3.relations.set(cleR(fort.id, rival.id), 'guerre');
+      A.equal(P.objectifSelon(e3, fort, 50), 'piller', 'en guerre, forte et belliqueuse : elle pille');
+      A.equal(P.objectifSelon(e3, ordre, 50), 'convertir', 'un ordre en paix cherche à convertir');
+      // une guerre à l'autre bout du monde ne change pas le quotidien
+      e3.relations.set(cleR(ordre.id, lointain.id), 'guerre');
+      A.equal(P.objectifSelon(e3, ordre, 50), 'convertir', 'une guerre lointaine ne pèse pas sur l\'objectif');
+    });
+
+    it('SPEC-FACTION-006 : l\'évolution est déterministe (graine + évènements), annoncée, transmise aux clients et rejouable d\'un bloc', function () {
+      function histoire(seed) {
+        var e = P.creer(seed);
+        P.decouvrir(e, SITES);
+        var suivi = [];
+        for (var j = 1; j <= 150; j++) {
+          P.tourDuMonde(e, j);
+          suivi.push(Array.from(e.factions.keys()).sort().map(function (id) { return e.factions.get(id).objectif; }).join(','));
+        }
+        return { e: e, suivi: suivi };
+      }
+      var h1 = histoire(42), h2 = histoire(42);
+      A.deep(h1.suivi, h2.suivi, 'même graine, mêmes évènements : mêmes objectifs jour après jour');
+      var changes = 0;
+      for (var k = 1; k < h1.suivi.length; k++) if (h1.suivi[k] !== h1.suivi[k - 1]) changes++;
+      A.gt(changes, 0, 'les objectifs changent au fil de la simulation (jamais figés à la naissance)');
+      A.ok(h1.e.annonces.some(function (a) { return /change d'objectif/.test(a.texte); }), 'un changement d\'objectif s\'annonce');
+      // rattrapage d'un bloc == jour par jour, objectifs compris
+      var e3 = P.creer(42); P.decouvrir(e3, SITES); P.tourDuMonde(e3, 150);
+      A.deep(Array.from(e3.factions.entries()).sort(), Array.from(h1.e.factions.entries()).sort(), 'rattrapage d\'un bloc identique');
+      // aller-retour de sauvegarde au milieu : même suite
+      var e4 = P.creer(42); P.decouvrir(e4, SITES); P.tourDuMonde(e4, 70);
+      e4 = P.charger(JSON.parse(JSON.stringify(P.serialiser(e4))));
+      P.tourDuMonde(e4, 150);
+      A.deep(Array.from(e4.factions.entries()).sort(), Array.from(h1.e.factions.entries()).sort(), 'rechargée en cours de route, la faction suit la même histoire');
+
+      // réseau : un objectif changé part dans la différence suivante et le client le relit
+      var e5 = P.creer(42); P.decouvrir(e5, SITES);
+      var suivi = P.suivreReseau(e5);
+      var client = P.appliquerReseau(null, P.instantaneReseau(e5));
+      for (var d = 1; d <= 150; d++) {
+        P.tourDuMonde(e5, d);
+        var diff = suivi.prendre();
+        if (diff) client = P.appliquerReseau(client, diff.complet ? P.instantaneReseau(e5) : diff);
+      }
+      e5.factions.forEach(function (f, id) {
+        A.equal(client.factions.get(id).objectif, f.objectif, 'objectif à jour côté client : ' + id);
+        A.equal(client.factions.get(id).territoire, f.territoire, 'territoire à jour côté client : ' + id);
+      });
+    });
+
+    it('SPEC-FACTION-007 : la patrouille agit vraiment — vigilance contre les raids, ennemis repoussés hors du territoire, tracé de ronde autour du siège', function () {
+      var e = P.creer(9);
+      var g = fTest('t:garde', 'royaume', 'pragmatique', 'defendre', [50, 50], 150, 0, 0);
+      var en = fTest('t:ennemi', 'bandits', 'belliqueux', 'piller', [50, 50], 100, 120, 0);   // territoires qui se recoupent
+      e.factions.set(g.id, g); e.factions.set(en.id, en);
+      e.relations.set(cleR(g.id, en.id), 'guerre');
+      var terrEn = en.territoire;
+      P.appliquerAction(e, g, 'patrouille', 4);
+      A.ok(g.patrouille && g.patrouille.jour === 4, 'la ronde du jour est enregistrée');
+      A.ok(Array.isArray(g.patrouille.points) && g.patrouille.points.length >= 4, 'une ronde a un tracé (points de passage)');
+      g.patrouille.points.forEach(function (p) {
+        var d = Math.hypot(p.x - g.siege.x, p.z - g.siege.z);
+        A.ok(d > 10 && d <= g.territoire, 'chaque point de ronde est dans le territoire, hors du centre');
+      });
+      A.lt(en.territoire, terrEn, 'l\'ennemi dont le territoire empiète est repoussé');
+      A.ok(g.vigilance >= 4, 'la faction est sur ses gardes');
+      // un raid contre une faction vigilante réussit moins souvent (jet déterministe)
+      var jourMoyen = null;
+      for (var j = 5; j < 400 && jourMoyen === null; j++) {
+        var h = P.h01(9, en.id, g.id, 'raid', j);
+        if (h >= 0.3 && h < 0.5) jourMoyen = j;
+      }
+      A.ok(jourMoyen !== null, 'un jour de jet moyen existe');
+      g.vigilance = jourMoyen;
+      var tg = g.territoire;
+      P.appliquerAction(e, en, 'raid', jourMoyen);
+      A.equal(g.territoire, tg, 'ce jet, gagnant contre une faction sans garde, échoue contre une faction vigilante');
+      g.vigilance = -1;
+      P.appliquerAction(e, en, 'raid', jourMoyen);
+      A.lt(g.territoire, tg, 'le même jet réussit quand la faction n\'est plus sur ses gardes');
+    });
+
+    it('SPEC-FACTION-007 : caravanes (richesse et liens), missions (conversion), avant-postes fondés à un endroit précis, économie quotidienne', function () {
+      var e = P.creer(13);
+      var m = fTest('t:marchand', 'guilde', 'pragmatique', 'commercer', [30, 30], 100, 0, 0);
+      var p = fTest('t:partenaire', 'royaume', 'pacifique', 'commercer', [30, 30], 100, 600, 0);
+      var o = fTest('t:ordre', 'ordre', 'fanatique', 'convertir', [30, 30], 100, -900, 0);
+      [m, p, o].forEach(function (f) { e.factions.set(f.id, f); });
+      e.relations.set(cleR(o.id, p.id), 'rivalite');
+      var or0 = m.ressources.or;
+      P.appliquerAction(e, m, 'caravane', 1);
+      A.gt(m.ressources.or, or0, 'une caravane enrichit sa faction');
+      // une caravane améliore, un jour sur quelques-uns, la relation avec son partenaire
+      var jourLien = null;
+      for (var j = 0; j < 500 && jourLien === null; j++) if (P.h01(13, m.id, 'caravane-lien', j) < 0.08) jourLien = j;
+      var avant = P.relationEntre(e, m.id, p.id);
+      P.appliquerAction(e, m, 'caravane', jourLien);
+      A.notEqual(P.relationEntre(e, m.id, p.id), avant, 'les échanges rapprochent les partenaires (neutre → alliance)');
+      // mission : un ordre convertit, la rivalité s'apaise
+      var jourMission = null;
+      for (var j2 = 0; j2 < 500 && jourMission === null; j2++) if (P.h01(13, o.id, 'mission', j2) < 0.2) jourMission = j2;
+      P.appliquerAction(e, o, 'mission', jourMission);
+      A.equal(P.relationEntre(e, o.id, p.id), 'neutre', 'une mission réussie apaise une rivalité');
+      // avant-poste réussi : un lieu précis, au bord du territoire
+      var jourAP = null;
+      for (var j3 = 0; j3 < 300 && jourAP === null; j3++) if (P.h01(13, p.id, 'avant_poste', j3) < 0.5) jourAP = j3;
+      P.appliquerAction(e, p, 'avant_poste', jourAP);
+      A.equal(p.avantPostes.length, 1, 'l\'avant-poste fondé est enregistré');
+      var ap = p.avantPostes[0];
+      var dap = Math.hypot(ap.x - p.siege.x, ap.z - p.siege.z);
+      A.ok(dap > p.territoire * 0.5 && dap <= p.territoire, 'au bord du territoire, à l\'intérieur');
+      A.ok(P.factionCouvrant(e, ap.x, ap.z), 'le territoire couvre son avant-poste');
+      // économie quotidienne : un jour sans action nourrit la faction
+      var e2 = P.creer(1);
+      var f2 = fTest('t:paisible', 'royaume', 'pacifique', 'defendre', [10, 10], 300, 0, 0);
+      e2.factions.set(f2.id, f2);
+      P.tourDuMonde(e2, 1);
+      A.gt(f2.ressources.nourriture, 10, 'le territoire produit de la nourriture chaque jour');
+    });
+
+    it('SPEC-FACTION-007 : patrouilles visibles près des joueurs seulement, en nombre borné ; simulation à gros grain qui continue loin d\'eux, au coût borné', function () {
+      var e = P.creer(21);
+      var proche = fTest('t:proche', 'royaume', 'pragmatique', 'defendre', [50, 50], 150, 0, 0);
+      var loin = fTest('t:loin', 'royaume', 'pragmatique', 'defendre', [50, 50], 150, 20000, 20000);
+      e.factions.set(proche.id, proche); e.factions.set(loin.id, loin);
+      e.jour = 7;
+      P.appliquerAction(e, proche, 'patrouille', 6);
+      P.appliquerAction(e, loin, 'patrouille', 6);
+      var vis = P.patrouillesVisibles(e, [{ x: 30, z: 20 }], 160, 8);
+      A.equal(vis.length, 1, 'seule la ronde proche d\'un joueur prend corps');
+      A.equal(vis[0].faction, proche.id);
+      A.ok(vis[0].gardes >= 1 && vis[0].gardes <= 3, 'quelques gardes, pas une armée');
+      A.equal(P.patrouillesVisibles(e, [{ x: 30, z: 20 }], 160, 12).length, 0, 'une ronde passée ne s\'éternise pas');
+      // borne : même avec beaucoup de factions proches, le nombre de rondes visibles est plafonné
+      for (var i = 0; i < 40; i++) {
+        var f = fTest('t:n' + i, 'ordre', 'pragmatique', 'defendre', [50, 50], 120, i * 3, 0);
+        e.factions.set(f.id, f);
+        P.appliquerAction(e, f, 'patrouille', 7);
+      }
+      A.ok(P.patrouillesVisibles(e, [{ x: 30, z: 20 }], 160, 8).length <= P.PATROUILLES_MAX, 'plafond de rondes visibles');
+      // loin de tout joueur, la faction continue d'agir (gros grain) : son territoire bouge sur une saison
+      var e2 = P.creer(21); P.decouvrir(e2, SITES);
+      var avant = {}; e2.factions.forEach(function (f, id) { avant[id] = JSON.stringify([f.territoire, f.ressources, f.objectif]); });
+      P.tourDuMonde(e2, 60);
+      var bouge = 0; e2.factions.forEach(function (f, id) { if (JSON.stringify([f.territoire, f.ressources, f.objectif]) !== avant[id]) bouge++; });
+      A.equal(bouge, e2.factions.size, 'chaque faction évolue, qu\'un joueur soit près d\'elle ou non');
+      // coût borné d'un jour simulé avec ~300 factions (≈ 45 000 relations)
+      var e3 = P.creer(5), sites = [];
+      for (var s = 0; s < 260; s++) sites.push({ id: 'ville:' + s, kind: 'ville', x: (s % 20) * 700, z: Math.floor(s / 20) * 700, nom: 'V' + s });
+      P.decouvrir(e3, sites);
+      A.gt(e3.factions.size, 280, 'un grand monde (' + e3.factions.size + ' factions)');
+      P.tourDuMonde(e3, 2);
+      var t0 = Date.now();
+      P.tourDuMonde(e3, 12);
+      var parJour = (Date.now() - t0) / 10;
+      A.lt(parJour, 40, 'un jour simulé coûte moins de 40 ms (' + parJour.toFixed(1) + ' ms)');
+    });
+
     it('SPEC-FACTION-008 : les relations entre factions PNJ évoluent et s\'annoncent, elles jugent joueurs et factions de joueurs par réputation, et proposent des quêtes selon leurs objectifs', function () {
       var e = P.creer(123);
       P.decouvrir(e, SITES);

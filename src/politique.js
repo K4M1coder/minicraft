@@ -126,6 +126,9 @@
   function annoncer(etat, texte, factions) {
     etat.annonces.push({ jour: etat.jour, texte: texte, factions: factions || [] });
     if (etat.annonces.length > ANNONCES_MAX) etat.annonces.shift();
+    // compteur monotone (non persisté) : l'appelant sait combien d'annonces sont nées,
+    // même quand la liste, bornée, n'en garde que les ANNONCES_MAX dernières
+    etat.nbAnnonces = (etat.nbAnnonces || 0) + 1;
   }
   var LIBELLES_RELATION = { guerre: 'entrent en guerre', rivalite: 'deviennent rivales',
     neutre: 'renouent des relations neutres', alliance: 'concluent une alliance' };
@@ -163,13 +166,18 @@
   }
 
   // ─── simulation à gros grain, par jour de jeu ──────────────────────────
+  /* SPEC-FACTION-007 : chaque objectif a ses actions. « convertir » envoie des
+     missions (qui apaisent les rivalités), « commercer » des caravanes (qui
+     enrichissent et rapprochent les partenaires), « défendre » et « explorer »
+     des patrouilles (vigilance, ennemis repoussés, ronde visible près des
+     joueurs), « s'étendre » des avant-postes, « piller » des raids. */
   var ACTIONS_PAR_OBJECTIF = {
     etendre: ['avant_poste', 'patrouille', 'rien'],
     commercer: ['caravane', 'rien'],
     defendre: ['patrouille', 'rien'],
     piller: ['raid', 'rien'],
-    convertir: ['caravane', 'rien'],
-    explorer: ['patrouille', 'rien'],
+    convertir: ['mission', 'caravane', 'rien'],
+    explorer: ['patrouille', 'caravane', 'rien'],
   };
   function choisirAction(f, hAction) {
     var opts = ACTIONS_PAR_OBJECTIF[f.objectif] || ['rien'];
@@ -178,14 +186,13 @@
     if (hAction > seuil) return 'rien';
     return opts[Math.floor((hAction / seuil) * opts.length) % opts.length];
   }
-  function ciblePourRaid(etat, f, jour) {
+  /* `voisins` (facultatif) : l'index des relations entre factions PNJ du jour
+     simulé (indexer), tenu à jour pendant ce jour — sans lui, une passe sur
+     toutes les relations (appelants hors de la simulation). Les deux voies
+     donnent exactement les mêmes candidats. */
+  function ciblePourRaid(etat, f, jour, voisins) {
     var candidats = [];
-    etat.relations.forEach(function (r, cle) {
-      if (r !== 'guerre' && r !== 'rivalite') return;
-      var parts = cle.split('~');
-      var autreId = parts[0] === f.id ? parts[1] : parts[1] === f.id ? parts[0] : null;
-      if (autreId && etat.factions.has(autreId)) candidats.push(autreId);
-    });
+    pourVoisins(etat, voisins, f.id, function (autreId, r) { if (r === 'guerre' || r === 'rivalite') candidats.push(autreId); });
     if (!candidats.length) return null;
     candidats.sort();
     var h = h01(etat.seed, f.id, 'ciblage', jour);
@@ -206,62 +213,342 @@
   function appliquerGainAvantPoste(f) {
     f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 10);
   }
-  function appliquerAction(etat, f, action, jour) {
-    if (action === 'caravane') { f.ressources.or += 1; annoncer(etat, f.nom + ' envoie une caravane commerciale.', [f.id]); return; }
+  // ─── index des relations (coût borné d'un jour simulé) ──────────────────
+  /* Les relations PNJ↔PNJ croissent comme n² (≈ 58 000 paires pour ≈ 340
+     factions) : les rebalayer à chaque raid, mission ou caravane coûtait plus
+     que tout le reste du jour. L'index, bâti une fois tant que ni les relations
+     ni les factions ne changent de taille (une naissance ajoute toujours ses
+     paires), garde chaque clé dans l'ordre de la Map, ses deux factions, un
+     hachage de base, la liste des clés de chaque faction et le code de sa
+     relation ; chaque jour, une seule passe sur la Map rafraîchit les codes
+     (et vérifie que les clés n'ont pas bougé, sinon l'index est rebâti). Les
+     actions du jour le tiennent à jour (poserRelation). */
+  var CACHES = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+  function rafraichirIndex(etat, c) {
+    var k = 0, ok = true;
+    etat.relations.forEach(function (r, cle) {
+      if (!ok) return;
+      if (cle !== c.cles[k]) { ok = false; return; }
+      c.codes[k++] = codeRelation(r);
+    });
+    return ok && k === c.cles.length;
+  }
+  function indexer(etat) {
+    var c = CACHES && CACHES.get(etat.relations);
+    if (c && c.taille === etat.relations.size && c.nf === etat.factions.size && rafraichirIndex(etat, c)) return c;
+    var cles = Array.from(etat.relations.keys()), n = cles.length, listes = new Map();
+    c = { taille: etat.relations.size, nf: etat.factions.size, cles: cles, a: new Array(n), b: new Array(n),
+          base: new Uint32Array(n), pnj: new Uint8Array(n), codes: new Uint8Array(n), dist: new Float32Array(n), indexDe: new Map(), adj: new Map(),
+          ids: Array.from(etat.factions.keys()).sort() };
+    for (var k = 0; k < n; k++) {
+      var t = cles[k].indexOf('~');
+      c.a[k] = cles[k].slice(0, t); c.b[k] = cles[k].slice(t + 1);
+      c.base[k] = h32(cles[k]);
+      c.indexDe.set(cles[k], k);
+      // une clé impliquant une faction absente de etat.factions (une faction de
+      // joueurs posée par guildes.js:declarerRelation, SPEC-FACTION-017) n'est ni
+      // dérivée, ni annoncée, ni candidate : etat.relations sert aussi de mémoire
+      // à ce genre de relation externe.
+      c.pnj[k] = c.a[k] !== c.b[k] && etat.factions.has(c.a[k]) && etat.factions.has(c.b[k]) ? 1 : 0;
+      if (!c.pnj[k]) continue;
+      var fa = etat.factions.get(c.a[k]), fb = etat.factions.get(c.b[k]);
+      c.dist[k] = Math.hypot(fa.siege.x - fb.siege.x, fa.siege.z - fb.siege.z);   // les sièges ne bougent jamais
+      [c.a[k], c.b[k]].forEach(function (id) { var l = listes.get(id); if (!l) listes.set(id, l = []); l.push(k); });
+    }
+    listes.forEach(function (l, id) { c.adj.set(id, Int32Array.from(l)); });
+    rafraichirIndex(etat, c);
+    if (CACHES) CACHES.set(etat.relations, c);
+    return c;
+  }
+  /* fn(autreId, relation) pour chaque relation de `id` avec une autre faction PNJ
+     (avec l'index : neutres comprises ; sans : celles que la Map contient). */
+  function pourVoisins(etat, ix, id, fn) {
+    if (ix) {
+      var l = ix.adj.get(id);
+      if (!l) return;
+      for (var i = 0; i < l.length; i++) { var k = l[i]; fn(ix.a[k] === id ? ix.b[k] : ix.a[k], ECHELLE[ix.codes[k]]); }
+      return;
+    }
+    etat.relations.forEach(function (r, cle) {
+      var t = cle.indexOf('~'), a = cle.slice(0, t), b = cle.slice(t + 1);
+      var autre = a === id ? b : b === id ? a : null;
+      if (autre && autre !== id && etat.factions.has(autre)) fn(autre, r);
+    });
+  }
+  function poserRelation(etat, ix, a, b, r) {
+    var cle = cleRelation(a, b);
+    etat.relations.set(cle, r);
+    if (!ix) return;
+    var k = ix.indexDe.get(cle);
+    if (k !== undefined) ix.codes[k] = codeRelation(r);
+  }
+  // mélange d'un hachage de clé et d'un hachage de jour (déterministe, sans chaîne à bâtir)
+  function melange01(a, b) {
+    var h = Math.imul((a ^ b) >>> 0, 0x85ebca6b) >>> 0;
+    h ^= h >>> 13; h = Math.imul(h, 0xc2b2ae35) >>> 0; h ^= h >>> 16;
+    return (h >>> 0) / 4294967296;
+  }
+
+  // ─── actions (SPEC-FACTION-007) ────────────────────────────────────────
+  var DUREE_PATROUILLE = 3, PATROUILLES_MAX = 6, RAYON_RONDE_MAX = 48, RAYON_RONDE_MIN = 16, POINTS_RONDE = 6;
+  var VIGILANCE_JOURS = 2, SUBIS_MAX = 8, AVANT_POSTES_MAX = 6, RESSOURCES_MAX = 500, PORTEE_COMMERCE = 3000;
+  /* Le tracé d'une ronde : POINTS_RONDE points sur un cercle autour du siège,
+     dans le territoire (assez loin du centre pour ne pas tourner sur place),
+     orientés selon le jour. */
+  function pointsRonde(seed, f, jour) {
+    var rr = Math.max(RAYON_RONDE_MIN, Math.min(f.territoire * 0.6, RAYON_RONDE_MAX));
+    var a0 = h01(seed, f.id, 'ronde', jour) * Math.PI * 2, out = [];
+    for (var i = 0; i < POINTS_RONDE; i++) {
+      var a = a0 + i * Math.PI * 2 / POINTS_RONDE;
+      out.push({ x: Math.round(f.siege.x + Math.cos(a) * rr), z: Math.round(f.siege.z + Math.sin(a) * rr) });
+    }
+    return out;
+  }
+  // la faction la plus proche avec qui commercer (ni en guerre ni rivale), à portée
+  function partenaireCommerce(etat, f, voisins) {
+    var hostiles = new Set(), best = null, bd = PORTEE_COMMERCE;
+    pourVoisins(etat, voisins, f.id, function (id, r) { if (r === 'guerre' || r === 'rivalite') hostiles.add(id); });
+    etat.factions.forEach(function (o, id) {
+      if (id === f.id || hostiles.has(id)) return;
+      var d = Math.hypot(o.siege.x - f.siege.x, o.siege.z - f.siege.z);
+      if (d < bd || (d === bd && best && id < best.id)) { bd = d; best = o; }
+    });
+    return best;
+  }
+  function relationDe(etat, ix, a, b) {
+    var k = ix ? ix.indexDe.get(cleRelation(a, b)) : undefined;
+    if (k !== undefined) return ECHELLE[ix.codes[k]];
+    return relationEntre(etat, a, b);
+  }
+  function appliquerAction(etat, f, action, jour, voisins) {
+    if (action === 'caravane') {
+      // une caravane rapporte (or, vivres) et, de loin en loin, rapproche les partenaires
+      f.ressources.or = Math.min(RESSOURCES_MAX, f.ressources.or + 3);
+      f.ressources.nourriture = Math.min(RESSOURCES_MAX, f.ressources.nourriture + 1);
+      var part = partenaireCommerce(etat, f, voisins);
+      annoncer(etat, f.nom + ' envoie une caravane commerciale' + (part ? ' vers ' + part.nom : '') + '.', part ? [f.id, part.id] : [f.id]);
+      if (part && h01(etat.seed, f.id, 'caravane-lien', jour) < 0.08) {
+        var rc = relationDe(etat, voisins, f.id, part.id), rc2 = ameliorer(rc);
+        if (rc2 !== rc) {
+          poserRelation(etat, voisins, f.id, part.id, rc2);
+          annoncer(etat, f.nom + ' et ' + part.nom + ' ' + LIBELLES_RELATION[rc2] + ' grâce au commerce.', [f.id, part.id]);
+        }
+      }
+      return;
+    }
+    if (action === 'mission') {
+      // missionnaires : une rivalité s'apaise (à défaut, un voisin neutre se rapproche)
+      prelever(f, { or: 2, nourriture: 0 });
+      var rivaux = [];
+      pourVoisins(etat, voisins, f.id, function (id, r) { if (r === 'rivalite') rivaux.push(id); });
+      rivaux.sort();
+      var cibleM = rivaux.length ? etat.factions.get(rivaux[Math.floor(h01(etat.seed, f.id, 'mission-cible', jour) * rivaux.length) % rivaux.length])
+                                 : partenaireCommerce(etat, f, voisins);
+      if (!cibleM) return;
+      var seuilM = rivaux.length ? 0.2 : 0.1;
+      if (h01(etat.seed, f.id, 'mission', jour) < seuilM) {
+        var rm = relationDe(etat, voisins, f.id, cibleM.id), rm2 = ameliorer(rm);
+        if (rm2 !== rm) {
+          poserRelation(etat, voisins, f.id, cibleM.id, rm2);
+          annoncer(etat, 'Les missionnaires de ' + f.nom + ' gagnent ' + cibleM.nom + ' à leur cause : elles ' + LIBELLES_RELATION[rm2] + '.', [f.id, cibleM.id]);
+        }
+      }
+      return;
+    }
+    if (action === 'patrouille') {
+      /* Une ronde : la faction est sur ses gardes (un raid contre elle réussit
+         moins souvent), repousse les ennemis en guerre dont le territoire empiète
+         sur le sien, sinon consolide le sien ; son tracé fait apparaître des gardes
+         en marche près des joueurs (patrouillesVisibles, serveur). */
+      f.vigilance = jour + VIGILANCE_JOURS;
+      f.patrouille = { jour: jour, points: pointsRonde(etat.seed, f, jour) };
+      var repousses = [];
+      var ennemis = [];
+      pourVoisins(etat, voisins, f.id, function (id, r) { if (r === 'guerre') ennemis.push(id); });
+      ennemis.sort().forEach(function (id) {
+        var en = etat.factions.get(id);
+        if (!en || Math.hypot(en.siege.x - f.siege.x, en.siege.z - f.siege.z) >= f.territoire + en.territoire) return;
+        if (en.territoire <= TERRITOIRE_MIN) return;
+        en.territoire = Math.max(TERRITOIRE_MIN, en.territoire - 3);
+        repousses.push(en);
+      });
+      if (repousses.length) annoncer(etat, 'Les patrouilles de ' + f.nom + ' repoussent ' + repousses.map(function (x) { return x.nom; }).join(', ') + '.', [f.id].concat(repousses.map(function (x) { return x.id; })));
+      else f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 1);
+      return;
+    }
     if (action === 'avant_poste') {
       prelever(f, COUT_ACTION_RESSOURCES);
       var hap = h01(etat.seed, f.id, 'avant_poste', jour);
       if (hap < 0.5) {
         appliquerGainAvantPoste(f);
-        annoncer(etat, f.nom + ' fonde un avant-poste et étend son territoire.', [f.id]);
+        // un lieu précis, au bord du nouveau territoire
+        var ang = h01(etat.seed, f.id, 'ap-angle', jour) * Math.PI * 2, dist = f.territoire * 0.85;
+        var ap = { x: Math.round(f.siege.x + Math.cos(ang) * dist), z: Math.round(f.siege.z + Math.sin(ang) * dist), jour: jour };
+        if (!f.avantPostes) f.avantPostes = [];
+        f.avantPostes.push(ap);
+        if (f.avantPostes.length > AVANT_POSTES_MAX) f.avantPostes.shift();
+        annoncer(etat, f.nom + ' fonde un avant-poste (' + ap.x + ', ' + ap.z + ') et étend son territoire.', [f.id]);
       } else {
         annoncer(etat, f.nom + ' tente de fonder un avant-poste, sans succès.', [f.id]);
       }
       return;
     }
     if (action === 'raid') {
-      var cible = ciblePourRaid(etat, f, jour);
+      var cible = ciblePourRaid(etat, f, jour, voisins);
       if (!cible) return;
       prelever(f, COUT_ACTION_RESSOURCES);
+      // la victime s'en souvient (SPEC-FACTION-006 : son objectif en tiendra compte)
+      if (!cible.subis) cible.subis = [];
+      cible.subis.push(jour);
+      if (cible.subis.length > SUBIS_MAX) cible.subis.shift();
       var h = h01(etat.seed, f.id, cible.id, 'raid', jour);
-      if (h < 0.5) {
-        appliquerGainElimination(etat, f, cible);
+      // une faction sur ses gardes (patrouille récente) résiste mieux
+      var seuilRaid = cible.vigilance !== undefined && cible.vigilance >= jour ? 0.3 : 0.5;
+      if (h < seuilRaid) {
+        appliquerGainElimination(etat, f, cible, voisins);
         annoncer(etat, f.nom + ' mène un raid contre ' + cible.nom + ' et gagne du terrain.', [f.id, cible.id]);
       } else {
         annoncer(etat, f.nom + ' échoue à raider ' + cible.nom + '.', [f.id, cible.id]);
       }
     }
-    // 'patrouille' et 'rien' : discrets, pas d'annonce (sans quoi le chat déborderait)
+    // 'rien' : discret, pas d'annonce
   }
   /* Effet d'une élimination réussie (raid classique ou quête SPEC-QUETE-002) :
      factorisé pour que les deux voies produisent EXACTEMENT le même résultat
      sur le territoire et la relation, à graine égale. */
-  function appliquerGainElimination(etat, f, cible) {
+  function appliquerGainElimination(etat, f, cible, voisins) {
     f.territoire = Math.min(TERRITOIRE_MAX, f.territoire + 15);
     cible.territoire = Math.max(TERRITOIRE_MIN, cible.territoire - 15);
-    etat.relations.set(cleRelation(f.id, cible.id), 'guerre');
+    poserRelation(etat, voisins, f.id, cible.id, 'guerre');
+  }
+  /* Ce que le territoire rapporte chaque jour : des vivres, selon son étendue. */
+  function produire(f) {
+    f.ressources.nourriture = Math.min(RESSOURCES_MAX, f.ressources.nourriture + 1 + Math.floor(f.territoire / 150));
   }
 
+  /* Les rondes du moment qui prennent corps près des joueurs (SPEC-FACTION-007) :
+     la simulation reste à gros grain partout ; seules les rondes dont un point de
+     passage est à `rayon` d'une position deviennent des gardes en marche (au plus
+     PATROUILLES_MAX, les plus proches d'abord). Coût : factions × positions, sans
+     balayage des relations ; l'appelant la consulte à sa cadence d'entretien. */
+  function patrouillesVisibles(etat, positions, rayon, jour) {
+    var out = [];
+    if (!positions || !positions.length) return out;
+    etat.factions.forEach(function (f, id) {
+      var p = f.patrouille;
+      if (!p || !p.points || jour < p.jour || jour - p.jour >= DUREE_PATROUILLE) return;
+      var dmin = Infinity;
+      for (var i = 0; i < positions.length; i++) {
+        var q = positions[i];
+        if (Math.hypot(q.x - f.siege.x, q.z - f.siege.z) > rayon + RAYON_RONDE_MAX + 2) continue;
+        for (var k = 0; k < p.points.length; k++) {
+          var d = Math.hypot(q.x - p.points[k].x, q.z - p.points[k].z);
+          if (d < dmin) dmin = d;
+        }
+      }
+      if (dmin > rayon) return;
+      out.push({ faction: id, nom: f.nom, jour: p.jour, points: p.points.slice(), gardes: Math.min(3, 1 + Math.floor(f.territoire / 150)), distance: dmin });
+    });
+    out.sort(function (a, b) { return a.distance - b.distance || (a.faction < b.faction ? -1 : a.faction > b.faction ? 1 : 0); });
+    return out.slice(0, PATROUILLES_MAX);
+  }
+
+  // ─── objectifs qui évoluent (SPEC-FACTION-006) ─────────────────────────
+  var SEUIL_RUINE = 15, SEUIL_FORCE = 40, SEUIL_RICHE_OR = 80, SEUIL_RICHE_NOURRITURE = 60;
+  var MEMOIRE_RAID_JOURS = 7, CYCLE_OBJECTIF_JOURS = 21;
+  var TYPES_PILLARDS = { bandits: 1, culte: 1 };
+  var CARACTERES_AGRESSIFS = { belliqueux: 1, fanatique: 1, avare: 1 };
+  var TYPES_PROSELYTES = { ordre: 1, culte: 1 };
+  var LIBELLES_OBJECTIF = { etendre: 's\'étendre', commercer: 'commercer', defendre: 'se défendre',
+    piller: 'piller', convertir: 'convertir', explorer: 'explorer' };
+  /* Ce qui compte pour une faction : ses relations avec les factions assez
+     proches pour l'atteindre (territoires distants de moins de PORTEE_CONFLIT) —
+     une guerre déclarée à l'autre bout du monde ne change pas son quotidien. */
+  var PORTEE_CONFLIT = 3000;
+  function situationDe(etat, f, voisins) {
+    var s = { guerre: 0, rivalite: 0, alliance: 0 };
+    if (voisins) {
+      // voie rapide (un jour simulé) : distances des sièges et territoires de l'index
+      var l = voisins.adj.get(f.id), tf = f.territoire;
+      if (!l) return s;
+      for (var i = 0; i < l.length; i++) {
+        var k = l[i], c = voisins.codes[k];
+        if (c === 2 || voisins.dist[k] > tf + TERRITOIRE_MAX + PORTEE_CONFLIT) continue;
+        var autre = voisins.a[k] === f.id ? voisins.b[k] : voisins.a[k], o = etat.factions.get(autre);
+        if (!o || voisins.dist[k] > tf + o.territoire + PORTEE_CONFLIT) continue;
+        s[ECHELLE[c]]++;
+      }
+      return s;
+    }
+    pourVoisins(etat, voisins, f.id, function (id, r) {
+      if (s[r] === undefined) return;
+      var o = etat.factions.get(id);
+      if (!o || Math.hypot(o.siege.x - f.siege.x, o.siege.z - f.siege.z) > f.territoire + o.territoire + PORTEE_CONFLIT) return;
+      s[r]++;
+    });
+    return s;
+  }
+  /* L'objectif que ce qui arrive à la faction lui dicte, au jour `jour` — par
+     ordre de priorité : un raid subi récemment → se défendre ; la ruine → piller
+     ses ennemis (bandits, cultes, caractère belliqueux) ou commercer ; la guerre
+     → piller si elle est forte et agressive, sinon se défendre ; la paix et la
+     richesse → s'étendre (explorer une fois le territoire au maximum) ; un ordre
+     ou un culte en paix → convertir. Sinon, un des objectifs de son genre, qui
+     change toutes les trois semaines (déterministe par graine). Fonction pure de
+     l'état : rejouer les mêmes jours redonne les mêmes objectifs. */
+  function objectifSelon(etat, f, jour, voisins) {
+    var s = situationDe(etat, f, voisins), r = f.ressources;
+    var raidRecent = (f.subis || []).some(function (j) { return jour >= j && jour - j <= MEMOIRE_RAID_JOURS; });
+    if (raidRecent) return 'defendre';
+    if (r.or < SEUIL_RUINE || r.nourriture < SEUIL_RUINE) {
+      return (TYPES_PILLARDS[f.type] || f.caractere === 'belliqueux') && s.guerre + s.rivalite > 0 ? 'piller' : 'commercer';
+    }
+    if (s.guerre > 0) {
+      return CARACTERES_AGRESSIFS[f.caractere] && r.or >= SEUIL_FORCE && r.nourriture >= SEUIL_FORCE ? 'piller' : 'defendre';
+    }
+    if (r.or >= SEUIL_RICHE_OR && r.nourriture >= SEUIL_RICHE_NOURRITURE) return f.territoire < TERRITOIRE_MAX ? 'etendre' : 'explorer';
+    if (TYPES_PROSELYTES[f.type] && s.rivalite === 0) return 'convertir';
+    var objs = (TYPES[f.type] && TYPES[f.type].objectifs) || f.objectifs || ['defendre'];
+    return objs[Math.floor(h01(etat.seed, f.id, 'objectif', Math.floor(jour / CYCLE_OBJECTIF_JOURS)) * objs.length) % objs.length];
+  }
+  function evoluerObjectif(etat, f, jour, voisins) {
+    var nouveau = objectifSelon(etat, f, jour, voisins);
+    if (nouveau === f.objectif) return false;
+    f.objectif = nouveau;
+    f.objectifDepuis = jour;
+    annoncer(etat, f.nom + ' change d\'objectif : ' + (LIBELLES_OBJECTIF[nouveau] || nouveau) + '.', [f.id]);
+    return true;
+  }
+
+  /* Un jour de jeu, toujours dans le même ordre : les actions de chaque faction
+     (ordre des identifiants), ce que rapporte son territoire, la dérive des
+     relations, puis l'évolution des objectifs selon ce qui est arrivé. */
   function tourUnJour(etat) {
     var jour = etat.jour;
-    Array.from(etat.factions.keys()).sort().forEach(function (id) {
+    var ix = indexer(etat);
+    var ids = ix.ids;
+    ids.forEach(function (id) {
       var f = etat.factions.get(id);
-      appliquerAction(etat, f, choisirAction(f, h01(etat.seed, id, 'action', jour)), jour);
+      appliquerAction(etat, f, choisirAction(f, h01(etat.seed, id, 'action', jour)), jour, ix);
     });
-    Array.from(etat.relations.keys()).sort().forEach(function (cle) {
-      var parts = cle.split('~');
-      // même garde que ciblePourRaid : une clé impliquant une faction absente
-      // de etat.factions (ex. une faction de joueurs posée par guildes.js via
-      // declarerRelation, SPEC-FACTION-017) n'est ni dérivée ni annoncée ici —
-      // etat.relations sert aussi de mémoire à ce genre de relation externe.
-      if (!etat.factions.has(parts[0]) || !etat.factions.has(parts[1])) return;
-      var hd = h01(etat.seed, cle, 'derive', jour);
-      if (hd >= 0.04) return;
-      var avant = etat.relations.get(cle), apres = hd < 0.02 ? degrader(avant) : ameliorer(avant);
-      if (apres === avant) return;
-      etat.relations.set(cle, apres);
-      annoncer(etat, nomDe(etat, parts[0]) + ' et ' + nomDe(etat, parts[1]) + ' ' + (LIBELLES_RELATION[apres] || 'changent de relation') + '.', parts);
+    ids.forEach(function (id) { produire(etat.factions.get(id)); });
+    // dérive des relations : chaque paire, indépendamment des autres (l'ordre ne
+    // change donc pas l'état) ; les annonces suivent l'ordre des clés
+    var hj = h32(etat.seed + '|derive|' + jour), changees = [];
+    for (var k = 0; k < ix.cles.length; k++) {
+      if (!ix.pnj[k]) continue;
+      var hd = melange01(ix.base[k], hj);
+      if (hd >= 0.04) continue;
+      var avant = ECHELLE[ix.codes[k]], apres = hd < 0.02 ? degrader(avant) : ameliorer(avant);
+      if (apres === avant) continue;
+      etat.relations.set(ix.cles[k], apres);
+      ix.codes[k] = codeRelation(apres);
+      changees.push(k);
+    }
+    changees.sort(function (x, y) { return ix.cles[x] < ix.cles[y] ? -1 : 1; }).forEach(function (k2) {
+      annoncer(etat, nomDe(etat, ix.a[k2]) + ' et ' + nomDe(etat, ix.b[k2]) + ' ' + (LIBELLES_RELATION[ECHELLE[ix.codes[k2]]] || 'changent de relation') + '.', [ix.a[k2], ix.b[k2]]);
     });
+    ids.forEach(function (id) { evoluerObjectif(etat, etat.factions.get(id), jour, ix); });
     etat.jour = jour + 1;
   }
   /* Rattrape tous les jours manquants jusqu'à `jourCible` inclus, un par un,
@@ -585,7 +872,8 @@
      les seules factions nées et relations changées depuis le dernier envoi, en
      indices. Le client rebâtit un état au format de `creer` (Maps factions et
      relations, clés de `cleRelation`, la neutralité étant l'absence). */
-  function descReseau(f) { return [f.id, f.type, f.nom, f.caractere, f.objectif]; }
+  // SPEC-FACTION-006/007 : l'objectif et le territoire (qui évoluent) voyagent aussi
+  function descReseau(f) { return [f.id, f.type, f.nom, f.caractere, f.objectif, f.territoire]; }
   function codeRelation(r) { var i = ECHELLE.indexOf(r); return i < 0 ? 2 : i; }
   function instantaneReseau(etat) {
     var ids = Array.from(etat.factions.keys()), n = ids.length, index = new Map();
@@ -611,10 +899,12 @@
      été remplacées (rechargement) — l'appelant renvoie alors l'état complet. */
   function suivreReseau(etat) {
     var sales = new Set(), nouvelles = [], index = new Map(), ids = [], rels = null, facs = null, jourEnvoye = etat.jour;
+    var vus = [];   // [objectif, territoire] envoyés, par indice (SPEC-FACTION-006/007)
+    function vu(f) { return f.objectif + '|' + f.territoire; }
     function installer() {
       rels = etat.relations; facs = etat.factions;
-      index.clear(); ids.length = 0; sales.clear(); nouvelles.length = 0;
-      facs.forEach(function (f, id) { index.set(id, ids.length); ids.push(id); });
+      index.clear(); ids.length = 0; sales.clear(); nouvelles.length = 0; vus.length = 0;
+      facs.forEach(function (f, id) { index.set(id, ids.length); ids.push(id); vus.push(vu(f)); });
       rels.set = function (k, v) { if (Map.prototype.get.call(rels, k) !== v) sales.add(k); return Map.prototype.set.call(rels, k, v); };
       rels.delete = function (k) { if (Map.prototype.has.call(rels, k)) sales.add(k); return Map.prototype.delete.call(rels, k); };
       facs.set = function (id, f) { if (!Map.prototype.has.call(facs, id)) nouvelles.push(id); return Map.prototype.set.call(facs, id, f); };
@@ -624,11 +914,23 @@
       prendre: function () {
         if (etat.relations !== rels || etat.factions !== facs) { installer(); jourEnvoye = etat.jour; return { complet: 1 }; }
         if (!sales.size && !nouvelles.length && etat.jour === jourEnvoye) return null;
-        var d = { jour: etat.jour, f: [], rel: [], ext: [] };
+        var d = { jour: etat.jour, f: [], rel: [], ext: [], maj: [] };
+        /* objectifs et territoires ne changent qu'au fil des jours simulés : on ne
+           les compare (une passe sur les factions) que quand le jour a avancé */
+        if (etat.jour !== jourEnvoye) {
+          for (var i = 0; i < ids.length; i++) {
+            var fi = etat.factions.get(ids[i]);
+            if (!fi) continue;
+            var v = vu(fi);
+            if (v !== vus[i]) { vus[i] = v; d.maj.push([i, fi.objectif, fi.territoire]); }
+          }
+        }
         nouvelles.forEach(function (id) {
           if (index.has(id)) return;
           index.set(id, ids.length); ids.push(id);
-          d.f.push(descReseau(etat.factions.get(id)));
+          var fn = etat.factions.get(id);
+          vus.push(vu(fn));
+          d.f.push(descReseau(fn));
         });
         sales.forEach(function (cle) {
           var p = cle.split('~'), i = index.get(p[0]), j = index.get(p[1]);
@@ -648,7 +950,7 @@
     function poser(e, cle, r) { if (r === 'neutre') e.relations.delete(cle); else e.relations.set(cle, r); }
     function naitre(e, d) {
       if (!Array.isArray(d) || typeof d[0] !== 'string' || e.factions.has(d[0])) return;
-      e.factions.set(d[0], { id: d[0], type: d[1], nom: d[2], caractere: d[3], objectif: d[4] });
+      e.factions.set(d[0], { id: d[0], type: d[1], nom: d[2], caractere: d[3], objectif: d[4], territoire: typeof d[5] === 'number' ? d[5] : null });
       e.ids.push(d[0]);
     }
     var e = etat;
@@ -666,6 +968,13 @@
     if (!m.complet) (m.rel || []).forEach(function (t) {
       var a = e.ids[t[0]], b = e.ids[t[1]];
       if (a && b && ECHELLE[t[2]]) poser(e, cleRelation(a, b), ECHELLE[t[2]]);
+    });
+    // SPEC-FACTION-006/007 : objectif et territoire mis à jour
+    if (!m.complet) (m.maj || []).forEach(function (t) {
+      var f = Array.isArray(t) && e.factions.get(e.ids[t[0]]);
+      if (!f) return;
+      if (typeof t[1] === 'string' && LIBELLES_OBJECTIF[t[1]]) f.objectif = t[1];
+      if (typeof t[2] === 'number' && isFinite(t[2])) f.territoire = t[2];
     });
     (m.ext || []).forEach(function (t) { if (Array.isArray(t) && typeof t[0] === 'string' && ECHELLE.indexOf(t[1]) >= 0) poser(e, t[0], t[1]); });
     return e;
@@ -700,6 +1009,9 @@
     COUT_ACTION_RESSOURCES: COUT_ACTION_RESSOURCES,
     appliquerGainAvantPoste: appliquerGainAvantPoste, appliquerGainElimination: appliquerGainElimination,
     enGuerreActive: enGuerreActive,
+    // SPEC-FACTION-006 : objectifs qui évoluent ; SPEC-FACTION-007 : rondes visibles près des joueurs
+    objectifSelon: objectifSelon, evoluerObjectif: evoluerObjectif,
+    patrouillesVisibles: patrouillesVisibles, PATROUILLES_MAX: PATROUILLES_MAX, DUREE_PATROUILLE: DUREE_PATROUILLE,
     // SPEC-FACTION-014 : influence du territoire sur la zone de jeu (zones.js)
     influenceZone: influenceZone, factionCouvrant: factionCouvrant, SEUIL_TERRITOIRE_CONSOLIDE: SEUIL_TERRITOIRE_CONSOLIDE,
     // SPEC-FACTION-015 : embargo commercial entre factions en guerre
