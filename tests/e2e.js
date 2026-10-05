@@ -3405,22 +3405,145 @@
 
   /* SPEC-RENDU-012 : mipmaps de l'atlas, activables/désactivables sans
      reconstruire tout le renderer (même instance avant/après). */
-  e2e('SPEC-RENDU-012 : l’option mipmaps change la texture de l’atlas sans reconstruire le renderer', async function (g) {
+  /* Les niveaux sont fournis par MC.Qualite.mipmapsAtlas (tuile par tuile)
+     plutôt que générés par le GPU : Three.js remet alors `generateMipmaps` à
+     false de lui-même — la preuve d'activation est donc la chaîne de niveaux
+     (`texture.mipmaps`) et le filtre de réduction, pas ce drapeau. */
+  e2e('SPEC-RENDU-012 : l’option mipmaps (activée par défaut) change la texture de l’atlas sans reconstruire le renderer', async function (g) {
     var avant = JSON.parse(JSON.stringify(g.options));
     try {
-      var rendererAvant = g.render.renderer;
-      g.reglerOption('mipmaps', true);
-      await frames(1);
-      A.equal(g.render.renderer, rendererAvant, 'même instance de renderer après le basculement');
-      A.ok(g.render.materials.opaque.map.generateMipmaps, 'generateMipmaps activé');
-      A.equal(g.render.materials.opaque.map.minFilter, THREE.LinearMipmapLinearFilter, 'filtre à mip activé');
+      A.equal(MC.Options.defauts().mipmaps, true, 'mipmaps activés par défaut');
+      var s = await reset(g);
+      s.flying = true; s.pos.y += 30; s.pitch = -0.35;
+      g.render.setDistance(6);
+      g.streamChunks(true);
+      for (var w = 0; w < 10; w++) await frames(1);
+      var tex = g.render.materials.opaque.map, rendererAvant = g.render.renderer;
+      var niveaux = Math.log2(Math.max(tex.image.width, tex.image.height)) + 1;
       g.reglerOption('mipmaps', false);
-      await frames(1);
-      A.notOk(g.render.materials.opaque.map.generateMipmaps, 'generateMipmaps désactivé');
-      A.equal(g.render.materials.opaque.map.minFilter, THREE.NearestFilter, 'filtre nearest restauré');
+      await frames(2);
+      capture('mipmaps-coupes');
+      A.equal(g.render.renderer, rendererAvant, 'même instance de renderer après le basculement');
+      A.equal(tex.minFilter, THREE.NearestFilter, 'coupés : filtre nearest, niveau 0 seul');
+      A.equal(tex.mipmaps.length, 0, 'coupés : aucune chaîne de niveaux en mémoire');
+      A.notOk(g.render.mipmapsActifs, 'coupés');
+      g.reglerOption('mipmaps', true);
+      await frames(2);
+      capture('mipmaps-actifs');
+      A.equal(g.render.renderer, rendererAvant, 'toujours la même instance de renderer');
+      A.equal(g.render.materials.opaque.map, tex, 'même texture d’atlas (pas de reconstruction des matériaux)');
+      A.equal(tex.minFilter, THREE.NearestMipmapLinearFilter, 'actifs : filtre à mip (nearest dans un niveau, linéaire entre niveaux)');
+      A.equal(tex.mipmaps.length, niveaux, 'actifs : chaîne complète de ' + niveaux + ' niveaux');
+      A.equal(tex.mipmaps[1].width, tex.image.width / 2, 'niveau 1 à demi-taille');
+      A.ok(g.render.mipmapsActifs, 'actifs');
+      s.flying = false;
     } finally {
       g.options = avant; MC.Options.sauver(localStorage, avant);
       g.reglerOption('mipmaps', avant.mipmaps);
+      await reset(g);
+    }
+  });
+
+  /* SPEC-RENDU-006 : l'antialias est piloté par le FPS mesuré — injecté ici
+     (g.mesurerFPS substitué), jamais celui de la machine de test — et
+     réactivable à la main dans l'écran des options. Le délai de l'hystérésis
+     est raccourci (g.etatQualite) pour ne pas attendre 2 × 3 s. */
+  e2e('SPEC-RENDU-006 : un FPS bas injecté prolongé coupe l’antialias, le réglage manuel des options ou un FPS haut le rétablit', async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    var mesurer = g.mesurerFPS, delai = g.etatQualite.delaiSec, dist = g.render.RENDER_DIST;
+    var fpsInjecte = 12;
+    // attente bornée en TEMPS (le nombre d'images par seconde du navigateur
+    // sans fenêtre varie de 60 à plusieurs centaines)
+    async function attendre(cond, maxMs) {
+      var t0 = performance.now();
+      while (!cond() && performance.now() - t0 < (maxMs || 15000)) await frames(1);
+      return cond();
+    }
+    async function ticks(n) {
+      var m0 = g.perf.mesures;
+      await attendre(function () { return g.perf.mesures >= m0 + n; });
+    }
+    try {
+      await reset(g);
+      g.reglerOption('antialias', 'auto');
+      g.reinitialiserQualite();
+      g.etatQualite.delaiSec = 0.8;
+      g.mesurerFPS = function () { return fpsInjecte; };
+      A.ok(g.render.antialiasActif, 'actif au départ (palier plein)');
+      A.ok(await attendre(function () { return !g.render.antialiasActif; }), 'FPS bas prolongé : antialias coupé');
+      A.equal(g.qualite.antialias, false, 'c’est la décision adaptative qui l’a coupé');
+      A.ok(g.qualite.fpsP50 < g.etatQualite.seuilBas, 'sur un p50 mesuré sous le seuil : ' + g.qualite.fpsP50);
+      capture('aa-coupe-fps-bas');
+
+      // réactivation manuelle, par l'écran des options, FPS toujours bas
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      var sel = document.querySelector('select[data-opt="antialias"]');
+      A.ok(sel, 'le lissage se règle dans les options');
+      sel.value = 'oui'; sel.dispatchEvent(new Event('change'));
+      A.ok(g.render.antialiasActif, 'réactivé aussitôt à la main');
+      await ticks(3);
+      A.ok(g.render.antialiasActif, 'reste actif malgré l’adaptatif qui le couperait (' + g.qualite.antialias + ')');
+      sel.value = 'auto'; sel.dispatchEvent(new Event('change'));
+      A.notOk(g.render.antialiasActif, 'retour en automatique : le FPS bas le coupe de nouveau');
+      document.querySelector('#btn-retour').click(); await frames(2);
+      key('Escape'); fakeLock(g, true); await frames(3);
+
+      // FPS haut restauré : rétabli sans intervention
+      fpsInjecte = 60;
+      A.ok(await attendre(function () { return g.render.antialiasActif; }), 'FPS haut prolongé : antialias rétabli');
+      A.equal(g.qualite.antialias, true, 'par la décision adaptative');
+      capture('aa-retabli-fps-haut');
+    } finally {
+      g.mesurerFPS = mesurer; g.etatQualite.delaiSec = delai;
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      g.reglerOption('antialias', avant.antialias || 'auto');
+      g.reinitialiserQualite();
+      g.render.setDistance(dist);
+      await reset(g);
+    }
+  });
+
+  /* SPEC-RENDU-015 : le panneau F3 et la décision d'adaptation lisent le
+     MÊME calcul. On lit en même temps le texte AFFICHÉ par le panneau et
+     `g.qualite.fpsP50` (la valeur sur laquelle l'adaptatif a décidé), au même
+     tick de mesure. Le FPS injecté (40 stable puis une image lente à 10)
+     distingue le p50 (40) du FPS instantané (10) : un panneau ou un
+     adaptatif qui lirait une autre mesure le trahirait. */
+  e2e('SPEC-RENDU-015 : le p50 affiché au panneau F3 est exactement celui de la décision d’adaptation', async function (g) {
+    var mesurer = g.mesurerFPS, dist = g.render.RENDER_DIST;
+    var f3 = document.querySelector('.panneau-f3');
+    function lirePanneau() {
+      var m = /p50\s*(\d+)/.exec(f3.textContent);
+      return m ? Number(m[1]) : NaN;
+    }
+    async function prochainTick() {
+      var m0 = g.perf.mesures;
+      for (var i = 0; i < 300 && g.perf.mesures === m0; i++) await frames(1);
+      await frames(1);                 // le panneau se redessine à l'image suivante
+    }
+    try {
+      await reset(g);
+      g.reinitialiserQualite();
+      if (!g.ui.f3Visible) g.ui.toggleF3();
+      g.mesurerFPS = function () { return 40; };
+      for (var t = 0; t < 4; t++) await prochainTick();
+      A.equal(lirePanneau(), 40, 'panneau : p50 sous un FPS stable');
+      A.equal(g.qualite.fpsP50, 40, 'adaptatif : même p50');
+      g.mesurerFPS = function () { return 10; };
+      await prochainTick();
+      var affiche = lirePanneau(), decide = g.qualite.fpsP50;   // lus ensemble, même image
+      capture('f3-p50-image-lente');
+      A.equal(g.fps, 10, 'FPS instantané du tick : l’image lente');
+      A.equal(g.qualite.mesure, g.perf.mesures, 'la décision vient du tick que le panneau affiche');
+      A.equal(affiche, decide, 'égalité stricte : panneau ' + affiche + ' / adaptatif ' + decide);
+      A.equal(decide, g.perf.fpsP50, 'g.perf (source du panneau) et g.qualite partagent la valeur');
+      A.equal(affiche, 40, 'tous deux lisent le p50 de la fenêtre, pas le FPS instantané');
+    } finally {
+      g.mesurerFPS = mesurer;
+      if (g.ui.f3Visible) g.ui.toggleF3();
+      g.reinitialiserQualite();
+      g.render.setDistance(dist);
     }
   });
 
@@ -3483,13 +3606,17 @@
     for (var i = 0; i < 3; i++) await frames(1);
     var rendererAvant = g.render.renderer;
 
-    g.render.setAntialias(true);
+    // les deux mesures dans le même tour synchrone, sans image intermédiaire :
+    // ni le streaming des chunks ni un tick de l'adaptatif (qui réapplique sa
+    // décision toutes les 0,4 s) ne peuvent s'intercaler entre elles
     await frames(2);
+    g.render.setAntialias(true);
+    g.render.renderViews(g.vues);
     A.equal(g.render.antialiasActif, true, 'option activée');
     var avecAA = g.render.metriquesDessin.appelsDessin;
 
     g.render.setAntialias(false);
-    await frames(2);
+    g.render.renderViews(g.vues);
     A.equal(g.render.antialiasActif, false, 'option désactivée');
     var sansAA = g.render.metriquesDessin.appelsDessin;
 

@@ -28,15 +28,75 @@
       A.equal(Q.percentile(f, 50), 60, 'p50 = dernier échantillon');
     });
 
-    it('SPEC-RENDU-015 : panneau F3 et adaptatif lisent la MÊME fenêtre — égalité stricte', function () {
+    it('SPEC-RENDU-015 : mesurerTick — le p50 affiché (panneau F3) est celui sur lequel l’adaptation décide, pas le FPS instantané', function () {
       var fenetre = Q.creerFenetre(5);
-      var etat = Q.creerEtat({ seuilBas: 30, seuilHaut: 50, delaiSec: 1 });
-      var t = 0;
-      for (var i = 0; i < 40; i++) { t += 0.1; Q.ajouterEchantillon(fenetre, t, 20); }
-      var p50Panneau = Q.percentile(fenetre, 50);              // ce que lirait g.perf.fpsP50
-      var d = Q.evaluer(etat, t, Q.percentile(fenetre, 50));   // ce que lit la décision d'adaptation
-      A.equal(Q.percentile(fenetre, 50), p50Panneau, 'même calcul, même valeur, à l’image près');
-      A.ok(d.niveau >= 0, 'décision produite à partir de la même source');
+      var etat = Q.creerEtat({ seuilBas: 30, seuilHaut: 50, delaiSec: 3 });
+      var t = 0, m;
+      for (var i = 0; i < 8; i++) { t += 0.4; m = Q.mesurerTick(fenetre, etat, t, 40); }
+      t += 0.4; m = Q.mesurerTick(fenetre, etat, t, 10);        // une image lente isolée
+      A.equal(m.fps, 10, 'FPS instantané du tick');
+      A.equal(m.p50, 40, 'p50 de la fenêtre (ce que montre le panneau F3)');
+      A.equal(m.decisions.fpsP50, m.p50, 'la décision porte la valeur exacte qu’elle a lue : la même');
+      A.ok(m.p95 >= m.p50, 'p95 du même calcul');
+    });
+
+    it('SPEC-RENDU-006 : antialiasEffectif — « auto » suit l’adaptatif, « oui » le réactive à la main, « non » le coupe', function () {
+      A.equal(Q.antialiasEffectif('auto', true), true);
+      A.equal(Q.antialiasEffectif('auto', false), false, 'auto : coupé quand le FPS l’a coupé');
+      A.equal(Q.antialiasEffectif('oui', false), true, 'réactivé manuellement malgré un FPS bas');
+      A.equal(Q.antialiasEffectif('non', true), false, 'coupé manuellement');
+      A.equal(Q.antialiasEffectif(undefined, true), true, 'option absente (ancien stockage) : auto');
+      A.ok(Q.CHOIX_ANTIALIAS.indexOf('auto') === 0, 'auto est le premier choix (défaut)');
+    });
+
+    it('SPEC-RENDU-006 : un FPS bas prolongé coupe l’antialias en « auto », un FPS haut restauré le rend', function () {
+      var fenetre = Q.creerFenetre(5);
+      var etat = Q.creerEtat({ seuilBas: 30, seuilHaut: 50, delaiSec: 3 });
+      var t = 0, m;
+      for (var i = 0; i < 30; i++) { t += 0.4; m = Q.mesurerTick(fenetre, etat, t, 12); }
+      A.notOk(Q.antialiasEffectif('auto', m.decisions.antialias), 'coupé après ' + t.toFixed(1) + ' s sous le seuil');
+      A.ok(Q.antialiasEffectif('oui', m.decisions.antialias), 'le réglage manuel le réactive');
+      for (var j = 0; j < 60; j++) { t += 0.4; m = Q.mesurerTick(fenetre, etat, t, 60); }
+      A.ok(Q.antialiasEffectif('auto', m.decisions.antialias), 'rendu après retour à un FPS haut');
+    });
+
+    // atlas synthétique 2×2 tuiles de 4 texels : couleurs franches distinctes
+    function atlasSynthetique() {
+      var L = 8, H = 8, T = 4, data = new Uint8ClampedArray(L * H * 4);
+      var couleurs = [[255, 0, 0], [0, 255, 0], [0, 0, 255], [40, 160, 40]];
+      for (var y = 0; y < H; y++) for (var x = 0; x < L; x++) {
+        var t = ((y / T) | 0) * 2 + ((x / T) | 0), k = (y * L + x) * 4, c = couleurs[t];
+        data[k] = c[0]; data[k + 1] = c[1]; data[k + 2] = c[2]; data[k + 3] = 255;
+        // tuile 3 : « feuillage » — un texel sur deux transparent (rgb nul, comme un canvas)
+        if (t === 3 && (x + y) % 2) { data[k] = data[k + 1] = data[k + 2] = 0; data[k + 3] = 0; }
+      }
+      return { data: data, L: L, H: H, T: T, couleurs: couleurs };
+    }
+    it('SPEC-RENDU-012 : mipmapsAtlas — aucune tuile ne déborde sur sa voisine tant qu’elle fait au moins un texel', function () {
+      var a = atlasSynthetique();
+      var niv = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5);
+      A.equal(niv.length, 3, 'niveaux 4×4, 2×2, 1×1');
+      A.equal(niv[0].width, 4); A.equal(niv[2].width, 1);
+      // niveaux 1 (tuile 2 texels) et 2 (tuile 1 texel) : chaque tuile garde sa couleur pure
+      [0, 1].forEach(function (k) {
+        var n = niv[k], tk = a.T >> (k + 1);
+        for (var y = 0; y < n.height; y++) for (var x = 0; x < n.width; x++) {
+          var t = ((y / tk) | 0) * 2 + ((x / tk) | 0), c = a.couleurs[t], o = (y * n.width + x) * 4;
+          A.equal(n.data[o] + ',' + n.data[o + 1] + ',' + n.data[o + 2], c.join(','),
+            'niveau ' + (k + 1) + ' texel ' + x + ',' + y + ' : couleur de sa tuile seule');
+        }
+      });
+    });
+
+    it('SPEC-RENDU-012 : mipmapsAtlas — un feuillage troué ne s’assombrit pas et garde sa couverture au seuil d’alphaTest', function () {
+      var a = atlasSynthetique();
+      var n1 = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5)[0];
+      // tuile 3 au niveau 1 : texels (2..3, 2..3)
+      for (var y = 2; y < 4; y++) for (var x = 2; x < 4; x++) {
+        var o = (y * n1.width + x) * 4;
+        A.equal(n1.data[o] + ',' + n1.data[o + 1] + ',' + n1.data[o + 2], '40,160,40', 'couleur du feuillage, pas assombrie');
+        A.ok(n1.data[o + 3] >= 128, 'couverture conservée (moitié des texels opaques au niveau 0, alpha ' + n1.data[o + 3] + ')');
+      }
     });
 
     it('SPEC-RENDU-003 : la réfraction saute une image sur deux sous le seuil de FPS', function () {

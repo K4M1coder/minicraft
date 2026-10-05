@@ -204,20 +204,40 @@
     var tailleTuileAtlas = { value: new THREE.Vector2(
       (1 - 2 * MC.Mesher.MARGE_UV) / MC.Mesher.ATLAS_COLS,
       (1 - 2 * MC.Mesher.MARGE_UV) / MC.Mesher.ATLAS_ROWS) };
+    // SPEC-RENDU-012 : taille de l'atlas en texels et niveau de mipmap
+    // maximal sûr (une tuile = 1 texel : log2(TILE)), voir avecAtlasRepete
+    var texelsAtlas = { value: new THREE.Vector2(atlas.TILE * atlas.COLS, atlas.TILE * atlas.ROWS) };
+    var lodMaxAtlas = { value: Math.log(atlas.TILE) / Math.LN2 };
     // remplace l'échantillonnage standard de la texture par une version qui
     // répète la tuile (fract) au lieu de l'étirer sur un quad fusionné —
     // sans cela, un grand quad greedy-meshé afficherait sa tuile zoomée/floue
     // (NearestFilter, sans mipmaps) plutôt que répétée à l'identique.
     function avecAtlasRepete(sh) {
       sh.uniforms.tailleTuileAtlas = tailleTuileAtlas;
+      sh.uniforms.texelsAtlas = texelsAtlas;
+      sh.uniforms.lodMaxAtlas = lodMaxAtlas;
       sh.vertexShader = 'attribute vec2 uvBase;\nattribute vec2 uvRep;\nvarying vec2 vUvBase;\nvarying vec2 vUvRep;\n' +
         sh.vertexShader.replace('#include <begin_vertex>',
           '#include <begin_vertex>\n  vUvBase = uvBase;\n  vUvRep = uvRep;');
-      sh.fragmentShader = 'uniform vec2 tailleTuileAtlas;\nvarying vec2 vUvBase;\nvarying vec2 vUvRep;\n' +
+      sh.fragmentShader = 'uniform vec2 tailleTuileAtlas;\nuniform vec2 texelsAtlas;\nuniform float lodMaxAtlas;\nvarying vec2 vUvBase;\nvarying vec2 vUvRep;\n' +
         sh.fragmentShader.replace('#include <map_fragment>', [
           '#ifdef USE_MAP',
           '  vec2 uvLocale = fract(vUvRep);',
-          '  vec4 sampledDiffuseColor = texture2D(map, vUvBase + uvLocale * tailleTuileAtlas);',
+          '  vec2 uvAtlas = vUvBase + uvLocale * tailleTuileAtlas;',
+          '#if __VERSION__ >= 300',
+          // SPEC-RENDU-012 : niveau de mipmap calculé sur la coordonnée
+          // CONTINUE (avant fract) — le saut du fract() à chaque bord de bloc
+          // ferait sinon lire le plus petit niveau le long d'une ligne de
+          // pixels (couture) — et plafonné au niveau où une tuile fait encore
+          // un texel : au-delà, les tuiles voisines se mélangeraient. Sans
+          // mipmaps (filtre Nearest), le niveau est sans effet : niveau 0.
+          '  vec2 uvContinu = (vUvBase + vUvRep * tailleTuileAtlas) * texelsAtlas;',
+          '  vec2 dUx = dFdx(uvContinu), dUy = dFdy(uvContinu);',
+          '  float lodAtlas = clamp(0.5 * log2(max(max(dot(dUx, dUx), dot(dUy, dUy)), 1e-8)), 0.0, lodMaxAtlas);',
+          '  vec4 sampledDiffuseColor = textureLod(map, uvAtlas, lodAtlas);',
+          '#else',
+          '  vec4 sampledDiffuseColor = texture2D(map, uvAtlas);',
+          '#endif',
           '  diffuseColor *= sampledDiffuseColor;',
           '#endif'].join('\n'));
     }
@@ -2433,14 +2453,40 @@
        l'image s'étire sur l'hôte sans se déformer (même rapport largeur/hauteur). */
     var resolutionVoulue = 'native';
     function setResolution(id) { resolutionVoulue = id || 'native'; resize(); return renderer.getPixelRatio(); }
-    // SPEC-RENDU-012 : mipmaps de l'atlas, optionnels (moins de mémoire GPU,
-    // au prix d'un moiré possible de loin quand ils sont coupés). On ne
-    // touche qu'à la texture concernée — aucune reconstruction du renderer.
+    /* SPEC-RENDU-012 : mipmaps de l'atlas, optionnels (activés par défaut,
+       voir options.js ; coupés : moins de mémoire GPU, moiré possible au
+       loin). On ne touche qu'à la texture concernée — aucune reconstruction
+       du renderer. Les niveaux ne sont PAS produits par le GPU
+       (generateMipmap moyennerait des texels transparents à rgb nul :
+       feuillage assombri au loin) mais par MC.Qualite.mipmapsAtlas, tuile
+       par tuile, une fois, puis fournis à Three.js (`texture.mipmaps`, qui
+       remet alors lui-même `generateMipmaps` à false). Filtre « nearest »
+       DANS un niveau (pas de bilinéaire qui déborderait au bord d'une
+       tuile), linéaire ENTRE niveaux (pas de saut visible) ; le niveau lu
+       est plafonné par le shader (avecAtlasRepete). Coupés, les niveaux
+       vont au ramasse-miettes et la texture GPU est libérée puis renvoyée
+       au seul niveau 0 (dispose : nouvelle texture GL au prochain rendu) —
+       sauf après une restauration de contexte, où l'écouteur 'dispose' de
+       Three.js vise encore l'ancien contexte (voir la note de
+       `disposerGeom`) : on se contente alors du renvoi. */
+    var mipmapsActifs = false;
+    function niveauxMipmapsAtlas() {
+      var cv = atlas.canvas, L = cv.width, H = cv.height;
+      var base = cv.getContext('2d').getImageData(0, 0, L, H);
+      var niv = MC.Qualite.mipmapsAtlas(base.data, L, H, atlas.TILE, matCutout.alphaTest);
+      return [base].concat(niv.map(function (n) { return new ImageData(n.data, n.width, n.height); }));
+    }
     function setMipmaps(actif) {
-      atlas.texture.generateMipmaps = !!actif;
-      atlas.texture.minFilter = actif ? THREE.LinearMipmapLinearFilter : THREE.NearestFilter;
-      atlas.texture.needsUpdate = true;
-      return !!actif;
+      actif = !!actif;
+      if (actif === mipmapsActifs) return actif;      // appliquerOptions rappelle à chaque réglage
+      mipmapsActifs = actif;
+      var t = atlas.texture;
+      t.mipmaps = actif ? niveauxMipmapsAtlas() : [];
+      t.minFilter = actif ? THREE.NearestMipmapLinearFilter : THREE.NearestFilter;
+      t.generateMipmaps = false;
+      if (contexteGen === 0) t.dispose();
+      t.needsUpdate = true;
+      return actif;
     }
     /* Vue étendue sur plusieurs écrans (SPEC-OPTION-006) : empilés, le champ
        vertical s'ouvre d'autant ; côte à côte, l'aspect de l'hôte suffit. */
@@ -2696,7 +2742,7 @@
       cameraDe: cameraDe, cameras: cameras,
       get RENDER_DIST() { return RENDER_DIST; },
       // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
-      setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps,
+      setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps, get mipmapsActifs() { return mipmapsActifs; },
       // SPEC-RENDU-006 : antialias par post-traitement, piloté par le FPS
       setAntialias: setAntialias, get antialiasActif() { return optionsRendu.antialias; },
       // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel

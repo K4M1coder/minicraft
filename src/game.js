@@ -581,8 +581,24 @@
       render.eau.options.refraction = g.qualite.refraction;
       render.eau.options.fpsP50 = null;
       render.setDPR(g.qualite.dpr);
-      render.setAntialias(g.qualite.antialias);
+      appliquerAntialias();
     };
+    // état à hystérésis de l'adaptatif (seuils, délai) : lisible et réglable
+    // par les tests e2e, qui raccourcissent le délai plutôt que d'attendre
+    g.etatQualite = etatQualite;
+    /* SPEC-RENDU-015 : LA mesure du FPS d'un tick (0,4 s) — `frames` images
+       en `acc` secondes. Substituable (tests e2e : FPS injecté, jamais celui
+       de la machine) ; tout ce qui suit (g.fps, panneau F3, adaptatif,
+       distance de vue) en découle, sans autre mesure concurrente. */
+    g.mesurerFPS = function (nbImages, duree) { return nbImages / duree; };
+    g.perf.mesures = 0;
+    /* SPEC-RENDU-006 : l'antialias effectif combine le choix du joueur
+       (options : auto / oui / non) et la décision adaptative du FPS. */
+    function appliquerAntialias() {
+      var choix = g.options ? g.options.antialias : 'auto';
+      if (!MC.Qualite) { render.setAntialias(choix !== 'non'); return; }
+      render.setAntialias(MC.Qualite.antialiasEffectif(choix, g.qualite ? g.qualite.antialias : true));
+    }
 
     /* SPEC-SUCCES-001, SPEC-ARCHI-042 : le SERVEUR décide des succès (g.succes
        n'est que le miroir de ses compteurs, rempli par SUCCES_ETAT) ; ce qu'il
@@ -727,6 +743,7 @@
       render.setOmbres(o.ombres);
       render.reglerRealiste(o.realiste);
       render.setMipmaps(!!o.mipmaps);            // SPEC-RENDU-012
+      appliquerAntialias();                      // SPEC-RENDU-006 : choix manuel du joueur
       if (render.RENDER_DIST > o.vueMax) render.setDistance(o.vueMax);
       // affichage (SPEC-OPTION-005, 006)
       g.disposition = MC.Options.disposition(g.ecrans, o);
@@ -3025,24 +3042,25 @@
 
       frames++; acc += dt;
       if (acc >= 0.4) {
-        g.fps = Math.round(frames / acc);
+        g.fps = Math.round(g.mesurerFPS(frames, acc));
         frames = 0; acc = 0;
-        // SPEC-RENDU-005 à 008, 015 : un seul échantillonnage du FPS, une
-        // seule fenêtre — le panneau F3 (g.perf) et l'adaptatif y puisent
-        // tous deux, à égalité stricte à l'image près.
+        // SPEC-RENDU-005 à 008, 015 : un seul échantillonnage du FPS, un seul
+        // calcul (MC.Qualite.mesurerTick) — le panneau F3 (g.perf) et
+        // l'adaptatif (g.qualite.fpsP50, la valeur sur laquelle il a décidé)
+        // en reçoivent le même p50, à égalité stricte à l'image près.
         if (fenetreFPS) {
-          MC.Qualite.ajouterEchantillon(fenetreFPS, now / 1000, g.fps);
-          var p50 = MC.Qualite.percentile(fenetreFPS, 50), p95 = MC.Qualite.percentile(fenetreFPS, 95);
-          g.perf.fps = g.fps; g.perf.fpsP50 = p50 == null ? g.fps : p50; g.perf.fpsP95 = p95 == null ? g.fps : p95;
-          var decisions = MC.Qualite.evaluer(etatQualite, now / 1000, p50);
+          var mesure = MC.Qualite.mesurerTick(fenetreFPS, etatQualite, now / 1000, g.fps);
+          var decisions = mesure.decisions;
+          g.perf.mesures++;
+          decisions.mesure = g.perf.mesures;
+          g.perf.fps = g.fps; g.perf.fpsP50 = mesure.p50; g.perf.fpsP95 = mesure.p95;
           g.qualite = decisions;
           render.eau.options.refraction = decisions.refraction;
-          render.eau.options.fpsP50 = g.perf.fpsP50;
+          render.eau.options.fpsP50 = decisions.fpsP50;
           render.setDPR(decisions.dpr);
-          // SPEC-RENDU-006 : simple transmission de la décision déjà calculée
-          // (même cascade que refraction/DPR ci-dessus) — la logique vit dans
-          // qualite.js, seul le câblage est ici.
-          render.setAntialias(decisions.antialias);
+          // SPEC-RENDU-006 : décision adaptative (même cascade que
+          // réfraction/DPR), sauf choix manuel du joueur dans les options
+          appliquerAntialias();
         }
       }
       // SPEC-PERF-015 : appels de dessin / triangles de la dernière image, et

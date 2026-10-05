@@ -141,12 +141,128 @@
     return decisions(etat);
   }
 
+  /* SPEC-RENDU-015 : UNE mesure de FPS (`fps`, la valeur de g.fps de ce
+     tick) produit en un seul calcul le p50/p95 affichés au panneau F3 ET la
+     décision d'adaptation. Le p50 transmis à `evaluer` est recopié tel quel
+     dans les décisions (`fpsP50`) : l'appelant n'a plus aucun moyen
+     d'afficher une valeur et d'en décider avec une autre. */
+  function mesurerTick(fenetre, etat, t, fps) {
+    ajouterEchantillon(fenetre, t, fps);
+    var p50 = percentile(fenetre, 50), p95 = percentile(fenetre, 95);
+    var d = evaluer(etat, t, p50);
+    d.fpsP50 = p50;
+    return { fps: fps, p50: p50, p95: p95, decisions: d };
+  }
+
+  /* SPEC-RENDU-006 : choix du joueur pour l'antialias (options) combiné à
+     la décision adaptative. « auto » (défaut) suit le FPS mesuré ; « oui »
+     le réactive manuellement quoi que dise l'adaptatif ; « non » le coupe. */
+  var CHOIX_ANTIALIAS = ['auto', 'oui', 'non'];
+  function antialiasEffectif(choix, decisionAuto) {
+    if (choix === 'oui' || choix === true) return true;
+    if (choix === 'non' || choix === false) return false;
+    return decisionAuto !== false;
+  }
+
+  /* SPEC-RENDU-012 : chaîne de mipmaps d'un atlas en grille régulière de
+     tuiles carrées (`tuile` texels, puissance de deux, comme l'atlas).
+     `data` : RGBA 8 bits du niveau 0 (largeur × hauteur, puissances de deux).
+     Rend les niveaux 1.. jusqu'à 1×1 : [{ width, height, data }].
+     Sûr pour un atlas (pas de débordement d'une tuile sur sa voisine) :
+     - chaque texel d'un niveau moyenne un bloc 2×2 du niveau précédent,
+       aligné sur la grille : tant qu'une tuile fait au moins 1 texel
+       (niveaux 0..log2(tuile)), aucun bloc ne chevauche deux tuiles ;
+       au-delà, le mélange est inévitable — le shader plafonne donc le
+       niveau lu à log2(tuile) (voir render.js, avecAtlasRepete) ;
+     - la couleur est moyennée en pondérant par l'alpha : un texel
+       transparent (rgb nul) n'assombrit pas le feuillage au loin ;
+     - l'alpha d'une tuile à découpe est remis à l'échelle pour garder, au
+       seuil `seuilAlpha` (alphaTest des matériaux), la même couverture
+       qu'au niveau 0 : herbes et fleurs ne s'évanouissent pas au loin. */
+  function mipmapsAtlas(data, largeur, hauteur, tuile, seuilAlpha) {
+    var seuil = (seuilAlpha > 0 ? seuilAlpha : 0.5) * 255;
+    var nivMaxTuile = Math.round(Math.log(tuile) / Math.LN2);
+    var colsT = largeur / tuile, rowsT = hauteur / tuile;
+    // couverture et présence d'alpha partiel par tuile, au niveau 0
+    var couv0 = new Float32Array(colsT * rowsT), decoupe = new Uint8Array(colsT * rowsT);
+    for (var ty = 0; ty < rowsT; ty++) for (var tx = 0; tx < colsT; tx++) {
+      var n = 0, partiel = 0;
+      for (var y = 0; y < tuile; y++) for (var x = 0; x < tuile; x++) {
+        var a = data[((ty * tuile + y) * largeur + tx * tuile + x) * 4 + 3];
+        if (a >= seuil) n++;
+        if (a < 255) partiel = 1;
+      }
+      couv0[ty * colsT + tx] = n / (tuile * tuile);
+      decoupe[ty * colsT + tx] = partiel;
+    }
+    var niveaux = [], src = data, sl = largeur, sh = hauteur, k = 0;
+    while (sl > 1 || sh > 1) {
+      k++;
+      var dl = Math.max(1, sl >> 1), dh = Math.max(1, sh >> 1);
+      var brut = new Float32Array(dl * dh * 4);
+      for (var dy = 0; dy < dh; dy++) for (var dx = 0; dx < dl; dx++) {
+        var r = 0, g = 0, b = 0, sa = 0, rr = 0, gg = 0, bb = 0, cnt = 0;
+        for (var oy = 0; oy < 2; oy++) for (var ox = 0; ox < 2; ox++) {
+          var sx = Math.min(sl - 1, dx * 2 + ox), sy = Math.min(sh - 1, dy * 2 + oy);
+          var i = (sy * sl + sx) * 4, al = src[i + 3];
+          r += src[i] * al; g += src[i + 1] * al; b += src[i + 2] * al; sa += al;
+          rr += src[i]; gg += src[i + 1]; bb += src[i + 2]; cnt++;
+        }
+        var o = (dy * dl + dx) * 4;
+        if (sa > 0) { brut[o] = r / sa; brut[o + 1] = g / sa; brut[o + 2] = b / sa; }
+        else { brut[o] = rr / cnt; brut[o + 1] = gg / cnt; brut[o + 2] = bb / cnt; }
+        brut[o + 3] = sa / cnt;
+      }
+      var out = new Uint8ClampedArray(dl * dh * 4);
+      for (var q = 0; q < out.length; q++) out[q] = Math.round(brut[q]);
+      // couverture conservée, tuile par tuile, tant qu'une tuile a au moins 1 texel
+      if (k <= nivMaxTuile) {
+        var tk = tuile >> k;
+        for (var ty2 = 0; ty2 < rowsT; ty2++) for (var tx2 = 0; tx2 < colsT; tx2++) {
+          var it = ty2 * colsT + tx2;
+          if (!decoupe[it]) continue;
+          var alphas = [];
+          for (var y2 = 0; y2 < tk; y2++) for (var x2 = 0; x2 < tk; x2++) alphas.push(brut[((ty2 * tk + y2) * dl + tx2 * tk + x2) * 4 + 3]);
+          var echelle = echelleCouverture(alphas, couv0[it], seuil);
+          if (echelle === 1) continue;
+          for (var y3 = 0; y3 < tk; y3++) for (var x3 = 0; x3 < tk; x3++) {
+            var j = ((ty2 * tk + y3) * dl + tx2 * tk + x3) * 4 + 3;
+            out[j] = Math.round(Math.min(255, brut[j] * echelle));
+          }
+        }
+      }
+      niveaux.push({ width: dl, height: dh, data: out });
+      src = brut; sl = dl; sh = dh;
+    }
+    return niveaux;
+  }
+  function couverture(alphas, echelle, seuil) {
+    var n = 0;
+    for (var i = 0; i < alphas.length; i++) if (Math.min(255, alphas[i] * echelle) >= seuil) n++;
+    return n / alphas.length;
+  }
+  /* Facteur d'échelle de l'alpha qui rapproche le plus la couverture au
+     seuil de la couverture visée (recherche dichotomique, la couverture
+     croît avec l'échelle) ; 1 si l'écart est déjà minimal. */
+  function echelleCouverture(alphas, cible, seuil) {
+    var pas = 1 / alphas.length;
+    if (Math.abs(couverture(alphas, 1, seuil) - cible) < pas / 2) return 1;
+    var lo = 0.05, hi = 16;
+    for (var it = 0; it < 24; it++) {
+      var mid = (lo + hi) / 2;
+      if (couverture(alphas, mid, seuil) < cible) lo = mid; else hi = mid;
+    }
+    return hi;
+  }
+
   MC.Qualite = {
     creerFenetre: creerFenetre, ajouterEchantillon: ajouterEchantillon, percentile: percentile,
     detecterRenduLogiciel: detecterRenduLogiciel,
     refractionFrequenceOK: refractionFrequenceOK, eauRefractanteVisible: eauRefractanteVisible,
     plafonnerDPR: plafonnerDPR, dprPlancher: dprPlancher, ajusterDPR: ajusterDPR,
     creerEtat: creerEtat, decisions: decisions, evaluer: evaluer,
+    mesurerTick: mesurerTick, CHOIX_ANTIALIAS: CHOIX_ANTIALIAS, antialiasEffectif: antialiasEffectif,
+    mipmapsAtlas: mipmapsAtlas,
   };
 
   if (typeof module !== 'undefined' && module.exports) module.exports = MC.Qualite;

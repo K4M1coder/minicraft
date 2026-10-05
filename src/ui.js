@@ -895,7 +895,8 @@
     var NOMS_VALEURS = { auto: 'automatique', 'haute-performance': 'haute performance', economie: 'économie d’énergie',
                          native: 'native', '800x600': '800 × 600', '1024x768': '1024 × 768', '1080p': '1080p (1920 × 1080)',
                          '1440p': '1440p (2560 × 1440)', '4k': '4K (3840 × 2160)', horizontal: 'côte à côte', vertical: 'empilés',
-                         '60': '60 %', '75': '75 %', '90': '90 %', '100': '100 %', '110': '110 %', '125': '125 %', '150': '150 %' };
+                         '60': '60 %', '75': '75 %', '90': '90 %', '100': '100 %', '110': '110 %', '125': '125 %', '150': '150 %',
+                         oui: 'toujours actif', non: 'désactivé' };
     /* SPEC-OPTION-007 : l'échelle des menus, fenêtres et dialogues. */
     function echelle(e) { root.style.setProperty('--ui', String(e)); return e; }
     /* Le HUD se tient sur l'écran principal d'une vue étendue (SPEC-OPTION-006). */

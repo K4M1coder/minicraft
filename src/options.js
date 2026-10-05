@@ -25,12 +25,16 @@
     orientation: { defaut: 'horizontal', valeurs: ['horizontal', 'vertical'], nom: 'Écrans côte à côte ou empilés' },
     // SPEC-OPTION-007 : menus et fenêtres à l'échelle de l'écran
     tailleInterface: { defaut: 'auto', valeurs: ['auto', '60', '75', '90', '100', '110', '125', '150'], nom: 'Taille de l’interface' },
-    // SPEC-RENDU-012 : mipmaps de l'atlas de textures. Par défaut à false —
-    // l'atlas est nearest-filtré sans mipmap pour éviter le bleed entre
-    // tuiles voisines (choix délibéré de src/atlas.js, hors périmètre de ce
-    // lot) ; l'activer réduit le moiré au loin au prix d'un peu de mémoire
-    // GPU et d'un risque de bleed visuel sur certaines tuiles tachetées.
-    mipmaps: { defaut: false, nom: 'Mipmaps des textures' },
+    // SPEC-RENDU-012 : mipmaps de l'atlas de textures, activés par défaut.
+    // Sûrs pour un atlas : générés tuile par tuile (MC.Qualite.mipmapsAtlas)
+    // et lus par le shader à un niveau plafonné à celui où une tuile fait
+    // encore un texel (render.js, avecAtlasRepete) — aucune tuile ne déborde
+    // sur sa voisine. Coupés : moins de mémoire GPU, moiré possible au loin.
+    mipmaps: { defaut: true, nom: 'Mipmaps des textures' },
+    // SPEC-RENDU-006 : lissage (antialias, passe FXAA légère). « auto » le
+    // laisse au FPS mesuré (coupé sous un FPS bas prolongé) ; « oui » le
+    // réactive manuellement, « non » le coupe.
+    antialias: { defaut: 'auto', valeurs: ['auto', 'oui', 'non'], nom: 'Lissage des contours (antialias)' },
   };
 
   /* SPEC-OPTION-007 : facteur d'échelle des menus pour une fenêtre de
