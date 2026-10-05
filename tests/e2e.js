@@ -57,9 +57,16 @@
      plus, en JPEG compressé (SPEC-BANC-011). `renderer.render` doit être
      rappelé juste avant : le tampon peut avoir été consommé par le rendu
      normal de la boucle de jeu entre deux `await`. */
+  /* Rend l'image COMPOSÉE telle que le joueur la voit : en écran partagé,
+     toutes les vues (renderViews), pas la seule caméra principale dans le
+     dernier viewport réglé (qui laissait trois quadrants sur quatre vides). */
+  function rendreTout(g) {
+    if (g.vues && g.vues.length > 1 && g.render.renderViews) g.render.renderViews(g.vues);
+    else g.render.render();
+  }
   function capturer(g, libelle) {
     try {
-      g.render.render();
+      rendreTout(g);
       var src = g.render.renderer.domElement;
       var w = src.width, h = src.height;
       if (!w || !h) return null;
@@ -113,7 +120,7 @@
      été consommé par la boucle de jeu normale entre deux `await`. */
   function dessinerFrame(g) {
     try {
-      g.render.render();
+      rendreTout(g);
       var src = g.render.renderer.domElement;
       var w = src.width, h = src.height;
       if (!w || !h) return null;
@@ -867,6 +874,19 @@
       function ecart(a, b) { var n = 0; for (var i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 40) n++; return n; }
       var nu = signatureImage();
       capture('avatar-sans-armure');
+      // M1 : corps ET armure projettent et reçoivent l'ombre, comme les mobs (sinon l'armure seule flottait au sol)
+      function fusionsDe(mm) { return mm.userData.fusions || []; }
+      A.equal(fusionsDe(m).length, 6, 'six parties du corps fusionnées (tête, buste, bras, jambes)');
+      fusionsDe(m).forEach(function (f) { A.ok(f.castShadow && f.receiveShadow, f.userData.fusion + ' : ombre portée et reçue'); });
+      // F5 : l'atlas d'armure — une tuile par matière, dont les pixels sont exactement le motif de cette matière
+      var atlas = g.render.atlasArmure(), N = atlas.userData.tuile, ctxA = atlas.image.getContext('2d');
+      function tuileDe(mt) { return atlas.userData.matieres.indexOf(mt) + 1; }
+      ['tissu', 'cuir', 'mailles', 'bronze', 'fer', 'or', 'diamant'].forEach(function (mt) {
+        var motif = MC.Apparence.motifArmure(mt), px = ctxA.getImageData(tuileDe(mt) * N, 0, N, N).data, diff = 0;
+        A.ok(tuileDe(mt) > 0, mt + ' : a sa tuile dans l\'atlas');
+        for (var q = 0; q < motif.pixels.length; q++) if (px[q * 4] !== motif.pixels[q]) diff++;
+        A.equal(diff, 0, mt + ' : sa tuile peint exactement son motif');
+      });
       var MATS = ['TISSU', 'CUIR', 'MAILLES', 'BRONZE', 'FER', 'OR', 'DIAMANT'];
       for (var k = 0; k < MATS.length; k++) {
         var mat = MATS[k];
@@ -876,17 +896,21 @@
         var pieces = m.userData.armure || [];
         A.equal(pieces.length, 9, mat + ' : neuf boîtes d\'armure');
         ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (p) {
-          var siennes = pieces.filter(function (b) { return b.userData.pieceArmure === p; });
+          var siennes = pieces.filter(function (b) { return b.piece === p; });
           A.ok(siennes.length > 0, mat + ' : ' + p + ' visible');
           var attendu = C.def(I[mat + '_' + p.toUpperCase()]).couleurArmure;
           siennes.forEach(function (b) {
-            A.equal(b.material.userData.base.getHex(), attendu, mat + ' ' + p + ' : teinte de la matière');
-            A.ok(b.material.map, mat + ' ' + p + ' : texture procédurale');
-            A.ok(b.parent && b.visible, mat + ' ' + p + ' : accrochée au corps');
+            A.equal(b.couleur, attendu, mat + ' ' + p + ' : teinte de la matière');
+            // F5 : la tuile de texture est CELLE de sa matière
+            A.equal(b.matiere, mat.toLowerCase(), mat + ' ' + p + ' : motif de sa matière');
+            A.equal(b.tuile, tuileDe(mat.toLowerCase()), mat + ' ' + p + ' : texturée par la tuile de sa matière');
+            // dessinée par la partie fusionnée du membre qui la porte, visible, texturée par l'atlas
+            var f = b.porteur.children.filter(function (o) { return o.userData.fusion; })[0];
+            A.ok(f && f.visible && f.material.visible && f.material.map === atlas, mat + ' ' + p + ' : accrochée au corps, texturée');
           });
         });
-        A.equal(pieces.filter(function (b) { return b.userData.pieceArmure === 'jambieres' || b.userData.pieceArmure === 'bottes'; })
-                  .map(function (b) { return b.parent; }).filter(function (p) { return p === m.userData.membres.jambeG || p === m.userData.membres.jambeD; }).length,
+        A.equal(pieces.filter(function (b) { return b.piece === 'jambieres' || b.piece === 'bottes'; })
+                  .filter(function (b) { return b.porteur === m.userData.membres.jambeG || b.porteur === m.userData.membres.jambeD; }).length,
                 4, mat + ' : jambières et bottes aux deux jambes');
         A.gt(ecart(signatureImage(), nu), 40, mat + ' : l\'armure change l\'image rendue (de face)');
         capture('face-' + mat.toLowerCase());
@@ -929,15 +953,40 @@
       A.equal(av[1].userData.armure.length, 9, 'le joueur 2 porte ses neuf pièces de fer');
       A.equal(av[0].userData.armure.length, 0, 'le joueur 1 ne porte rien');
       A.close(av[1].position.z, s2.pos.z, 0.01, 'l\'avatar suit le joueur 2');
-      // la vue du joueur 1 montre le joueur 2, jamais le joueur 1 lui-même
-      g.render.render();
-      A.ok(av[1].visible && !av[0].visible, 'vue 1 : le joueur 2 visible, son propre corps caché');
+      // corps et armure : même règle d'ombre (reçue, jamais projetée par un avatar local, voir render.js)
+      av[1].userData.fusions.forEach(function (f) { A.ok(!f.castShadow && f.receiveShadow, f.userData.fusion + ' : ombre reçue, non projetée'); });
+      // M2 : pour CHAQUE vue rendue par renderViews, le corps de son joueur est
+      // caché et celui de l'autre visible (relevé pendant le rendu de la vue)
+      var trace = g.render.tracerAvatarsLocaux(true);
+      try { g.render.renderViews(g.vues); } finally { g.render.tracerAvatarsLocaux(false); }
+      A.equal(trace.length, 2, 'les deux vues ont été rendues');
+      for (var v = 0; v < 2; v++) {
+        for (var a = 0; a < 2; a++) {
+          A.equal(trace[v][a], a !== v, 'vue ' + (v + 1) + ' : le corps du joueur ' + (a + 1) + (a === v ? ' (le sien) est caché' : ' est visible'));
+        }
+      }
       capture('ecran-partage-joueur2-en-fer');
+      // le joueur 2 se tourne : de dos dans la vue du joueur 1
+      s2.yaw = 0;
+      await frames(3);
+      capture('ecran-partage-joueur2-de-dos');
+      s2.yaw = Math.PI;
       ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (p) { s2.equip[p] = { id: I['OR_' + p.toUpperCase()], n: 1 }; });
       await frames(3);
-      A.equal(av[1].userData.armure.filter(function (b) { return b.material.userData.base.getHex() === C.def(I.OR_PLASTRON).couleurArmure; }).length, 9,
+      A.equal(av[1].userData.armure.filter(function (b) { return b.couleur === C.def(I.OR_PLASTRON).couleurArmure; }).length, 9,
               'changé pour de l\'or : l\'avatar se rhabille');
       capture('ecran-partage-joueur2-en-or');
+      // F6 : un joueur local mort n'est plus debout dans les autres vues
+      s2.dead = true;
+      await frames(2);
+      trace = g.render.tracerAvatarsLocaux(true);
+      try { g.render.renderViews(g.vues); } finally { g.render.tracerAvatarsLocaux(false); }
+      A.equal(trace[0][1], false, 'joueur 2 mort : son avatar n\'apparaît plus dans la vue du joueur 1');
+      s2.dead = false; s2.hp = 20;
+      await frames(2);
+      trace = g.render.tracerAvatarsLocaux(true);
+      try { g.render.renderViews(g.vues); } finally { g.render.tracerAvatarsLocaux(false); }
+      A.equal(trace[0][1], true, 'revenu à la vie : de nouveau visible');
     } finally {
       soloRetabli(g); await frames(3);
     }
@@ -947,7 +996,7 @@
   e2e('SPEC-OBJET-001 : à quatre joueurs locaux en armure complète, face à face, la cadence reste jouable', {
         "teste": "la cadence d'images en écran partagé à quatre, chaque joueur en armure complète (quatre matières différentes) et voyant les trois autres",
         "pourquoi": "G9 : les avatars des joueurs locaux et leurs neuf pièces d'armure ne doivent pas faire chuter la cadence de l'écran partagé",
-        "attendu": "trois avatars habillés visibles par vue, au moins 20 images/s (seuil bas du banc sans fenêtre, comme SPEC-SPLIT-005)"
+        "attendu": "trois avatars habillés visibles par vue ; au moins 55 images/s (G9) et moins de 30 % de perte de cadence par rapport à la même scène sans les avatars"
   }, async function (g) {
     var s = await reset(g);
     var o = await sceneDegagee(g, s, 4);
@@ -969,10 +1018,26 @@
       A.equal(av.length, 4, 'quatre avatars locaux');
       av.forEach(function (m, i) { A.equal(m.userData.armure.length, 9, 'joueur ' + (i + 1) + ' : armure complète'); });
       capture('quatre-joueurs-en-armure');
-      var t0 = performance.now();
-      await frames(60);
-      var fps = 60 / ((performance.now() - t0) / 1000);
-      A.gt(fps, 20, 'au moins 20 images/s en quadrant, quatre avatars en armure (' + fps.toFixed(0) + ')');
+      /* Cadence médiane (robuste aux à-coups du banc) sur 90 images, mesurée
+         en alternance avec les avatars (trois en armure dans chaque vue) et
+         sans eux (même scène, mêmes regards) ; on garde la meilleure de
+         quatre mesures de chaque, pour absorber un poste partagé. */
+      async function cadenceMediane() {
+        var ms = [], t = performance.now();
+        for (var f = 0; f < 90; f++) { await frames(1); var n = performance.now(); ms.push(n - t); t = n; }
+        ms.sort(function (x, y) { return x - y; });
+        return 1000 / ms[45];
+      }
+      // même scène, mêmes regards : avec les avatars, puis sans (retirés du rendu)
+      var avec = 0, sans = 0;
+      try {
+        for (var r = 0; r < 4; r++) {
+          g.render.masquerAvatarsLocaux(true); await frames(5); sans = Math.max(sans, await cadenceMediane());
+          g.render.masquerAvatarsLocaux(false); await frames(5); avec = Math.max(avec, await cadenceMediane());
+        }
+      } finally { g.render.masquerAvatarsLocaux(false); }
+      A.gt(avec, 55, 'G9 : au moins 55 images/s en quadrant, trois avatars en armure par vue (' + avec.toFixed(0) + ' ; sans avatars ' + sans.toFixed(0) + ')');
+      A.gt(avec, sans * 0.7, 'moins de 30 % de perte de cadence avec les avatars (' + avec.toFixed(0) + ') que sans (' + sans.toFixed(0) + ')');
     } finally {
       soloRetabli(g); await frames(3);
     }

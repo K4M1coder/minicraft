@@ -595,11 +595,11 @@
      chargé après core.js mais référencé seulement à l'appel (pas au chargement). */
   var PROCHAIN_ID_FORME = 200;
   function idForme(nom) { var id = PROCHAIN_ID_FORME++; B[nom] = id; return id; }
-  function escalierDe(nom, baseId) {
+  function escalierDe(nom, baseId, nomMateriau) {
     var base = BLOCKS[baseId];
     var escId = idForme(nom);
     defBlock(escId, {
-      name: 'Escalier (' + base.name.toLowerCase() + ')', tiles: base.tiles.slice(),
+      name: 'Escalier (' + (nomMateriau || base.name.toLowerCase()) + ')', tiles: base.tiles.slice(),
       hardness: base.hardness, tool: base.tool, needsTool: base.needsTool,
       transparent: true, pass: 'cutout', forme: 'escalier', mat: baseId,
     });
@@ -719,10 +719,10 @@
      figé (tests/donnees/ids.json, SPEC-SAVE-019) le vérifie. Le drapeau
      inflammable du matériau est fixé juste au-dessus : l'escalier en hérite
      (chaume, poutres). */
-  [['ESCALIER_BETON_ROUGE', B.BETON_ROUGE], ['ESCALIER_BETON_JAUNE', B.BETON_JAUNE],
-   ['ESCALIER_BETON_BLEU', B.BETON_BLEU], ['ESCALIER_BETON_VERT', B.BETON_VERT],
-   ['ESCALIER_BETON_NOIR', B.BETON_NOIR], ['ESCALIER_BETON_BLANC', B.BETON_BLANC],
-   ['ESCALIER_BETON_GRIS', B.BETON_GRIS],
+  [['ESCALIER_BETON_ROUGE', B.BETON_ROUGE, 'béton rouge'], ['ESCALIER_BETON_JAUNE', B.BETON_JAUNE, 'béton jaune'],
+   ['ESCALIER_BETON_BLEU', B.BETON_BLEU, 'béton bleu'], ['ESCALIER_BETON_VERT', B.BETON_VERT, 'béton vert'],
+   ['ESCALIER_BETON_NOIR', B.BETON_NOIR, 'béton noir'], ['ESCALIER_BETON_BLANC', B.BETON_BLANC, 'béton blanc'],
+   ['ESCALIER_BETON_GRIS', B.BETON_GRIS, 'béton gris'],
    ['ESCALIER_TERRACOTTA', B.TERRACOTTA], ['ESCALIER_TERRACOTTA_RED', B.TERRACOTTA_RED],
    ['ESCALIER_TERRACOTTA_BLUE', B.TERRACOTTA_BLUE], ['ESCALIER_TERRACOTTA_GREEN', B.TERRACOTTA_GREEN],
    ['ESCALIER_TERRACOTTA_BLACK', B.TERRACOTTA_BLACK], ['ESCALIER_TERRACOTTA_WHITE', B.TERRACOTTA_WHITE],
@@ -732,7 +732,7 @@
    ['ESCALIER_POUTRE_CHENE', B.POUTRE_CHENE], ['ESCALIER_POUTRE_SAPIN', B.POUTRE_SAPIN],
    ['ESCALIER_POUTRE_BOULEAU', B.POUTRE_BOULEAU], ['ESCALIER_POUTRE_ACACIA', B.POUTRE_ACACIA],
    ['ESCALIER_POUTRE_JUNGLE', B.POUTRE_JUNGLE],
-  ].forEach(function (p) { escalierDe(p[0], p[1]); });
+  ].forEach(function (p) { escalierDe(p[0], p[1], p[2]); });
   // un escalier ou une dalle brûle comme son matériau (bois, foin, chaume…) :
   // ceux du haut ont été déclarés avant que le bois ne soit marqué inflammable
   BLOCKS.forEach(function (d) {

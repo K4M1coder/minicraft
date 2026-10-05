@@ -979,57 +979,140 @@
 
     /* ── SPEC-OBJET-001 : l'armure portée, visible sur l'avatar ─────────────
        Les boîtes viennent de MC.Apparence.habillage (logique pure, testée sous
-       Node) : chacune s'accroche à la partie du corps qui la porte et suit donc
-       ses mouvements (marche, coup, regard). Texture procédurale par matière
-       (MC.Apparence.motifArmure : niveaux de gris que la teinte de la matière
-       colore), PARTAGÉE par tous les avatars — une par matière et par contexte
-       GPU, jamais libérée avec un avatar ; matériau propre à chaque boîte, comme
-       le reste du corps (l'éclat de la case et le clignotement des coups le
-       modifient). On ne rhabille que quand la signature (les quatre ids) change. */
-    var texturesArmure = {};
-    function textureArmure(matiere) {
-      var cle = matiere + '@' + contexteGen;
-      if (texturesArmure[cle]) return texturesArmure[cle];
-      var motif = MC.Apparence.motifArmure(matiere), N = motif.taille;
-      var cv = document.createElement('canvas');
-      cv.width = cv.height = N;
-      var ctx = cv.getContext('2d'), img = ctx.createImageData(N, N);
-      for (var i = 0; i < N * N; i++) {
-        var v = motif.pixels[i];
-        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
-        img.data[i * 4 + 3] = 255;
+       Node), chacune dans le repère de la partie du corps qui la porte.
+       Pour tenir la cadence de l'écran partagé (G9), un avatar n'est pas
+       dessiné boîte par boîte : chaque partie du corps (tête, buste, deux bras,
+       deux jambes) devient UNE seule géométrie fusionnée — ses boîtes de corps
+       (peau, vêtements, cheveux, yeux) et les pièces d'armure qu'elle porte —,
+       colorée par sommet et texturée par un atlas commun (une tuile blanche
+       pour le corps, une tuile par matière : MC.Apparence.motifArmure, niveaux
+       de gris que la teinte de la matière colore). Six appels de dessin par
+       avatar au lieu d'une vingtaine. Les boîtes d'origine restent en place
+       (articulations, pose, LOD), seul leur matériau est rendu invisible. On ne
+       refusionne que quand l'une des quatre pièces portées change. */
+    var MATIERES_ATLAS = ['tissu', 'cuir', 'mailles', 'bronze', 'fer', 'or', 'diamant'];
+    var TUILES_ATLAS = MATIERES_ATLAS.length + 1;      // tuile 0 : blanc (corps)
+    var atlasesArmure = {};
+    function tuileArmure(matiere) { var i = MATIERES_ATLAS.indexOf(matiere); return i < 0 ? 5 : i + 1; }
+    function atlasArmure() {
+      if (atlasesArmure[contexteGen]) return atlasesArmure[contexteGen];
+      var N = 16, cv = document.createElement('canvas');
+      cv.width = N * TUILES_ATLAS; cv.height = N;
+      var ctx = cv.getContext('2d'), img = ctx.createImageData(cv.width, N);
+      for (var t = 0; t < TUILES_ATLAS; t++) {
+        var motif = t ? MC.Apparence.motifArmure(MATIERES_ATLAS[t - 1]) : null;
+        for (var y = 0; y < N; y++) for (var x = 0; x < N; x++) {
+          var v = motif ? motif.pixels[y * N + x] : 255, k = (y * cv.width + t * N + x) * 4;
+          img.data[k] = img.data[k + 1] = img.data[k + 2] = v; img.data[k + 3] = 255;
+        }
       }
       ctx.putImageData(img, 0, 0);
-      var t = new THREE.CanvasTexture(cv);
-      t.magFilter = THREE.NearestFilter;
-      t.minFilter = THREE.NearestFilter;
-      return (texturesArmure[cle] = t);
+      var tex = new THREE.CanvasTexture(cv);
+      tex.magFilter = THREE.NearestFilter;
+      tex.minFilter = THREE.NearestFilter;
+      tex.userData = { matieres: MATIERES_ATLAS.slice(), tuile: N };   // vérifiable par les e2e
+      return (atlasesArmure[contexteGen] = tex);
     }
+    /* Les ombres d'un modèle (mobs, avatars) : toutes ses boîtes, et les parties
+       fusionnées qu'on lui fera ensuite (habillerAvatar relit ces drapeaux) —
+       corps et armure toujours ensemble. `porte` faux : il reçoit l'ombre sans
+       en projeter (avatars locaux de l'écran partagé, voir syncAvatarsLocaux). */
+    function ombrer(m, porte) {
+      porte = porte !== false;
+      m.userData.ombres = { porte: porte, recoit: true };
+      m.traverse(function (o) { if (o.isMesh) { o.castShadow = porte; o.receiveShadow = true; } });
+    }
+    var tmpCouleur = new THREE.Color();
+    // fusionne des morceaux { geo (BufferGeometry indexée, déjà placée), couleur (hex), tuile }
+    function fusionner(morceaux) {
+      var nv = 0, ni = 0;
+      morceaux.forEach(function (p) { nv += p.geo.attributes.position.count; ni += p.geo.index.count; });
+      var pos = new Float32Array(nv * 3), nor = new Float32Array(nv * 3), uv = new Float32Array(nv * 2),
+          col = new Float32Array(nv * 3), idx = new (nv > 65535 ? Uint32Array : Uint16Array)(ni);
+      var ov = 0, oi = 0, marge = 0.5 / 16;
+      morceaux.forEach(function (p) {
+        var g = p.geo, n = g.attributes.position.count;
+        pos.set(g.attributes.position.array, ov * 3);
+        nor.set(g.attributes.normal.array, ov * 3);
+        var su = g.attributes.uv.array;
+        tmpCouleur.setHex(p.couleur);
+        for (var i = 0; i < n; i++) {
+          uv[(ov + i) * 2] = (p.tuile + marge + su[i * 2] * (1 - 2 * marge)) / TUILES_ATLAS;
+          uv[(ov + i) * 2 + 1] = marge + su[i * 2 + 1] * (1 - 2 * marge);
+          col[(ov + i) * 3] = tmpCouleur.r; col[(ov + i) * 3 + 1] = tmpCouleur.g; col[(ov + i) * 3 + 2] = tmpCouleur.b;
+        }
+        var si = g.index.array;
+        for (var j = 0; j < si.length; j++) idx[oi + j] = si[j] + ov;
+        ov += n; oi += si.length;
+        g.dispose();
+      });
+      var out = new THREE.BufferGeometry();
+      out.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      out.setAttribute('normal', new THREE.BufferAttribute(nor, 3));
+      out.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+      out.setAttribute('color', new THREE.BufferAttribute(col, 3));
+      out.setIndex(new THREE.BufferAttribute(idx, 1));
+      out.computeBoundingSphere();
+      return out;
+    }
+    var PARTIES_FUSION = ['tete', 'buste', 'brasG', 'brasD', 'jambeG', 'jambeD'];
     function habillerAvatar(m, equip) {
       var AP = MC.Apparence, mb = m.userData.membres, dims = m.userData.dimsCorps;
       if (!AP || !mb || !dims) return false;
-      var sig = AP.signatureArmure(equip);
-      if (m.userData.sigArmure === sig) return false;
-      (m.userData.armure || []).forEach(function (o) {
+      // les quatre ids portés comparés en place, sans rien allouer à chaque image
+      var ids = m.userData.idsArmure || (m.userData.idsArmure = [-1, -1, -1, -1]), change = false;
+      for (var k = 0; k < 4; k++) {
+        var s = equip && equip[AP.PIECES_ARMURE[k]], id = s ? s.id : 0;
+        if (ids[k] !== id) { ids[k] = id; change = true; }
+      }
+      if (!change) return false;
+      // SPEC-RENDU-002 : jamais disposer une ressource d'une génération de contexte révolue
+      var memeContexte = m.__mcGen === contexteGen;
+      (m.userData.fusions || []).forEach(function (o) {
         if (o.parent) o.parent.remove(o);
-        o.geometry.dispose(); o.material.dispose();
+        if (memeContexte) { o.geometry.dispose(); o.material.dispose(); }
       });
-      var pieces = [];
-      AP.habillage(equip, dims).forEach(function (b) {
-        var porteur = mb[b.partie];
+      // par partie : ses boîtes de corps (dans son repère), puis l'armure qu'elle porte
+      var parPartie = {}, armure = [];
+      PARTIES_FUSION.forEach(function (nom) {
+        var porteur = mb[nom], morceaux = [];
         if (!porteur) return;
-        var o = new THREE.Mesh(new THREE.BoxGeometry(b.lx, b.ly, b.lz), mat(b.couleur, { map: textureArmure(b.matiere) }));
-        // le buste est une boîte placée dans le repère du corps : on s'y ramène
-        if (b.partie === 'buste') o.position.set(b.x - porteur.position.x, b.y - porteur.position.y, b.z - porteur.position.z);
-        else o.position.set(b.x, b.y, b.z);
-        o.userData.pieceArmure = b.piece;
-        o.userData.matiereArmure = b.matiere;
-        o.castShadow = true;
-        porteur.add(o);
-        pieces.push(o);
+        var corps = porteur.isMesh ? [porteur] : porteur.children.filter(function (o) { return o.isMesh && !o.userData.fusion; });
+        corps.forEach(function (o) {
+          var base = (o.material.userData && o.material.userData.base) || o.material.color;
+          var g = o.geometry.clone();
+          if (o !== porteur) { o.updateMatrix(); g.applyMatrix4(o.matrix); }
+          morceaux.push({ geo: g, couleur: base.getHex(), tuile: 0 });
+          o.material.visible = false;            // dessinée par la partie fusionnée
+        });
+        parPartie[nom] = morceaux;
       });
-      m.userData.armure = pieces;
-      m.userData.sigArmure = sig;
+      AP.habillage(equip, dims).forEach(function (b) {
+        var porteur = mb[b.partie], morceaux = parPartie[b.partie];
+        if (!porteur || !morceaux) return;
+        var g = new THREE.BoxGeometry(b.lx, b.ly, b.lz);
+        // le buste est une boîte placée dans le repère du corps : on s'y ramène
+        if (b.partie === 'buste') g.translate(b.x - porteur.position.x, b.y - porteur.position.y, b.z - porteur.position.z);
+        else g.translate(b.x, b.y, b.z);
+        var tuile = tuileArmure(b.matiere);
+        morceaux.push({ geo: g, couleur: b.couleur, tuile: tuile });
+        armure.push({ piece: b.piece, partie: b.partie, matiere: b.matiere, couleur: b.couleur, tuile: tuile, porteur: porteur });
+      });
+      var fusions = [];
+      PARTIES_FUSION.forEach(function (nom) {
+        var morceaux = parPartie[nom];
+        if (!morceaux || !morceaux.length) return;
+        var o = new THREE.Mesh(fusionner(morceaux), mat(0xffffff, { vertexColors: true, map: atlasArmure() }));
+        o.userData.fusion = nom;
+        // ombres comme le reste du modèle (M1 : corps et armure ensemble, ou aucun)
+        var om = m.userData.ombres;
+        o.castShadow = !!(om && om.porte); o.receiveShadow = !!(om && om.recoit);
+        mb[nom].add(o);
+        fusions.push(o);
+      });
+      m.userData.fusions = fusions;
+      m.userData.armure = armure;
+      m.userData.sigArmure = AP.signatureArmure(equip);
       m.userData.lumT = 0;     // la nouvelle armure prend l'éclat de la case dès l'image suivante
       return true;
     }
@@ -1114,7 +1197,7 @@
         if (!m) {
           var sp = f.type === 'bateau' ? SPEC_BATEAU : (MC.EntitySpecs && MC.EntitySpecs[f.type]) || { w: 0.6, h: 1.8, speed: 1.6 };
           m = tagGen(mobMesh(f.type, sp, { role: f.role, pnj: f.id }));
-          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          ombrer(m);
           m.userData.figurant = true;
           scene.add(m);
           figurants.set(f.id, m);
@@ -1218,6 +1301,7 @@
         var m = maillagesDistants.get(d.id);
         if (!m) {
           m = tagGen(mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: d.nom || d.id }));
+          ombrer(m);         // corps ET armure projettent leur ombre, comme les mobs
           m.add(etiquetteNom(d.nom || ('Joueur ' + d.id)));
           m.userData.nom = d.nom;
           scene.add(m);
@@ -1275,13 +1359,17 @@
         if (!m) {
           m = tagGen(mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: j.nom || j.cle }));
           m.userData.cleLocale = j.cle;
-          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          // reçoit l'ombre, n'en projette pas : en écran partagé, la carte d'ombres se
+          // recalcule à chaque vue (quatre fois par image) — G9, mesuré par l'e2e de cadence
+          ombrer(m, false);
           scene.add(m);
           avatarsLocaux[i] = m;
         }
         m.position.set(j.pos.x, j.pos.y, j.pos.z);
         m.rotation.y = j.yaw || 0;
         habillerAvatar(m, j.equip);
+        // F6 : un joueur local mort (en attente de renaissance) n'est plus debout dans les autres vues
+        m.userData.mort = !!j.mort;
         animerMembres(m, j, dtEntites, 'l' + j.cle);
       }
       while (avatarsLocaux.length > liste.length) libererEntite(avatarsLocaux.pop());
@@ -1289,8 +1377,17 @@
     }
     // avant le rendu de la vue `vue` : tous les avatars locaux, sauf le sien
     function montrerAvatarsPour(vue) {
-      for (var i = 0; i < avatarsLocaux.length; i++) avatarsLocaux[i].visible = i !== vue;
+      for (var i = 0; i < avatarsLocaux.length; i++) avatarsLocaux[i].visible = !avatarsMasques && i !== vue && !avatarsLocaux[i].userData.mort;
+      if (traceAvatars) traceAvatars[vue] = avatarsLocaux.map(function (m) { return m.visible; });
     }
+    /* Pour les e2e (M2) : relève, vue par vue, quels avatars locaux étaient
+       visibles au moment où renderViews a rendu cette vue. Coupé par défaut :
+       aucune allocation par image en jeu. */
+    var traceAvatars = null;
+    function tracerAvatarsLocaux(actif) { traceAvatars = actif ? [] : null; return traceAvatars; }
+    // pour la mesure de cadence des e2e : la même scène, avatars locaux retirés du rendu
+    var avatarsMasques = false;
+    function masquerAvatarsLocaux(oui) { avatarsMasques = !!oui; }
 
     /* Éclat d'une créature : la lumière de sa case (ciel et sources), selon
        la même règle que le terrain — une créature ne luit pas au fond d'une grotte. */
@@ -1415,7 +1512,7 @@
         if (!m) {
           m = tagGen(e.type === 'item' ? itemMesh(e.item) : mobMesh(e.type, entities.SPECS[e.type], e));
           m.userData.blesse = false;
-          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          ombrer(m);
           scene.add(m);
           entityMeshes.set(e.eid, m);
         }
@@ -2840,7 +2937,8 @@
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
       updateLumieresPortees: updateLumieresPortees,
       libererToutesEntites: libererToutesEntites, syncDistants: syncDistants,
-      syncAvatarsLocaux: syncAvatarsLocaux, avatarsLocaux: avatarsLocaux, maillagesDistants: maillagesDistants, habillerAvatar: habillerAvatar,
+      syncAvatarsLocaux: syncAvatarsLocaux, avatarsLocaux: avatarsLocaux, habillerAvatar: habillerAvatar,
+      tracerAvatarsLocaux: tracerAvatarsLocaux, masquerAvatarsLocaux: masquerAvatarsLocaux, atlasArmure: atlasArmure,
       maillagesDistants: maillagesDistants,
       get materiauxLiberes() { return liberees; },
       resize: resize, render: render, renderViews: renderViews,

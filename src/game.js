@@ -183,7 +183,18 @@
     /* Le solo est « une equipe d'un joueur » : meme chemin de code que
        l'ecran partage, donc teste en permanence plutot qu'en cas special. */
     var equipe = [];
-    var AUCUN_AVATAR_LOCAL = [];   // seul : aucun avatar local (render.syncAvatarsLocaux)
+    /* SPEC-OBJET-001 : ce que render.syncAvatarsLocaux doit savoir des joueurs
+       locaux, dans des objets RÉUTILISÉS d'une image à l'autre (aucune allocation
+       par image) ; vide quand on est seul (aucun avatar local). */
+    var avatarsLocauxListe = [];
+    function listeAvatarsLocaux() {
+      avatarsLocauxListe.length = equipe.length > 1 ? equipe.length : 0;
+      for (var i = 0; i < avatarsLocauxListe.length; i++) {
+        var j = equipe[i], sa = j.player.state, o = avatarsLocauxListe[i] || (avatarsLocauxListe[i] = {});
+        o.cle = j.index; o.nom = j.nom; o.pos = sa.pos; o.yaw = sa.yaw; o.vel = sa.vel; o.equip = sa.equip; o.mort = !!sa.dead;
+      }
+      return avatarsLocauxListe;
+    }
     var player = MC.createPlayer(world, entities, regles);
     equipe.push({ index: 0, nom: 'Joueur 1', player: player,
                   source: 'clavier', manette: null, vue: null, prediction: MC.Synchro.creerPrediction() });
@@ -3155,10 +3166,7 @@
       render.syncEntities(entities, net, function (x, y, z) { return MC.Lumiere.lumiereEn(world.chunkDe, x, y, z); },
                           DC.sunIntensity(g.time));
       // SPEC-OBJET-001 : en écran partagé, chacun voit l'avatar (et l'armure) des autres joueurs locaux
-      render.syncAvatarsLocaux(equipe.length > 1 ? equipe.map(function (j) {
-        var sa = j.player.state;
-        return { cle: j.index, nom: j.nom, pos: sa.pos, yaw: sa.yaw, vel: sa.vel, equip: sa.equip };
-      }) : AUCUN_AVATAR_LOCAL);
+      render.syncAvatarsLocaux(listeAvatarsLocaux());
 
       // une camera par joueur, puis un rendu par vue
       var taille = [surface.clientWidth || innerWidth, surface.clientHeight || innerHeight];

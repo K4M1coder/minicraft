@@ -62,6 +62,16 @@
       });
     });
 
+    it('SPEC-CONSTR-001 : chaque escalier de matériau porte un nom qui le distingue (les sept bétons compris)', function () {
+      var noms = {};
+      MATERIAUX_CONSTRUCTION.forEach(function (m) {
+        var nom = C.BLOCKS[C.BLOCKS[B[m]].escalier].name;
+        A.notOk(noms[nom], m + ' : « ' + nom + ' » déjà pris par ' + noms[nom]);
+        noms[nom] = m;
+      });
+      A.equal(C.BLOCKS[B.ESCALIER_BETON_BLANC].name, 'Escalier (béton blanc)');
+    });
+
     it('SPEC-CONSTR-001 : chaque escalier de matériau se fabrique (6 → 4) et se ramasse tel quel une fois cassé', function () {
       MATERIAUX_CONSTRUCTION.forEach(function (m) {
         var id = B[m], esc = C.BLOCKS[id].escalier;
