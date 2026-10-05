@@ -911,6 +911,13 @@ if (e2eSelectionnes.length) {
     const motif = resultatE2E ? resultatE2E.motif : ('code de sortie ' + rE2E.status);
     ecrire('  ✗ end-to-end : infrastructure indisponible (' + motif + ')');
     e2eSelectionnes.forEach((t) => {
+      if (MODE_REJEU) {
+        // SPEC-BANC-114 : le banc de ce vieux commit ne se laisse pas piloter par le moteur actuel — ignorés, avec la raison
+        ignoresIncompatibles++;
+        testsResultats.push({ id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
+          etat: 'ignore', raison: 'incompatible avec ce commit : le serveur et le banc de ce commit ne démarrent pas avec le moteur e2e actuel (' + motif + ')', duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 0 } });
+        return;
+      }
       res.failed++;
       testsResultats.push({
         id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,

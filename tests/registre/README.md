@@ -199,6 +199,27 @@ Pour le futur lot d'interface / route serveur (`docs/banc/historique-global.md`,
 - `etatRegistre(t, seuilLentMs)` — la règle d'état ci-dessus, réutilisable
   telle quelle pour toute agrégation (§3.5 « Répartition »).
 
+## Moteur de test, métadonnées de commit et campagnes historisées
+
+Chaque entrée porte `moteurTest` : `{ version, commit, jeu }`, la version du
+**moteur** de test (lanceur, harnais, CDP, diagnostics, écriture du registre,
+`tools/moteur-test.js`) qui a produit le run. Pour comparer deux runs, ne pas
+confondre « le jeu a changé » et « la façon de le tester a changé ».
+
+`node tools/registre.js historiser [--depuis <ref>] [--preset pr] [--lister] [--max N]`
+rejoue, pour chaque commit de **merge**, de **PR** (« titre (#N) ») ou de
+**release** de l'historique, une vraie campagne dans un worktree temporaire sur
+ce commit : le code du jeu et les tests sont ceux du commit, le moteur est celui
+du dépôt courant (`MC_RACINE_JEU`, voir `tools/historiser.js`). L'entrée est celle
+d'un push (`origine: pre-push`) plus `meta_commit` : message, parents, branche
+fusionnée, auteur, date du commit, fichiers modifiés, `VERSION_JEU` de ce
+commit, étiquette de release. `date` (le `debut_run` de l'historique) est
+l'heure réelle d'exécution, jamais la date du commit. Un test que le moteur
+ne peut pas faire tourner sur ce commit est `ignore`, avec sa raison. Les
+commits déjà inscrits (entrée non interrompue) sont sautés : la commande se
+relance après une interruption. Compter 5 à 10 minutes par commit ; les entrées
+se compactent à la publication comme les autres.
+
 ## Limite connue : pas de redimensionnement d'image
 
 Les captures sont stockées TELLES QUE produites par le banc/la campagne

@@ -63,6 +63,21 @@ function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: '
     R.ok(Date.parse(e.date) >= avant - 1000 && Date.parse(e.date) <= apres, 'SPEC-BANC-113 : debut_run est l\'heure réelle de la campagne (' + e.date + '), pas celle du commit (' + e.meta_commit.date_commit + ')');
     R.ok(wtVu && !fs.existsSync(wtVu), 'SPEC-BANC-112 : le worktree temporaire est supprimé');
     R.eq(git(['worktree', 'list', '--porcelain']).split('\n').filter(l => /^worktree /.test(l)).length, worktreesAvant, 'SPEC-BANC-112 : aucun worktree ne reste dans le dépôt');
+    // un e2e rejoué sur ce vieux commit : le serveur et la page du banc de v0.8.0, le moteur CDP actuel (SPEC-BANC-112)
+    const registre2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hist-reel-e2e-'));
+    if (!require(path.join(RACINE, 'tools', 'navigateur.js')).trouverNavigateur()) R.saut('SPEC-BANC-112 : un e2e rejoué sur v0.8.0', 'aucun Edge/Chrome installé');
+    else try {
+      const r3 = HIST.historiser({
+        dossierRepo: RACINE, dossierRegistre: registre2, depuis: 'v0.7.0', preset: 'pr',
+        argsCampagne: ['--test', 'le viseur coïncide avec le centre du canvas', '--sans-fonctions'],
+        lancerCampagne: (arg) => HIST.campagneReelle(arg),
+      });
+      const e3 = REG.lireEntrees(registre2)[0];
+      R.ok(r3.ok && e3 && e3.tests.length === 1, 'SPEC-BANC-112 : la campagne e2e sur v0.8.0 produit son entrée', JSON.stringify(r3.echecs));
+      R.ok(e3 && ['reussi', 'ignore'].indexOf(e3.tests[0].etat) >= 0 && (e3.tests[0].etat !== 'ignore' || /incompatible avec ce commit/.test(e3.tests[0].raison)),
+        'SPEC-BANC-112/114 : l\'e2e tourne sur le jeu de v0.8.0 (réussi) ou, si le banc de ce commit ne se laisse pas piloter, est ignoré avec sa raison — jamais en échec', JSON.stringify(e3 && e3.tests[0] && { e: e3.tests[0].etat, r: e3.tests[0].raison }));
+      R.ok(e3 && e3.moteurRendu && e3.moteurRendu.navigateur, 'SPEC-BANC-112 : et le moteur de rendu (navigateur, GPU) est celui observé par l\'orchestration actuelle', JSON.stringify(e3 && e3.moteurRendu));
+    } finally { try { fs.rmSync(registre2, { recursive: true, force: true }); } catch (e) { /* verrouillé */ } }
     // reprise : le commit est inscrit, la seconde passe ne lance rien
     let lances = 0;
     const r2 = HIST.historiser({ dossierRepo: RACINE, dossierRegistre: registre, depuis: 'v0.7.0', lancerCampagne: () => { lances++; return { ok: false, motif: 'ne devrait pas être appelée' }; } });

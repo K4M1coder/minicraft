@@ -57,6 +57,10 @@ const NAV = require('./navigateur.js');
 const DIAG = require('./diagnostics.js');
 
 const RACINE = path.join(__dirname, '..');
+/* SPEC-BANC-112 : en REJEU d'un vieux commit (tools/historiser.js), le serveur de test et la page du banc sont ceux de CE
+   commit (MC_RACINE_JEU), l'orchestration CDP, les diagnostics et le cahier ceux du moteur actuel. */
+const RACINE_JEU = process.env.MC_RACINE_JEU ? path.resolve(process.env.MC_RACINE_JEU) : RACINE;
+const EN_REJEU = RACINE_JEU !== RACINE;
 const DELAI_DEMARRAGE_DEFAUT = 20000;
 // Filet de sécurité contre un test qui ne rend jamais la main (session CDP
 // bloquée), pas un couperet pour un test simplement lent (SPEC-BANC-010,
@@ -95,9 +99,9 @@ async function attendreServeurPret(port, delaiMs) {
    campagne — jamais le port de jeu par défaut, pour ne jamais entrer en
    conflit avec une partie déjà lancée sur ce poste. */
 async function demarrerServeurTest(port, delaiMs) {
-  const processus = spawn(process.execPath, [path.join(RACINE, 'server.js'), '--port', String(port), '--serveur', '--tests'],
+  const processus = spawn(process.execPath, [path.join(RACINE_JEU, 'server.js'), '--port', String(port), '--serveur', '--tests'],
     // MC_TEST_POSE_LIBRE : les e2e en ligne posent des blocs sans les posséder (SPEC-SYNC-028 est éprouvée par tests/integration-archi-inv.js)
-    { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1' }) });
+    { cwd: RACINE_JEU, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1' }) });
   let journal = '';
   processus.stdout.on('data', (d) => { journal += d; });
   processus.stderr.on('data', (d) => { journal += d; });
@@ -363,6 +367,14 @@ async function executerCampagne(selection, options) {
       throw e;
     }
 
+    /* SPEC-BANC-114 : la page du banc d'un vieux commit peut ne pas offrir l'API que le moteur actuel pilote
+       (window.runUnE2EParNom) : ses e2e ne peuvent pas être exécutés ici — ils sont `ignore`, avec la raison,
+       jamais réussis ni en échec. */
+    let apiAbsente = null;
+    if (EN_REJEU) {
+      const rApi = await session.envoyer('Runtime.evaluate', { expression: "typeof window.runUnE2EParNom === 'function'", returnByValue: true }, 5000).catch(() => null);
+      if (!rApi || !rApi.result || rApi.result.value !== true) apiAbsente = 'incompatible avec ce commit : la page du banc de ce commit n\'offre pas window.runUnE2EParNom, que le moteur actuel pilote — ses e2e ne peuvent pas y être exécutés';
+    }
     const rGpu = await session.envoyer('Runtime.evaluate', { expression: EXPRESSION_RENDU, returnByValue: true }, 8000)
       .then((r) => r.result && r.result.value).catch(() => null);
     const accelerationMaterielle = rGpu ? accelerationDepuisRenderer(rGpu.renderer) : null;
@@ -375,6 +387,12 @@ async function executerCampagne(selection, options) {
           etat: 'delai', duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 1 },
           message: 'délai global de la campagne e2e dépassé avant ce test', captures: [],
         }));
+        continue;
+      }
+      if (apiAbsente) {
+        testsResultats.push({ id: test.id, nom: test.nom, type: test.type || 'e2e', groupe: test.groupe, domaines: test.domaines || [], specs: test.specs || [], fiche: test.fiche || null,
+          etiquettes: test.etiquettes || [], fonctions: test.fonctions || [], etat: 'ignore', raison: apiAbsente, duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 0 }, captures: [] });
+        opts.ecrire('  ○ ' + test.nom + ' — ignoré : ' + apiAbsente);
         continue;
       }
       opts.ecrire('  ▶ ' + test.nom);
