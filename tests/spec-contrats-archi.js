@@ -20,7 +20,8 @@
                       'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER', 'VEHICULE_EVT',
                       'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF', 'ACTIONNER',
                       'LIVRE_ECRIRE',
-                      'FACTION_MEMBRES'];
+                      'FACTION_MEMBRES',
+                      'EXPOSER', 'EXPOSITION_RETIRER', 'COFFRE_SUSPECT', 'EXPOSITIONS'];
       A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
       A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
@@ -252,6 +253,61 @@
       A.equal(K.validerFactionMembres({ t: 'faction_membres' }), null, 'liste manquante');
       A.deep(K.validerRecu({ t: 'faction_membres', l: [['Bob', 1, 2, 'g1']] }), { t: 'faction_membres', l: [{ nom: 'Bob', x: 1, z: 2, faction: 'g1' }] }, 'routé par validerRecu');
       A.equal(K.valider({ t: 'faction_membres', l: [] }), null, 'jamais accepté d\'un client');
+    });
+
+    it('SPEC-ARCHI-043 : EXPOSER et EXPOSITION_RETIRER (c→s) — une case d inventaire vers un présentoir, ou le retrait, rien d autre', function () {
+      A.equal(K.MSG.EXPOSER, 'exposer');
+      A.equal(K.MSG.EXPOSITION_RETIRER, 'expo_retirer');
+      A.equal(K.SENS.exposer, 'c>s'); A.equal(K.SENS.expo_retirer, 'c>s');
+      A.ok(K.BUDGETS_FLOOD.exposer > 0 && K.BUDGETS_FLOOD.exposer <= 10, 'budget anti-flood serré (exposer)');
+      A.ok(K.BUDGETS_FLOOD.expo_retirer > 0 && K.BUDGETS_FLOOD.expo_retirer <= 10, 'budget anti-flood serré (retirer)');
+      A.deep(K.validerExposer({ t: 'exposer', x: 3, y: 40, z: -7, i: 2, id: 9, data: { a: 1 } }), { t: 'exposer', j: 0, x: 3, y: 40, z: -7, i: 2 },
+             'seules la case et la position voyagent : ni objet, ni donnée annoncés par le client');
+      A.deep(K.validerExposer({ t: 'exposer', j: 3, x: 0, y: 0, z: 0, i: 35 }), { t: 'exposer', j: 3, x: 0, y: 0, z: 0, i: 35 });
+      A.equal(K.validerExposer({ t: 'exposer', x: 0, y: 5, z: 0 }), null, 'case manquante');
+      A.equal(K.validerExposer({ t: 'exposer', x: 0, y: 5, z: 0, i: 36 }), null, 'case hors de l\'inventaire');
+      A.equal(K.validerExposer({ t: 'exposer', x: 0, y: 128, z: 0, i: 0 }), null, 'y hors du monde');
+      A.equal(K.validerExposer({ t: 'exposer', x: 0.5, y: 5, z: 0, i: 0 }), null, 'coordonnée non entière');
+      A.equal(K.validerExposer({ t: 'exposer', j: 4, x: 0, y: 5, z: 0, i: 0 }), null, 'j hors borne');
+      A.equal(K.validerExposer(null), null);
+      A.deep(K.validerExpositionRetirer({ t: 'expo_retirer', x: 1, y: 2, z: 3, i: 4 }), { t: 'expo_retirer', j: 0, x: 1, y: 2, z: 3 });
+      A.equal(K.validerExpositionRetirer({ t: 'expo_retirer', x: 1, y: 2 }), null, 'z manquant');
+      A.equal(K.validerExpositionRetirer({ t: 'exposer', x: 1, y: 2, z: 3 }), null, 'mauvais t');
+      A.deep(NP.valider({ t: 'exposer', x: 1, y: 2, z: 3, i: 0 }), { t: 'exposer', j: 0, x: 1, y: 2, z: 3, i: 0 }, 'routé par NP.valider côté serveur');
+      A.deep(NP.valider({ t: 'expo_retirer', x: 1, y: 2, z: 3 }), { t: 'expo_retirer', j: 0, x: 1, y: 2, z: 3 });
+    });
+
+    it('SPEC-ARCHI-044 : COFFRE_SUSPECT (c→s) — la case d un coffre piégé ou doré et, facultative, celle du kit de désamorçage', function () {
+      A.equal(K.MSG.COFFRE_SUSPECT, 'coffre_suspect');
+      A.equal(K.SENS.coffre_suspect, 'c>s');
+      A.ok(K.BUDGETS_FLOOD.coffre_suspect > 0 && K.BUDGETS_FLOOD.coffre_suspect <= 10, 'budget anti-flood serré');
+      A.deep(K.validerCoffreSuspect({ t: 'coffre_suspect', x: 3, y: 40, z: -7 }), { t: 'coffre_suspect', j: 0, x: 3, y: 40, z: -7 }, 'sans kit');
+      A.deep(K.validerCoffreSuspect({ t: 'coffre_suspect', j: 1, x: 3, y: 40, z: -7, i: 4, piege: 'gaz' }), { t: 'coffre_suspect', j: 1, x: 3, y: 40, z: -7, i: 4 },
+             'aucun piège annoncé par le client ne passe');
+      A.equal(K.validerCoffreSuspect({ t: 'coffre_suspect', x: 0, y: 5, z: 0, i: 36 }), null, 'case hors de l\'inventaire');
+      A.equal(K.validerCoffreSuspect({ t: 'coffre_suspect', x: 0, y: 5, z: 0, i: 'a' }), null, 'case non numérique');
+      A.equal(K.validerCoffreSuspect({ t: 'coffre_suspect', x: 0, y: 200, z: 0 }), null, 'y hors du monde');
+      A.equal(K.validerCoffreSuspect({ t: 'coffre_suspect', j: 9, x: 0, y: 5, z: 0 }), null, 'j hors borne');
+      A.deep(NP.valider({ t: 'coffre_suspect', x: 1, y: 2, z: 3 }), { t: 'coffre_suspect', j: 0, x: 1, y: 2, z: 3 }, 'routé par NP.valider côté serveur');
+    });
+
+    it('SPEC-SYNC-027 : EXPOSITIONS (s→c) — l objet exposé de chaque présentoir proche, borné, jamais accepté d un client', function () {
+      A.equal(K.MSG.EXPOSITIONS, 'expositions');
+      A.equal(K.SENS.expositions, 's>c');
+      A.deep(K.validerExpositions({ t: 'expositions', l: [[3, 40, -7, 305], [4, 40, -7, 0]] }),
+             { t: 'expositions', l: [{ x: 3, y: 40, z: -7, id: 305 }, { x: 4, y: 40, z: -7, id: 0 }] }, 'id 0 = présentoir vidé');
+      A.deep(K.validerExpositions({ t: 'expositions', l: [], cx: 2, cz: -3 }), { t: 'expositions', l: [], cx: 2, cz: -3 }, 'liste d\'un chunk, éventuellement vide');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [], cx: 2 }), null, 'cz manquant');
+      A.equal(K.validerExpositions({ t: 'expositions' }), null, 'liste manquante');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [[3, 40, -7]] }), null, 'id manquant');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [[3, 200, -7, 5]] }), null, 'y hors du monde');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [[3, 40, -7, -1]] }), null, 'id négatif');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [[3, 40, -7, 70000]] }), null, 'id hors borne');
+      A.equal(K.validerExpositions({ t: 'expositions', l: [[1.5, 40, -7, 5]] }), null, 'coordonnée non entière');
+      var trop = []; for (var i = 0; i < K.BORNES.EXPOSITIONS_MAX + 1; i++) trop.push([i, 40, 0, 5]);
+      A.equal(K.validerExpositions({ t: 'expositions', l: trop }), null, 'au plus EXPOSITIONS_MAX entrées');
+      A.deep(K.validerRecu({ t: 'expositions', l: [[1, 2, 3, 4]] }), { t: 'expositions', l: [{ x: 1, y: 2, z: 3, id: 4 }] }, 'routé par validerRecu');
+      A.equal(K.valider({ t: 'expositions', l: [] }), null, 'jamais accepté d\'un client');
     });
 
     it('SPEC-ARCHI-003 : les origines locales du mode fermé sont exactement trois, figées', function () {

@@ -47,6 +47,11 @@
     LIVRE_ECRIRE: 'livre_ecrire',         // c→s : { j, seq, i, titre, pages[], signer } — contenu proposé, borné et nettoyé
     // amendement L39 (SPEC-FACTION-012) : où se trouvent les membres de SES factions — jamais ceux des autres
     FACTION_MEMBRES: 'faction_membres',   // s→c : { l: [[nom, x, z, factionId], …] } — membres connectés des factions du destinataire
+    // amendement L24/L25 (SPEC-ARCHI-043/044, SPEC-SYNC-027) : présentoirs, socles et coffres suspects tenus par le serveur
+    EXPOSER: 'exposer',                   // c→s : { j, x, y, z, i } — exposer UN exemplaire de la case `i` sur le présentoir ou le socle de cette case
+    EXPOSITION_RETIRER: 'expo_retirer',   // c→s : { j, x, y, z } — reprendre l'objet exposé sur cette case
+    COFFRE_SUSPECT: 'coffre_suspect',     // c→s : { j, x, y, z, i? } — ouvrir un coffre piégé ou doré ; `i` : case du kit de désamorçage tenu, s'il y en a un
+    EXPOSITIONS: 'expositions',           // s→c : { l: [[x, y, z, id], …], cx?, cz? } — objet exposé (id 0 = vidé) ; avec cx, cz : l'état COMPLET de ce chunk
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
@@ -57,6 +62,7 @@
     actionner: 'c>s',
     livre_ecrire: 'c>s',
     faction_membres: 's>c',
+    exposer: 'c>s', expo_retirer: 'c>s', coffre_suspect: 'c>s', expositions: 's>c',
   };
   // évènements de VEHICULE_EVT et motifs de refus, listes fermées
   var EVT_VEHICULE = { POSE: 'pose', MONTE: 'monte', DESCEND: 'descend', REPARE: 'repare', REFUS: 'refus' };
@@ -101,6 +107,8 @@
     FACTION_MEMBRES_MAX: 64,    // amendement L39 (SPEC-FACTION-012) : entrées au plus dans FACTION_MEMBRES
     NOM_JOUEUR_MAX: 24,         // = longueur d'un nom de REJOINDRE (net-protocol.js)
     ID_FACTION_MAX: 32,
+    EXPOSITIONS_MAX: 256,       // amendement SPEC-SYNC-027 : entrées au plus dans EXPOSITIONS
+    ID_OBJET_MAX: 65535,        // identifiant d'objet ou de bloc d'une exposition
   };
   /* Budgets anti-flood des messages c→s, en messages par seconde et par
      connexion (ou par joueur local pour DORMIR). */
@@ -108,6 +116,8 @@
                         vehicule_poser: 5, vehicule_monter: 10, vehicule_descendre: 10, vehicule_reparer: 5 };
   BUDGETS_FLOOD.actionner = 10;   // amendement L29 (SPEC-MECA-005) : dix clics par seconde et par joueur local
   BUDGETS_FLOOD.livre_ecrire = 4; // amendement L24 (SPEC-INTERIEUR-003) : quatre écritures par seconde et par joueur local
+  // amendement L24/L25 (SPEC-ARCHI-043/044) : un présentoir ou un coffre ne se manipule pas à la mitrailleuse
+  BUDGETS_FLOOD.exposer = 5; BUDGETS_FLOOD.expo_retirer = 5; BUDGETS_FLOOD.coffre_suspect = 4;
   /* amendement L24 (SPEC-INTERIEUR-003) : bornes BRUTES d'un LIVRE_ECRIRE — au-delà, le message est rejeté
      entier ; en deçà, MC.Livres (serveur) borne encore au contenu exact d'un livre (titre, pages, taille JSON). */
   var LIVRE_BRUT = { TITRE_MAX: 64, PAGES_MAX: 8, PAGE_MAX: 480, CASE_MAX: 35 };
@@ -234,6 +244,35 @@
     return { t: MSG.LIVRE_ECRIRE, j: j, seq: m.seq, i: m.i, titre: nettoyerTexteLivre(m.titre, false),
              pages: m.pages.map(function (pg) { return nettoyerTexteLivre(pg, true); }), signer: m.signer === true };
   }
+  // ── amendement SPEC-ARCHI-043/044 : présentoirs, socles et coffres suspects ──
+  /* Seules la position et la case d'inventaire voyagent : l'objet exposé, sa donnée,
+     le piège tiré et le butin sont décidés par le SERVEUR, jamais annoncés par le client. */
+  function validerExposer(m) {
+    if (!objet(m) || m.t !== MSG.EXPOSER) return null;
+    if (!coordH(m.x) || !entierDans(m.y, 0, BORNES.WORLD_H - 1) || !coordH(m.z)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0 || !entierDans(m.i, 0, LIVRE_BRUT.CASE_MAX)) return null;
+    return { t: MSG.EXPOSER, j: j, x: m.x, y: m.y, z: m.z, i: m.i };
+  }
+  function validerExpositionRetirer(m) {
+    if (!objet(m) || m.t !== MSG.EXPOSITION_RETIRER) return null;
+    if (!coordH(m.x) || !entierDans(m.y, 0, BORNES.WORLD_H - 1) || !coordH(m.z)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.EXPOSITION_RETIRER, j: j, x: m.x, y: m.y, z: m.z };
+  }
+  function validerCoffreSuspect(m) {
+    if (!objet(m) || m.t !== MSG.COFFRE_SUSPECT) return null;
+    if (!coordH(m.x) || !entierDans(m.y, 0, BORNES.WORLD_H - 1) || !coordH(m.z)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    var o = { t: MSG.COFFRE_SUSPECT, j: j, x: m.x, y: m.y, z: m.z };
+    if (m.i !== undefined) {
+      if (!entierDans(m.i, 0, LIVRE_BRUT.CASE_MAX)) return null;
+      o.i = m.i;
+    }
+    return o;
+  }
   // ── amendement L39 (SPEC-FACTION-012) : positions des membres de ses factions ──
   // Côté client : chaque entrée [nom, x, z, factionId] est vérifiée ; une entrée mal formée invalide le message.
   function validerFactionMembres(m) {
@@ -248,6 +287,23 @@
       l.push({ nom: e[0], x: Math.round(e[1] * 10) / 10, z: Math.round(e[2] * 10) / 10, faction: e[3] });
     }
     return { t: MSG.FACTION_MEMBRES, l: l };
+  }
+  // ── amendement SPEC-SYNC-027 : l'objet exposé des présentoirs et socles proches ──
+  function validerExpositions(m) {
+    if (!objet(m) || m.t !== MSG.EXPOSITIONS || !Array.isArray(m.l) || m.l.length > BORNES.EXPOSITIONS_MAX) return null;
+    var l = [];
+    for (var i = 0; i < m.l.length; i++) {
+      var e = m.l[i];
+      if (!Array.isArray(e) || e.length !== 4) return null;
+      if (!coordH(e[0]) || !entierDans(e[1], 0, BORNES.WORLD_H - 1) || !coordH(e[2]) || !entierDans(e[3], 0, BORNES.ID_OBJET_MAX)) return null;
+      l.push({ x: e[0], y: e[1], z: e[2], id: e[3] });
+    }
+    var r = { t: MSG.EXPOSITIONS, l: l };
+    if (m.cx !== undefined || m.cz !== undefined) {
+      if (!coordH(m.cx) || !coordH(m.cz)) return null;
+      r.cx = m.cx; r.cz = m.cz;
+    }
+    return r;
   }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
@@ -265,6 +321,9 @@
       case MSG.HISTOIRE_REPONSE: return validerHistoireReponse(m);
       case MSG.ACTIONNER: return validerActionner(m);
       case MSG.LIVRE_ECRIRE: return validerLivreEcrire(m);
+      case MSG.EXPOSER: return validerExposer(m);
+      case MSG.EXPOSITION_RETIRER: return validerExpositionRetirer(m);
+      case MSG.COFFRE_SUSPECT: return validerCoffreSuspect(m);
       default: return null;
     }
   }
@@ -397,6 +456,7 @@
       case MSG.SUCCES_ETAT: return validerSuccesEtat(m);
       case MSG.FOUDROYE: return validerFoudroye(m);
       case MSG.FACTION_MEMBRES: return validerFactionMembres(m);
+      case MSG.EXPOSITIONS: return validerExpositions(m);
       default: return null;
     }
   }
@@ -440,5 +500,7 @@
     validerActionner: validerActionner,
     validerLivreEcrire: validerLivreEcrire, LIVRE_BRUT: LIVRE_BRUT, nettoyerTexteLivre: nettoyerTexteLivre,
     validerFactionMembres: validerFactionMembres,
+    validerExposer: validerExposer, validerExpositionRetirer: validerExpositionRetirer,
+    validerCoffreSuspect: validerCoffreSuspect, validerExpositions: validerExpositions,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
