@@ -321,9 +321,10 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
     d3.envoyer({ t: 'rejoindre', formatIds: FORMAT_IDS, nom: 'Diane', locaux: 1 });
     await d3.attendre('bienvenue');
 
+    // (la recherche du voisin est étalée dans le budget des tics : ≈ 8,6 s mesurées au démarrage, borne à 30 s)
     // avancerCatastrophes tourne toutes les ~1 s (voir la boucle de jeu,
     // server.js) : la tornade injectée y est déjà active dès le départ.
-    const annonce = await d3.attendre('chat', 8000, m => /frappé par une tornade/.test(m.texte || ''));
+    const annonce = await d3.attendre('chat', 30000, m => /frappé par une tornade/.test(m.texte || ''));
     ok(!!annonce, 'SPEC-ENV-001/QUETE-003 : la VRAIE boucle serveur détecte la tornade et endommage réellement le lieu (annonce en chat)', annonce && annonce.texte);
     ok(/Bourg de test/.test(annonce.texte || ''), 'l\'annonce désigne le vrai lieu synthétique touché', annonce && annonce.texte);
 
