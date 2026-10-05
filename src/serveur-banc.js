@@ -21,7 +21,7 @@
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
     Object.assign(S, {
       traiterResultatsTest, filetErreurTests, traiterCahiers, traiterCatalogue,
-      traiterPerimetre, traiterHistorique, traiterImageRegistre,
+      traiterPerimetre, traiterHistorique, traiterImageRegistre, traiterRegistre,
       arreterServeurHistoireTest, traiterServeurHistoireTest,
       arreterServeurJeuTest, traiterServeurJeuTest,
     });
@@ -272,7 +272,7 @@
       return true;
     }
     let exportHistoriqueEnCours = false;
-    const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/export'];
+    const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/matrice', '/tests/historique/export'];
     function traiterHistorique(req, res) {
       const url = req.url.split('?')[0];
       if (ROUTES_HISTORIQUE.indexOf(url) < 0) return false;
@@ -372,12 +372,72 @@
       if (url === '/tests/historique/series') {
         const filtrees = HIST.filtrerLignes(toutes, filtre);
         const props = (q.props || '').split(',').filter(Boolean);
-        repondreJSON(res, 200, { serie: HIST.serieAgregee(filtrees, { x: q.x, props: props }) });
+        // SPEC-BANC-041 à 043 : la série, et de quoi choisir sa forme (un test seul ou plusieurs)
+        const sa = HIST.serieAvecMeta(filtrees, { x: q.x, props: props });
+        repondreJSON(res, 200, { serie: sa.serie, nbTests: sa.nbTests, nbRuns: sa.nbRuns });
+        return true;
+      }
+      if (url === '/tests/historique/matrice') {
+        // SPEC-BANC-044 : vue matrice, mêmes lignes filtrées que le tableau
+        repondreJSON(res, 200, HIST.matriceEtats(HIST.filtrerLignes(toutes, filtre), { x: q.x }));
         return true;
       }
       // /tests/historique/images
       if (!q.test) { repondreJSON(res, 400, { ok: false, motif: 'paramètre test requis' }); return true; }
-      repondreJSON(res, 200, { images: HIST.imagesDeTest(toutes, q.test, { filtre: filtre, tri: q.tri }) });
+      /* SPEC-BANC-051/052 : le témoin de chaque image du test (épinglé, sinon la dernière
+         capture inscrite) — calculé sur TOUS les passages du test, pas sur la vue filtrée */
+      const passages = HIST.imagesDeTest(toutes, q.test, { filtre: filtre, tri: q.tri });
+      const toutesDuTest = HIST.lignesDeTest(toutes, q.test);
+      const nomTest = toutesDuTest.length ? toutesDuTest[0].nom : null;
+      repondreJSON(res, 200, {
+        images: passages,
+        temoins: nomTest ? HIST.temoinsDeTest(toutesDuTest, nomTest, require('./tools/registre.js').lireTemoins()) : {},
+      });
+      return true;
+    }
+
+    /* Écritures du registre depuis le banc (SPEC-BANC-052, 053 à 058) :
+       POST /tests/registre/inscrire { dossier, motif? } et
+       POST /tests/registre/temoin { test, commit, image, cle_image? }. Mêmes
+       protections que les écritures des cahiers : banc local seulement
+       (refuserHorsBancLocal, déjà posé par servirBanc), requête fiable (ni
+       Origin étrangère, ni requête intersites), JSON, corps borné
+       (lireCorpsJSON). La logique est dans tools/registre.js, la même que la
+       ligne de commande (`inscrire`, `temoin`) — testée sous Node sans serveur. */
+    function traiterRegistre(req, res) {
+      const url = req.url.split('?')[0];
+      if (url !== '/tests/registre/inscrire' && url !== '/tests/registre/temoin') return false;
+      if (refuserHorsBancLocal(req, res)) return true;
+      if (req.method !== 'POST') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return true; }
+      const fiable = requeteFiable(req, EP.portActuel);
+      if (!fiable.ok) { repondreJSON(res, fiable.code, { ok: false, motif: fiable.motif }); return true; }
+      if (String(req.headers['content-type'] || '').split(';')[0].trim() !== 'application/json') {
+        repondreJSON(res, 415, { ok: false, motif: 'Content-Type attendu : application/json' });
+        return true;
+      }
+      lireCorpsJSON(req, (corps) => {
+        try {
+          const REG = require('./tools/registre.js');
+          if (url === '/tests/registre/inscrire') {
+            const r = REG.inscrireDepuisBanc(corps);
+            repondreJSON(res, r.ok ? 200 : (r.code || 422), r.ok ? r : { ok: false, motif: r.motif });
+            return;
+          }
+          const c = corps && typeof corps === 'object' ? corps : {};
+          if (typeof c.test !== 'string' || typeof c.commit !== 'string' || typeof c.image !== 'string'
+              || (c.cle_image !== undefined && typeof c.cle_image !== 'string')) {
+            repondreJSON(res, 400, { ok: false, motif: 'test, commit et image attendus (textes)' });
+            return;
+          }
+          // l'image est un nom de fichier du stockage adressé par contenu, jamais un chemin
+          if (!/^[0-9a-f]{40}\.(jpg|jpeg|png|webp)$/.test(c.image)) { repondreJSON(res, 400, { ok: false, motif: 'image invalide' }); return; }
+          const r = REG.marquerTemoin(c.test, c.commit, c.image, { cleImage: c.cle_image });
+          repondreJSON(res, r.ok ? 200 : 422, r.ok ? { ok: true } : { ok: false, motif: r.motif });
+        } catch (e) {
+          journal('registre (banc) : ' + ((e && e.stack) || e));
+          if (!res.headersSent) repondreJSON(res, 500, { ok: false, motif: 'erreur interne : ' + ((e && e.message) || e) });
+        }
+      });
       return true;
     }
 

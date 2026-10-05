@@ -22,7 +22,7 @@
   G.MC_PRESETS = [
     {
       nom: 'commit',
-      description: 'Rapide (< 60 s) : specs, unitaires et fonctionnels, sans navigateur ni intégration, sans les tests lents (@lent)',
+      description: 'Specs, unitaires et fonctionnels, sans navigateur ni intégration ni tests lents (@lent) ; au crochet pre-commit, restreint au périmètre du commit (tools/perimetre.js), repli sur la suite complète en cas de doute',
       pour: ['crochet', 'developpeur'],
       criteres: { types: ['spec', 'unitaire', 'fonctionnel'], sauf: { etiquettes: ['lent'] } },
     },

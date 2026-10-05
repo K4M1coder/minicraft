@@ -379,6 +379,7 @@
       if (brut === '/tests/catalogue' && S.filetErreurTests(S.traiterCatalogue, req, res)) return;
       if (brut === '/tests/perimetre' && S.filetErreurTests(S.traiterPerimetre, req, res)) return;
       if (brut.indexOf('/tests/registre/images/') === 0 && S.traiterImageRegistre(req, res)) return;
+      if (brut.indexOf('/tests/registre/') === 0 && S.filetErreurTests(S.traiterRegistre, req, res)) return;
       servirFichier(res, cheminBanc(req.url), req);
     }
     /* Sans --tests, la machine locale (et elle seule, voir servirBanc) apprend

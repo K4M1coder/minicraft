@@ -267,7 +267,7 @@ async function attendrePret(port) {
       ['requête intersites (Sec-Fetch-Site)', { 'Sec-Fetch-Site': 'cross-site' }],
       ['Host étranger', { Host: 'evil.example' }],
     ];
-    const routesBanc = ['/tests/historique/lignes?rapide=tous', '/tests/historique/export?format=html&rapide=tous', '/tests/historique/tests', '/tests/cahiers/api', '/tests/catalogue'];
+    const routesBanc = ['/tests/historique/lignes?rapide=tous', '/tests/historique/export?format=html&rapide=tous', '/tests/historique/tests', '/tests/historique/series?props=etat', '/tests/historique/matrice', '/tests/historique/images?test=x', '/tests/cahiers/api', '/tests/catalogue'];
     for (const [quoi, ent] of etrangeres) {
       for (const r of routesBanc) {
         const rep = await requete(PORT, 'GET', r, null, ent);
@@ -295,6 +295,60 @@ async function attendrePret(port) {
     ok(rSonde.code === 200 && latenceSonde < 1500, 'SPEC-BANC-122 : le serveur répond pendant un export (' + latenceSonde + ' ms)', 'code ' + rSonde.code);
     const rFin = rExports.find(r => r.code === 200);
     ok(rFin && /<\/html>$/.test(rFin.corps.toString('utf8')), 'SPEC-BANC-122 : l\'export découpé arrive complet (page HTML fermée)');
+
+    // ── SPEC-BANC-041 à 045 : séries, matrice et témoins servis aux graphiques et diaporamas ──
+    const rSerie = await requete(PORT, 'GET', '/tests/historique/series?rapide=tous&x=rang_commit&props=etat,duree_ms,nb_captures', null);
+    let jSerie = null; try { jSerie = JSON.parse(rSerie.corps.toString()); } catch (e) { /* null */ }
+    ok(rSerie.code === 200 && jSerie && Array.isArray(jSerie.serie) && typeof jSerie.nbTests === 'number' && typeof jSerie.nbRuns === 'number',
+      'SPEC-BANC-041/042 : GET /tests/historique/series rend la série et le nombre de tests distincts', 'code ' + rSerie.code + ' ' + String(rSerie.corps).slice(0, 200));
+    ok(jSerie && jSerie.serie.length > 0 && jSerie.serie.every(p => p.run && p.etat && p.duree_ms && Array.isArray(p.duree_ms.valeurs) && 'debut_run' in p),
+      'SPEC-BANC-043 : chaque point porte l\'état, la durée (valeurs, médiane, p95) et la date du run');
+    const rMatrice = await requete(PORT, 'GET', '/tests/historique/matrice?rapide=tous&filtre=' + encodeURIComponent(JSON.stringify({ nom: 'test factice' })), null);
+    let jMatrice = null; try { jMatrice = JSON.parse(rMatrice.corps.toString()); } catch (e) { /* null */ }
+    ok(rMatrice.code === 200 && jMatrice && Array.isArray(jMatrice.runs) && Array.isArray(jMatrice.tests) && jMatrice.tests.some(t => t.nom === 'test factice') && jMatrice.cellules,
+      'SPEC-BANC-044 : GET /tests/historique/matrice rend runs, tests et cellules', 'code ' + rMatrice.code + ' ' + String(rMatrice.corps).slice(0, 200));
+    const rImages = await requete(PORT, 'GET', '/tests/historique/images?test=' + encodeURIComponent('G › test factice') + '&tri=commit&filtre=%7B%7D&rapide=tous', null);
+    let jImages = null; try { jImages = JSON.parse(rImages.corps.toString()); } catch (e) { /* null */ }
+    ok(rImages.code === 200 && jImages && Array.isArray(jImages.images) && jImages.images.length >= 1 && jImages.temoins && typeof jImages.temoins === 'object',
+      'SPEC-BANC-048/051 : GET /tests/historique/images rend les passages et les témoins de chaque image', 'code ' + rImages.code + ' ' + String(rImages.corps).slice(0, 200));
+
+    // ── SPEC-BANC-052 à 058 : écritures du registre demandées par le banc ──────────────────────
+    const registreEntrees = path.join(RACINE, 'tests', 'registre', 'entrees');
+    const registreImages = path.join(RACINE, 'tests', 'registre', 'images');
+    const lister = (d) => { try { return fs.readdirSync(d); } catch (e) { return []; } };
+    const entreesAvant = lister(registreEntrees), imagesAvant = lister(registreImages);
+    const temoinsAvant = (() => { try { return fs.readFileSync(path.join(RACINE, 'tests', 'registre', 'temoins.json'), 'utf8'); } catch (e) { return null; } })();
+    const JSONH = { 'Content-Type': 'application/json' };
+    eq((await requete(PORT, 'GET', '/tests/registre/inscrire', null)).code, 405, 'SPEC-BANC-054 : l\'inscription n\'est acceptée qu\'en POST');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier }, { 'Content-Type': 'text/plain' })).code, 415, 'SPEC-BANC-054 : JSON exigé');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier }, Object.assign({ Origin: 'http://evil.example' }, JSONH))).code, 403, 'SPEC-BANC-054 : Origin étrangère refusée (CSRF)');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier }, Object.assign({ 'Sec-Fetch-Site': 'cross-site' }, JSONH))).code, 403, 'SPEC-BANC-054 : requête intersites refusée');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: 'cahier-qui-n-existe-pas' }, JSONH)).code, 404, 'SPEC-BANC-054 : cahier inconnu');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: '../../../etc' }, JSONH)).code, 404, 'SPEC-BANC-054 : chemin piégé refusé');
+    eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: 12 }, JSONH)).code, 400, 'SPEC-BANC-054 : identifiant qui n\'est pas du texte');
+    eq((await requete(PORT, 'POST', '/tests/registre/temoin', { test: 't', commit: 'c', image: '../../x.jpg' }, JSONH)).code, 400, 'SPEC-BANC-052 : le témoin ne désigne qu\'une image du stockage adressé par contenu');
+    eq((await requete(PORT, 'POST', '/tests/registre/temoin', { test: 't', commit: 'c', image: 'a'.repeat(40) + '.jpg' }, JSONH)).code, 422, 'SPEC-BANC-052 : une image absente du registre est refusée');
+    eq(lister(registreEntrees).length, entreesAvant.length, 'SPEC-BANC-054 : aucun refus n\'écrit dans le registre');
+    const rInscr = await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier, motif: 'intégration du banc' }, JSONH);
+    let jInscr = null; try { jInscr = JSON.parse(rInscr.corps.toString()); } catch (e) { /* null */ }
+    ok(rInscr.code === 200 && jInscr && jInscr.ok && jInscr.run && typeof jInscr.arbre_modifie === 'boolean',
+      'SPEC-BANC-054/058 : POST /tests/registre/inscrire inscrit le cahier et dit si l\'arbre était modifié', 'code ' + rInscr.code + ' ' + String(rInscr.corps).slice(0, 200));
+    const nouvelles = lister(registreEntrees).filter(f => entreesAvant.indexOf(f) < 0);
+    ok(nouvelles.length === 1, 'SPEC-BANC-054 : une seule entrée créée', JSON.stringify(nouvelles));
+    if (nouvelles.length === 1) {
+      const lignes = fs.readFileSync(path.join(registreEntrees, nouvelles[0]), 'utf8').split('\n').filter(Boolean);
+      const meta = JSON.parse(lignes[0]);
+      ok(meta.origine === 'manuel' && meta.inscrit === true && meta.statut === 'en_attente' && meta.motif === 'intégration du banc' && meta.dossierCahier === dossier,
+        'SPEC-BANC-054/055 : origine manuel, inscrit, en attente, motif et cahier d\'origine', JSON.stringify(meta));
+    }
+    const rBis = await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier }, JSONH);
+    let jBis = null; try { jBis = JSON.parse(rBis.corps.toString()); } catch (e) { /* null */ }
+    ok(rBis.code === 409 && jBis && /déjà inscrit/.test(jBis.motif), 'SPEC-BANC-056 : la seconde inscription est refusée avec un message clair', 'code ' + rBis.code + ' ' + String(rBis.corps).slice(0, 160));
+    eq(lister(registreEntrees).filter(f => entreesAvant.indexOf(f) < 0).length, 1, 'SPEC-BANC-056 : sans créer de seconde entrée');
+    // le test ne laisse rien dans le vrai registre versionné
+    lister(registreEntrees).filter(f => entreesAvant.indexOf(f) < 0).forEach((f) => { try { fs.rmSync(path.join(registreEntrees, f), { force: true }); } catch (e) { /* rien */ } });
+    lister(registreImages).filter(f => imagesAvant.indexOf(f) < 0).forEach((f) => { try { fs.rmSync(path.join(registreImages, f), { force: true }); } catch (e) { /* rien */ } });
+    eq((() => { try { return fs.readFileSync(path.join(RACINE, 'tests', 'registre', 'temoins.json'), 'utf8'); } catch (e) { return null; } })(), temoinsAvant, 'SPEC-BANC-052 : aucun refus ne touche temoins.json');
 
     // L1 : le catalogue NODE est publié pour le banc (tests Node seulement et
     // d'intégration visibles sans passage dans l'historique)

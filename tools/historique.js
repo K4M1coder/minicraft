@@ -37,6 +37,9 @@ const TYPES_COLONNES = {
   domaines: 'liste', specs: 'liste', fonctions: 'liste', etiquettes: 'liste',
   debut_test: 'horodatage', duree_ms: 'nombre', etat: 'enum', erreur: 'texte', raison: 'texte',
   nb_captures: 'nombre',
+  // SPEC-BANC-034 : la fiche (quoi/pourquoi/attendu) et les images (rôle:libellé) ont leur colonne,
+  // lue par valeurColonne() — ni l'une ni l'autre n'est une valeur simple de la ligne
+  fiche: 'texte', captures: 'texte',
   motif: 'texte', arbre_modifie: 'enum', interrompu: 'enum',
   // périmètre d'exécution (SPEC-BANC-070/076)
   perimetre: 'enum', raison_selection: 'liste', trou_perimetre: 'enum',
@@ -154,8 +157,23 @@ function construireLignes(runs, opts) {
 // (jamais une erreur : un filtre passé par l'URL peut porter une colonne que
 // cette version du serveur ne connaît pas encore).
 // ══════════════════════════════════════════════════════════════════════════
+/* Valeur d'une colonne pour filtrer, trier et exporter (SPEC-BANC-034) : la
+   fiche et les captures sont des structures, pas des valeurs — elles se
+   lisent comme un texte (fiche : teste, pourquoi, attendu ; captures : un
+   « rôle:libellé » par image, y compris celles dont le fichier n'est pas
+   conservé). Toute autre colonne est la propriété de même nom. */
+function valeurColonne(ligne, champ) {
+  if (champ === 'fiche') {
+    const f = ligne.fiche;
+    return f && typeof f === 'object' ? [f.teste, f.pourquoi, f.attendu].filter(x => typeof x === 'string' && x).join(' — ') : '';
+  }
+  if (champ === 'captures') {
+    return (Array.isArray(ligne.captures) ? ligne.captures : []).map(c => (c.role || '') + (c.libelle ? ':' + c.libelle : '')).join(', ');
+  }
+  return ligne[champ];
+}
 function valeurCorrespond(ligne, champ, type, spec) {
-  const v = ligne[champ];
+  const v = valeurColonne(ligne, champ);
   if (type === 'texte') {
     if (!spec) return true;
     return String(v === undefined || v === null ? '' : v).toLowerCase().indexOf(String(spec).toLowerCase()) >= 0;
@@ -236,7 +254,7 @@ function trierLignes(lignes, tris) {
     for (let i = 0; i < liste.length; i++) {
       const { champ, ordre } = liste[i];
       const sens = ordre === 'desc' ? -1 : 1;
-      const c = comparerValeurs(a[champ], b[champ]) * sens;
+      const c = comparerValeurs(valeurColonne(a, champ), valeurColonne(b, champ)) * sens;
       if (c !== 0) return c;
     }
     return 0;
@@ -314,12 +332,12 @@ function serieAgregee(lignes, opts) {
   const parRun = new Map();
   lignes.forEach((l) => {
     if (!parRun.has(l.run)) {
-      parRun.set(l.run, { run: l.run, x: l[x], commit: l.commit, commit_court: l.commit_court, sujet_commit: l.sujet_commit, tests: [] });
+      parRun.set(l.run, { run: l.run, x: l[x], debut_run: l.debut_run, commit: l.commit, commit_court: l.commit_court, sujet_commit: l.sujet_commit, tests: [] });
     }
     parRun.get(l.run).tests.push(l);
   });
   const points = Array.from(parRun.values()).map((r) => {
-    const point = { run: r.run, x: r.x, commit: r.commit, commit_court: r.commit_court, sujet_commit: r.sujet_commit };
+    const point = { run: r.run, x: r.x, debut_run: r.debut_run, commit: r.commit, commit_court: r.commit_court, sujet_commit: r.sujet_commit };
     props.forEach((prop) => {
       if (prop === 'etat') {
         const c = { reussi: 0, echec: 0, ignore: 0, avertissement: 0 };
@@ -336,19 +354,75 @@ function serieAgregee(lignes, opts) {
   return points;
 }
 
+/* Série + ce que le rendu doit savoir pour choisir sa forme (SPEC-BANC-042/
+   043) : combien de tests DISTINCTS le filtre retient (un seul : bande de
+   pastilles pour l'état, valeur brute pour une durée ; plusieurs : barres
+   empilées, médiane et p95) et combien de runs. Le seuil « lent » n'est pas
+   ici : il vient du banc (champ « Seuil lent »). */
+function serieAvecMeta(lignes, opts) {
+  const cles = new Set();
+  const runs = new Set();
+  lignes.forEach((l) => { cles.add(l.cle); runs.add(l.run); });
+  return { serie: serieAgregee(lignes, opts), nbTests: cles.size, nbRuns: runs.size };
+}
+
+/* Vue matrice (SPEC-BANC-044) : tests en lignes, runs en colonnes (les plus
+   récents d'abord retenus si le filtre en donne trop), chaque cellule porte
+   l'état du test dans ce run — les mêmes lignes que le tableau (SPEC-BANC-036),
+   regroupées autrement. Bornée (le tableau complet d'un registre qui grossit
+   n'a pas de sens en grille) : `tronque` dit ce qui a été écarté, les tests
+   écartés étant les plus calmes (jamais ceux qui ont échoué). */
+const MATRICE_TESTS_MAX = 200, MATRICE_RUNS_MAX = 60;
+function matriceEtats(lignes, opts) {
+  const o = opts || {};
+  const x = o.x === 'rang_commit' ? 'rang_commit' : 'debut_run';
+  const maxTests = Math.max(1, Math.min(MATRICE_TESTS_MAX, parseInt(o.maxTests, 10) || MATRICE_TESTS_MAX));
+  const maxRuns = Math.max(1, Math.min(MATRICE_RUNS_MAX, parseInt(o.maxRuns, 10) || MATRICE_RUNS_MAX));
+  const parRun = new Map();
+  lignes.forEach((l) => {
+    if (!parRun.has(l.run)) parRun.set(l.run, { run: l.run, x: l[x], debut_run: l.debut_run, commit: l.commit, commit_court: l.commit_court, sujet_commit: l.sujet_commit });
+  });
+  const tousRuns = Array.from(parRun.values()).sort((a, b) => comparerValeurs(a.x, b.x));
+  const runs = tousRuns.slice(Math.max(0, tousRuns.length - maxRuns));
+  const gardes = new Set(runs.map(r => r.run));
+  const parCle = new Map();
+  lignes.forEach((l) => {
+    if (!gardes.has(l.run)) return;
+    let t = parCle.get(l.cle);
+    if (!t) { t = { cle: l.cle, nom: l.nom, echecs: 0, cellules: {} }; parCle.set(l.cle, t); }
+    t.cellules[l.run] = l.etat;
+    if (l.etat === 'echec') t.echecs++;
+  });
+  const tousTests = Array.from(parCle.values()).sort((a, b) => b.echecs - a.echecs || comparerValeurs(a.cle, b.cle));
+  const tests = tousTests.slice(0, maxTests);
+  const cellules = {};
+  tests.forEach((t) => { cellules[t.cle] = t.cellules; });
+  return {
+    runs: runs,
+    tests: tests.map(t => ({ cle: t.cle, nom: t.nom, echecs: t.echecs })),
+    cellules: cellules,
+    tronque: { tests: tousTests.length > tests.length, runs: tousRuns.length > runs.length },
+    totalTests: tousTests.length, totalRuns: tousRuns.length,
+  };
+}
+
 // ══════════════════════════════════════════════════════════════════════════
 // Images d'un test, dans l'ordre (§3.3, préparation pour un lot ultérieur —
 // la suite ORDONNÉE des runs avec leurs captures groupées par rôle,
 // SPEC-BANC-040) — un run sans capture pour ce test apparaît quand même
 // (« pas de capture », §3.3), pour ne pas désynchroniser un futur diaporama.
 // ══════════════════════════════════════════════════════════════════════════
-function imagesDeTest(lignes, testId, opts) {
-  const o = opts || {};
-  // `testId` : l'identité (cle, SPEC-BANC-119) ; à défaut l'ancien `test`
-  // (id catalogue) des appelants d'avant — SEULEMENT si aucune clé ne
-  // correspond, pour ne jamais mêler les tests d'une même SPEC.
+/* Les lignes d'UN test : `testId` est l'identité (cle, SPEC-BANC-119) ; à
+   défaut l'ancien `test` (id catalogue) des appelants d'avant — SEULEMENT si
+   aucune clé ne correspond, pour ne jamais mêler les tests d'une même SPEC. */
+function lignesDeTest(lignes, testId) {
   let retenues = lignes.filter(l => l.cle === testId);
   if (!retenues.length) retenues = lignes.filter(l => l.test === testId);
+  return retenues;
+}
+function imagesDeTest(lignes, testId, opts) {
+  const o = opts || {};
+  const retenues = lignesDeTest(lignes, testId);
   const deTest = filtrerLignes(retenues, o.filtre);
   const tri = o.tri === 'commit' ? { champ: 'rang_commit', ordre: 'asc' } : { champ: 'debut_run', ordre: 'asc' };
   const triees = trierLignes(deTest, tri);
@@ -356,9 +430,47 @@ function imagesDeTest(lignes, testId, opts) {
     run: l.run, commit: l.commit, commit_court: l.commit_court, sujet_commit: l.sujet_commit,
     debut_run: l.debut_run, etat: l.etat, duree_ms: l.duree_ms, inscrit: l.inscrit,
     preset: l.preset, dossierCahier: l.dossierCahier, erreur: l.erreur, raison: l.raison,
+    origine: l.origine, motif: l.motif, arbre_modifie: l.arbre_modifie, interrompu: l.interrompu, rang_commit: l.rang_commit,
     cle: l.cle, test: l.test, nom: l.nom, type: l.type, groupe: l.groupe, fiche: l.fiche,
     captures: l.captures && l.captures.length ? l.captures : [],
   }));
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// Témoins (SPEC-BANC-051/052) : pour chaque image d'un test — identité
+// « rôle|libellé » —, l'image de référence que l'humain compare à l'image
+// courante. C'est celle ÉPINGLÉE (tests/registre/temoins.json, posée par
+// `marquerTemoin`, route POST /tests/registre/temoin), à condition qu'elle
+// existe encore dans l'historique INSCRIT ; sinon la dernière capture
+// inscrite de cette image. Aucun diff automatique : le témoin ne décide de rien.
+// ══════════════════════════════════════════════════════════════════════════
+function cleImage(c) { return (c && c.role ? c.role : '') + '|' + (c && c.libelle ? c.libelle : ''); }
+function temoinsDeTest(lignes, nom, temoins) {
+  const sortie = {};
+  const epingles = temoins && estObjet(temoins[nom]) ? temoins[nom] : null;
+  const inscrites = lignes.filter(l => l.inscrit).slice().sort((a, b) => comparerValeurs(a.debut_run, b.debut_run));
+  const cles = new Set();
+  lignes.forEach((l) => (l.captures || []).forEach((c) => { if (c && c.image) cles.add(cleImage(c)); }));
+  cles.forEach((k) => {
+    const correspond = (l, c) => c && c.image && cleImage(c) === k;
+    let pin = epingles && estObjet(epingles.images) ? epingles.images[k] : null;
+    // un épinglage d'avant l'identité par image (commit + image seulement) vaut pour l'image qu'il désigne
+    if (!pin && epingles && epingles.image && !epingles.images) pin = { commit: epingles.commit, image: epingles.image };
+    if (pin) {
+      for (let i = inscrites.length - 1; i >= 0; i--) {
+        const l = inscrites[i];
+        if (l.commit !== pin.commit) continue;
+        const c = (l.captures || []).find(c => correspond(l, c) && c.image === pin.image);
+        if (c) { sortie[k] = { epingle: true, run: l.run, commit: l.commit, commit_court: l.commit_court, image: c.image }; return; }
+      }
+    }
+    for (let i = inscrites.length - 1; i >= 0; i--) {
+      const l = inscrites[i];
+      const c = (l.captures || []).find(c => correspond(l, c));
+      if (c) { sortie[k] = { epingle: false, run: l.run, commit: l.commit, commit_court: l.commit_court, image: c.image }; return; }
+    }
+  });
+  return sortie;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -395,7 +507,7 @@ function testsConnus(lignes) {
 // l'historique complet en JSON pour le remettre en forme lui-même.
 // ══════════════════════════════════════════════════════════════════════════
 function valeurExport(ligne, champ) {
-  const v = ligne[champ];
+  const v = valeurColonne(ligne, champ);
   if (Array.isArray(v)) return v.join(', ');
   if (typeof v === 'boolean') return v ? 'oui' : 'non';
   return v === undefined || v === null ? '' : String(v);
@@ -419,7 +531,7 @@ const LIBELLES_COLONNES = {
   rang_commit: 'Rang commit', branche: 'Branche', preset: 'Préréglage', origine: 'Origine', inscrit: 'Inscrit',
   test: 'Id test', cle: 'Identité', nom: 'Nom du test', type: 'Type', groupe: 'Groupe', domaines: 'Domaines',
   specs: 'Specs', fonctions: 'Fonctions', etiquettes: 'Étiquettes', debut_test: 'Début test', duree_ms: 'Durée (ms)',
-  etat: 'État', erreur: 'Erreur', raison: 'Raison', nb_captures: 'Captures', motif: 'Motif',
+  etat: 'État', erreur: 'Erreur', raison: 'Raison', nb_captures: 'Captures', captures: 'Images', fiche: 'Fiche', motif: 'Motif',
   arbre_modifie: 'Arbre modifié', interrompu: 'Interrompu',
 };
 function libelle(c) { return Object.prototype.hasOwnProperty.call(LIBELLES_COLONNES, c) ? LIBELLES_COLONNES[c] : String(c); }
@@ -533,7 +645,7 @@ function creerIndex(opts) {
 module.exports = {
   TYPES_COLONNES, COLONNES_ENUM, COLONNES_LISTE,
   construireLignes, filtrerLignes, filtreRapide, trierLignes, paginer, TAILLE_PAGE_MAX,
-  effectifsEnum, effectifsToutesEnum, serieAgregee, imagesDeTest,
+  effectifsEnum, effectifsToutesEnum, serieAgregee, serieAvecMeta, matriceEtats, MATRICE_TESTS_MAX, MATRICE_RUNS_MAX, imagesDeTest, lignesDeTest, temoinsDeTest, cleImage, valeurColonne,
   testsConnus, exporterCSV, exporterHTMLVue, morceauxExport, EXPORT_LIGNES_MAX, celluleCsv, estColonne, cleTest,
   creerIndex, calculerInfoCommit,
 };

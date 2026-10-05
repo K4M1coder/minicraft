@@ -140,6 +140,21 @@ function git(dossierRepo, args) {
 }
 function commitPlein(dossierRepo, refOuCourt) { return git(dossierRepo, ['rev-parse', refOuCourt || 'HEAD']); }
 function brancheCourante(dossierRepo) { return git(dossierRepo, ['rev-parse', '--abbrev-ref', 'HEAD']); }
+/* Le dépôt a-t-il des modifications non commitées (SPEC-BANC-058) ? Le registre
+   lui-même (entrées et images qui attendent leur commit) et les cahiers locaux
+   ne comptent pas : ce ne sont pas du code testé. `null` hors dépôt git
+   (inconnu, jamais « propre » par défaut). */
+function arbreModifie(dossierRepo) {
+  let sortie;
+  try {
+    sortie = execFileSync('git', ['status', '--porcelain', '--untracked-files=all'],
+      { cwd: dossierRepo || RACINE, encoding: 'utf8', env: envGitPour(dossierRepo || RACINE), stdio: ['ignore', 'pipe', 'ignore'], maxBuffer: 64 * 1024 * 1024 });
+  } catch (e) { return null; }
+  return sortie.split('\n').filter(Boolean).some((l) => {
+    const chemin = l.slice(3).replace(/^"|"$/g, '');
+    return !(chemin.indexOf('tests/registre/') === 0 || chemin.indexOf('tests/resultats/') === 0);
+  });
+}
 /* `git rev-list --topo-order <branche>` : du commit le plus RÉCENT au plus
    ancien, en respectant l'ordre topologique du graphe (parent toujours après
    ses enfants) — c'est l'ordre « officiel » de la branche, indépendant de
@@ -420,7 +435,7 @@ function inscrire(dossierCahier, opts) {
     motif: o.motif || null,
     // capturés AU DÉBUT de la campagne locale (tests/run.js), jamais
     // recalculés ici : l'arbre a pu changer depuis (voir leur en-tête)
-    arbre_modifie: !!campagne.arbreModifie,
+    arbre_modifie: !!campagne.arbreModifie || !!o.arbreModifie,
     interrompu: !!campagne.interrompue,
     // SPEC-BANC-085 : moteur de rendu du RUN (propriété de la campagne, pas
     // d'un test), tel que tools/e2e-headless.js/tests/run.js l'a observé —
@@ -435,6 +450,49 @@ function inscrire(dossierCahier, opts) {
   };
   const fichier = ecrireEntreeFichier(dossierRegistre, entree);
   return { ok: true, id: entree.id, commit: commit, fichier: fichier, tests: tests.length, imagesNouvelles: imagesNouvelles, imagesReutilisees: imagesReutilisees };
+}
+
+/* Inscription demandée par le banc web (SPEC-BANC-053 à 058, docs/banc/
+   historique-global.md §3.4) : MÊME fonction que `node tools/registre.js
+   inscrire` (copie des captures dans le stockage adressé par contenu, création
+   de l'entrée), mais ce que la route reçoit est du texte venu d'une page — il
+   est donc validé ici, jamais cru sur parole :
+     - `dossier` doit être UN DES cahiers réels (liste lue sur le disque, jamais
+       un chemin bâti sur l'entrée) ;
+     - `motif` (facultatif) est un texte court sans caractères de contrôle ;
+     - l'entrée est `origine: 'manuel'`, `statut: 'en_attente'` — le commit
+       suivant l'intègre comme une entrée pre-push (pre-commit, SPEC-BANC-028) ;
+     - un dépôt aux modifications non commitées, AU MOMENT de l'inscription,
+       marque l'entrée `arbre_modifie: true` : le code testé n'est alors pas
+       exactement le commit cité (SPEC-BANC-058) ;
+     - inscrire deux fois le même cahier est refusé (409), sans seconde entrée
+       (SPEC-BANC-056).
+   `opts` redirige les dossiers (tests) comme inscrire(). Rend { ok, code,
+   motif? | run, commit, arbre_modifie }. */
+const MOTIF_LONGUEUR_MAX = 200;
+function inscrireDepuisBanc(corps, opts) {
+  const o = opts || {};
+  const racineResultats = o.racineResultats || path.join(RACINE, 'tests', 'resultats');
+  const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
+  const dossierRepo = o.dossierRepo || RACINE;
+  if (!corps || typeof corps !== 'object' || Array.isArray(corps)) return { ok: false, code: 400, motif: 'corps JSON attendu : { dossier, motif? }' };
+  if (typeof corps.dossier !== 'string' || !corps.dossier) return { ok: false, code: 400, motif: 'identifiant du cahier requis' };
+  if (corps.motif !== undefined && corps.motif !== null && typeof corps.motif !== 'string') return { ok: false, code: 400, motif: 'le motif doit être un texte' };
+  const motif = typeof corps.motif === 'string'
+    ? corps.motif.replace(/[\u0000-\u001f\u007f]+/g, ' ').trim().slice(0, MOTIF_LONGUEUR_MAX) : '';
+  const cahier = require('./cahier.js');
+  if (!cahier.estCahierValide(racineResultats, corps.dossier)) return { ok: false, code: 404, motif: 'cahier introuvable : ' + String(corps.dossier).slice(0, 80) };
+  if (dejaInscrit(dossierRegistre, corps.dossier)) {
+    return { ok: false, code: 409, motif: 'ce cahier est déjà inscrit au registre — une seule inscription par cahier' };
+  }
+  const modifie = arbreModifie(dossierRepo);
+  const r = inscrire(corps.dossier, {
+    origine: 'manuel', statut: 'en_attente', motif: motif || null, arbreModifie: modifie === true,
+    racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: dossierRepo,
+    seuilLentMs: o.seuilLentMs,
+  });
+  if (!r.ok) return { ok: false, code: /déjà inscrit/.test(r.motif || '') ? 409 : 422, motif: r.motif };
+  return { ok: true, code: 200, run: r.id, commit: r.commit, arbre_modifie: modifie === true, motif: motif || null, tests: r.tests };
 }
 
 // ── entrées en attente (pont pre-push → pre-commit, SPEC-BANC-028) ──────
@@ -620,7 +678,17 @@ function marquerTemoin(testId, commit, image, opts) {
     (e.tests || []).some(t => (t.id === testId || t.nom === testId) && (t.captures || []).some(c => c.image === image)));
   if (!existe) return { ok: false, motif: 'aucune capture de ce test, à ce commit, avec cette image, dans le registre' };
   const temoins = lireTemoins(dossierRegistre);
-  temoins[testId] = { commit: commit, image: image };
+  const precedent = temoins[testId] && typeof temoins[testId] === 'object' ? temoins[testId] : {};
+  const epingle = { commit: commit, image: image };
+  /* SPEC-BANC-052 : chaque image d'un test (identité « rôle|libellé », voir
+     tools/historique.js cleImage) a SON témoin ; `commit` et `image` au premier
+     niveau restent le dernier épinglage du test, tel que le lisent
+     temoinDe() et l'export d'un test (SPEC-BANC-029/030). */
+  if (o.cleImage) {
+    epingle.images = Object.assign({}, precedent.images);
+    epingle.images[o.cleImage] = { commit: commit, image: image };
+  } else if (precedent.images) epingle.images = precedent.images;
+  temoins[testId] = epingle;
   ecrireTemoins(temoins, dossierRegistre);
   return { ok: true };
 }
@@ -1196,7 +1264,7 @@ if (require.main === module) {
     console.log(JSON.stringify({ historique: historiqueTest(testId, opts), temoin: temoinDe(testId, historiqueTest(testId, opts), opts) }, null, 2));
     process.exit(0);
   } else if (sous === 'temoin') {
-    const r = marquerTemoin(args[1], args[2], args[3]);
+    const r = marquerTemoin(args[1], args[2], args[3], { cleImage: option('--cle-image') || undefined });
     console.log(JSON.stringify(r));
     process.exit(r.ok ? 0 : 1);
   } else if (sous === 'compacter') {
@@ -1224,7 +1292,7 @@ if (require.main === module) {
     console.log('Usage : node tools/registre.js inscrire [cahier] [--origine pre-push|manuel] [--statut ok|en_attente] [--motif texte]\n' +
       '                        | commit\n' +
       '                        | historique <testId> [--manuel] [--tri lancement|commit] [--exporter [--sortie f]]\n' +
-      '                        | temoin <testId> <commit> <image>\n' +
+      '                        | temoin <testId> <commit> <image> [--cle-image role|libelle]\n' +
       '                        | compacter [--a-blanc] [--jusqu-a ref] [--version vX.Y.Z] [--sauvegarde dossier] [--json]   (rétention, SPEC-BANC-090/091)\n' +
       '                        | restaurer <dossier-de-sauvegarde>\n' +
       '                        | instables [--json]   (score d\'instabilité, SPEC-BANC-088)');
@@ -1237,6 +1305,6 @@ module.exports = {
   lireEntrees, lireEntreeFichier, listerFichiersEntrees, lireTemoins, ecrireTemoins, sha1,
   commitPlein, brancheCourante, ordreCommits, rangCommit, etatRegistre, raisonRegistre, SEUIL_LENT_DEFAUT_MS,
   moteurRenduDe, memeMoteur, SEUIL_INSTABILITE_PIXELS_DEFAUT,
-  inscrire, dejaInscrit, aDesEntreesEnAttente, compacter, compacterTest, restaurerCompaction, ecrireAtomique, calculerInstabilites, FENETRE_INSTABILITE_DEFAUT, SEUIL_INSTABILITE_ALTERNANCES_DEFAUT, marquerEnAttenteCommitees,
+  inscrire, inscrireDepuisBanc, arbreModifie, MOTIF_LONGUEUR_MAX, dejaInscrit, aDesEntreesEnAttente, compacter, compacterTest, restaurerCompaction, ecrireAtomique, calculerInstabilites, FENETRE_INSTABILITE_DEFAUT, SEUIL_INSTABILITE_ALTERNANCES_DEFAUT, marquerEnAttenteCommitees,
   historiqueTest, runsUnifies, marquerTemoin, temoinDe, exporterHistoriqueHTML, commiterRegistre,
 };
