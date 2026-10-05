@@ -41,6 +41,8 @@
     HISTOIRE_NOTIF: 'histoire_notif',     // s→c : { j, notifs, proposition?, libre?, eid? } — ce que le récit annonce
     SUCCES_ETAT: 'succes_etat',           // s→c : { j, etat:{compte,debloques} } — compteurs du panneau (lot P-SUCC)
     FOUDROYE: 'foudroye',                 // s→c : { j } — ce joueur vient d'être foudroyé (lot P-SUCC)
+    // amendement L29 (SPEC-MECA-005) : levier ou bouton actionné à la main ; le serveur vérifie la portée et le bloc
+    ACTIONNER: 'actionner',               // c→s : { j, x, y, z } — actionner la commande (levier, bouton) de cette case
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
@@ -48,6 +50,7 @@
     vehicule_poser: 'c>s', vehicule_monter: 'c>s', vehicule_descendre: 'c>s', vehicule_reparer: 'c>s', vehicule_evt: 's>c',
     histoire_parler: 'c>s', histoire_reponse: 'c>s', histoire_notif: 's>c',
     succes_etat: 's>c', foudroye: 's>c',
+    actionner: 'c>s',
   };
   // évènements de VEHICULE_EVT et motifs de refus, listes fermées
   var EVT_VEHICULE = { POSE: 'pose', MONTE: 'monte', DESCEND: 'descend', REPARE: 'repare', REFUS: 'refus' };
@@ -94,6 +97,7 @@
      connexion (ou par joueur local pour DORMIR). */
   var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10, histoire_parler: 5, histoire_reponse: 10,
                         vehicule_poser: 5, vehicule_monter: 10, vehicule_descendre: 10, vehicule_reparer: 5 };
+  BUDGETS_FLOOD.actionner = 10;   // amendement L29 (SPEC-MECA-005) : dix clics par seconde et par joueur local
 
   // ─── primitives ────────────────────────────────────────────────────────────
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
@@ -185,6 +189,15 @@
     if (m.option !== null && m.option !== undefined && !ident(m.option)) return null;
     return { t: MSG.HISTOIRE_REPONSE, j: j, id: m.id, option: m.option === undefined ? null : m.option };
   }
+  // ── amendement L29 (SPEC-MECA-005) : actionner un levier ou un bouton ──
+  // Seule la case voyage : le nouvel état est décidé par le serveur (MC.Circuits.actionner).
+  function validerActionner(m) {
+    if (!objet(m) || m.t !== MSG.ACTIONNER) return null;
+    if (!coordH(m.x) || !entierDans(m.y, 0, BORNES.WORLD_H - 1) || !coordH(m.z)) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0) return null;
+    return { t: MSG.ACTIONNER, j: j, x: m.x, y: m.y, z: m.z };
+  }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
     if (!objet(m) || typeof m.t !== 'string') return null;
@@ -199,6 +212,7 @@
       case MSG.VEHICULE_REPARER: return validerVehiculeReparer(m);
       case MSG.HISTOIRE_PARLER: return validerHistoireParler(m);
       case MSG.HISTOIRE_REPONSE: return validerHistoireReponse(m);
+      case MSG.ACTIONNER: return validerActionner(m);
       default: return null;
     }
   }
@@ -370,5 +384,6 @@
     validerVehiculeDescendre: validerVehiculeDescendre, validerVehiculeReparer: validerVehiculeReparer, validerVehiculeEvt: validerVehiculeEvt,
     validerSuccesEtat: validerSuccesEtat, validerFoudroye: validerFoudroye,
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,
+    validerActionner: validerActionner,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

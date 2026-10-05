@@ -18,7 +18,7 @@
     it('SPEC-ARCHI-019 : les types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
       var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE', 'SUCCES_ETAT', 'FOUDROYE',
                       'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER', 'VEHICULE_EVT',
-                      'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF'];
+                      'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF', 'ACTIONNER'];
       A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
       A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
@@ -190,6 +190,22 @@
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'refus', motif: 'pasvu' }), null, 'motif inconnu');
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'monte', nom: 'CAMION!' }), null, 'nom mal formé');
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 9, evt: 'monte' }), null, 'j hors borne');
+    });
+
+    it('SPEC-MECA-005 : ACTIONNER (c→s) — un joueur local actionne la commande d\'une case du monde, rien d\'autre', function () {
+      A.equal(K.MSG.ACTIONNER, 'actionner');
+      A.equal(K.SENS.actionner, 'c>s');
+      A.ok(K.BUDGETS_FLOOD.actionner > 0, 'budget anti-flood');
+      A.deep(K.validerActionner({ t: 'actionner', x: 3, y: 40, z: -7 }), { t: 'actionner', j: 0, x: 3, y: 40, z: -7 });
+      A.deep(K.validerActionner({ t: 'actionner', j: 2, x: 0, y: 0, z: 0, etat: 1 }), { t: 'actionner', j: 2, x: 0, y: 0, z: 0 }, 'aucun état annoncé par le client ne passe');
+      A.equal(K.validerActionner({ t: 'actionner', x: 0, y: 128, z: 0 }), null, 'y hors du monde');
+      A.equal(K.validerActionner({ t: 'actionner', x: 1e9, y: 5, z: 0 }), null, 'x hors borne');
+      A.equal(K.validerActionner({ t: 'actionner', x: 0.5, y: 5, z: 0 }), null, 'coordonnée non entière');
+      A.equal(K.validerActionner({ t: 'actionner', x: 0, y: 5 }), null, 'z manquant');
+      A.equal(K.validerActionner({ t: 'actionner', j: 4, x: 0, y: 5, z: 0 }), null, 'j hors borne');
+      A.equal(K.validerActionner(null), null);
+      A.deep(K.valider({ t: 'actionner', x: 1, y: 2, z: 3 }), { t: 'actionner', j: 0, x: 1, y: 2, z: 3 }, 'routé par valider');
+      A.deep(NP.valider({ t: 'actionner', x: 1, y: 2, z: 3 }), { t: 'actionner', j: 0, x: 1, y: 2, z: 3 }, 'et par NP.valider côté serveur');
     });
 
     it('SPEC-ARCHI-003 : les origines locales du mode fermé sont exactement trois, figées', function () {
