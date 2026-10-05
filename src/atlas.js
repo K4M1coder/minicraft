@@ -965,14 +965,18 @@
     })();
     (function () {                                                    // 253 lichen luminescent (SPEC-LUMIERE-007)
       var o = clear(253);
+      /* Son propre générateur : rnd() est séquentiel et partagé, y puiser ici décalerait
+         les textures de toutes les tuiles dessinées après (plancton 235 et suivantes). */
+      var sl = 253 * 7919;
+      function rl() { sl = (sl * 1664525 + 1013904223) >>> 0; return sl / 4294967296; }
       // une croûte basse, en taches arrondies, d'un vert d'eau qui luit
       for (var k = 0; k < 7; k++) {
-        var cx = 2 + ((rnd() * 12) | 0), cy = 9 + ((rnd() * 5) | 0), r = 1 + ((rnd() * 2) | 0);
+        var cx = 2 + ((rl() * 12) | 0), cy = 9 + ((rl() * 5) | 0), r = 1 + ((rl() * 2) | 0);
         g.fillStyle = k % 3 ? '#5fd8a0' : '#a8ffd8';
         g.beginPath(); g.ellipse(o[0] + cx, o[1] + cy, r + 1, r, 0, 0, 7); g.fill();
       }
       g.fillStyle = '#e8fff4';
-      for (var k2 = 0; k2 < 5; k2++) g.fillRect(o[0] + 2 + ((rnd() * 12) | 0), o[1] + 10 + ((rnd() * 4) | 0), 1, 1);
+      for (var k2 = 0; k2 < 5; k2++) g.fillRect(o[0] + 2 + ((rl() * 12) | 0), o[1] + 10 + ((rl() * 4) | 0), 1, 1);
     })();
     (function () {                                                    // 235 plancton luminescent
       var o = clear(235);

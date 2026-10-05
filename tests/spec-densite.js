@@ -57,6 +57,26 @@
       A.equal(marinsHyper, 0, 'jamais hyperurbain en pleine mer (' + marinsHyper + '/' + testes + ')');
     });
 
+    it('SPEC-DENSITE-001 : le climat et la fertilité lisent le climat (température, humidité), pas seulement l\'identifiant du biome', function () {
+      var w = monde(), Bio = w.bio, froid = null, chaud = null, sec = null, humide = null;
+      // deux points du MÊME biome de plaines, de climat très différent (température, puis humidité)
+      for (var i = 0; i < 4000; i++) {
+        var x = (i * 7919) % 40000 - 20000, z = (i * 104729) % 40000 - 20000, b = w.biomeAt(x, z);
+        if (b.id !== 'plaines') continue;
+        var cl = Bio.climat(x, z);
+        if (!froid || cl.t < froid.t) froid = { x: x, z: z, t: cl.t, h: cl.h };
+        if (!chaud || cl.t > chaud.t) chaud = { x: x, z: z, t: cl.t, h: cl.h };
+        if (!sec || cl.h < sec.h) sec = { x: x, z: z, t: cl.t, h: cl.h };
+        if (!humide || cl.h > humide.h) humide = { x: x, z: z, t: cl.t, h: cl.h };
+      }
+      A.ok(froid && chaud && chaud.t - froid.t > 0.1, 'des plaines de températures différentes (' + (froid && froid.t) + ' à ' + (chaud && chaud.t) + ')');
+      A.ok(sec && humide && humide.h - sec.h > 0.1, 'des plaines d humidités différentes');
+      var fF = w.densite.facteurs(froid.x, froid.z), fC = w.densite.facteurs(chaud.x, chaud.z);
+      A.ok(fF.climat !== fC.climat, 'même biome, températures différentes : facteurs climat différents (' + fF.climat + ' / ' + fC.climat + ')');
+      var fS = w.densite.facteurs(sec.x, sec.z), fH = w.densite.facteurs(humide.x, humide.z);
+      A.ok(fS.fertilite !== fH.fertilite, 'même biome, humidités différentes : facteurs de fertilité différents (' + fS.fertilite + ' / ' + fH.fertilite + ')');
+    });
+
     it('SPEC-DENSITE-001 : l\'habitabilité combine eau douce et côtes, relief, climat, fertilité et volcans — un volcan actif fait le vide autour de lui', function () {
       var w = monde(), Bio = w.bio;
       var f0 = w.densite.facteurs(0, 0);
@@ -82,7 +102,8 @@
       A.gt(eteints.length, 0, 'des volcans éteints dans la zone');
       // même carte, sans les données de volcans : la référence pour isoler leur effet
       var sansVolcan = MC.Densite.creer(MC.makeNoise(w.seed), function (x, z) { return Math.max(1, Math.min(C.WORLD_H - 14, w.heightAt(x, z))); },
-        function (x, z) { return w.biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); });
+        function (x, z) { return w.biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); },
+        { climat: function (x, z) { return Bio.climat(x, z); } });   // le même climat : seul le volcan manque
       var v = actifs[0], ve = eteints[0];
       var flanc = w.densite.facteurs(v.x + v.R * 0.5, v.z);
       A.lt(flanc.volcan, -0.5, 'sur le cône d\'un volcan actif, le volcan retire beaucoup : ' + flanc.volcan);

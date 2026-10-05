@@ -13,12 +13,14 @@
    - 034 : le serveur fait apparaître des créatures, éveille les gardiens de
      donjon, et fait croître les cultures en les diffusant par BLOC — sans
      croissance pendant la pause, et vues par deux clients (SPEC-SYNC-018) ;
+   - SPEC-EAU-005 / SPEC-SYNC-018 : l'eau qui coule (source posée près d'Alice) n'est
+     diffusée par BLOC qu'aux joueurs à portée — rien au-delà de la portée de diffusion ;
    - SPEC-SYNC-019 : le vieillissement et l'extinction d'un feu, calculés au tic
      du serveur, sont diffusés à tous les clients ;
    - 035 : fabriquer en solo fermé passe par CRAFT (grille et inventaire serveur).
 
    Usage : node tests/integration-archi-env.js [scenario]
-   Scénarios : sommeil, heure, tornade, foudre, habitants, apparitions, cultures, culturesDeux, feu, gardien, craft */
+   Scénarios : sommeil, heure, tornade, foudre, habitants, apparitions, cultures, culturesDeux, eauPortee, feu, gardien, craft */
 'use strict';
 const path = require('path');
 const fs = require('fs');
@@ -410,6 +412,45 @@ async function scenarioCulturesDeux() {
   } finally { await arreterTout(); supprimerDossier(d); }
 }
 
+// ── SPEC-EAU-005 / SPEC-SYNC-018 : l'eau qui coule n'est diffusée qu'aux joueurs à portée ──
+async function scenarioEauPortee() {
+  const d = dossierTemp('mc-env-eau-');
+  try {
+    const graine = 20260921;
+    const t = terreFerme(graine);
+    const w = MC.createWorld(graine);
+    for (let cx = -3; cx <= 3; cx++) for (let cz = -3; cz <= 3; cz++) w.getChunk(Math.floor(t.x / 16) + cx, Math.floor(t.z / 16) + cz, true);
+    const B = MC.Core.B;
+    const eaux = new Set([B.WATER, B.EAU_1, B.EAU_2, B.EAU_3, B.EAU_4, B.EAU_5, B.EAU_6, B.EAU_7]);
+    const sx = Math.floor(t.x) + 4, sz = Math.floor(t.z), sy = w.groundAt(sx, sz, true) + 1;
+    // le témoin local : la même source, posée dans un monde identique, coule pareil (le serveur a la même graine)
+    w.setBlock(sx, sy, sz, B.WATER);
+    const attendues = new Map();
+    for (let i = 0; i < 60; i++) w.coulerEau(96).forEach(ch => attendues.set(ch[0] + ',' + ch[1] + ',' + ch[2], ch));
+    const PORTEE = 6;                                          // portée de diffusion réduite (test) : bien en deçà de l'étalement de l'eau
+    const distance = (x, z) => Math.hypot(x - t.x, z - t.z);   // comme le serveur : bloc entier, joueur à sa position
+    const toutes = Array.from(attendues.values());
+    const loin = toutes.filter(ch => distance(ch[0], ch[2]) > PORTEE + 0.5), pres = toutes.filter(ch => distance(ch[0], ch[2]) < PORTEE - 0.5);
+    ok(loin.length > 5 && pres.length > 5, 'témoin — l’eau s’étale des deux côtés de la limite de portée (' + pres.length + ' proches, ' + loin.length + ' lointaines)');
+    const f = fichierMonde(d, { heure: JOUR_ETE });
+    const s = await demarrer(args(f, d, ['--ouvert']), { MC_TEST_PORTEE_BLOCS: String(PORTEE), MC_TEST_SPAWN: t.x + ',' + t.y + ',' + t.z, MC_MODE: 'creatif' });
+    const a = await rejoindre(s.port, 'Alice', 1);
+    ok(!!(await attendreQue(() => toi(a.client), 8000, 50)), 'préparation : Alice est dans le monde');
+    await dodo(1500);
+    a.client.envoyer({ t: 'bloc', x: sx, y: sy, z: sz, id: B.WATER, j: 0, i: 0 });
+    const cle = (m) => m.x + ',' + m.y + ',' + m.z;
+    const eauVue = () => a.client.messages.filter(m => m.t === 'bloc' && eaux.has(m.id) && cle(m) !== sx + ',' + sy + ',' + sz);
+    ok(!!(await attendreQue(() => eauVue().length >= 3, 15000, 100)), 'SPEC-SYNC-018 : l’eau qui coule près d’Alice lui est diffusée (BLOC d’eau)');
+    await dodo(5000);                                          // l'étalement entier (sept blocs) a eu le temps de se faire
+    const vues = eauVue();
+    ok(vues.some(m => distance(m.x, m.z) < PORTEE - 0.5), 'SPEC-SYNC-018 : des changements d’eau à portée sont reçus');
+    const hors = vues.filter(m => distance(m.x, m.z) >= PORTEE + 0.01);
+    eq(hors.length, 0, 'SPEC-EAU-005 / SPEC-SYNC-018 : aucun changement d’eau hors de la portée de diffusion n’est envoyé à Alice', JSON.stringify(hors.slice(0, 3)));
+    a.client.fermer();
+    await s.arreter();
+  } finally { await arreterTout(); supprimerDossier(d); }
+}
+
 // ── SPEC-SYNC-019 : le feu évolue au tic et se diffuse à tous ────────────────
 async function scenarioFeu() {
   const d = dossierTemp('mc-env-feu-');
@@ -492,7 +533,7 @@ async function scenarioCraft() {
 }
 
 const SCENARIOS = { sommeil: scenarioSommeil, heure: scenarioHeure, tornade: scenarioTornade, foudre: scenarioFoudre,
-  habitants: scenarioHabitants, apparitions: scenarioApparitions, cultures: scenarioCultures, culturesDeux: scenarioCulturesDeux, feu: scenarioFeu, gardien: scenarioGardien, craft: scenarioCraft };
+  habitants: scenarioHabitants, apparitions: scenarioApparitions, cultures: scenarioCultures, culturesDeux: scenarioCulturesDeux, eauPortee: scenarioEauPortee, feu: scenarioFeu, gardien: scenarioGardien, craft: scenarioCraft };
 
 (async function () {
   const demande = process.argv[2];

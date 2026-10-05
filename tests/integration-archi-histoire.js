@@ -147,7 +147,7 @@ async function epopee(D, id) {
   }
   let libre = null;
   for (const [dx, dz] of [[1, 0], [-1, 0], [0, 1], [0, -1], [2, 0], [0, 2]]) {
-    if (w.getBlock(fx + dx, fy, fz + dz) === 0 && !libre) libre = { x: fx + dx, z: fz + dz };
+    if (w.getBlock(fx + dx, fy, fz + dz) === 0 && w.getBlock(fx + dx, fy + 1, fz + dz) === 0 && !libre) libre = { x: fx + dx, z: fz + dz };
   }
   if (libre) {
     const t = await bloc(cl, libre.x, fy, libre.z, B.TORCH);

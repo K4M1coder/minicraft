@@ -40,6 +40,21 @@
   var MALUS_BIOME = {};
   [MALUS_CLIMAT, MALUS_FERTILITE].forEach(function (t) { for (var k in t) MALUS_BIOME[k] = t[k]; });
 
+  /* Le climat lu en continu (température t, humidité h de MC.Biomes.climat, 0..1),
+     pour que deux points d'un même biome mais de climats très différents ne pèsent
+     pas pareil : le grand froid (t bas), la chaleur sèche (t haut, h bas) et l'aridité
+     (h bas) retirent de l'habitabilité même avant d'avoir fait basculer le biome.
+     Le malus par biome ci-dessus reste le plancher : au cœur d'un désert ou d'un
+     glacier, rien ne change. */
+  var CLIMAT = { froid: 0.4, froidDe: 0.18, froidA: 0.34, chaleur: 0.5, chaleurDe: 0.60, chaleurA: 0.74,
+                 secDe: 0.60, secA: 0.46, aridite: 0.3, aridDe: 0.25, aridA: 0.45 };
+  function malusClimatContinu(cl) {
+    var froid = CLIMAT.froid * (1 - smoothstep(CLIMAT.froidDe, CLIMAT.froidA, cl.t));
+    var chaleur = CLIMAT.chaleur * smoothstep(CLIMAT.chaleurDe, CLIMAT.chaleurA, cl.t) * (1 - smoothstep(CLIMAT.secA, CLIMAT.secDe, cl.h));
+    return froid + chaleur;
+  }
+  function malusAridite(cl) { return CLIMAT.aridite * (1 - smoothstep(CLIMAT.aridDe, CLIMAT.aridA, cl.h)); }
+
   /* SPEC-DENSITE-001 : le volcan pèse sur l'habitabilité — un volcan actif
      repousse l'installation (coulées, bombes, cendres : SPEC-RELIEF-011), un
      volcan éteint bien moins (pentes et cratère seulement). Le malus est plein
@@ -47,7 +62,7 @@
   var VOLCAN = { actif: 0.6, eteint: 0.25, plein: 0.6, portee: 2 };
 
   /* `env` (facultatif) : les données environnementales du monde —
-     `volcanProche(x, z, facteur)` de MC.Biomes. Sans elle, la carte ne tient
+     `volcanProche(x, z, facteur)` et `climat(x, z)` de MC.Biomes. Sans elle, la carte ne tient
      compte que des biomes, du relief et de l'eau. */
   function creer(N, hauteur, biomeDe, riviereDe, env) {
     env = env || {};
@@ -114,6 +129,11 @@
         if (MALUS_CLIMAT[bio.id]) f.climat = -MALUS_CLIMAT[bio.id];
         if (MALUS_FERTILITE[bio.id]) f.fertilite = -MALUS_FERTILITE[bio.id];
       }
+      if (env.climat && !(bio && bio.marin)) {
+        var cl = env.climat(x, z);
+        f.climat = -Math.min(0.85, Math.max(-f.climat, malusClimatContinu(cl)));
+        f.fertilite = -Math.min(0.85, Math.max(-f.fertilite, malusAridite(cl)));
+      }
       f.relief = -(1 - planeite(x, z)) * 0.35;
       if (pointEau(x, z)) f.eau = 0.22;
       f.volcan = -VOLCAN.actif * proximiteVolcan(x, z);
@@ -177,5 +197,5 @@
   }
 
   MC.Densite = { creer: creer, CLASSES: CLASSES, SEUILS: SEUILS, MALUS_BIOME: MALUS_BIOME,
-                 MALUS_CLIMAT: MALUS_CLIMAT, MALUS_FERTILITE: MALUS_FERTILITE, VOLCAN: VOLCAN };
+                 CLIMAT: CLIMAT, MALUS_CLIMAT: MALUS_CLIMAT, MALUS_FERTILITE: MALUS_FERTILITE, VOLCAN: VOLCAN };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

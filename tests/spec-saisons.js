@@ -196,9 +196,9 @@
       for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) w.getChunk(cx + a, cz + b, true);
     }
     function surface(w, x, z) { var y = C.WORLD_H - 1; while (y > 0 && w.getBlock(x, y, z) === 0) y--; return y; }
-    function balayer(w, temps, fois, surBloc) {
+    function balayer(w, temps, fois, surBloc, occupe) {
       var n = 0;
-      for (var i = 0; i < fois; i++) n += w.tickEauxSaison(temps, surBloc);
+      for (var i = 0; i < fois; i++) n += w.tickEauxSaison(temps, surBloc, occupe);
       return n;
     }
     var HIVER = DC.YEAR_LENGTH * 0.875, PRINTEMPS = DC.YEAR_LENGTH * 1.125, ETE = DC.YEAR_LENGTH * 1.375;
@@ -249,6 +249,39 @@
       A.equal(w.getBlock(riv.x, yRiv, riv.z), B.WATER, 'la rivière aussi');
       A.equal(w.getEtat(lac.x, yLac, lac.z), 0, 'sans état résiduel');
       A.equal(balayer(w, PRINTEMPS, 100), 0, 'puis plus rien à faire');
+    });
+
+    it('SPEC-SAISON-005 : le dégel rend l\'eau de la génération — le monde sauvegardé ne garde aucune modification résiduelle @lent', function () {
+      var w = MC.createWorld(20260921);
+      var lac = chercherColonne(w, function (c) { return c.climat.lac && c.climat.t < SEUIL && c.climat.t >= 0.26 && c.eau > c.h; });
+      charger3x3(w, lac.x, lac.z);
+      var avant = w.overrides.size;
+      balayer(w, HIVER, 300);
+      A.gt(w.overrides.size, avant, 'le gel est inscrit dans les modifications (il doit survivre à un redémarrage)');
+      balayer(w, PRINTEMPS, 400);
+      A.equal(w.overrides.size, avant, 'dégelé : plus aucune modification résiduelle');
+      A.equal(w.etatsOverrides.size, 0, 'ni état résiduel');
+    });
+
+    it('SPEC-SAISON-005 : le gel n\'emmure personne — une case occupée par un corps (joueur, monture, barque) reste liquide jusqu\'à ce qu\'il la quitte @lent', function () {
+      var w = MC.createWorld(20260921);
+      var lac = chercherColonne(w, function (c) { return c.climat.lac && c.climat.t < SEUIL && c.climat.t >= 0.26 && c.eau > c.h; });
+      charger3x3(w, lac.x, lac.z);
+      var y = surface(w, lac.x, lac.z);
+      A.equal(w.getBlock(lac.x, y, lac.z), B.WATER, 'le lac est liquide avant l\'hiver');
+      // un corps nage dans la case de surface (la boîte d'un joueur : 0,6 × 1,8)
+      var corps = { x: lac.x + 0.5, y: y - 0.21, z: lac.z + 0.5, w: 0.6, h: 1.8 };
+      var occupe = function (x, yy, z) {
+        return MC.Physics.boxOverlap(x + 0.5, yy, z + 0.5, 1, 1, corps.x, corps.y, corps.z, corps.w, corps.h);
+      };
+      balayer(w, HIVER, 300, null, occupe);
+      A.equal(w.getBlock(lac.x, y, lac.z), B.WATER, 'tant que le corps y est, la surface ne gèle pas');
+      A.ok(w.getBlock(lac.x + 3, surface(w, lac.x + 3, lac.z), lac.z) === B.ICE ||
+           w.getBlock(lac.x - 3, surface(w, lac.x - 3, lac.z), lac.z) === B.ICE, 'le reste du lac gèle bien');
+      // le corps s'éloigne : la case gèle au balayage suivant
+      corps.x += 6;
+      balayer(w, HIVER, 300, null, occupe);
+      A.equal(w.getBlock(lac.x, y, lac.z), B.ICE, 'le corps parti, la case gèle');
     });
 
     it('SPEC-SAISON-005 : le gel ne touche ni l\'eau du joueur, ni les constructions, ni la banquise générée, et survit à un redémarrage @lent', function () {

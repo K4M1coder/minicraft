@@ -1204,7 +1204,15 @@
     var RECIF = {};
     [B.CORAL_RED, B.CORAL_YELLOW, B.CORAL_BLUE, B.CORAIL_BLANC].forEach(function (id) { if (id) RECIF[id] = true; });
     var eauxT = 0, eauxChunk = 0, eauxCol = 0;
-    function eauxSaisonColonne(c, col, hiver, nuit, surBloc) {
+    /* L'eau que la saison ou la nuit rend est celle de la génération (la case l'était
+       avant le gel ou le plancton) : la modification inscrite par setBlock n'a plus
+       lieu d'être, et le monde sauvegardé n'en garde pas de trace. Une case qui n'est
+       pas de l'eau générée (posée par un joueur au-dessus d'un lac) garde la sienne. */
+    function eauRendue(c, col, wx, y, wz) {
+      var h = heightAt(wx, wz);
+      if (y > h && y <= h + c.eau.prof[col]) overrides.delete(key3(wx, y, wz));
+    }
+    function eauxSaisonColonne(c, col, hiver, nuit, surBloc, occupe) {
       var nat = c.eau.nature[col];
       if (!nat) return 0;
       var T = MC.Eau.TYPES;
@@ -1216,12 +1224,15 @@
       if (id === B.ICE) {
         if (hiver || getEtat(wx, y, wz) !== ETAT_SAISON) return 0;
         setBlock(wx, y, wz, B.WATER);
+        eauRendue(c, col, wx, y, wz);
         if (surBloc) surBloc(wx, y, wz, B.WATER, 0);
         return 1;
       }
       if (id !== B.WATER) return 0;
       if (hiver && nat !== T.ecoulement && nat !== T.chute && Bio.climat(wx, wz).t < GEL_CLIMAT_SEUIL &&
           MC.Eau.eauDormante(nat, getBlock, wx, y, wz)) {
+        // personne n'est emmuré : la case occupée par un corps (joueur, monture, barque) attend le balayage suivant
+        if (occupe && occupe(wx, y, wz)) return 0;
         setBlock(wx, y, wz, B.ICE);
         setEtat(wx, y, wz, ETAT_SAISON);
         if (surBloc) surBloc(wx, y, wz, B.ICE, ETAT_SAISON);
@@ -1235,6 +1246,7 @@
       if (dessous === B.PLANCTON_LUMINEUX) {
         if (nuit || getEtat(wx, yb, wz) !== ETAT_SAISON) return 0;
         setBlock(wx, yb, wz, B.WATER);
+        eauRendue(c, col, wx, yb, wz);
         if (surBloc) surBloc(wx, yb, wz, B.WATER, 0);
         return 1;
       }
@@ -1245,8 +1257,10 @@
       if (surBloc) surBloc(wx, yb + 1, wz, B.PLANCTON_LUMINEUX, ETAT_SAISON);
       return 1;
     }
-    /* Un pas des eaux de saison à l'heure `temps` ; rend le nombre de blocs changés. */
-    function tickEauxSaison(temps, surBloc) {
+    /* Un pas des eaux de saison à l'heure `temps` ; rend le nombre de blocs changés.
+       `occupe(x, y, z)` (facultatif, fourni par le serveur) dit si un corps vivant ou
+       un véhicule occupe la case : le gel l'épargne tant qu'il y est. */
+    function tickEauxSaison(temps, surBloc, occupe) {
       if (!MC.Eau || !MC.DayCycle || !chunks.size) return 0;
       var hiver = MC.DayCycle.saison(temps).nom === 'hiver', nuit = MC.DayCycle.isNight(temps);
       var cles = Array.from(chunks.keys()), vus = 0, faits = 0, sauts = 0;
@@ -1255,7 +1269,7 @@
         var c = chunks.get(cles[eauxChunk]);
         if (!c || !c.eau) { eauxChunk++; eauxCol = 0; sauts++; continue; }
         for (; eauxCol < CX * CZ && vus < EAUX_COLONNES && faits < EAUX_CHANGEMENTS; eauxCol++, vus++) {
-          faits += eauxSaisonColonne(c, eauxCol, hiver, nuit, surBloc);
+          faits += eauxSaisonColonne(c, eauxCol, hiver, nuit, surBloc, occupe);
         }
         if (eauxCol >= CX * CZ) { eauxChunk++; eauxCol = 0; sauts++; }
       }
@@ -1404,7 +1418,7 @@
         // SPEC-SAISON-005 / SPEC-LUMIERE-007 : le serveur seul en décide (les postes passent eauxSaison: false)
         if (!(opts && opts.eauxSaison === false)) {
           eauxT += dt;
-          if (eauxT >= EAUX_PAS) { eauxT = 0; tickEauxSaison(temps, surBloc); }
+          if (eauxT >= EAUX_PAS) { eauxT = 0; tickEauxSaison(temps, surBloc, opts && opts.occupe); }
         }
       }
       return grown;
@@ -1548,11 +1562,15 @@
     // ─── donjons ─────────────────────────────────────────────────────────────
     function salleDonjon(x, y, z) { return donjons.salleA(x, y, z); }
     /* La salle d'un donjon moyen ou grand où se tient ce point : { donjon, index }. */
-    function pieceDonjon(x, y, z) { return donjons.salleDe(x, y, z); }
+    function pieceDonjon(x, y, z) {
+      return donjons.salleDe(x, y, z) || (structuresSous && structuresSous.salleDe(x, y, z));   // SPEC-SOUTERRAIN-003 : donjons des profondeurs
+    }
     /* Butin d'un coffre de donjon jamais ouvert, ou null pour un coffre ordinaire. */
     function butinCoffre(x, y, z) {
       var c = donjons.coffreA(x, y, z);
-      return c ? donjons.butin(c.donjon, c.indice) : null;
+      if (c) return donjons.butin(c.donjon, c.indice);
+      var cs = structuresSous && structuresSous.coffreA(x, y, z);   // SPEC-SOUTERRAIN-003 : trésor d'un donjon des profondeurs
+      return cs ? structuresSous.butin(cs.donjon, cs.indice) : null;
     }
 
     return {

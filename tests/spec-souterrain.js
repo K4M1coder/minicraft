@@ -282,7 +282,11 @@
       });
       BIOMES_SOUS.forEach(function (b) { A.ok(vus[b], 'des structures sous le biome ' + b + ' : ' + JSON.stringify(vus[b] || {})); });
       ['geode', 'luxuriante', 'englouties', 'abime', 'grotte'].forEach(function (b) {
-        S.GENRES.forEach(function (g) { A.ok(vus[b] && vus[b][g], b + ' : au moins un(e) ' + g + ' sur ±6 km'); });
+        S.GENRES.forEach(function (g) {
+          // une mine noyée (±24 blocs) exige une mer assez large : rare, elle n'est garantie que sur une zone plus vaste (±9 km : 2 sur la graine d'essai)
+          if (b === 'englouties' && g === 'mine') return;
+          A.ok(vus[b] && vus[b][g], b + ' : au moins un(e) ' + g + ' sur ±6 km');
+        });
       });
       // chaque structure est dans le biome souterrain qui la porte, et sous terre (ou sous le fond de la mer)
       m.liste.slice(0, 400).forEach(function (st) {
@@ -338,6 +342,62 @@
       A.ok(donjon.blocs.some(function (b) { return b[3] === B.OBSIDIAN; }), 'd\'obsidienne');
       A.ok(donjon.blocs.some(function (b) { return b[3] === B.CRISTAL_LUMINEUX; }), 'éclairé de cristaux');
     });
+
+    it('SPEC-SOUTERRAIN-003 : une structure noyée ne déborde pas sous la terre ferme — toute son emprise est marine @lent', function () {
+      var EMPRISE = { donjon: 7, ruines: 13, mine: 25 };
+      [GRAINE, 7, 99991].forEach(function (g) {
+        var w = MC.createWorld(g), noyees = 0, fautes = [];
+        w.structuresSouterraines.dansZone(-6000, -6000, 6000, 6000).forEach(function (st) {
+          if (!st.noye) return;
+          noyees++;
+          var r = EMPRISE[st.genre] + 2;
+          for (var a = -r; a <= r && fautes.length < 5; a += 3) for (var b = -r; b <= r; b += 3) {
+            var bio = w.biomeAt(st.x + a, st.z + b);
+            if (!bio.marin) { fautes.push(st.nom + ' ' + st.x + ',' + st.z + ' : terre ferme (' + bio.id + ') en ' + (st.x + a) + ',' + (st.z + b)); break; }
+          }
+        });
+        A.gt(noyees, 0, 'graine ' + g + ' : des structures noyées existent');
+        A.deep(fautes, [], 'graine ' + g + ' : aucune structure noyée au contact de la terre ferme');
+      });
+    });
+
+    it('SPEC-SOUTERRAIN-003 : le premier étai de chaque galerie de mine est bien debout, et le rail commence à la chambre @lent', function () {
+      var m = structuresDuMonde();
+      var mines = m.liste.filter(function (s) { return s.genre === 'mine'; }).slice(0, 12);
+      A.gt(mines.length, 0, 'des mines');
+      mines.forEach(function (mine) {
+        var etat = new Map();                                   // l'application dans l'ordre du tableau, comme le chunk
+        mine.blocs.forEach(function (b) { etat.set(b[0] + ',' + b[1] + ',' + b[2], b[3]); });
+        [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (d) {
+          var cx = mine.x + d[0] * 4, cz = mine.z + d[1] * 4, px = -d[1], pz = d[0];
+          function en(x, y, z) { return etat.get(x + ',' + y + ',' + z); }
+          var lieu = mine.nom + ' ' + mine.x + ',' + mine.z + ' galerie ' + d;
+          A.equal(en(cx + px, mine.y + 1, cz + pz), B.LOG, lieu + ' : poteau du premier étai');
+          A.equal(en(cx - px, mine.y + 2, cz - pz), B.LOG, lieu + ' : second poteau');
+          A.equal(en(cx, mine.y + 3, cz), B.PLANKS, lieu + ' : poutre');
+          A.equal(en(cx, mine.y + 1, cz), B.RAIL, lieu + ' : rail dès le premier bloc de galerie');
+        });
+      });
+    });
+
+    it('SPEC-SOUTERRAIN-003 : le donjon propre a son trésor (coffre et butin du biome) et ses gardes @lent', function () {
+      var m = structuresDuMonde(), w = m.w, vus = 0, SPECS = MC.createEntities(w).SPECS;
+      BIOMES_SOUS.forEach(function (b) {
+        var d = m.liste.filter(function (s) { return s.genre === 'donjon' && s.biome === b; })[0];
+        if (!d) return;
+        vus++;
+        var coffre = d.blocs.filter(function (bl) { return bl[3] === B.CHEST; });
+        A.equal(coffre.length, 1, b + ' : un coffre au trésor');
+        var l = w.butinCoffre(coffre[0][0], coffre[0][1], coffre[0][2]);
+        A.ok(l && l.length >= 3, b + ' : le coffre a un butin (' + JSON.stringify(l) + ')');
+        A.ok(l.every(function (it) { return it.id && it.n >= 1; }), b + ' : des piles valides');
+        var centre = w.pieceDonjon(d.x, d.y + 1, d.z);
+        A.ok(centre && centre.donjon.id === d.id, b + ' : la salle du donjon est reconnue comme pièce de donjon');
+        A.ok(d.gardes && d.gardes.length >= 1, b + ' : des gardes');
+        A.ok(d.gardes.every(function (g) { return g.salle === centre.index && SPECS[g.type]; }), b + ' : de créatures qui existent');
+      });
+      A.gt(vus, 3, 'des donjons de plusieurs biomes (' + vus + ')');
+    });
   });
 
   /* ─── Non-régression de la génération (SOUTERRAIN-003, LUMIERE-007) ───────
@@ -369,22 +429,22 @@
         [6, -6, 'fef481b', 'fef481b', 'fef481b'],
         [6, 0, 'b78b2cae', '62a76276', '28c7cbae'],
         [6, 6, '3239ddb', '8d902f03', '631a8bcf'],
-        [-93, -73, 'dafde8c6', '7f2f6ee4', '33f90384'],
-        [-97, -54, '5d61a955', '86a802db', 'cd8d9bd3'],
+        [-93, -73, 'dafde8c6', '67528fb6', '33f90384'],
+        [-97, -54, '5d61a955', '8a254573', 'cd8d9bd3'],
         [-94, -45, 'c7b0a77d', '807f19ef', '2386b6f3'],
-        [-94, -24, '546178ae', '23bc24eb', 'ccc407e7'],
+        [-94, -24, '546178ae', '64ef6fa8', 'ccc407e7'],
         [-95, -4, '3e0d44a8', '501e6d66', 'd36c320'],
-        [-87, -54, 'ad82a59e', '538ce9ff', 'bbab56b2'],
-        [-82, -55, '8d2f7311', 'b98482ce', '9dbaba0f'],
+        [-87, -54, 'ad82a59e', '8e97147', 'bbab56b2'],
+        [-82, -55, '8d2f7311', '8d2f7311', '8d2f7311'],
         [-59, -67, '1638677b', 'c84ffe0a', '203b6a5c'],
-        [-53, -75, '28fade06', 'b71cba79', '1ecf33dd'],
+        [-53, -75, '28fade06', '211a38c1', '1ecf33dd'],
         [-46, -89, 'fd9b3c36', 'd6630ca7', '839efec3'],
-        [-41, -95, 'ae6c442a', '65352d31', '73e0630e'],
-        [-33, -86, 'eb18d89', 'f685fc19', '8e4bde15'],
-        [-31, -27, '7a2a634a', '9219eff0', 'fffd4748'],
-        [-19, -38, '7f2db11a', '17caacfb', '2417a74c'],
-        [5, 57, '6e2708a7', 'd64ee823', '9b9c07d'],
-        [32, -16, '371b5b1a', 'b5a68ebc', '45a1d944']],
+        [-41, -95, 'ae6c442a', '42323417', '73e0630e'],
+        [-33, -86, 'eb18d89', '81977041', '8e4bde15'],
+        [-31, -27, '7a2a634a', '7a2a634a', '7a2a634a'],
+        [-19, -38, '7f2db11a', 'c397bc38', '2417a74c'],
+        [5, 57, '6e2708a7', '6e2708a7', '6e2708a7'],
+        [32, -16, '371b5b1a', '8be66ddd', '45a1d944']],
       4242: [[-6, -6, 'a9d8429f', '5f5e4f7e', '597d29bb'],
         [-6, 0, 'edb8de95', '2d2dcf9c', '60f1a371'],
         [-6, 6, 'dec17af5', '682d48f1', '89be0ad5'],
@@ -403,22 +463,22 @@
         [6, 0, 'ab2e77f8', 'ab2e77f8', 'ab2e77f8'],
         [6, 6, 'fa1749f8', 'fa1749f8', 'fa1749f8'],
         [-95, -72, 'f8a3e6a0', 'c7f40b71', '4a4753b'],
-        [-95, -51, '6764f35d', 'ccb40fc', 'd49b94a1'],
+        [-95, -51, '6764f35d', 'bbb29235', 'd49b94a1'],
         [-96, -5, '8766ce02', '42aa1d3e', '245e7255'],
-        [-93, 23, 'ad95306f', '3b643c89', '76304da8'],
-        [-96, 58, '6ede7680', 'c4a51912', 'a8e849db'],
+        [-93, 23, 'ad95306f', 'bb59ad0c', '76304da8'],
+        [-96, 58, '6ede7680', 'e2221f0a', 'a8e849db'],
         [-93, 66, '2a83d114', '16a6d819', 'b2ac893d'],
-        [-88, -81, 'c44dd8da', '5f81e7b5', '3e753d8e'],
-        [-87, -68, 'ca623da7', '79cbbe9', 'ca623da7'],
+        [-88, -81, 'c44dd8da', '5bc66759', '3e753d8e'],
+        [-87, -68, 'ca623da7', '8a301b71', 'ca623da7'],
         [-88, -41, '54a1660d', '724434ed', '4fecd10b'],
-        [-89, 9, '4d74ddb1', '2649c6b6', 'baf3643'],
+        [-89, 9, '4d74ddb1', '3e03587e', 'baf3643'],
         [-87, 19, 'ce851b3f', 'e7c84e3c', 'b1071fa6'],
-        [-87, 82, 'c33f1df1', '40366a19', '5414b7a8'],
-        [-83, 38, '83812e19', '57aea97b', '6507fa20'],
-        [-79, 74, '44326052', '92a77492', 'aa4047c5'],
-        [-81, 94, '5ac14045', 'f69fcd4a', 'ade39df6'],
-        [-74, 25, 'a3639f14', '44194cc4', '44d60984'],
-        [-66, -66, 'ee418f1e', '85e0c1f1', 'fbbc7deb']],
+        [-87, 82, 'c33f1df1', 'c33f1df1', 'c1c04a41'],
+        [-83, 38, '83812e19', '35b6cc5b', '71de48c0'],
+        [-79, 74, '44326052', 'a3adb284', 'aa4047c5'],
+        [-81, 94, '5ac14045', '5ac14045', '5ac14045'],
+        [-74, 25, 'a3639f14', 'b804299b', '44d60984'],
+        [-66, -66, 'ee418f1e', 'ee418f1e', 'ee418f1e']],
       99991: [[-6, -6, 'd52d2f14', 'd52d2f14', 'd52d2f14'],
         [-6, 0, '232167d3', 'cea9aa5e', '5ecdc3ac'],
         [-6, 6, 'ebb75a5b', 'ebb75a5b', 'ebb75a5b'],
@@ -436,21 +496,21 @@
         [6, -6, 'a61b96f4', '6ec5c861', '70f9df3b'],
         [6, 0, '3bd48ed8', '72dbdcf8', '4df4b8fc'],
         [6, 6, 'c7dce1b9', '18909411', '3ae2f3a5'],
-        [-94, -59, 'ec53c495', 'b3d0b4ca', 'f311bca'],
+        [-94, -59, 'ec53c495', '9f08d0ff', 'f311bca'],
         [-95, -41, '6a6efe41', '7dce95b5', 'b2b047bb'],
-        [-97, -33, '45fc7729', '4d499ab5', '5ac1f47d'],
-        [-94, -16, '877d42d5', '1f0c9808', '48c4c8f8'],
+        [-97, -33, '45fc7729', 'e0cd05d', '5ac1f47d'],
+        [-94, -16, '877d42d5', 'b1cbf50', '48c4c8f8'],
         [-96, -13, '7b6e458a', '540739b1', '7d9373bf'],
-        [-94, 26, '9904b05d', '9f3471ae', 'cf095d9c'],
+        [-94, 26, '9904b05d', '5ca1b867', 'cf095d9c'],
         [-93, 53, '46d67c1a', '88d37bd5', '4c015b00'],
         [-95, 68, '4b10e853', '2ac1cc95', 'c0831670'],
-        [-79, -41, '1249c0b0', 'cfa5db05', '6317b9be'],
+        [-79, -41, '1249c0b0', 'cf50f682', '6317b9be'],
         [-81, 40, 'a8a47f26', '87df4e5b', 'f4b3c357'],
-        [-74, -13, '7403a0ad', '38320342', 'b08d4746'],
-        [-75, 32, '3fced24a', 'd1678e17', '8420d455'],
-        [-31, 81, 'eb824add', '9a105a7c', 'a31121f4'],
-        [-3, -46, 'efd40440', '84be60af', 'd46feaed'],
-        [16, -3, 'dedbc7e5', '2275723a', '6ad997ad']],
+        [-74, -13, '7403a0ad', 'e769c0c3', 'b08d4746'],
+        [-75, 32, '3fced24a', 'b3e50b52', '8420d455'],
+        [-31, 81, 'eb824add', 'eb824add', '4e88d6d'],
+        [-3, -46, 'efd40440', 'efd40440', 'b4299270'],
+        [16, -3, 'dedbc7e5', 'dedbc7e5', 'dedbc7e5']],
       20260921: [[-6, -6, '7d7c6ab3', '7d7c6ab3', '7d7c6ab3'],
         [-6, 0, '1378dab8', '1e1b8bb9', '902556d4'],
         [-6, 6, 'fb109a1d', 'fb109a1d', 'fb109a1d'],
@@ -469,22 +529,22 @@
         [6, 0, 'e712674b', 'e712674b', 'e712674b'],
         [6, 6, '466167fe', '466167fe', '466167fe'],
         [-94, -74, '13b5b254', 'b890cc05', '38cbb759'],
-        [-94, -53, '2e9bb202', '6954a6a', '97260b36'],
+        [-94, -53, '2e9bb202', '442affca', '97260b36'],
         [-95, -47, 'a2bc54f8', 'a4e7ca95', 'e24c40b9'],
         [-95, -31, '4a7e254f', 'c990f9e9', 'b10e118b'],
-        [-96, 9, 'a9833417', '6bed0f9f', '91a090d5'],
-        [-86, -74, 'fb2f8dbb', '44df6669', 'ea61f4ea'],
-        [-88, -46, 'a610295d', 'ce69d822', 'aa45af74'],
-        [-89, 17, 'dffe3b97', '9ed408c2', '4e100547'],
+        [-96, 9, 'a9833417', '31cc59d2', '91a090d5'],
+        [-86, -74, 'fb2f8dbb', 'e53f1d9c', 'ea61f4ea'],
+        [-88, -46, 'a610295d', 'd94a1afb', 'aa45af74'],
+        [-89, 17, 'dffe3b97', '675eb07d', '4e100547'],
         [-90, 31, '4531c16c', 'd0e60df0', '63318e5b'],
-        [-86, 81, '6a2df273', '79f35ba0', 'd7f8bc2f'],
-        [-83, 81, 'd54cf6d0', 'fed9a484', '38b814f8'],
+        [-86, 81, '6a2df273', 'bfa4d261', 'd7f8bc2f'],
+        [-83, 81, 'd54cf6d0', '393e108c', '38b814f8'],
         [-72, -97, '77294dbc', 'c9c0dc54', '9dc86b25'],
         [-69, 9, '8a10fbbb', 'b50c2db9', '15b74bb4'],
-        [-66, 59, 'c08cdad1', '3c032590', '47e5f354'],
-        [-61, 54, 'e7930e0a', 'a04227ea', 'de834747'],
-        [-53, 37, '7f2846fa', '4d0888cc', '73205336'],
-        [53, 51, '27baf9b4', 'b26dacbf', '39edf7b6']],
+        [-66, 59, 'c08cdad1', 'c08cdad1', 'c08cdad1'],
+        [-61, 54, 'e7930e0a', 'e7930e0a', 'e7930e0a'],
+        [-53, 37, '7f2846fa', '8c426bf4', '73205336'],
+        [53, 51, '27baf9b4', '4973395f', '39edf7b6']],
   };
   function fnvMasque(h, arr, masque) {
     if (!arr) return h;
@@ -615,7 +675,7 @@
       var nuit = 0, jour = DC.DAY_LENGTH * 0.25;
       for (var t = 0; t < DC.DAY_LENGTH; t += 10) if (DC.isNight(t)) { nuit = t; break; }
       A.ok(DC.isNight(nuit) && !DC.isNight(jour), 'une heure de nuit, une heure de jour');
-      var poses = [];
+      var poses = [], overridesAvant = w.overrides.size;
       for (var i = 0; i < 400; i++) w.tickEauxSaison(nuit, function (x, y, z, id, e) { if (id === B.PLANCTON_LUMINEUX) poses.push([x, y, z, e]); });
       A.gt(poses.length, 0, 'du plancton est monté cette nuit');
       poses.forEach(function (p) {
@@ -632,6 +692,35 @@
       for (var j = 0; j < 400; j++) w.tickEauxSaison(jour);
       poses.forEach(function (p) { A.equal(w.getBlock(p[0], p[1], p[2]), B.WATER, 'dispersé au jour'); });
       A.notOk(w.lights.has(w.key3(p0[0], p0[1], p0[2])), 'plus de lumière');
+      // l'eau revenue est celle de la génération : le monde sauvegardé n'en garde aucune trace
+      A.equal(w.overrides.size, overridesAvant, 'aucune modification résiduelle après la dispersion');
+    });
+
+    it('SPEC-LUMIERE-007 : le lichen a son propre générateur — aucune autre tuile de l\'atlas n\'est décalée', function () {
+      /* L\'atlas se peint dans un canvas (navigateur) : on le rejoue ici sur un contexte factice qui
+         enregistre les fillRect, hors de la tuile 253 (lichen). rnd() est un générateur séquentiel
+         partagé : si le lichen y puisait, toutes les tuiles dessinées après (plancton 235…) changeraient.
+         Empreinte de référence relevée sur l\'atlas d\'avant le lichen (master 824c3ba). */
+      var fs = require('fs'), path = require('path'), vm = require('vm');
+      var rec = [], ctx = { fillStyle: '', strokeStyle: '', lineWidth: 1, font: '', textAlign: '', textBaseline: '' };
+      ['beginPath', 'closePath', 'moveTo', 'lineTo', 'arc', 'ellipse', 'fill', 'stroke', 'strokeRect', 'clearRect', 'fillText', 'putImageData']
+        .forEach(function (n) { ctx[n] = function () {}; });
+      ctx.fillRect = function (x, y, w, h) { rec.push([x, y, w, h, ctx.fillStyle]); };
+      ctx.getImageData = function (x, y, w, h) { return { data: new Uint8ClampedArray(w * h * 4), width: w, height: h }; };
+      ctx.createImageData = ctx.getImageData;
+      var cv = { getContext: function () { return ctx; }, toDataURL: function () { return ''; } };
+      var sb = { document: { createElement: function () { return cv; } }, THREE: { CanvasTexture: function () {}, NearestFilter: 1 } };
+      sb.globalThis = sb; vm.createContext(sb);
+      ['journal', 'formes', 'core', 'atlas'].forEach(function (m) {
+        vm.runInContext(fs.readFileSync(path.join(__dirname, '..', 'src', m + '.js'), 'utf8'), sb);
+      });
+      sb.MC.buildAtlas();
+      var lichen = rec.filter(function (o) { return o[0] >= 208 && o[0] < 224 && o[1] >= 240 && o[1] < 256; });
+      A.gt(lichen.length, 0, 'la tuile 253 (lichen) est bien peinte');
+      var autres = rec.filter(function (o) { return !(o[0] >= 208 && o[0] < 224 && o[1] >= 240 && o[1] < 256); });
+      var h = 2166136261, t = JSON.stringify(autres);
+      for (var i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 16777619) >>> 0; }
+      A.equal(autres.length + ':' + h.toString(16), '52843:397857d7', 'toutes les autres tuiles se peignent comme avant le lichen');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

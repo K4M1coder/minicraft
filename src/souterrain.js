@@ -118,6 +118,16 @@
              noye: !!s.noye };
   }
 
+  // richesses du trésor d'un donjon souterrain : [id, min, max, chance]
+  var BUTIN_BIOME = {
+    geode:              [[I.SAPHIR, 1, 2, 0.6], [I.LAPIS, 2, 6, 0.8], [I.DIAMOND, 1, 1, 0.35]],
+    chambre_magmatique: [[I.RUBIS, 1, 2, 0.6], [I.GOLD_INGOT, 2, 5, 0.8], [B.OBSIDIAN, 2, 4, 0.5]],
+    luxuriante:         [[I.EMERALD, 1, 3, 0.7], [I.BONE_MEAL, 3, 8, 0.8], [B.MUSHROOM, 2, 6, 0.6]],
+    englouties:         [[I.PRISMARINE_SHARD, 4, 10, 0.9], [B.SEA_LANTERN, 2, 4, 0.7], [I.GOLD_INGOT, 1, 4, 0.6]],
+    abime:              [[I.DIAMOND, 1, 3, 0.7], [B.OBSIDIAN, 2, 6, 0.8], [I.RUBIS, 1, 2, 0.5]],
+    grotte:             [[I.EMERALD, 1, 2, 0.5], [I.BONE, 2, 6, 0.8], [I.ARGENT_LINGOT, 1, 3, 0.4]],
+  };
+
   var REGION_STRUCT = 112;      // une structure au plus par région de 112 × 112 blocs
   var PROBA_STRUCT = 0.4;       // part des régions qui en ont une
   var PORTEE_STRUCT = 30;       // au-delà, une structure ne touche plus un chunk
@@ -125,6 +135,8 @@
   var Y_MAX_STRUCT = 15;        // sous le plafond des biomes souterrains (16)
   var HAUT_STRUCT = 6;          // hauteur des salles, murs compris
   var TOIT_STRUCT = 3;          // roche gardée entre le haut d'une structure et la surface
+  // demi-emprise de chaque genre (murs compris) : donjon ±6, ruines ±12, mine ±24 (galeries)
+  var EMPRISE_STRUCT = { donjon: 7, ruines: 13, mine: 25 };
 
   /* `N` : le bruit du monde (hash2/hash3) ; `hauteur(x, z)` : la surface ;
      `biomeDe(x, z)` : le biome de surface. Comme MC.Donjons : chaque région
@@ -156,6 +168,17 @@
       var sId = biomeAt(bio ? bio.id : 'plaines', y0, !!(bio && bio.marin));
       var genre = GENRES[Math.floor(N.hash2(rx * 13 + 7, rz * 17 - 3) * GENRES.length) % GENRES.length];
       var st = structurePour(sId, genre);
+      /* Une structure noyée est décidée par le biome du centre, mais ses salles
+         s'étendent bien plus loin : près d'une côte, elle déborderait sous la terre
+         ferme, au contact des cavernes d'air (l'eau fuirait dès qu'on la dérange).
+         Elle n'existe que si TOUTE son emprise (et une marge) est marine. */
+      if (st.noye && biomeDe) {
+        var r = EMPRISE_STRUCT[genre] + 2;
+        for (var a2 = -r; a2 <= r; a2 += 2) for (var b2 = -r; b2 <= r; b2 += 2) {
+          var bi = biomeDe(x + a2, z + b2);
+          if (!bi || !bi.marin) return null;
+        }
+      }
       st.id = 'sous:' + rx + ',' + rz; st.x = x; st.y = y0; st.z = z;
       st.blocs = []; st.salles = [];
       BATIR[genre](st, outils(st));
@@ -223,6 +246,16 @@
           var d = st.deco && st.deco.length ? st.deco[k % st.deco.length] : st.coeur;
           o.pose(x + dx, y + 1, z + dz, d);
         }
+        /* le trésor au fond de la salle (butin propre au biome : MC.Souterrain.butin,
+           lu par world.butinCoffre) et ses gardes, deux créatures du biome qui
+           s'éveillent à l'entrée (comme les gardes des donjons de MC.Donjons) */
+        o.pose(x, y + 1, z + R - 1, B.CHEST);
+        st.coffres = [{ x: x, y: y + 1, z: z + R - 1 }];
+        var gtypes = Object.keys(materiaux(st.biome).mobs).filter(function (t) { return t !== 'chauve_souris'; })
+          .sort(function (a, b) { return materiaux(st.biome).mobs[b] - materiaux(st.biome).mobs[a]; });
+        st.gardes = gtypes.length ? [-2, 2].map(function (dx, k) {
+          return { salle: 0, type: gtypes[k % gtypes.length], x: x + dx + 0.5, y: y + 1, z: z + 0.5 };
+        }) : [];
         // deux portes, de part et d'autre : la salle s'ouvre sur la roche, comme une grotte
         for (var w = -1; w <= 1; w++) for (var hy = 1; hy <= 3; hy++) { o.pose(x + R, y + hy, z + w, o.vide); o.pose(x - R, y + hy, z + w, o.vide); }
       },
@@ -293,7 +326,9 @@
             if (i % 4 === 2 && st.noye) o.pose(cx - px, y + 4, cz - pz, st.lumiere);
             if (!st.noye && o.h3(cx, y, cz) < 0.1) o.pose(cx - px, y + 3, cz - pz, B.COBWEB);
           }
-          for (var w3 = -1; w3 <= 1; w3++) for (var b = 1; b <= 3; b++) o.pose(x + ux * 4 + px * w3, y + b, z + uz * 4 + pz * w3, o.vide);
+          /* La galerie ouvre déjà sa section (vide sur y+1..3, w de -1 à 1) dès i = 4,
+             dans la paroi de la chambre : on n'y repose rien après les poteaux, la poutre
+             et le rail du premier étai, sans quoi ils seraient effacés. */
           st.salles.push({ x0: Math.min(x + ux * 4, x + ux * L) - (uz ? 1 : 0), y0: y + 1, z0: Math.min(z + uz * 4, z + uz * L) - (ux ? 1 : 0),
                            x1: Math.max(x + ux * 4, x + ux * L) + (uz ? 1 : 0), y1: y + 3, z1: Math.max(z + uz * 4, z + uz * L) + (ux ? 1 : 0) });
         });
@@ -334,7 +369,40 @@
       return null;
     }
 
-    return { deRegion: deRegion, dansZone: dansZone, appliquer: appliquer, structureA: structureA };
+    /* Le donjon souterrain dont ce bloc est le coffre au trésor : { donjon, indice }, ou null. */
+    function coffreA(x, y, z) {
+      var l = dansZone(x, z, x, z);
+      for (var i = 0; i < l.length; i++) {
+        var cs = l[i].coffres || [];
+        for (var k = 0; k < cs.length; k++) if (cs[k].x === x && cs[k].y === y && cs[k].z === z) return { donjon: l[i], indice: k };
+      }
+      return null;
+    }
+    /* La salle (gardée) d'un donjon souterrain qui contient ce point : { donjon, index }, ou null. */
+    function salleDe(x, y, z) {
+      var l = dansZone(x, z, x, z);
+      for (var i = 0; i < l.length; i++) {
+        if (!l[i].gardes || !l[i].gardes.length) continue;
+        var s = l[i].salles[0];
+        if (x >= s.x0 && x < s.x1 + 1 && y >= s.y0 && y < s.y1 + 1 && z >= s.z0 && z < s.z1 + 1) return { donjon: l[i], index: 0 };
+      }
+      return null;
+    }
+    /* Butin du trésor d'un donjon souterrain, tiré de sa position (déterministe, comme
+       MC.Donjons.butin) : une base de vivres et de fer, les richesses propres au biome. */
+    function butin(st, indice) {
+      var sd = (indice || 0) * 101;
+      function r() { sd++; return N.hash3(st.x * 7 + sd, st.y + sd * 13, st.z * 11 - sd); }
+      function entre(a, b) { return a + Math.floor(r() * (b - a + 1)); }
+      var l = [{ id: I.BREAD, n: entre(2, 4) }, { id: I.IRON_INGOT, n: entre(2, 5) }, { id: I.COAL, n: entre(3, 8) }];
+      (BUTIN_BIOME[st.biome] || BUTIN_BIOME.grotte).forEach(function (t) {
+        if (r() < t[3]) l.push({ id: t[0], n: entre(t[1], t[2]) });
+      });
+      return l;
+    }
+
+    return { deRegion: deRegion, dansZone: dansZone, appliquer: appliquer, structureA: structureA,
+             coffreA: coffreA, salleDe: salleDe, butin: butin };
   }
 
   MC.Souterrain = {

@@ -308,8 +308,21 @@
          seraient sinon perdus), donc désactivés ici. Cultures et feu, eux,
          avancent dans le tic et chaque bloc changé est diffusé (SPEC-SYNC-018/019,
          SPEC-ARCHI-034) : les clients n'en simulent plus rien. */
+      /* Le gel des eaux (SPEC-SAISON-005) épargne la case où nage un joueur ou
+         flotte une créature ou un véhicule : personne n'est emmuré dans la glace. */
+      const occupeParCorps = (x, y, z) => {
+        for (const { js } of tousLesJoueurs()) {
+          const st = js.joueur.state;
+          if (!st.dead && MC.Physics.boxOverlap(x + 0.5, y, z + 0.5, 1, 1, st.pos.x, st.pos.y, st.pos.z, 0.6, 1.8)) return true;
+        }
+        for (const en of entites.list) {
+          if (en.pos && en.type !== 'item' && en.type !== 'arrow' &&
+              MC.Physics.boxOverlap(x + 0.5, y, z + 0.5, 1, 1, en.pos.x, en.pos.y, en.pos.z, en.w || 0.6, en.h || 1)) return true;
+        }
+        return false;
+      };
       monde.tick(dt, 14, null, { temps: EP.heure, circuits: false, eau: false,
-        surBloc: noterBlocMonde });
+        surBloc: noterBlocMonde, occupe: occupeParCorps });
       diffuserBlocsMonde();
       if (profilTics) profilTics.section('monde.tick');
 
