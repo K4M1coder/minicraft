@@ -553,10 +553,10 @@
       var H = 4;
       var brut = corpsBrut(l, st, o, p, w, d, y0, etages);
       y0 = brut.y0; var haut = brut.haut;
-      var optsToit = null;
+      var optsToit = null, brutA = null, stA = st, pA = null;
       if (aile) {
-        var pA = function (u, v) { return p(u + aile.u0, v + d); };
-        var stA = st, pil = st.pilotis || 0;
+        pA = function (u, v) { return p(u + aile.u0, v + d); };
+        var pil = st.pilotis || 0;
         if (pil) {
           // sur pilotis, l'aile a ses quatre poteaux mais pas d'échelle propre
           stA = {}; for (var kA in st) stA[kA] = st[kA];
@@ -566,7 +566,7 @@
             for (var ya = y0 - pil; ya < y0 - 1; ya++) o.pose(qa[0], ya, qa[1], st.soubassement);
           });
         }
-        corpsBrut(l, stA, o, pA, aile.w, aile.d, y0, 1);
+        brutA = corpsBrut(l, stA, o, pA, aile.w, aile.d, y0, 1);
         // le passage : le mur du fond du corps et le mur avant de l'aile s'ouvrent
         var uP = aile.u0 + Math.floor(aile.w / 2);
         [[uP, d - 1], [uP, d]].forEach(function (c) {
@@ -595,6 +595,9 @@
       // un intérieur meublé selon la fonction du bâtiment (SPEC-INTERIEUR-001)
       meubler(o, p, w, d, y0, etages, type, rot || 0, etages > 1, st);
       toit(st, o, p, w, d, haut, optsToit);
+      /* plat, dôme, chapeau : ces toits sont des blocs pleins propres à chaque
+         volume (toitEnPente, lui, couvre l'aile par opts) — l'aile reçoit le sien */
+      if (aile && st.forme !== 'pignon' && st.forme !== 'raide') toit(stA, o, pA, aile.w, aile.d, brutA.haut, null);
       // la boîte du bâtiment couvre aussi l'aile d'un plan en L (lieu et bâtiment où l'on se trouve, dégâts)
       var c0 = p(0, 0), c1 = p(w - 1, d - 1 + (aile ? aile.d : 0));
       var bat = { type: type, nom: nom || BATIMENTS[type].nom, lieu: l.id,

@@ -154,6 +154,13 @@
       A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 1, inverse: false },
               function (dir) { return dir === 3 ? { orientation: 0, inverse: false } : null; }), F.DROIT,
               'l\'escalier voisin de même orientation à l\'ouest garde la rangée droite');
+      // même garde côté « avant » (angle intérieur) : la rangée qui continue vers le voisin avant l'empêche
+      A.equal(F.formeDepuisVoisins(0, false, { orientation: 1, inverse: false }, null,
+              function (dir) { return dir === 1 ? { orientation: 0, inverse: false } : null; }), F.DROIT,
+              'voisin avant : l\'escalier de même orientation à l\'est garde la rangée droite');
+      A.equal(F.formeDepuisVoisins(0, false, { orientation: 1, inverse: false }, null,
+              function (dir) { return dir === 3 ? { orientation: 0, inverse: false } : null; }), F.INT_D,
+              'voisin avant : une rangée du mauvais côté ne bloque pas l\'angle');
     });
 
     /* ── SPEC-CONSTR-003 : arêtiers et noues ─────────────────────────────────

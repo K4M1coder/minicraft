@@ -417,6 +417,22 @@
       A.equal(vue, 3, 'trois maisons en L contrôlées');
     });
 
+    it('SPEC-CONSTR-003 : l aile d une maison en L est couverte aussi sous les styles à toit plat, dôme ou chapeau', function () {
+      var plats = ['desert', 'badlands', 'pics_glaces', 'champignons'];
+      plats.forEach(function (sc) {
+        var vue = 0;
+        for (var rx = 0; rx < 60 && vue < 3; rx++) {
+          var l = monde().habitats.batirBatimentPourEssai('maison', sc, false, rx % 4, null, 1000 + rx * 7, 2000 + rx * 3, 9);
+          var b = l.batiments[0];
+          if (b.plan !== 'L') continue;
+          vue++;
+          var trous = colonnesDecouvertes(accesseurLieu(l), b);
+          A.equal(trous.length, 0, sc + ' : maison en L entièrement couverte, aile comprise (' + trous.slice(0, 4).join(' ') + ')');
+        }
+        A.gt(vue, 0, sc + ' : au moins une maison en L contrôlée');
+      });
+    });
+
     it('SPEC-INTERIEUR-001 : tout bâtiment généré est meublé selon sa fonction, et aucun n est creux', function () {
       var w = monde(), B = C.B, MEUBLES = [B.LIT, B.TABLE, B.CHAISE, B.ARMOIRE, B.ETAGERE, B.BIBLIOTHEQUE, B.TAPIS, B.LAMPE, B.VASE, B.PRESENTOIR, B.SOCLE, B.FOYER];
       // à ciel ouvert, sans intérieur : la place, le marché (étals), les loisirs (parc, fontaine, théâtre), le quai
@@ -485,6 +501,26 @@
       A.ok(!desert[B.FOYER] && desert[B.VASE], 'maison de grès : une jarre, pas de cheminée');
       A.ok(taiga[B.FOYER] && taiga[B.TAPIS] && !taiga[B.VASE], 'isba : cheminée et tapis de fourrure, pas de vase');
       A.ok(plaine[B.FOYER] && plaine[B.VASE], 'colombages : cheminée et vase');
+      // maisons-champignons (chapeau) : des lampes plutôt que des vases
+      var champi = mobilierMaisons('champignons');
+      A.ok(champi[B.LAMPE] && !champi[B.VASE], 'maison-champignon : des lampes, pas de vase');
+      // sous un climat froid, la cheminée remplace la lampe à l'étage (maison urbaine à étages)
+      function mobilierEtages(sc) {
+        var ids = {}, vues = 0;
+        for (var k = 0; k < 40 && vues < 3; k++) {
+          var l = monde().habitats.batirBatimentPourEssai('maison', sc, true, k % 4, null, 1000 + k * 11, 2000 + k * 5, 9);
+          var bat = l.batiments[0], acc = accesseurLieu(l);
+          if (!bat || !(bat.etages > 1)) continue;
+          vues++;
+          for (var x = bat.x0; x <= bat.x1; x++) for (var z = bat.z0; z <= bat.z1; z++) for (var y = bat.y0 + 4; y < bat.y0 + 4 * bat.etages; y++) ids[acc.getBlock(x, y, z)] = 1;
+        }
+        ids.vues = vues;
+        return ids;
+      }
+      var froid = mobilierEtages('taiga'), chaud = mobilierEtages('desert');
+      A.ok(froid.vues > 0 && chaud.vues > 0, 'des maisons à étages contrôlées');
+      A.ok(froid[B.FOYER] && !froid[B.LAMPE], 'étage sous climat froid : une cheminée à la place de la lampe');
+      A.ok(chaud[B.LAMPE] && !chaud[B.FOYER], 'étage sous climat chaud : la lampe, pas de cheminée');
       // un lit de maison occupe deux cases : pied et tête, orientés pareil
       var l0 = lieux(w, 'village', 3000)[0], acc0 = accesseurLieu(l0), lit = null;
       l0.blocs.forEach(function (arr) { for (var i = 0; i < arr.length && !lit; i += 5) if (arr[i + 3] === B.LIT && !MC.Formes.unpackMeuble(arr[i + 4]).variante) lit = [arr[i], arr[i + 1], arr[i + 2]]; });

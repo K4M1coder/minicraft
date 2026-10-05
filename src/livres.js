@@ -90,7 +90,10 @@
   function signer(livre, auteur) {
     if (!estModifiable(livre)) return livre;
     var nom = nettoyer(auteur || 'Anonyme', false).slice(0, MAX_AUTEUR) || 'Anonyme';
-    return Object.assign({}, livre, { auteur: nom, signe: true });
+    /* reborner après la signature : l'auteur compte dans la taille JSON (une
+       demi-paire de substitution isolée pèse 6 caractères échappée), et un
+       livre signé qui dépasserait DATA_MAX serait perdu par INV_MAJ. */
+    return borner(Object.assign({}, livre, { auteur: nom, signe: true }), false);
   }
 
   // ─── livres du monde (SPEC-INTERIEUR-003) ──────────────────────────────────

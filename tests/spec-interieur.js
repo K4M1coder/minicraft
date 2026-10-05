@@ -338,6 +338,19 @@
       A.deep(L.borner(null), { titre: '', pages: [''], auteur: null, signe: false }, 'borner : rien devient un livre vierge');
     });
 
+    it('SPEC-INTERIEUR-003 : un livre signé reste sous la borne même avec un auteur de demi-paires de substitution (6 caractères JSON chacune)', function () {
+      var Ct = MC.Conteneurs;
+      var ctx = { joueur: { inv: Inv.create(36) }, regles: {} };
+      ctx.joueur.inv.setAt(0, { id: I.LIVRE, n: 1 });
+      var pages = []; for (var i = 0; i < 8; i++) pages.push('"'.repeat(220));
+      var auteur = new Array(25).join(String.fromCharCode(0xd800)) + ' (joueur 2)';
+      Ct.appliquer(ctx, { k: 'ecrire', i: 0, titre: 'T', pages: pages, signer: true, auteur: auteur });
+      var d = ctx.joueur.inv.stackAt(0).data;
+      A.ok(d.signe && d.auteur, 'le livre est signé');
+      A.ok(JSON.stringify(d).length <= MC.ContratsV2.BORNES.DATA_MAX, 'JSON ' + JSON.stringify(d).length + ' <= ' + MC.ContratsV2.BORNES.DATA_MAX);
+      A.ok(MC.ContratsV2.validerPile(ctx.joueur.inv.stackAt(0)), 'la pile signée passe validerPile (INV_MAJ ne sera pas rejeté)');
+    });
+
     it('SPEC-INTERIEUR-003 : jetée puis ramassée, la pile garde son livre (data conservée)', function () {
       var w = G.flatWorld(9, B.STONE), ents = MC.createEntities(w);
       var livre = L.signer(L.ecrire(null, { titre: 'Voyage', pages: ['Page une'] }), 'Iris');

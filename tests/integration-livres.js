@@ -155,6 +155,39 @@ async function scenarioEcriture() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── écran partagé : signature « (joueur N) » et budget anti-flood par joueur local ──
+async function scenarioEcranPartage() {
+  const d = A.dossierTemp('mc-livres-ep-');
+  try {
+    const f = fichierMonde(d);
+    const env = { MC_TEST_INV: JSON.stringify([[I.LIVRE, 1], [I.LIVRE, 1]]) };
+    const s = await demarrer(args(f, d), env);
+    const { client: cl } = await rejoindre(s.port, 'Duo', 2);
+    await dodo(500);
+    const inv0 = (cl.dernier('inv_maj') && cl.dernier('inv_maj').inv) || null;
+    let seq = 0;
+    const iL = 0;
+    // le joueur local 2 (j=1) signe : « (joueur 2) » ajouté au nom de la connexion
+    const seqS = ++seq;
+    cl.envoyer({ t: 'livre_ecrire', j: 1, seq: seqS, i: iL, titre: 'Duo', pages: ['a', 'b'], signer: true });
+    const m = await cl.attendre('inv_maj', 3000, x => x.ack === seqS && x.j === 1);
+    const p = pile(m.inv[iL]);
+    ok(p && p.data && p.data.signe && p.data.auteur === 'Duo (joueur 2)', 'SPEC-INTERIEUR-003 : en écran partagé, le joueur local 2 signe « Duo (joueur 2) » (« ' + (p && p.data && p.data.auteur) + ' »)');
+    await dodo(1100);
+    // budget par joueur local : le joueur 1 épuise le sien, le joueur 2 garde le sien
+    const vu = cl.depuis(), seq0 = seq;
+    for (let k = 0; k < 20; k++) cl.envoyer({ t: 'livre_ecrire', j: 0, seq: ++seq, i: 1, titre: 'A' + k, pages: ['x'] });
+    const seqJ2 = [];
+    for (let k = 0; k < CA.BUDGETS_FLOOD.livre_ecrire; k++) { seqJ2.push(++seq); cl.envoyer({ t: 'livre_ecrire', j: 1, seq: seq, i: 1, titre: 'B' + k, pages: ['y'] }); }
+    await dodo(900);
+    const acks = vu('inv_maj').filter(x => x.ack > seq0);
+    const recusJ2 = acks.filter(x => x.j === 1 && seqJ2.indexOf(x.ack) >= 0).length;
+    eq(recusJ2, seqJ2.length, 'SPEC-INTERIEUR-003 : le budget anti-flood est par joueur local — le joueur 2 garde tout le sien quand le joueur 1 a épuisé le sien');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 // ── lire : la bibliothèque générée d'un lieu ────────────────────────────────
 function trouverBibliotheque() {
   const w = MC.createWorld(GRAINE);
@@ -199,10 +232,39 @@ async function scenarioBibliotheque() {
   await s.arreter();
 }
 
+// ── lire : le carnet dit quels donjons sont vaincus ─────────────────────────
+async function scenarioCarnetVaincu() {
+  const cible = trouverBibliotheque();
+  if (!cible) return;
+  const { bat, biblio, lieu } = cible;
+  const w = MC.createWorld(GRAINE);
+  const ids = w.donjons.dansZone(lieu.x - 200, lieu.z - 200, lieu.x + 200, lieu.z + 200).map(x => x.id);
+  ok(ids.length > 0, 'préparation : des donjons dans les environs de ' + lieu.nom);
+  const d = A.dossierTemp('mc-livres-v-');
+  try {
+    const f = path.join(d, 'monde.json');
+    fs.writeFileSync(f, JSON.stringify({ v: 2, graine: GRAINE, heure: 60, overrides: [], etats: [], crops: [], donjons: ids }));
+    const s = await demarrer(args(f, d), { MC_TEST_SPAWN: [bat.dedans.x, bat.y0 + 0.05, bat.dedans.z].join(',') });
+    const { client: cl } = await rejoindre(s.port, 'Lectrice', 1);
+    const cle = biblio.x + ',' + biblio.y + ',' + biblio.z;
+    let etat = null;
+    for (let k = 0; k < 40 && !etat; k++) {
+      cl.envoyer({ t: 'cont_ouvrir', j: 0, x: biblio.x, y: biblio.y, z: biblio.z });
+      etat = await cl.attendre('cont_etat', 500, x => x.cle === cle).catch(() => null);
+    }
+    const carnet = etat && etat.slots.map(pile).filter(Boolean).find(q => /^Carnet d'explorateur/.test(q.data.titre));
+    ok(!!carnet && carnet.data.pages.slice(1).some(pg => pg.indexOf('vaincu') >= 0), 'SPEC-INTERIEUR-003 : le carnet signale les donjons vaincus (vaincu lu côté serveur)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 (async () => {
   try {
     await scenarioEcriture();
+    await scenarioEcranPartage();
     await scenarioBibliotheque();
+    await scenarioCarnetVaincu();
   } catch (e) {
     ok(false, 'le scénario ne doit pas lever d\'exception', e && e.stack);
   } finally {
