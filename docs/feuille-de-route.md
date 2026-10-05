@@ -79,6 +79,56 @@ committer et pousser en détaché (`nohup`), surveiller avec un moniteur.
 - **Le visuel/confort en dernier** parmi les indépendants (son, options,
   diagnostics fins du banc, diaporamas).
 
+## Point de reprise — 2026-10-06 (travail mis en pause à la demande du propriétaire)
+
+**État** :  = v0.8.0 + mise à jour de PLAN/feuille (e8dbaa6), **non poussé** depuis la v0.8.0 (le push de 1427bed est passé ; e8dbaa6 reste local). Le workflow des quatre lots de fiches ⏳ a été arrêté ; plus aucun serveur ni navigateur de test ne tourne (l'Edge headless  appartient à VS Code). Quatre branches attendent dans  (verrouillées, rien n'est perdu) ; toutes sont rebasées sur e8dbaa6, **aucune n'est fusionnée ni poussée**.
+
+| Lot | Branche / worktree | Fiches visées | Où il en est | Reprise |
+|---|---|---|---|---|
+| presentoirs |  ·  (3 commits + modifications non commitées, copie : ) | SYNC-027, ARCHI-043, ARCHI-044, INTERIEUR-003 (pose d'un livre sur un présentoir) | implémenté, revue adversariale faite (défaut majeur : le texte des fiches ARCHI-043/044 décrit encore le comportement « refusé » supprimé par le lot) ; corrections en cours, non commitées (save.js migration des objets exposés, tests, **reformulation de SPECS.md ARCHI-043/044**) | **le texte des fiches ARCHI-043/044 ne peut être changé qu'avec l'accord du propriétaire** : lui soumettre la reformulation (git diff -- SPECS.md dans le worktree) avant de commiter ; puis terminer les corrections, [1mPortes de qualité[0m
+  [32m✓[0m [1mG1[0m Toute spec déclarée est citée par au moins un test
+      [2m711 specs couvertes, 59 planifiées[0m
+  [32m✓[0m [1mG2[0m Tout identifiant cité par un test existe dans SPECS.md
+      [2m727 identifiants valides[0m
+  [32m✓[0m [1mG3[0m 100 % des tests Node passent
+      [2m1664/1664[0m
+  [32m✓[0m [1mG4[0m Tous les fichiers de src/ sont syntaxiquement valides
+      [2m98 fichiers[0m
+  [32m✓[0m [1mG5[0m Aucun module pur ne référence THREE, document ou window
+      [2m86 modules purs vérifiés[0m
+  [32m✓[0m [1mG6[0m Toute fonction exportée d'un module pur est citée par un test
+      [2msurface publique couverte[0m
+  [32m✓[0m [1mG10[0m La version suit le versionnage sémantique et le journal la publie
+      [2mversion 0.8.0 (CHANGELOG.md)[0m
+  [32m✓[0m [1mG11[0m Les crochets git encadrent commits et versions
+      [2mcommit-msg et pre-commit actifs, règle du cran vérifiée[0m
+  [32m✓[0m [1mG12[0m La génération et le maillage restent sous le budget de tests/budget-perf.json
+      [2mbench-generation.js : moyenne 36.21 ms, p95 35.08 ms ; bench-maillage.js : moyenne 44.48 ms, p95 64.67 ms[0m
+  [32m✓[0m [1mG13[0m Les crochets citent un préréglage existant et non vide, pre-commit au périmètre, pre-push et pre-merge-commit en suite complète (SPEC-BANC-006, 075)
+      [2mpre-commit→commit au périmètre, pre-push et pre-merge-commit→pr en entier ; périmètre de src/mesher.js : 427 test(s), 1207 exclu(s)[0m
+  [32m✓[0m [1mG14[0m 100 % des tests ont une fiche (SPEC-BANC-002) et au moins un domaine ou une fonction, déclarée ou observée (SPEC-BANC-066)
+      [2m100 % des tests ont une fiche, un domaine ou une fonction (déclarée ou observée)[0m
+  [32m✓[0m [1mG15[0m Chaque test e2e du cahier produit ≥ 2 captures réelles, début et fin (SPEC-BANC-026/027)
+      [2m5 test(s) e2e, tous ≥ 2 captures (319 Ko de captures pour ce cahier)[0m
+  [32m✓[0m [1mG16[0m Aucun console.* direct dans src/ et server.js hors de src/journal.js (SPEC-BANC-110)
+      [2m98 fichiers vérifiés, tout passe par MC.Journal[0m
+
+  [2mportes manuelles (à vérifier dans le navigateur) :[0m
+  [33m○[0m [1mG7[0m 100 % des tests end-to-end passent [2m— ouvrir tests/index.html[0m
+  [33m○[0m [1mG8[0m Aucune erreur console au chargement [2m— ouvrir index.html[0m
+  [33m○[0m [1mG9[0m ≥ 55 images/s, écran partagé compris [2m— mesure dans les tests e2e[0m
+
+[32mToutes les portes automatiques sont vertes[0m + , commit, fusion |
+| divers |  ·  (5 commits, propre) | ENV-005, SAVE-017, LIMITE-007, PACK-001 | implémenté, revue faite, corrections commitées (5dcb47f) | vérifier les portes sur la tête, fusion ff, push ; dire clairement ce que PACK-001 ne prouve pas hors Windows |
+| banc-a |  ·  (4 commits, propre) | BANC-004, 006, 029, 034, 039, 041 à 058 | implémenté, revue faite, corrections commitées (4953486) ; 058 reste ✅ | portes sur la tête, fusion ff (rebaser sur banc-b au besoin, union des conflits), push |
+| banc-b |  ·  (5 commits + modifications non commitées, copie : ) | BANC-063, 064, 065, 080, 082, 084, 092 à 103, 111 à 116 | implémenté, revue faite (défauts : BANC-114 « ignoré avec raison » non tenue mot à mot, BANC-064 règle de répétition non prouvée) ; corrections en cours, non commitées (tests/run.js, tools/historiser.js, 2 tests) | terminer les corrections, portes + , commit, fusion |
+
+**Ordre de reprise** : (1) diviser la machine : un seul agent à la fois sur la suite complète ; (2) divers → banc-a → banc-b → presentoirs, chacun : portes, rebase sur master, fusion , une seule poussée à la fin ; (3)  puis  (v0.9.0 attendue) ; (4) lots de la Phase 7 ci-dessous.
+
+**Décisions du propriétaire déjà prises** : FACTION-007 reste ✅ ; INTERIEUR-003 reste ⏳ jusqu'à la livraison du lot presentoirs ; SOUTERRAIN-003 est ⏳ (boss + coffre regarni, ligne 7.2) ; tâches 7.1 à 7.6 ouvertes ; pas d'état ◐ pour les fiches, pas de porte d'audit « ✅ avec reste » (idée gardée pour plus tard) ; branche  (4 commits probablement dépassés par le découpage livré) conservée en attendant sa décision.
+
+**Pièges connus** : la machine se charge vite (4 agents en parallèle ⇒ tests lents, faux échecs) ;  avant chaque fusion ff ; le catch-up politique est borné à un jour par entretien et la première catastrophe met ≈ 8,6 s à être annoncée (bornes d'attente des tests élargies) ; pas de , aucune ligne Co-Authored-By, e-mail .
+
 ## Table d'avancement
 
 Légende : ☐ à faire · ◐ en cours · ☑ fait. Les numéros renvoient à `PLAN.md`.
