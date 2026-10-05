@@ -296,7 +296,7 @@ Ces deux commandes, comme toute commande, sont aussi accessibles en suffixe :
 `/duel help` (ou `aide`) affiche l'aide sans rien exécuter. Pour mémoire : `/help`
 (ou `/aide`) `/heure` `/jour` `/nuit` `/ou` (alias `/pos`) `/graine` `/vider` `/meteo`
 `/succes` `/rendu [realiste|simple]` `/rejoindre [adresse]` `/quitter` `/qui`,
-`/faction …`, `/duel …` et `/admin …` pour un administrateur ou un modérateur
+`/faction …`, `/duel …`, `/quete [lister|accepter <id>|remettre <id>]` et `/admin …` pour un administrateur ou un modérateur
 connecté. Un joueur nommé « help » ou « aide » ne peut donc pas être défié par
 `/duel` (et un hôte ainsi nommé se joint par son adresse complète). `/jour` et `/nuit`
 sont des demandes au serveur : elles n'aboutissent qu'en mode créatif ou pour un

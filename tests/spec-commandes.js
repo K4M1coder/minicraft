@@ -346,9 +346,62 @@
       var a = jeu.indexOf('var ACTIONS_COMMANDE');
       var table = jeu.slice(a, jeu.indexOf('};', a));
       A.ok(!/\b(help|list|aide)\b/.test(table), 'ACTIONS_COMMANDE n\'a pas de gestionnaire d\'aide');
-      A.ok(/net\.envoyerChat\('\/faction '/.test(jeu) && /net\.envoyerChat\('\/duel '/.test(jeu), 'seules les actions faction et duel sont relayées');
+      A.ok(/net\.envoyerChat\('\/faction '/.test(jeu) && /net\.envoyerChat\('\/duel '/.test(jeu), 'seules les actions faction, duel et quete sont relayées');
       A.ok(!/\^\\\/(help|list|aide|liste|commandes)/.test(serveur), 'le serveur n\'intercepte ni /help ni /list');
       A.ok(!/case 'help'|case 'list'/.test(jeu) && !/case 'help'|case 'list'/.test(serveur), 'aucun case help ou list hors de commandes.js');
+    });
+
+    it('SPEC-CMD-002 : /quete, arbitrée par le serveur, figure au registre, à /list et à l\'aide (liste exhaustive)', function () {
+      var l = Cmd.executer(cmd('/list'), {});
+      A.equal(l.messages[0].indexOf(Cmd.REGISTRE.length + ' commandes'), 0, 'l\'en-tête compte toutes les commandes');
+      A.ok(l.messages.some(function (m) { return m.indexOf('/quete') === 0 && m.indexOf('[en ligne]') > 0; }), '/list contient /quete [en ligne]');
+      ['/help quete', '/quete help', '/AIDE /Quete'].forEach(function (t) {
+        var r = Cmd.executer(cmd(t), {});
+        A.ok(r.messages[0].indexOf('Usage : /quete') === 0, t + ' : ' + r.messages[0]);
+        A.equal(r.actions.length, 0, t + ' : aucune action');
+        A.ok(r.messages.filter(function (m) { return m.indexOf('Sous-commande : ') === 0; }).length === 3, t + ' : trois sous-commandes');
+      });
+      A.ok(Cmd.aide().indexOf('/quete') >= 0, 'aide() cite /quete');
+    });
+
+    it('SPEC-CMD-002 : /quete relaie au serveur (action quete avec le texte brut), le serveur reste arbitre', function () {
+      var r = Cmd.executer(cmd('/quete accepter ferme:0'), {});
+      A.equal(r.actions.length, 1);
+      A.equal(r.actions[0].type, 'quete');
+      A.equal(r.actions[0].brut, 'accepter ferme:0');
+      A.equal(Cmd.executer(cmd('/quete'), {}).actions[0].action, 'lister', '/quete seul = lister');
+      var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
+      A.ok(/net\.envoyerChat\('\/quete '/.test(jeu) && /quete: actionCommandeQuete/.test(jeu), 'game.js relaie /quete');
+    });
+
+    it('SPEC-CMD-005 : toute commande interceptée par le serveur (chat) figure au registre', function () {
+      var serveur = require('./source-serveur.js').sourceServeur(RACINE);
+      var vus = [];
+      serveur.replace(/\/\^\\\/([a-z]+)\(\\s\|\$\)\//g, function (_, n) { vus.push(n); return ''; });
+      A.ok(vus.indexOf('quete') >= 0 && vus.indexOf('duel') >= 0 && vus.indexOf('faction') >= 0, 'le motif trouve les commandes serveur : ' + vus.join(','));
+      vus.forEach(function (n) { A.ok(Cmd.REGISTRE.some(function (c) { return c.nom === n; }), '/' + n + ' (serveur) est au registre'); });
+    });
+
+    it('SPEC-CMD-003 : les réponses multi-lignes tiennent à l\'écran (recentsLot rend toute la série système, plafonnée)', function () {
+      var chat = Chat.creer();
+      chat.envoyer('Bob', 'salut');
+      Cmd.executer(cmd('/list'), {}).messages.forEach(function (m) { chat.systeme(m); });
+      var n = Cmd.REGISTRE.length + 1;
+      A.equal(chat.recents(8).length, 8, 'recents(8) tronque');
+      var lot = chat.recentsLot(8, 24);
+      A.equal(lot.length, n, 'recentsLot rend l\'en-tête et toutes les commandes');
+      A.ok(lot[0].texte.indexOf(' commandes') > 0, 'le lot commence à l\'en-tête');
+      var c2 = Chat.creer();
+      for (var i = 0; i < 40; i++) c2.systeme('l' + i);
+      A.equal(c2.recentsLot(8, 24).length, 24, 'plafonné');
+      var c3 = Chat.creer(); c3.systeme('a'); c3.envoyer('X', 'b');
+      A.equal(c3.recentsLot(8, 24).length, 2, 'court : tout');
+      ['admin', 'faction', 'duel', 'quete'].forEach(function (nm) {
+        A.ok(Cmd.executer(cmd('/help ' + nm), {}).messages.length <= 24, '/help ' + nm + ' tient dans le plafond');
+      });
+      A.ok(n <= 24, 'la liste complète tient dans le plafond d\'affichage');
+      var ui = fs.readFileSync(path.join(RACINE, 'src', 'ui.js'), 'utf8');
+      A.ok(/chat\.recentsLot\(8, 24\)/.test(ui), 'ui.js affiche le lot complet');
     });
 
     it('SPEC-CMD-005 : dans un bloc de commande, /list et /help ne laissent aucun effet (client et serveur ne retiennent que les actions)', function () {

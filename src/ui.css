@@ -246,6 +246,8 @@
   .chat.actif { pointer-events: auto; }
   .chat-log { display: flex; flex-direction: column; gap: 2px; max-height: 168px;
               overflow: hidden; transition: opacity .2s; }
+  .chat-log.lot { max-height: min(66vh, 460px); overflow-y: auto; }
+  .chat.actif .chat-log { pointer-events: auto; }
   .chat-log .ln { background: rgba(10,12,16,.62); border-radius: 4px; padding: 2px 7px;
                   font-size: 12px; align-self: flex-start; max-width: 100%;
                   word-break: break-word; }

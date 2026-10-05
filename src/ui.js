@@ -698,13 +698,16 @@
 
       if (dernier !== dernierChatId) {
         dernierChatId = dernier;
-        chatLog.innerHTML = chat.recents(8).map(function (m) {
+        var lot = chat.recentsLot(8, 24);
+        chatLog.classList.toggle('lot', lot.length > 8);
+        chatLog.innerHTML = lot.map(function (m) {
           var corps = C_Chat.echapper(m.texte);
           return m.type === 'systeme'
             ? '<div class="ln sys">' + corps + '</div>'
             : '<div class="ln"><b>' + C_Chat.echapper(m.auteur || '?') + '</b> ' + corps + '</div>';
         }).join('');
-        chatLog.scrollTop = chatLog.scrollHeight;
+        /* une longue réponse (/list, /help) se lit depuis son début ; sinon, le bas */
+        chatLog.scrollTop = lot.length > 8 ? 0 : chatLog.scrollHeight;
       }
       if (chat.enSaisie !== dernierEnSaisie) {
         dernierEnSaisie = chat.enSaisie;

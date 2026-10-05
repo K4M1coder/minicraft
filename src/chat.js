@@ -79,6 +79,16 @@
       return etat.messages.slice(k);
     }
 
+    /* Les `base` derniers messages, étendus à toute la réponse système qui les
+       termine (série ininterrompue de messages système, plafonnée à `plafond`) :
+       une réponse multi-lignes (/list, /help) s'affiche en entier. */
+    function recentsLot(base, plafond) {
+      base = base || 8; plafond = Math.max(base, plafond || 24);
+      var m = etat.messages, k = 0;
+      while (k < plafond && k < m.length && m[m.length - 1 - k].type === 'systeme') k++;
+      return recents(Math.max(base, k));
+    }
+
     // ─── saisie ──────────────────────────────────────────────────────────────
     function ouvrir() { etat.enSaisie = true; etat.saisie = ''; etat.nonLus = 0; return true; }
     function fermer() { etat.enSaisie = false; etat.saisie = ''; return true; }
@@ -101,7 +111,7 @@
       get nonLus() { return etat.nonLus; },
       get saisie() { return etat.saisie; },
       set saisie(v) { etat.saisie = String(v === null || v === undefined ? '' : v); },
-      envoyer: envoyer, systeme: systeme, recevoir: recevoir, recents: recents,
+      envoyer: envoyer, systeme: systeme, recevoir: recevoir, recents: recents, recentsLot: recentsLot,
       ouvrir: ouvrir, fermer: fermer, annuler: annuler, valider: valider,
       bloqueEntrees: bloqueEntrees,
       marquerLu: function () { etat.nonLus = 0; },

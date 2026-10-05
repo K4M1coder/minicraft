@@ -2657,10 +2657,12 @@
        serveur, qui répond lui-même (y compris par un refus motivé s'il n'y a
        personne à défier). */
     function actionCommandeDuel(a) { net.envoyerChat('/duel ' + (a.brut || '')); }
+    /* SPEC-QUETE-004 : le serveur reste seul arbitre des quêtes. */
+    function actionCommandeQuete(a) { net.envoyerChat('/quete ' + (a.brut || '')); }
     var ACTIONS_COMMANDE = {
       heure: actionCommandeHeure, vider: actionCommandeVider, rejoindre: actionCommandeRejoindre,
       quitter: actionCommandeQuitter, rendu: actionCommandeRendu, faction: actionCommandeFaction,
-      admin: actionCommandeAdmin, duel: actionCommandeDuel,
+      admin: actionCommandeAdmin, duel: actionCommandeDuel, quete: actionCommandeQuete,
     };
     function appliquerActionCommande(a) {
       if (a && Object.prototype.hasOwnProperty.call(ACTIONS_COMMANDE, a.type)) ACTIONS_COMMANDE[a.type](a);

@@ -118,6 +118,14 @@
         '/duel accepter — accepter le défi reçu',
         '/duel refuser — refuser le défi reçu'],
       exemples: ['/duel Alice', '/duel accepter'], disponibilite: 'en ligne' },
+    { nom: 'quete', alias: [], usage: '/quete [lister]|accepter <id>|remettre <id>',
+      resume: 'Quêtes proposées par le serveur',
+      details: 'Liste les quêtes proposées et en cours, en accepte une ou la remet. Le serveur arbitre seul ; sa réponse arrive dans le chat.',
+      sousCommandes: [
+        '/quete lister — quêtes proposées et en cours (par défaut)',
+        '/quete accepter <id> — accepter une quête proposée',
+        '/quete remettre <id> — remettre une quête dont l\'objectif est atteint'],
+      exemples: ['/quete lister', '/quete accepter ferme:0'], disponibilite: 'en ligne' },
   ];
 
   var LISTE = REGISTRE.map(function (c) { return c.nom; });
@@ -305,6 +313,12 @@
     return action('Duel proposé à ' + args[0] + '…', { type: 'duel', action: 'proposer', args: { nom: args[0] } });
   }
 
+  /* Quêtes (SPEC-QUETE-004) : comme /duel, la commande ne décide rien — elle
+     traduit en une action que game.js relaie au serveur, seul arbitre. */
+  function quete(args) {
+    return action('', { type: 'quete', action: (args[0] || 'lister').toLowerCase(), args: {}, brut: args.join(' ') });
+  }
+
   function executer(cmd, ctx) {
     ctx = ctx || {};
     if (!cmd || !cmd.nom) return msg('Commande inconnue.');
@@ -387,6 +401,8 @@
         return faction(cmd.args || []);
       case 'duel':
         return duel(cmd.args || []);
+      case 'quete':
+        return quete(cmd.args || []);
       default:
         return msg(inconnue(cmd.nom));
     }
