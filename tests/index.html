@@ -38,6 +38,19 @@
         <button id="btn-perimetre" type="button">Aperçu</button>
       </div>
       <div id="perimetre-apercu" class="perimetre-apercu" hidden></div>
+      <!-- SPEC-BANC-065 : la sélection se regroupe par catégorie, domaine, spec, fonction ou étiquette -->
+      <div class="sel-ligne" id="regroupement-ligne">
+        <label>Regrouper par
+          <select id="regrouper">
+            <option value="">type › domaine › groupe</option>
+            <option value="categorie">catégorie</option>
+            <option value="domaine">domaine</option>
+            <option value="spec">spec</option>
+            <option value="fonction">fonction</option>
+            <option value="etiquette">étiquette</option>
+          </select>
+        </label>
+      </div>
       <div id="arbre" class="arbre"></div>
       <div class="sel-bar">
         <span id="compteur">0 test(s) retenu(s)</span>
@@ -91,6 +104,7 @@
         <button type="button" id="hist-colonnes-btn">Colonnes ▾</button>
         <div id="hist-colonnes-menu" class="hist-menu" hidden></div>
       </div>
+      <button type="button" id="hist-repartition-btn">Répartition</button>
       <button type="button" id="hist-export-csv">Export CSV</button>
       <button type="button" id="hist-export-html">Export HTML</button>
       <button type="button" id="hist-fermer">Fermer ✕</button>
@@ -100,6 +114,8 @@
     <div class="hist-table-wrap">
       <table id="hist-table"><thead><tr></tr></thead><tbody></tbody></table>
     </div>
+    <!-- Répartition de la vue filtrée par dimension (SPEC-BANC-064) -->
+    <div id="hist-repartition" hidden></div>
     <!-- panneau « test » (SPEC-BANC-039/121) : tous les passages d'un test -->
     <div id="hist-panneau-test" hidden></div>
     <div class="hist-pagination">

@@ -309,6 +309,48 @@
     return null;
   }
 
+  // ── SPEC-BANC-065 : regrouper la sélection ───────────────────────────────
+  /* Regroupe les tests du catalogue par catégorie (type), domaine, spec,
+     fonction ou étiquette, avec les effectifs : [{ valeur, effectif, tests }],
+     triés par effectif décroissant puis par nom. Un test compte dans CHACUNE
+     de ses valeurs (comme les colonnes-listes de l'historique, SPEC-BANC-063) ;
+     un test sans valeur tombe dans « — ». `fonctionsObservees` (facultatif) :
+     { 'MC.Mesher.tileOrigin': [clé de test, …] } — la carte d'impact
+     (tests/registre/impact.json, SPEC-BANC-067) — complète les fonctions
+     DÉCLARÉES de la fiche : cocher un groupe de fonction sélectionne ainsi
+     exactement les tests qui la déclarent OU l'ont observée. */
+  var DIMENSIONS_GROUPE = ['categorie', 'domaine', 'spec', 'fonction', 'etiquette'];
+  function regrouper(catalogue, dimension, fonctionsObservees) {
+    if (DIMENSIONS_GROUPE.indexOf(dimension) < 0) return [];
+    var parCle = Object.create(null);
+    if (dimension === 'fonction' && fonctionsObservees) {
+      Object.keys(fonctionsObservees).forEach(function (f) {
+        (fonctionsObservees[f] || []).forEach(function (cle) { (parCle[cle] = parCle[cle] || []).push(f); });
+      });
+    }
+    var groupes = Object.create(null), ordre = [];
+    (catalogue || []).forEach(function (t) {
+      var valeurs;
+      if (dimension === 'categorie') valeurs = [t.type];
+      else if (dimension === 'domaine') valeurs = t.domaines || [];
+      else if (dimension === 'spec') valeurs = t.specs || [];
+      else if (dimension === 'etiquette') valeurs = t.etiquettes || [];
+      else valeurs = (t.fonctions || []).concat(parCle[t.cle] || []);
+      var vues = Object.create(null), propres = [];
+      valeurs.forEach(function (v) { if (v !== undefined && v !== null && v !== '' && !vues[v]) { vues[v] = true; propres.push(String(v)); } });
+      if (!propres.length) propres = ['—'];
+      propres.forEach(function (v) {
+        if (!groupes[v]) { groupes[v] = { valeur: v, effectif: 0, tests: [] }; ordre.push(v); }
+        groupes[v].effectif++; groupes[v].tests.push(t);
+      });
+    });
+    return ordre.map(function (v) { return groupes[v]; }).sort(function (a, b) {
+      if (a.valeur === '—') return 1;
+      if (b.valeur === '—') return -1;
+      return b.effectif - a.effectif || (a.valeur < b.valeur ? -1 : a.valeur > b.valeur ? 1 : 0);
+    });
+  }
+
   // ── indexSpecs : lecture de SPECS.md ────────────────────────────────────
   function indexSpecs(texte) {
     var out = {};
@@ -326,6 +368,8 @@
   MC_TESTS.preset = preset;
   MC_TESTS.indexSpecs = indexSpecs;
   MC_TESTS.cleTest = cleTest;
+  MC_TESTS.regrouper = regrouper;
+  MC_TESTS.DIMENSIONS_GROUPE = DIMENSIONS_GROUPE;
   Object.defineProperty(MC_TESTS, 'PRESETS', {
     get: function () { return (G.MC_PRESETS || []); }, configurable: true,
   });

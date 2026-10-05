@@ -272,7 +272,8 @@
       return true;
     }
     let exportHistoriqueEnCours = false;
-    const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/matrice', '/tests/historique/export'];
+  const ROUTES_HISTORIQUE = ['/tests/historique/lignes', '/tests/historique/series', '/tests/historique/images', '/tests/historique/tests', '/tests/historique/matrice', '/tests/historique/export',
+      '/tests/historique/repartition', '/tests/historique/fonctions'];
     function traiterHistorique(req, res) {
       const url = req.url.split('?')[0];
       if (ROUTES_HISTORIQUE.indexOf(url) < 0) return false;
@@ -298,7 +299,30 @@
       if (!filtre || typeof filtre !== 'object' || Array.isArray(filtre)) { repondreJSON(res, 400, { ok: false, motif: 'filtre : un objet JSON est attendu' }); return true; }
       if (q.rapide) filtre = Object.assign({}, HIST.filtreRapide(q.rapide), filtre);
 
+      /* GET /tests/historique/fonctions (SPEC-BANC-065) : fonction → clés des
+         tests qui la déclarent ou l'ont observée, d'après la carte d'impact
+         (tests/registre/impact.json, SPEC-BANC-067). La sélection du banc s'en
+         sert pour regrouper par fonction : le catalogue du navigateur ne
+         connaît que les fonctions déclarées. Sans carte valide : objet vide. */
+      if (url === '/tests/historique/fonctions') {
+        const carte = require('./tools/perimetre.js').lireCarte();
+        const fonctions = {};
+        if (carte) Object.keys(carte.fonctions).forEach((f) => { fonctions[f] = carte.fonctions[f].map(id => carte.tests[id]); });
+        repondreJSON(res, 200, { ok: true, commit: carte ? carte.commit : null, fonctions });
+        return true;
+      }
+
       const toutes = obtenirIndiceHistorique().lignes();
+
+      /* GET /tests/historique/repartition?dimension=<d> (SPEC-BANC-064) : le
+         tableau de répartition de la vue filtrée courante — mêmes filtres que
+         /lignes, comptes par état et durée cumulée par valeur de la dimension. */
+      if (url === '/tests/historique/repartition') {
+        const REP = require('./tools/repartition.js');
+        if (!REP.estDimension(q.dimension)) { repondreJSON(res, 400, { ok: false, motif: 'dimension inconnue : catégorie, domaine, spec, fonction, étiquette ou raison' }); return true; }
+        repondreJSON(res, 200, Object.assign({ ok: true }, REP.repartition(HIST.filtrerLignes(toutes, filtre), q.dimension)));
+        return true;
+      }
 
       if (url === '/tests/historique/tests') {
         repondreJSON(res, 200, { tests: HIST.testsConnus(HIST.filtrerLignes(toutes, filtre)) });

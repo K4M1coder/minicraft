@@ -134,6 +134,7 @@
       seuilLent: document.getElementById('seuil-lent'),
       arbre: document.getElementById('arbre'),
       recherche: document.getElementById('recherche'),
+      regrouper: document.getElementById('regrouper'),
       presets: document.getElementById('presets'),
       compteur: document.getElementById('compteur'),
       btnLancer: document.getElementById('btn-lancer'),
@@ -150,6 +151,8 @@
       connusParCle: Object.create(null), // tests connus de l'historique (SPEC-BANC-118)
       connusParNom: Object.create(null),
       cochees: Object.create(null),   // cle -> true (SPEC-BANC-119)
+      regroupement: '',               // '' : type › domaine › groupe ; sinon dimension de MC_TESTS.regrouper (SPEC-BANC-065)
+      fonctionsObservees: null,       // fonction → clés des tests qui l'ont observée (carte d'impact)
       lignesParId: Object.create(null),
       resultats: [],                   // résultats accumulés de la campagne en cours
       enCours: false,
@@ -212,7 +215,35 @@
     construirePanneauDebug();
 
     // ── catalogue et menu de sélection (SPEC-BANC-007) ─────────────────────
+    /* SPEC-BANC-065 : la sélection regroupée par catégorie, domaine, spec,
+       fonction ou étiquette, avec les effectifs. Cocher un groupe coche tous
+       ses tests (donc, pour une fonction, ceux qui la déclarent ou l'ont
+       observée) ; un test présent dans plusieurs groupes y reste synchronisé. */
+    function construireArbreRegroupe() {
+      refs.arbre.innerHTML = '';
+      G.MC_TESTS.regrouper(etat.catalogue, etat.regroupement, etat.fonctionsObservees).forEach(function (gr) {
+        var cases = [];
+        var ul = el('ul', { class: 'niveau-test' });
+        gr.tests.forEach(function (t) { ul.appendChild(feuilleTest(t, [cases])); });
+        refs.arbre.appendChild(el('details', { 'data-groupe': gr.valeur }, [
+          el('summary', {}, [caseACocher(function (v) { basculerGroupe(cases, v); }, cases, gr.valeur + ' (' + gr.effectif + ')')]),
+          ul,
+        ]));
+      });
+    }
+    function changerRegroupement(dimension) {
+      etat.regroupement = dimension || '';
+      if (etat.regroupement !== 'fonction' || etat.fonctionsObservees) { construireArbre(); appliquerRecherche(); return Promise.resolve(); }
+      // les fonctions OBSERVÉES viennent de la carte d'impact, servie par le banc ;
+      // sans elle (route absente, carte invalide), les fonctions déclarées suffisent
+      return fetch('/tests/historique/fonctions').then(function (r) { return r.ok ? r.json() : null; }).then(function (j) {
+        etat.fonctionsObservees = (j && j.fonctions) || {};
+      }, function () { etat.fonctionsObservees = {}; }).then(function () { construireArbre(); appliquerRecherche(); });
+    }
+    refs.regrouper.addEventListener('change', function () { changerRegroupement(refs.regrouper.value); });
+
     function construireArbre() {
+      if (etat.regroupement) { construireArbreRegroupe(); return; }
       var parType = Object.create(null);
       etat.catalogue.forEach(function (t) {
         parType[t.type] = parType[t.type] || Object.create(null);
@@ -244,31 +275,7 @@
             var tests = parType[type][dom][groupe];
             var casesGroupe = [];
             var ulTests = el('ul', { class: 'niveau-test' });
-            tests.forEach(function (t) {
-              var cb = el('input', { type: 'checkbox' });
-              var enfants = [cb, el('span', {}, [' ' + t.nom])];
-              if (t.horsNavigateur) {
-                // SPEC-BANC-118 : connu de l'historique mais pas lançable ici
-                // (intégration, fichier Node seulement, test disparu du
-                // catalogue courant) — visible, consultable, jamais coché
-                cb.disabled = true;
-                enfants.push(el('span', { class: 't-hors' }, [' — hors de ce banc (node tests/run.js)']));
-              } else {
-                cb.checked = !!etat.cochees[cleDe(t)];
-                cb.addEventListener('change', function () { basculerTest(t, cb.checked); });
-                casesGroupe.push(cb); casesDom.push(cb); casesType.push(cb);
-              }
-              var connu = etat.connusParCle[cleHistorique(t)];
-              if (connu) {
-                var d = connu.dernier || {};
-                enfants.push(el('button', { type: 'button', class: 't-hist' + (d.etat === 'echec' ? ' t-etat-echec' : ''),
-                  title: 'Historique de ce test : ' + connu.runs + ' passage(s), dernier ' + (d.etat || '?') + ' le ' + String(d.debut_run || '').slice(0, 10),
-                  onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); ouvrirHistoriqueTest(t); } },
-                  ['historique (' + connu.runs + ')']));
-              }
-              var li = el('li', { class: 't-feuille', title: (t.fiche && t.fiche.teste) || '' }, enfants);
-              ulTests.appendChild(li);
-            });
+            tests.forEach(function (t) { ulTests.appendChild(feuilleTest(t, [casesGroupe, casesDom, casesType])); });
             var liGroupe = el('li', {}, [
               el('details', {}, [
                 el('summary', {}, [caseACocher(function (v) { basculerGroupe(casesGroupe, v); }, casesGroupe, groupe + ' (' + tests.length + ')')]),
@@ -287,6 +294,33 @@
         return n;
       }
     }
+    /* Une ligne de test de l'arbre (case, historique) ; sa case rejoint chacune
+       des listes de cases des niveaux qui la contiennent. */
+    function feuilleTest(t, listesCases) {
+      var cb = el('input', { type: 'checkbox' });
+      var enfants = [cb, el('span', {}, [' ' + t.nom])];
+      if (t.horsNavigateur) {
+        // SPEC-BANC-118 : connu de l'historique mais pas lançable ici
+        // (intégration, fichier Node seulement, test disparu du
+        // catalogue courant) — visible, consultable, jamais coché
+        cb.disabled = true;
+        enfants.push(el('span', { class: 't-hors' }, [' — hors de ce banc (node tests/run.js)']));
+      } else {
+        cb.checked = !!etat.cochees[cleDe(t)];
+        cb.setAttribute('data-cle', cleDe(t));
+        cb.addEventListener('change', function () { basculerTest(t, cb.checked); });
+        listesCases.forEach(function (l) { l.push(cb); });
+      }
+      var connu = etat.connusParCle[cleHistorique(t)];
+      if (connu) {
+        var d = connu.dernier || {};
+        enfants.push(el('button', { type: 'button', class: 't-hist' + (d.etat === 'echec' ? ' t-etat-echec' : ''),
+          title: 'Historique de ce test : ' + connu.runs + ' passage(s), dernier ' + (d.etat || '?') + ' le ' + String(d.debut_run || '').slice(0, 10),
+          onclick: function (ev) { ev.preventDefault(); ev.stopPropagation(); ouvrirHistoriqueTest(t); } },
+          ['historique (' + connu.runs + ')']));
+      }
+      return el('li', { class: 't-feuille', title: (t.fiche && t.fiche.teste) || '' }, enfants);
+    }
     function caseACocher(onChange, casesLiees, libelle) {
       var cb = el('input', { type: 'checkbox' });
       cb.addEventListener('change', function () { onChange(cb.checked); });
@@ -297,6 +331,10 @@
     }
     function basculerTest(t, coche) {
       if (coche) etat.cochees[cleDe(t)] = true; else delete etat.cochees[cleDe(t)];
+      // le même test sous un autre groupe (regroupement par domaine, fonction…) suit
+      Array.prototype.forEach.call(refs.arbre.querySelectorAll('input[data-cle]'), function (c) {
+        if (c.getAttribute('data-cle') === cleDe(t) && c.checked !== coche) c.checked = coche;
+      });
       majCompteur();
     }
     /* SPEC-BANC-119 : tout ce qui désigne UN test dans cette page (case
@@ -981,7 +1019,7 @@
        le menu de sélection doit se refermer dès qu'on clique « Lancer », pas
        seulement à l'ouverture d'un test — vérifiable sans dépendre de la
        structure interne au-delà de ces quelques références. */
-    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois, afficherLienRapport: afficherLienRapport };
+  window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois, afficherLienRapport: afficherLienRapport, changerRegroupement: changerRegroupement };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer);

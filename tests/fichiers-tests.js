@@ -53,9 +53,11 @@
     // SPEC-SERVEUR-008 : server.js découpé en modules (src/serveur-*.js) — audit et tests de chaque module
     'spec-serveur-modules',
     // historique global : vues, séries, inscription depuis le banc, préréglages et crochets (SPEC-BANC-004, 006, 041 à 058)
-    'spec-historique-vues'];
+    'spec-historique-vues',
+    // banc de tests, 2e moitié : répartition et sélection regroupée (SPEC-BANC-063 à 065)
+    'spec-banc-repartition'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true, 'spec-serveur-modules': true, 'spec-historique-vues': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true, 'spec-serveur-modules': true, 'spec-historique-vues': true, 'spec-banc-repartition': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

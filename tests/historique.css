@@ -141,3 +141,15 @@
 @media (max-width: 900px) {
   .hist-barre h2 { display: none; }
 }
+
+/* Répartition (SPEC-BANC-064) : tableau + barres empilées par état */
+#hist-repartition { flex: 0 0 auto; max-height: 38vh; overflow: auto; padding: 6px 12px; border-top: 1px solid rgba(255,255,255,.1); background: #0d1219; font-size: 12px; }
+#hist-repartition[hidden] { display: none; }
+.hist-rep-barre-titre { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+.hist-rep-table { border-collapse: collapse; width: 100%; }
+.hist-rep-table th, .hist-rep-table td { padding: 3px 8px; text-align: left; border-bottom: 1px solid rgba(255,255,255,.05); white-space: nowrap; }
+.hist-rep-cellule-barre { width: 40%; }
+.hist-rep-barre { display: flex; height: 14px; min-width: 6px; padding: 0; border: 0; border-radius: 3px; overflow: hidden; cursor: pointer; background: #222; }
+.hist-rep-barre span { display: block; height: 100%; }
+.hist-rep-reussi { background: #3fb950; } .hist-rep-echec { background: #f85149; }
+.hist-rep-ignore { background: #6e7681; } .hist-rep-avertissement { background: #d29922; }

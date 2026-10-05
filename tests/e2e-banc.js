@@ -1,5 +1,5 @@
 /* e2e-banc.js — le banc se teste lui-même, dans un VRAI navigateur
-   (SPEC-BANC-029, 034, 039, 041 à 058 ; docs/banc/historique-global.md §4).
+  (SPEC-BANC-029, 034, 039, 041 à 058, 064, 065 ; docs/banc/historique-global.md §4).
 
    Ces tests vérifient la page du banc (tests/index.html, tests/historique.js,
    tests/historique-vues.js) : vrais éléments, vrais évènements, vraie mise en
@@ -17,7 +17,7 @@
   var API = G.E2E_API;
   if (!API) return;
   var e2e = API.enregistreur('tests/e2e-banc.js');
-  var A = API.A, capture = API.capture;
+  var A = API.A, capture = API.capture, wait = API.wait;
 
   function maintenant() { return performance.now(); }
   /* sondage borné : rend la première valeur vraie de `fn`, échoue au bout de `ms` */
@@ -483,5 +483,138 @@
           A.equal(essais, 2, 'le serveur a été interrogé deux fois, la seconde fut refusée');
         });
       } finally { hote.remove(); remiseAZero(); }
+    });
+  function ahora() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
+  function attendreBanc(fn, delaiMs, quoi) {
+    var t0 = ahora();
+    function boucle() {
+      var v = fn();
+      if (v) return Promise.resolve(v);
+      if (ahora() - t0 > (delaiMs || 8000)) return Promise.reject(new Error('condition non atteinte à temps : ' + (quoi || '')));
+      return wait(60).then(boucle);
+    }
+    return boucle();
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Historique global : répartition et sélection regroupée (SPEC-BANC-064/065)
+  // ══════════════════════════════════════════════════════════════════════════
+  e2e('SPEC-BANC-064 : le panneau Répartition de l\'historique affiche tableau et barres par dimension et un clic sur une barre filtre le tableau',
+    { teste: 'le panneau « Répartition » de la zone Historique, dans la vraie page du banc, contre la vraie route /tests/historique/repartition',
+      pourquoi: 'les tests Node vérifient le calcul (tools/repartition.js) et le câblage sur un faux DOM ; seule la vraie page prouve que le bouton, la route du serveur et le clic sur une barre fonctionnent ensemble',
+      attendu: 'le bouton Répartition ouvre le panneau ; chaque dimension affiche un tableau (tests, réussis, échecs, ignorés, avertissements, durée cumulée) et des barres ; cliquer la barre d\'une valeur filtre le tableau principal sur cette valeur' },
+    async function () {
+      var H = G.MC_HISTORIQUE;
+      A.ok(H, 'window.MC_HISTORIQUE présent');
+      var zone = document.getElementById('zone-historique');
+      var panneau = document.getElementById('hist-repartition');
+      A.ok(panneau && panneau.hidden, 'le panneau Répartition existe et est fermé par défaut');
+      document.getElementById('btn-historique').click();
+      zone.querySelector('[data-rapide="tous"]').click();
+      await attendreBanc(function () { return /ligne\(s\)/.test(zone.querySelector('#hist-page-info').textContent) && H.etat.total > 0; }, 10000, 'lignes de l\'historique');
+      try {
+        document.getElementById('hist-repartition-btn').click();
+        A.equal(panneau.hidden, false, 'le bouton Répartition ouvre le panneau');
+        await attendreBanc(function () { return panneau.querySelector('table.hist-rep-table tbody tr'); }, 10000, 'tableau de répartition');
+        var sel = document.getElementById('hist-rep-dimension');
+        var dims = Array.prototype.map.call(sel.options, function (o) { return o.value; });
+        A.equal(dims.join(','), 'categorie,domaine,spec,fonction,etiquette,raison', 'les six dimensions sont proposées');
+        var entetes = Array.prototype.map.call(panneau.querySelectorAll('thead th'), function (t) { return t.textContent; }).join('|');
+        A.ok(/Tests/.test(entetes) && /Réussis/.test(entetes) && /Échecs/.test(entetes) && /Ignorés/.test(entetes) && /Avertissements/.test(entetes) && /Durée cumulée/.test(entetes), 'colonnes du tableau : ' + entetes);
+        // dimension « catégorie » : plusieurs barres, les comptes sont cohérents avec la vue
+        sel.value = 'categorie';
+        sel.dispatchEvent(new Event('change'));
+        await attendreBanc(function () { return /unitaire|spec|e2e|integration|fonctionnel/.test(panneau.textContent) && panneau.querySelector('button.hist-rep-barre'); }, 10000, 'répartition par catégorie');
+        var lignesTab = Array.prototype.slice.call(panneau.querySelectorAll('tbody tr'));
+        var somme = 0;
+        lignesTab.forEach(function (tr) {
+          var c = tr.children;
+          var nb = parseInt(c[1].textContent, 10);
+          var parts = parseInt(c[2].textContent, 10) + parseInt(c[3].textContent, 10) + parseInt(c[4].textContent, 10) + parseInt(c[5].textContent, 10);
+          A.equal(parts, nb, 'réussis + échecs + ignorés + avertissements = nombre de tests (' + c[0].textContent + ')');
+          somme += nb;
+        });
+        A.equal(somme, H.etat.total, 'la catégorie est mono-valeur : la somme des groupes égale le nombre de lignes de la vue');
+        // clic sur la première barre : le tableau principal est filtré sur cette catégorie
+        var barre = panneau.querySelector('button.hist-rep-barre');
+        var valeur = barre.getAttribute('data-valeur');
+        A.ok(valeur, 'la barre porte sa valeur');
+        var nbBarre = parseInt(barre.closest('tr').children[1].textContent, 10);
+        barre.click();
+        await attendreBanc(function () { return H.etat.total === nbBarre; }, 10000, 'tableau filtré sur ' + valeur);
+        egal(H.etat.filtresColonnes.type, [valeur], 'le filtre de la colonne type est posé sur ' + valeur);
+        var lignesVue = Array.prototype.slice.call(zone.querySelectorAll('#hist-table tbody tr'));
+        A.gt(lignesVue.length, 0, 'le tableau principal montre des lignes');
+        // la répartition suit la vue filtrée : une seule catégorie reste
+        await attendreBanc(function () { return panneau.querySelectorAll('tbody tr').length === 1; }, 10000, 'répartition suivant la vue filtrée');
+      } finally {
+        H.etat.filtresColonnes = {};
+        H.etat.cleFiltres = null;
+        H.repartition(false);
+        document.getElementById('hist-rapide-inscrits').checked = true;
+        document.getElementById('hist-rapide-inscrits').dispatchEvent(new Event('change'));
+        document.getElementById('hist-fermer').click();
+      }
+      A.equal(zone.hidden, true, 'zone refermée');
+    });
+
+  e2e('SPEC-BANC-065 : la sélection du banc se regroupe par fonction et cocher une fonction sélectionne les tests qui la déclarent ou l\'ont observée',
+    { teste: 'le regroupement de la zone de sélection (catégorie, domaine, spec, fonction, étiquette) dans la vraie page',
+      pourquoi: 'lancer « tous les tests qui touchent MC.Mesher.tileOrigin » suppose que le groupe de fonction reflète la déclaration ET la carte d\'impact servie par le banc, ce que seule la page réelle contre le vrai serveur prouve',
+      attendu: 'regrouper par fonction puis cocher MC.Mesher.tileOrigin coche exactement les tests qui la déclarent ou figurent dans la carte d\'impact pour elle' },
+    async function () {
+      var B = G.MC_BANC;
+      if (!B) return;      // hors du banc
+      var etat = B.etat;
+      var avant = etat.cochees;
+      var ancienRegroupement = etat.regroupement;
+      etat.cochees = Object.create(null);
+      try {
+        var selecteur = document.getElementById('regrouper');
+        A.ok(selecteur, 'sélecteur « Regrouper par » présent');
+        var options = Array.prototype.map.call(selecteur.options, function (o) { return o.value; });
+        A.equal(options.join(','), ',categorie,domaine,spec,fonction,etiquette', 'les cinq regroupements, plus la vue par défaut');
+        B.refs.panneauSel.hidden = false;
+        await B.completer();
+        // les fonctions observées viennent de la carte d'impact, servie par le banc
+        var carte = await (await fetch('/tests/historique/fonctions')).json();
+        A.ok(carte.ok && carte.fonctions, 'la route des fonctions observées répond');
+        var observees = carte.fonctions['MC.Mesher.tileOrigin'] || [];
+        A.gt(observees.length, 0, 'la carte d\'impact connaît des tests qui observent MC.Mesher.tileOrigin');
+        selecteur.value = 'fonction';
+        selecteur.dispatchEvent(new Event('change'));
+        var groupe = await attendreBanc(function () {
+          return B.refs.arbre.querySelector('details[data-groupe="MC.Mesher.tileOrigin"]');
+        }, 10000, 'groupe MC.Mesher.tileOrigin');
+        var titre = groupe.querySelector('summary label').textContent;
+        A.ok(/MC\.Mesher\.tileOrigin \(\d+\)/.test(titre), 'le groupe affiche son effectif : ' + titre);
+        // attendu, calculé indépendamment du groupe : déclarés ∪ observés, parmi les tests lançables ici
+        var attendu = {};
+        etat.catalogue.forEach(function (t) {
+          if (t.horsNavigateur) return;
+          if ((t.fonctions || []).indexOf('MC.Mesher.tileOrigin') >= 0 || observees.indexOf(t.cle) >= 0) attendu[t.cle] = true;
+        });
+        A.gt(Object.keys(attendu).length, 0, 'au moins un test lançable la touche');
+        groupe.querySelector('summary input').click();
+        var coches = Object.keys(etat.cochees).sort();
+        egal(coches, Object.keys(attendu).sort(), 'exactement les tests qui déclarent ou ont observé la fonction');
+        A.ok(/\(\d+\)/.test(titre) && parseInt(/\((\d+)\)/.exec(titre)[1], 10) >= coches.length, 'l\'effectif du groupe couvre ces tests');
+        // un test présent sous plusieurs fonctions y reste synchronisé
+        var cases = B.refs.arbre.querySelectorAll('input[data-cle]');
+        Array.prototype.forEach.call(cases, function (c) {
+          if (attendu[c.getAttribute('data-cle')]) A.ok(c.checked, 'case cochée : ' + c.getAttribute('data-cle'));
+        });
+        // les autres regroupements se construisent aussi
+        ['categorie', 'domaine', 'spec', 'etiquette'].forEach(function (dim) {
+          selecteur.value = dim;
+          selecteur.dispatchEvent(new Event('change'));
+          A.gt(B.refs.arbre.querySelectorAll('details[data-groupe]').length, 0, 'groupes par ' + dim);
+        });
+      } finally {
+        etat.cochees = avant;
+        document.getElementById('regrouper').value = ancienRegroupement || '';
+        await B.changerRegroupement(ancienRegroupement || '');
+        B.refermerSelection();
+      }
     });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

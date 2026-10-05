@@ -72,6 +72,7 @@
     { id: 'duree_ms', label: 'Durée (ms)', type: 'nombre', defaut: true },
     { id: 'etat', label: 'État', type: 'enum', defaut: true },
     { id: 'erreur', label: 'Erreur', type: 'texte', defaut: true },
+    { id: 'raison', label: 'Raison', type: 'texte', defaut: false },     // états ignore et avertissement (SPEC-BANC-089)
     { id: 'nb_captures', label: 'Captures', type: 'nombre', defaut: false },
     { id: 'captures', label: 'Images (libellés)', type: 'texte', defaut: false },
     { id: 'fiche', label: 'Fiche', type: 'texte', defaut: false },
@@ -160,6 +161,7 @@
       if (data.taille) etat.taille = data.taille;
       rendreTable(Array.isArray(data.lignes) ? data.lignes : []);
       rendrePagination();
+      rafraichirRepartition();
     }).catch(function (e) {
       if (monSeq !== etat.seq) return;
       rendreEntetes();
@@ -417,6 +419,105 @@
     }).catch(function (e) {
       info.textContent = 'export impossible : ' + ((e && e.message) || e);
     });
+  }
+
+  // ══════════════════════════════════════════════════════════════════════
+  // Répartition (SPEC-BANC-064) : pour la vue filtrée courante et la dimension
+  // choisie (catégorie, domaine, spec, fonction, étiquette — ou raison, qui
+  // compte les ignorés et avertissements par motif), un tableau et un graphique
+  // en barres : nombre de tests, réussis, échecs, ignorés, avertissements,
+  // durée cumulée. Calculé par le serveur (tools/repartition.js) sur les mêmes
+  // filtres que le tableau ; un clic sur une barre filtre le tableau principal
+  // sur cette valeur. Le panneau suit en permanence la vue filtrée.
+  // ══════════════════════════════════════════════════════════════════════
+  var DIMENSIONS_REPARTITION = [
+    ['categorie', 'Catégorie'], ['domaine', 'Domaine'], ['spec', 'Spec'],
+    ['fonction', 'Fonction'], ['etiquette', 'Étiquette'], ['raison', 'Raison'],
+  ];
+  etat.repartition = { ouvert: false, dimension: 'domaine', seq: 0 };
+  function panneauRepartition() { return document.getElementById('hist-repartition'); }
+  function dureeLisible(ms) {
+    if (typeof ms !== 'number') return '—';
+    return ms >= 1000 ? (ms / 1000).toFixed(1).replace('.', ',') + ' s' : Math.round(ms) + ' ms';
+  }
+  function urlRepartition() {
+    var p = parametresVue();
+    p.set('dimension', etat.repartition.dimension);
+    return '/tests/historique/repartition?' + p.toString();
+  }
+  function basculerRepartition(ouvert) {
+    etat.repartition.ouvert = ouvert === undefined ? !etat.repartition.ouvert : !!ouvert;
+    var p = panneauRepartition();
+    if (p) p.hidden = !etat.repartition.ouvert;
+    if (etat.repartition.ouvert) rafraichirRepartition();
+  }
+  function choisirDimension(dim) {
+    etat.repartition.dimension = dim;
+    rafraichirRepartition();
+  }
+  function rafraichirRepartition() {
+    var p = panneauRepartition();
+    if (!p || !etat.repartition.ouvert) return;
+    var moi = ++etat.repartition.seq;
+    fetch(urlRepartition()).then(lireJSON).then(function (data) {
+      if (moi !== etat.repartition.seq) return;     // réponse périmée
+      rendreRepartition(data);
+    }).catch(function (e) {
+      if (moi !== etat.repartition.seq) return;
+      p.innerHTML = '';
+      p.appendChild(el('p', { class: 'hist-erreur' }, ['Répartition impossible : ' + ((e && e.message) || e)]));
+    });
+  }
+  // un clic sur une barre : le tableau principal est filtré sur cette valeur
+  function filtrerSurValeur(champ, valeur) {
+    var col = PAR_ID[champ];
+    if (!col || valeur === null || valeur === undefined) return;
+    etat.filtresColonnes[champ] = col.type === 'texte' || col.type === 'exact' ? String(valeur) : [String(valeur)];
+    if (etat.colonnes.indexOf(champ) < 0) etat.colonnes = etat.colonnes.concat([champ]);   // le filtre reste visible
+    etat.cleFiltres = null;      // la ligne de filtres reflète le nouveau filtre
+    etat.page = 1;
+    rafraichir();
+  }
+  function rendreRepartition(data) {
+    var p = panneauRepartition();
+    p.innerHTML = '';
+    var sel = el('select', { id: 'hist-rep-dimension', 'aria-label': 'dimension de la répartition' });
+    DIMENSIONS_REPARTITION.forEach(function (d) {
+      var o = el('option', { value: d[0] }, [d[1]]);
+      o.selected = d[0] === etat.repartition.dimension;
+      sel.appendChild(o);
+    });
+    sel.addEventListener('change', function () { choisirDimension(sel.value); });
+    p.appendChild(el('div', { class: 'hist-rep-barre-titre' }, [
+      el('strong', {}, ['Répartition par ']), sel,
+      el('span', { class: 'hist-spacer' }),
+      el('span', {}, [(data.total || 0) + ' ligne(s) dans la vue filtrée']),
+      el('button', { type: 'button', id: 'hist-rep-fermer', onclick: function () { basculerRepartition(false); } }, ['Fermer ✕']),
+    ]));
+    var groupes = Array.isArray(data.groupes) ? data.groupes : [];
+    if (!groupes.length) { p.appendChild(el('p', {}, ['(aucune ligne dans la vue filtrée)'])); return; }
+    var max = groupes.reduce(function (m, g) { return Math.max(m, g.nb || 0); }, 1);
+    var tab = el('table', { class: 'hist-rep-table' });
+    tab.appendChild(el('thead', {}, [el('tr', {}, ['Valeur', 'Tests', 'Réussis', 'Échecs', 'Ignorés', 'Avertissements', 'Durée cumulée', 'Répartition']
+      .map(function (t) { return el('th', {}, [t]); }))]));
+    var corps = el('tbody');
+    groupes.forEach(function (g) {
+      var libelle = g.valeur === null ? '(aucune)' : String(g.valeur);
+      var barre = el('button', { type: 'button', class: 'hist-rep-barre', 'data-valeur': g.valeur === null ? '' : String(g.valeur),
+        title: libelle + ' — cliquer pour filtrer le tableau', style: 'width:' + Math.max(2, Math.round(100 * g.nb / max)) + '%',
+        onclick: function () { filtrerSurValeur(data.champ, g.valeur); } });
+      [['reussi', 'hist-rep-reussi'], ['echec', 'hist-rep-echec'], ['ignore', 'hist-rep-ignore'], ['avertissement', 'hist-rep-avertissement']].forEach(function (c) {
+        if (g[c[0]]) barre.appendChild(el('span', { class: c[1], style: 'flex-grow:' + g[c[0]], title: c[0] + ' : ' + g[c[0]] }));
+      });
+      var tr = el('tr', {}, [
+        el('td', {}, [libelle]), el('td', {}, [String(g.nb)]), el('td', {}, [String(g.reussi)]), el('td', {}, [String(g.echec)]),
+        el('td', {}, [String(g.ignore)]), el('td', {}, [String(g.avertissement)]), el('td', {}, [dureeLisible(g.duree_ms)]),
+        el('td', { class: 'hist-rep-cellule-barre' }, [barre]),
+      ]);
+      corps.appendChild(tr);
+    });
+    tab.appendChild(corps);
+    p.appendChild(tab);
   }
 
   // ══════════════════════════════════════════════════════════════════════
@@ -1097,6 +1198,8 @@
     var bg = document.getElementById('hist-graphes-btn');
     if (bg) bg.addEventListener('click', basculerGraphes);
     construireGraphes();
+    var bRep = document.getElementById('hist-repartition-btn');
+    if (bRep) bRep.addEventListener('click', function () { basculerRepartition(); });
     document.getElementById('hist-export-csv').addEventListener('click', function () { exporterVue('csv'); });
     document.getElementById('hist-export-html').addEventListener('click', function () { exporterVue('html'); });
     rendreMenuColonnes();
@@ -1108,5 +1211,6 @@
   G.MC_HISTORIQUE = {
     ouvrir: ouvrir, fermer: fermer, ouvrirTest: ouvrirPanneauTest, etat: etat, _urlImage: urlImage,
     graphes: graphes, panneau: panneau, ouvrirDiaporama: ouvrirDiaporama, colonnes: COLONNES, reinitialiser: reinitialiser,
+    repartition: basculerRepartition, filtrerSurValeur: filtrerSurValeur,
   };
 })(typeof window !== 'undefined' ? window : this);
