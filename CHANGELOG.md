@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.8.0] - 2026-10-05
 ### Ajouté
 - SPEC-CMD-002 à 005 — **`/list` et `/help` : la liste et l'aide de toutes les commandes du chat**. Un registre unique (`MC.Commandes.REGISTRE` : nom, alias, usage, résumé, détails, sous-commandes, exemples, disponibilité) alimente `/list` (alias `/liste`, `/commandes` : un message par commande, signalée « [en ligne] » ou « [admin] » le cas échéant), `/help <commande>` (usage, description, alias, une ligne par sous-commande de `/admin`, `/faction` et `/duel`, exemples ; nom avec ou sans `/`, en toute casse, alias admis ; chaque message tient dans les 160 caractères du chat) et `/aide` (alias de `/help`, inchangé sans argument), et `LISTE` en est dérivée. Toute commande accepte aussi la forme suffixée `/<commande> help` (ou `aide`) : interceptée dans `executer` avant tout `case`, elle affiche l'aide sans exécuter la commande, sans action et sans rien envoyer au serveur ; seul le premier argument compte, si bien qu'un joueur nommé « help » ou « aide » ne peut pas être défié par `/duel`. `/aide` (message court) est maintenant généré depuis le registre. Test de garde : chaque `case` de `executer` figure au registre et réciproquement. Tests : `tests/spec-commandes.js`, `tests/integration-archi-reseau.js` (vrai serveur : `/faction help` brut).
 - SPEC-CMD-002 / SPEC-CMD-003 — **corrections de la revue : `/quete` est listée et documentée, et les longues réponses se lisent en entier**. `/quete` (`lister`, `accepter <id>`, `remettre <id>`), arbitrée par le serveur, entre au registre : elle figure dans `/list` (« [en ligne] »), `/help quete`, `/quete help` et `/aide`, et le jeu la relaie enfin au serveur comme `/duel` (jusque-là, taper `/quete` répondait « Commande inconnue — tapez /list », qui n'en parlait pas). Un test de garde exige que chaque commande interceptée par le serveur figure au registre. Le journal du chat ne montrait que les 8 derniers messages, si bien que `/list` (18 lignes) et `/help faction` (19) étaient coupés au début : il rend désormais toute la série de messages système qui termine l'historique (`chat.recentsLot`, 24 lignes au plus), lue depuis son en-tête, dans un journal plus haut et défilable. Tests : `tests/spec-commandes.js`.
@@ -1535,6 +1537,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.8.0]: #
 [0.7.0]: #
 [0.6.0]: #
 [0.5.0]: #
