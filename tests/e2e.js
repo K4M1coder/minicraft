@@ -3444,6 +3444,156 @@
     }
   });
 
+  /* SPEC-RENDU-012 : le shader d'atlas (avecAtlasRepete, render.js) lit le
+     niveau de mipmap calculé sur la coordonnée CONTINUE du bloc et plafonné
+     à log2(TILE). Preuve visuelle par niveaux colorés : la chaîne de l'atlas
+     est remplacée le temps du test par des niveaux unis — 0 à 3 rouges, 4
+     bleu, 5 et au-delà verts — lus en « nearest » entre niveaux. Sur un
+     plateau de briques (grands quads fusionnés) vu en rasant :
+     - près (3 à 8 blocs), le niveau lu est bas : aucun pixel bleu. Un niveau
+       calculé après le fract() sauterait au plafond le long de chaque bord
+       de bloc : des lignes bleues ;
+     - loin (45 à 64 blocs), le niveau voulu dépasse 4 : il doit être
+       plafonné (bleu), jamais vert. */
+  e2e('SPEC-RENDU-012 : le niveau de mipmap de l’atlas est continu aux bords des blocs et plafonné à log2(TILE)', async function (g) {
+    var s = await reset(g);
+    var tex = g.render.materials.opaque.map, avantMip = tex.mipmaps, avantFiltre = tex.minFilter;
+    var avantAA = g.options.antialias, dist = g.render.RENDER_DIST;
+    var Y = 118, X0 = Math.floor(s.pos.x) - 4, Z0 = Math.floor(s.pos.z) - 32, N = 72, modifies = [];
+    A.equal(g.render.atlasShader.lodMax.value, Math.log2(g.render.atlasShader.texels.value.x / MC.Mesher.ATLAS_COLS),
+      'plafond du shader : log2(TILE)');
+    A.equal(g.render.atlasShader.lodMax.value, 4, 'tuiles de 16 texels : niveau 4');
+    try {
+      g.reglerOption('antialias', 'non');
+      g.reglerOption('mipmaps', true);
+      A.ok(g.render.mipmapsActifs, 'mipmaps actifs (WebGL2)');
+      g.render.setDistance(8);
+      g.streamChunks(true);
+      for (var x = X0; x < X0 + N; x++) for (var z = Z0; z < Z0 + 64; z++) {
+        g.world.setBlock(x, Y, z, B.BRICK); modifies.push([x, z]);
+      }
+      // niveaux colorés, mêmes tailles que la vraie chaîne
+      var couleur = function (k) { return k <= 3 ? [220, 30, 30] : k === 4 ? [30, 30, 220] : [30, 220, 30]; };
+      tex.mipmaps = avantMip.map(function (niv, k) {
+        var w = niv.width, h = niv.height, d = new Uint8ClampedArray(w * h * 4), c = couleur(k);
+        for (var i = 0; i < w * h; i++) { d[i * 4] = c[0]; d[i * 4 + 1] = c[1]; d[i * 4 + 2] = c[2]; d[i * 4 + 3] = 255; }
+        return new ImageData(d, w, h);
+      });
+      tex.minFilter = THREE.NearestMipmapNearestFilter;
+      tex.needsUpdate = true;
+      s.flying = true; g.time = 60;
+      s.pos.x = X0 + N / 2 + 0.5; s.pos.z = Z0 + 0.5; s.pos.y = Y + 1 + 2 - g.player.EYE;
+      s.yaw = Math.PI; s.pitch = -0.15;     // regard vers +z, le long du plateau
+      for (var t0 = performance.now(); performance.now() - t0 < 15000;) {
+        await frames(1);
+        var sale = false;
+        for (var cx = Math.floor(X0 / 16); cx <= Math.floor((X0 + N) / 16); cx++)
+          for (var cz = Math.floor(Z0 / 16); cz <= Math.floor((Z0 + 64) / 16); cz++) {
+            var c = g.world.chunks.get(g.world.key(cx, cz)); if (c && c.dirty) sale = true;
+          }
+        if (!sale) break;
+      }
+      await frames(3);
+      g.render.setAntialias(false);
+      g.render.render();
+      var cv = g.render.renderer.domElement, W = cv.width, H = cv.height;
+      var c2 = document.createElement('canvas'); c2.width = W; c2.height = H;
+      var ctx = c2.getContext('2d'); ctx.drawImage(cv, 0, 0);
+      capture('niveaux-colores');
+      var cam = g.render.camera;
+      function ligne(d) {                      // rangée d'écran d'un point du plateau à d blocs devant
+        var v = new THREE.Vector3(s.pos.x, Y + 1, s.pos.z + d).project(cam);
+        return Math.round((1 - v.y) / 2 * H);
+      }
+      function compter(y0, y1) {
+        // colonnes centrales : le plateau (72 blocs de large) y couvre toute la bande, même à 64 blocs
+        var px = ctx.getImageData(Math.round(W * 0.3), Math.min(y0, y1), Math.round(W * 0.4), Math.max(1, Math.abs(y1 - y0))).data, n = { r: 0, b: 0, v: 0, tot: 0 };
+        for (var i = 0; i < px.length; i += 4) {
+          var r = px[i], gg = px[i + 1], b = px[i + 2];
+          n.tot++;
+          if (r > gg + 50 && r > b + 50) n.r++;
+          else if (b > r + 50 && b > gg + 50) n.b++;
+          else if (gg > r + 50 && gg > b + 50) n.v++;
+        }
+        return n;
+      }
+      var pres = compter(ligne(8), ligne(3)), loin = compter(ligne(64) + 2, ligne(45));
+      A.gt(pres.r, pres.tot * 0.8, 'près : le plateau lu aux niveaux bas (rouge) — ' + JSON.stringify(pres));
+      A.ok(pres.b <= pres.tot * 0.002, 'près : pas de ligne au niveau plafond le long des bords de blocs — ' + JSON.stringify(pres));
+      A.gt(loin.b, loin.tot * 0.5, 'loin : niveau plafonné à 4 (bleu) — ' + JSON.stringify(loin));
+      A.equal(loin.v, 0, 'loin : jamais au-delà du plafond (vert) — ' + JSON.stringify(loin));
+    } finally {
+      tex.mipmaps = avantMip; tex.minFilter = avantFiltre; tex.needsUpdate = true;
+      modifies.forEach(function (p) { g.world.setBlock(p[0], Y, p[1], 0); });
+      g.reglerOption('antialias', avantAA || 'auto');
+      g.render.setDistance(dist);
+      s.flying = false;
+      await reset(g);
+    }
+  });
+
+  /* SPEC-RENDU-012 : sur l'atlas RÉEL, les tuiles hors découpe à alpha
+     partiel (verres, eau : leur alpha est une opacité) gardent leur opacité
+     moyenne à tous les niveaux lus (0 à log2(TILE)) — seules les tuiles de
+     la passe cutout voient leur alpha rééchelonné. */
+  e2e('SPEC-RENDU-012 : atlas réel — verres et eau gardent leur alpha moyen (± 2 %) à tous les niveaux de mipmap', async function (g) {
+    var opt = g.options.mipmaps;
+    try {
+      g.reglerOption('mipmaps', true);
+      await frames(1);
+      var tex = g.render.materials.opaque.map, C = MC.Core, TILE = 16, COLS = MC.Mesher.ATLAS_COLS;
+      var cv = tex.mipmaps[0], L = cv.width;
+      var niveaux = [cv.getContext('2d').getImageData(0, 0, L, cv.height)].concat(tex.mipmaps.slice(1, 5));
+      var vues = {}, tuiles = [];
+      C.BLOCKS.forEach(function (b) {
+        if (!b || !b.tiles || C.passOf(b.id) === 'cutout') return;
+        if (!(C.passOf(b.id) === 'blend' || /verre/i.test(b.name || ''))) return;
+        b.tiles.forEach(function (t) { if (!vues[t]) { vues[t] = 1; tuiles.push({ t: t, nom: b.name }); } });
+      });
+      A.ok(tuiles.some(function (x) { return x.t === 11; }), 'le verre (tuile 11) est contrôlé');
+      var controlees = 0;
+      tuiles.forEach(function (x) {
+        var moy = niveaux.map(function (n, k) {
+          var tk = TILE >> k, ox = (x.t % COLS) * tk, oy = ((x.t / COLS) | 0) * tk, s = 0;
+          for (var y = 0; y < tk; y++) for (var xx = 0; xx < tk; xx++) s += n.data[((oy + y) * n.width + ox + xx) * 4 + 3];
+          return s / (tk * tk);
+        });
+        if (moy[0] >= 254.5) return;                  // tuile opaque : rien à vérifier
+        controlees++;
+        moy.forEach(function (m, k) {
+          A.ok(Math.abs(m - moy[0]) <= Math.max(1, moy[0] * 0.02),
+            x.nom + ' (tuile ' + x.t + ') niveau ' + k + ' : alpha moyen ' + m.toFixed(1) + ' contre ' + moy[0].toFixed(1) + ' au niveau 0');
+        });
+      });
+      A.gt(controlees, 0, 'au moins une tuile translucide contrôlée');
+    } finally {
+      g.reglerOption('mipmaps', opt);
+      await frames(1);
+    }
+  });
+
+  /* SPEC-RENDU-012 : en WebGL1, le shader n'a ni textureLod ni dFdx : les
+     mipmaps y réintroduiraient coutures et mélanges de tuiles — ils restent
+     coupés quel que soit le réglage. */
+  e2e('SPEC-RENDU-012 : sans WebGL2, l’option mipmaps reste sans effet (niveau 0 seul)', async function (g) {
+    var caps = g.render.renderer.capabilities, avant = caps.isWebGL2, opt = g.options.mipmaps;
+    var tex = g.render.materials.opaque.map;
+    try {
+      g.reglerOption('mipmaps', false);
+      caps.isWebGL2 = false;
+      g.reglerOption('mipmaps', true);
+      await frames(1);
+      A.notOk(g.render.mipmapsActifs, 'mipmaps refusés sans WebGL2');
+      A.equal(tex.minFilter, THREE.NearestFilter, 'filtre nearest');
+      A.equal(tex.mipmaps.length, 0, 'aucune chaîne de niveaux');
+    } finally {
+      caps.isWebGL2 = avant;
+      g.reglerOption('mipmaps', false);
+      g.reglerOption('mipmaps', opt);
+      await frames(1);
+    }
+  });
+
   /* SPEC-RENDU-006 : l'antialias est piloté par le FPS mesuré — injecté ici
      (g.mesurerFPS substitué), jamais celui de la machine de test — et
      réactivable à la main dans l'écran des options. Le délai de l'hystérésis
@@ -3480,8 +3630,11 @@
       document.querySelector('#btn-options').click(); await frames(2);
       var sel = document.querySelector('select[data-opt="antialias"]');
       A.ok(sel, 'le lissage se règle dans les options');
+      var etatAA = document.querySelector('[data-etat="antialias"]');
+      A.ok(/coupé \(FPS bas\)/.test(etatAA.textContent), 'l’écran indique l’état effectif en automatique : ' + etatAA.textContent);
       sel.value = 'oui'; sel.dispatchEvent(new Event('change'));
       A.ok(g.render.antialiasActif, 'réactivé aussitôt à la main');
+      A.ok(/actuellement actif/.test(etatAA.textContent), 'état affiché mis à jour : ' + etatAA.textContent);
       await ticks(3);
       A.ok(g.render.antialiasActif, 'reste actif malgré l’adaptatif qui le couperait (' + g.qualite.antialias + ')');
       sel.value = 'auto'; sel.dispatchEvent(new Event('change'));
@@ -3517,28 +3670,31 @@
       var m = /p50\s*(\d+)/.exec(f3.textContent);
       return m ? Number(m[1]) : NaN;
     }
-    async function prochainTick() {
-      var m0 = g.perf.mesures;
-      for (var i = 0; i < 300 && g.perf.mesures === m0; i++) await frames(1);
+    async function prochainTick() {    // borné en TEMPS : le nombre d'images par seconde varie
+      var m0 = g.perf.mesures, t0 = performance.now();
+      while (g.perf.mesures === m0 && performance.now() - t0 < 5000) await frames(1);
+      A.ok(g.perf.mesures > m0, 'un tick de mesure a eu lieu');
       await frames(1);                 // le panneau se redessine à l'image suivante
     }
     try {
       await reset(g);
       g.reinitialiserQualite();
       if (!g.ui.f3Visible) g.ui.toggleF3();
-      g.mesurerFPS = function () { return 40; };
-      for (var t = 0; t < 4; t++) await prochainTick();
-      A.equal(lirePanneau(), 40, 'panneau : p50 sous un FPS stable');
-      A.equal(g.qualite.fpsP50, 40, 'adaptatif : même p50');
-      g.mesurerFPS = function () { return 10; };
-      await prochainTick();
+      /* onze ticks (4,4 s, tous dans la fenêtre de 5 s) de valeurs toutes
+         différentes, la dernière la plus lente : triées, 5 15 25 … 105 ;
+         p50 = 55, alors que p40 = 45, p60 = 65, la moyenne ≈ 55,9 et le FPS
+         instantané = 5 — seul le p50 donne 55. */
+      var suite = [15, 85, 35, 105, 55, 25, 95, 45, 75, 65, 5], i = 0;
+      g.mesurerFPS = function () { return suite[Math.min(i++, suite.length - 1)]; };
+      for (var t = 0; t < suite.length; t++) await prochainTick();
       var affiche = lirePanneau(), decide = g.qualite.fpsP50;   // lus ensemble, même image
-      capture('f3-p50-image-lente');
-      A.equal(g.fps, 10, 'FPS instantané du tick : l’image lente');
+      capture('f3-p50-suite-variee');
+      A.equal(i, suite.length, 'chaque tick a consommé une valeur injectée');
+      A.equal(g.fps, 5, 'FPS instantané du dernier tick');
       A.equal(g.qualite.mesure, g.perf.mesures, 'la décision vient du tick que le panneau affiche');
       A.equal(affiche, decide, 'égalité stricte : panneau ' + affiche + ' / adaptatif ' + decide);
       A.equal(decide, g.perf.fpsP50, 'g.perf (source du panneau) et g.qualite partagent la valeur');
-      A.equal(affiche, 40, 'tous deux lisent le p50 de la fenêtre, pas le FPS instantané');
+      A.equal(affiche, 55, 'tous deux lisent le p50 de la fenêtre, et lui seul');
     } finally {
       g.mesurerFPS = mesurer;
       if (g.ui.f3Visible) g.ui.toggleF3();
@@ -3623,10 +3779,17 @@
     A.equal(g.render.renderer, rendererAvant, 'même instance de renderer — pas de reconstruction du contexte');
     A.gt(avecAA, sansAA, 'la passe FXAA ajoute au moins un appel de dessin : ' + avecAA + ' (actif) > ' + sansAA + ' (coupé)');
 
-    // réactivable manuellement (la fiche l'exige explicitement)
-    g.render.setAntialias(true);
-    await frames(1);
-    A.equal(g.render.antialiasActif, true, 'réactivable manuellement dans les options');
+    // réactivable manuellement (la fiche l'exige explicitement) : par le
+    // choix « toujours actif » des options, qu'aucun tick adaptatif n'écrase
+    var choixAvant = g.options.antialias;
+    try {
+      g.render.setAntialias(false);
+      g.reglerOption('antialias', 'oui');
+      await frames(1);
+      A.equal(g.render.antialiasActif, true, 'réactivable manuellement dans les options');
+    } finally {
+      g.reglerOption('antialias', choixAvant || 'auto');
+    }
   });
 
   /* SPEC-RENDU-009 : sous le seuil de foule, chaque mob garde son maillage

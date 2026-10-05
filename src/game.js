@@ -654,6 +654,10 @@
       // SPEC-OPTION-001 et 003 : réglages et touches
       options: function () { return g.options; },
       onOption: function (cle, v) { return reglerOption(cle, v); },
+      // SPEC-RENDU-006 : état EFFECTIF du lissage, affiché à côté de son choix
+      // (en automatique, le FPS peut l'avoir coupé ; l'écran partagé ne
+      // l'applique jamais : la passe FXAA ne sert que la vue unique)
+      etatAntialias: function () { return { actif: render.antialiasActif, ecranPartage: equipe.length > 1 }; },
       onLier: function (action, code) { return lierTouche(action, code); },
       resolutions: function () {
         var d = g.disposition || { largeur: screen.width, hauteur: screen.height };

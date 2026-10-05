@@ -2470,14 +2470,33 @@
        Three.js vise encore l'ancien contexte (voir la note de
        `disposerGeom`) : on se contente alors du renvoi. */
     var mipmapsActifs = false;
+    /* Tuiles à découpe (passe cutout, alphaTest) : les seules dont l'alpha
+       des niveaux réduits est rééchelonné pour garder leur couverture — le
+       verre, l'eau (fondu) gardent leur opacité moyenne. */
+    function tuilesDecoupe() {
+      var C = MC.Core, vu = {};
+      C.BLOCKS.forEach(function (b) {
+        if (!b || C.passOf(b.id) !== 'cutout' || !b.tiles) return;
+        b.tiles.forEach(function (t) {
+          vu[t] = 1;
+          ((C.INDEX_VARIANTES && C.INDEX_VARIANTES[t]) || []).forEach(function (v) { vu[v] = 1; });
+        });
+      });
+      return Object.keys(vu).map(Number);
+    }
     function niveauxMipmapsAtlas() {
       var cv = atlas.canvas, L = cv.width, H = cv.height;
       var base = cv.getContext('2d').getImageData(0, 0, L, H);
-      var niv = MC.Qualite.mipmapsAtlas(base.data, L, H, atlas.TILE, matCutout.alphaTest);
-      return [base].concat(niv.map(function (n) { return new ImageData(n.data, n.width, n.height); }));
+      var niv = MC.Qualite.mipmapsAtlas(base.data, L, H, atlas.TILE, matCutout.alphaTest, tuilesDecoupe());
+      // niveau 0 : le canvas de l'atlas lui-même (pas de copie en mémoire)
+      return [cv].concat(niv.map(function (n) { return new ImageData(n.data, n.width, n.height); }));
     }
     function setMipmaps(actif) {
-      actif = !!actif;
+      /* WebGL1 : le shader n'y a ni textureLod ni dFdx (avecAtlasRepete
+         retombe sur texture2D, niveau calculé par le GPU APRÈS le fract,
+         sans plafond) — coutures aux bords des blocs et tuiles qui se
+         mélangent au loin. Les mipmaps y restent donc coupés. */
+      actif = !!actif && !!renderer.capabilities.isWebGL2;
       if (actif === mipmapsActifs) return actif;      // appliquerOptions rappelle à chaque réglage
       mipmapsActifs = actif;
       var t = atlas.texture;
@@ -2743,6 +2762,8 @@
       get RENDER_DIST() { return RENDER_DIST; },
       // SPEC-RENDU-007/012 : qualité adaptative pilotée par game.js
       setDPR: setDPR, get dprPalier() { return dprPalier; }, setMipmaps: setMipmaps, get mipmapsActifs() { return mipmapsActifs; },
+      // SPEC-RENDU-012 : uniforms du shader d'atlas (niveau plafond, taille en texels), lus par les tests
+      atlasShader: { lodMax: lodMaxAtlas, texels: texelsAtlas },
       // SPEC-RENDU-006 : antialias par post-traitement, piloté par le FPS
       setAntialias: setAntialias, get antialiasActif() { return optionsRendu.antialias; },
       // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel

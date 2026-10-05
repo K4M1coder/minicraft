@@ -74,7 +74,7 @@
     }
     it('SPEC-RENDU-012 : mipmapsAtlas — aucune tuile ne déborde sur sa voisine tant qu’elle fait au moins un texel', function () {
       var a = atlasSynthetique();
-      var niv = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5);
+      var niv = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5, [3]);
       A.equal(niv.length, 3, 'niveaux 4×4, 2×2, 1×1');
       A.equal(niv[0].width, 4); A.equal(niv[2].width, 1);
       // niveaux 1 (tuile 2 texels) et 2 (tuile 1 texel) : chaque tuile garde sa couleur pure
@@ -88,15 +88,59 @@
       });
     });
 
-    it('SPEC-RENDU-012 : mipmapsAtlas — un feuillage troué ne s’assombrit pas et garde sa couverture au seuil d’alphaTest', function () {
+    it('SPEC-RENDU-012 : mipmapsAtlas — un feuillage troué ne s’assombrit pas au loin', function () {
       var a = atlasSynthetique();
-      var n1 = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5)[0];
+      var n1 = Q.mipmapsAtlas(a.data, a.L, a.H, a.T, 0.5, [3])[0];
       // tuile 3 au niveau 1 : texels (2..3, 2..3)
       for (var y = 2; y < 4; y++) for (var x = 2; x < 4; x++) {
         var o = (y * n1.width + x) * 4;
         A.equal(n1.data[o] + ',' + n1.data[o + 1] + ',' + n1.data[o + 2], '40,160,40', 'couleur du feuillage, pas assombrie');
-        A.ok(n1.data[o + 3] >= 128, 'couverture conservée (moitié des texels opaques au niveau 0, alpha ' + n1.data[o + 3] + ')');
       }
+    });
+
+    /* Atlas 16×16 de 2×2 tuiles de 8 texels (16 texels par tuile au niveau
+       1 : un pas de couverture = 1/16). Tuile 0 : quatre blocs 2×2 portant
+       chacun 3 texels d'alpha 160 (au-dessus du seuil 127,5 au niveau 0,
+       moyenne 120 en dessous au niveau 1). Tuile 1 : cinq texels isolés
+       opaques (moyenne 63,75 au niveau 1). */
+    function atlasCouverture() {
+      var L = 16, T = 8, data = new Uint8ClampedArray(L * L * 4);
+      function pose(tuile, x, y, a) {
+        var k = (((tuile >> 1) * T + y) * L + (tuile & 1) * T + x) * 4;
+        data[k] = 50; data[k + 1] = 150; data[k + 2] = 50; data[k + 3] = a;
+      }
+      [[0, 0], [4, 0], [0, 4], [4, 4]].forEach(function (b) {
+        pose(0, b[0], b[1], 160); pose(0, b[0] + 1, b[1], 160); pose(0, b[0], b[1] + 1, 160);
+      });
+      [[0, 0], [2, 0], [4, 2], [6, 4], [2, 6]].forEach(function (p) { pose(1, p[0], p[1], 255); });
+      return { data: data, L: L, T: T };
+    }
+    function couvertureTuile(niv, tuile, tk) {
+      var n = 0;
+      for (var y = 0; y < tk; y++) for (var x = 0; x < tk; x++)
+        if (niv.data[(((tuile >> 1) * tk + y) * niv.width + (tuile & 1) * tk + x) * 4 + 3] >= 127.5) n++;
+      return n / (tk * tk);
+    }
+    it('SPEC-RENDU-012 : mipmapsAtlas — une tuile à découpe garde sa couverture au seuil d’alphaTest, au pas près, sans jamais s’épaissir', function () {
+      var a = atlasCouverture(), pas = 1 / 16;
+      var n1 = Q.mipmapsAtlas(a.data, a.L, a.L, a.T, 0.5, [0, 1])[0];
+      // tuile 0 : 12/64 = 0,1875 au niveau 0 ; sans conservation, 0 au niveau 1 (la plante disparaît)
+      var c0 = couvertureTuile(n1, 0, 4);
+      A.ok(Math.abs(c0 - 0.1875) <= pas, 'tuile 0 : couverture ' + c0 + ' ≈ 0,1875 (à un pas près)');
+      // tuile 1 : 5/64 ≈ 0,078 ; la remise à l'échelle donnerait 5/16 : plus loin de la cible que 0
+      var c1 = couvertureTuile(n1, 1, 4);
+      A.ok(c1 <= 5 / 64 + pas, 'tuile 1 : couverture ' + c1 + ' ≤ 0,078 + un pas (pas d’épaississement)');
+    });
+
+    it('SPEC-RENDU-012 : mipmapsAtlas — une tuile hors découpe (fondu : verre, eau) garde son alpha moyen, sans remise à l’échelle', function () {
+      var a = atlasCouverture();
+      var niv = Q.mipmapsAtlas(a.data, a.L, a.L, a.T, 0.5, []);
+      // tuile 0 hors découpe : moyenne exacte (3 × 160 / 4 = 120) sur chaque bloc
+      A.equal(niv[0].data[3], 120, 'niveau 1 : alpha moyen 120, non rééchelonné');
+      var somme0 = 0, somme2 = 0;
+      for (var y = 0; y < 8; y++) for (var x = 0; x < 8; x++) somme0 += a.data[(y * 16 + x) * 4 + 3];
+      for (var y2 = 0; y2 < 2; y2++) for (var x2 = 0; x2 < 2; x2++) somme2 += niv[1].data[(y2 * 4 + x2) * 4 + 3];
+      A.ok(Math.abs(somme0 / 64 - somme2 / 4) <= 1, 'niveau 2 : même alpha moyen qu’au niveau 0 (' + somme0 / 64 + ' / ' + somme2 / 4 + ')');
     });
 
     it('SPEC-RENDU-003 : la réfraction saute une image sur deux sous le seuil de FPS', function () {

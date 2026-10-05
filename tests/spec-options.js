@@ -32,6 +32,41 @@
       A.deep(O.charger(null), O.defauts(), 'sans stockage : les défauts');
     });
 
+    it('SPEC-OPTION-001 / SPEC-RENDU-012 : un stockage v0.7.0 (sans schéma) migre — mipmaps prend le nouveau défaut, rien d’autre ne bouge', function () {
+      var st = stockage();
+      st.setItem(O.CLE, JSON.stringify({ mipmaps: false, volume: 0.5 }));
+      var o = O.charger(st);
+      A.equal(o.mipmaps, true, 'mipmaps : jamais réglé avant v0.7.0 → défaut courant (activé)');
+      A.equal(o.volume, 0.5, 'volume conservé');
+      A.equal(o.schema, O.SCHEMA, 'relu au format courant');
+      // une table v0.7.0 complète, chaque réglage à une valeur NON par défaut
+      var ancien = {}, attendu = {};
+      Object.keys(O.REGLAGES).forEach(function (k) {
+        var r = O.REGLAGES[k];
+        var v = typeof r.defaut === 'boolean' ? !r.defaut : r.valeurs ? r.valeurs[r.valeurs.length - 1] : r.min;
+        if (v === r.defaut) v = r.valeurs ? r.valeurs[0] : r.max;
+        ancien[k] = v; attendu[k] = v;
+      });
+      delete ancien.antialias; attendu.antialias = O.REGLAGES.antialias.defaut;   // absent en v0.7.0
+      ancien.mipmaps = false; attendu.mipmaps = true;
+      st.setItem(O.CLE, JSON.stringify(ancien));
+      var m = O.charger(st);
+      Object.keys(O.REGLAGES).forEach(function (k) { A.equal(m[k], attendu[k], 'migration : ' + k); });
+    });
+
+    it('SPEC-OPTION-001 / SPEC-RENDU-012 : au format 2, un réglage choisi par le joueur se conserve, un réglage jamais touché suit le défaut courant', function () {
+      var st = stockage();
+      O.sauver(st, O.regler(O.defauts(), 'mipmaps', false));
+      var o = O.charger(st);
+      A.equal(o.mipmaps, false, 'coupé par le joueur : reste coupé');
+      A.deep(o.modifies, ['mipmaps'], 'la liste des réglages modifiés est relue');
+      // un réglage enregistré mais jamais réglé (valeur d'un ancien défaut) : défaut courant
+      st.setItem(O.CLE, JSON.stringify({ schema: 2, modifies: ['volume'], volume: 0.4, champ: 99 }));
+      var p = O.charger(st);
+      A.equal(p.volume, 0.4, 'réglé : conservé');
+      A.equal(p.champ, O.REGLAGES.champ.defaut, 'jamais réglé : défaut courant');
+    });
+
     it('SPEC-OPTION-003 : les touches se remappent, un conflit est signalé, le choix est conservé et l aide suit', function () {
       var t = O.defauts().touches;
       A.equal(O.actionDe(t, 'KeyE'), 'inventaire');

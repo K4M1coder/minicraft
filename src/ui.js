@@ -922,7 +922,7 @@
           var permises = k === 'resolution' && hooks.resolutions ? hooks.resolutions() : r.valeurs;
           return '<label class="opt-ligne">' + ech(r.nom) + ' <select data-opt="' + k + '">' + permises.map(function (v) {
             return '<option value="' + v + '"' + (v === o[k] ? ' selected' : '') + '>' + ech(NOMS_VALEURS[v] || v) + '</option>';
-          }).join('') + '</select></label>';
+          }).join('') + '</select>' + (k === 'antialias' ? ' <span class="opt-val" data-etat="antialias"></span>' : '') + '</label>';
         }
         if (k === 'ecran' && hooks.ecrans) {
           return '<label class="opt-ligne">' + ech(r.nom) + ' <select data-opt="ecran">' + hooks.ecrans().map(function (e, i) {
@@ -946,11 +946,21 @@
         '<div class="row"><button id="btn-opt-defaut">Valeurs par défaut</button>' +
         '<button id="btn-retour" class="primary">Retour</button></div></div>');
       var msg = overlay.querySelector('#opt-msg');
+      /* SPEC-RENDU-006 : ce que fait réellement le lissage en ce moment */
+      function majEtatAntialias() {
+        var e = overlay.querySelector('[data-etat="antialias"]');
+        if (!e || !hooks.etatAntialias) return;
+        var st = hooks.etatAntialias();
+        e.textContent = st.ecranPartage ? '— sans effet en écran partagé'
+          : st.actif ? '— actuellement actif' : '— actuellement coupé' + ((hooks.options() || {}).antialias === 'auto' ? ' (FPS bas)' : '');
+      }
+      majEtatAntialias();
       Array.prototype.forEach.call(overlay.querySelectorAll('[data-opt]'), function (inp) {
         inp.addEventListener(inp.type === 'checkbox' || inp.tagName === 'SELECT' ? 'change' : 'input', function () {
           var k = inp.getAttribute('data-opt');
           var brut = inp.type === 'checkbox' ? inp.checked : inp.tagName === 'SELECT' && MC.Options.REGLAGES[k].valeurs ? inp.value : parseFloat(inp.value);
           var v = hooks.onOption(k, brut);
+          majEtatAntialias();
           var s = overlay.querySelector('[data-val="' + k + '"]');
           if (s) s.textContent = v;
         });

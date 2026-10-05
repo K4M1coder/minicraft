@@ -138,10 +138,24 @@
     ACTIONS.forEach(function (a) { t[a.id] = a.touches.slice(); });
     return t;
   }
+  /* Format conservé : 2 depuis l'ajout de `modifies`. Jusqu'à la v0.7.0
+     (pas de `schema`), `sauver` écrivait la table entière : impossible d'y
+     distinguer un choix du joueur d'un défaut d'alors. `modifies` liste les
+     réglages que le joueur a réellement réglés (via `regler`) ; au
+     chargement, un réglage absent de cette liste prend le défaut COURANT —
+     un défaut qui change (mipmaps, SPEC-RENDU-012) atteint donc aussi les
+     anciens joueurs qui n'y avaient jamais touché. */
+  var SCHEMA = 2;
+  /* Réglages dont le défaut a changé depuis un stockage sans schéma
+     (≤ v0.7.0) : relus comme jamais modifiés. Tous les autres réglages d'un
+     tel stockage sont relus tels quels (aucune valeur ne bouge). */
+  var DEFAUTS_CHANGES_V1 = ['mipmaps'];
   function defauts() {
     var o = {};
     Object.keys(REGLAGES).forEach(function (k) { o[k] = REGLAGES[k].defaut; });
     o.touches = touchesParDefaut();
+    o.schema = SCHEMA;
+    o.modifies = [];
     return o;
   }
 
@@ -160,7 +174,10 @@
   /* Nouvelle table de réglages avec `cle` = `v` (bornée). */
   function regler(opts, cle, v) {
     var o = copier(opts);
-    if (REGLAGES[cle]) o[cle] = valeur(cle, v);
+    if (REGLAGES[cle]) {
+      o[cle] = valeur(cle, v);
+      if (o.modifies.indexOf(cle) < 0) o.modifies.push(cle);
+    }
     return o;
   }
   function copier(opts) {
@@ -168,6 +185,8 @@
     Object.keys(opts).forEach(function (k) { o[k] = opts[k]; });
     o.touches = {};
     Object.keys(opts.touches || {}).forEach(function (k) { o.touches[k] = opts.touches[k].slice(); });
+    o.schema = SCHEMA;
+    o.modifies = Array.isArray(opts.modifies) ? opts.modifies.slice() : [];
     return o;
   }
 
@@ -221,7 +240,12 @@
       var brut = stockage && stockage.getItem(CLE);
       if (!brut) return o;
       var lu = JSON.parse(brut);
-      Object.keys(REGLAGES).forEach(function (k) { if (k in lu) o[k] = valeur(k, lu[k]); });
+      var modifies = lu.schema >= 2 && Array.isArray(lu.modifies)
+        ? lu.modifies.filter(function (k) { return REGLAGES.hasOwnProperty(k); })
+        : Object.keys(REGLAGES).filter(function (k) { return k in lu && DEFAUTS_CHANGES_V1.indexOf(k) < 0; });
+      modifies = modifies.filter(function (k, i) { return modifies.indexOf(k) === i; });
+      modifies.forEach(function (k) { if (k in lu) o[k] = valeur(k, lu[k]); });
+      o.modifies = modifies;
       if (lu.touches) ACTIONS.forEach(function (a) {
         var l = lu.touches[a.id];
         if (Array.isArray(l) && l.length && l.every(function (c) { return typeof c === 'string' && !RESERVEES[c]; })) o.touches[a.id] = l.slice();
@@ -230,12 +254,12 @@
     return o;
   }
   function sauver(stockage, opts) {
-    try { if (stockage) stockage.setItem(CLE, JSON.stringify(opts)); return true; } catch (e) { return false; }
+    try { if (stockage) stockage.setItem(CLE, JSON.stringify(copier(opts))); return true; } catch (e) { return false; }
   }
 
   MC.Options = { echelleInterface: echelleInterface, MAQUETTE: MAQUETTE, REGLAGES: REGLAGES, ACTIONS: ACTIONS, RESERVEES: RESERVEES, defauts: defauts, valeur: valeur,
                  regler: regler, actionDe: actionDe, lier: lier, nomTouche: nomTouche, aide: aide,
-                 charger: charger, sauver: sauver, CLE: CLE,
+                 charger: charger, sauver: sauver, CLE: CLE, SCHEMA: SCHEMA,
                  RESOLUTIONS: RESOLUTIONS, resolutionsPour: resolutionsPour, disposition: disposition,
                  champEtendu: champEtendu, rapportPixels: rapportPixels, preferenceGpu: preferenceGpu };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

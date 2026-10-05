@@ -176,15 +176,20 @@
        niveau lu à log2(tuile) (voir render.js, avecAtlasRepete) ;
      - la couleur est moyennée en pondérant par l'alpha : un texel
        transparent (rgb nul) n'assombrit pas le feuillage au loin ;
-     - l'alpha d'une tuile à découpe est remis à l'échelle pour garder, au
-       seuil `seuilAlpha` (alphaTest des matériaux), la même couverture
-       qu'au niveau 0 : herbes et fleurs ne s'évanouissent pas au loin. */
-  function mipmapsAtlas(data, largeur, hauteur, tuile, seuilAlpha) {
+     - l'alpha d'une tuile À DÉCOUPE (`tuilesDecoupe` : indices des tuiles
+       de la passe cutout, à alphaTest) est remis à l'échelle pour garder au
+       mieux, au seuil `seuilAlpha` (leur alphaTest), la couverture du niveau
+       0 : herbes et fleurs s'amincissent moins au loin. Les autres tuiles
+       (fondu : verre, eau… dont l'alpha est une opacité, pas une découpe)
+       gardent la moyenne simple : leur opacité ne change pas au loin. */
+  function mipmapsAtlas(data, largeur, hauteur, tuile, seuilAlpha, tuilesDecoupe) {
     var seuil = (seuilAlpha > 0 ? seuilAlpha : 0.5) * 255;
     var nivMaxTuile = Math.round(Math.log(tuile) / Math.LN2);
     var colsT = largeur / tuile, rowsT = hauteur / tuile;
     // couverture et présence d'alpha partiel par tuile, au niveau 0
     var couv0 = new Float32Array(colsT * rowsT), decoupe = new Uint8Array(colsT * rowsT);
+    var enDecoupe = new Uint8Array(colsT * rowsT);
+    (tuilesDecoupe || []).forEach(function (t) { if (t >= 0 && t < enDecoupe.length) enDecoupe[t] = 1; });
     for (var ty = 0; ty < rowsT; ty++) for (var tx = 0; tx < colsT; tx++) {
       var n = 0, partiel = 0;
       for (var y = 0; y < tuile; y++) for (var x = 0; x < tuile; x++) {
@@ -193,7 +198,7 @@
         if (a < 255) partiel = 1;
       }
       couv0[ty * colsT + tx] = n / (tuile * tuile);
-      decoupe[ty * colsT + tx] = partiel;
+      decoupe[ty * colsT + tx] = partiel && enDecoupe[ty * colsT + tx] ? 1 : 0;
     }
     var niveaux = [], src = data, sl = largeur, sh = hauteur, k = 0;
     while (sl > 1 || sh > 1) {
@@ -243,16 +248,22 @@
   }
   /* Facteur d'échelle de l'alpha qui rapproche le plus la couverture au
      seuil de la couverture visée (recherche dichotomique, la couverture
-     croît avec l'échelle) ; 1 si l'écart est déjà minimal. */
+     croît avec l'échelle par paliers) ; 1 si l'écart est déjà minimal. La
+     dichotomie encadre le palier de la cible : on garde celle des deux
+     bornes dont la couverture en est la plus proche (en cas d'égalité,
+     celle qui couvre le moins : ne pas épaissir une plante au loin). */
   function echelleCouverture(alphas, cible, seuil) {
     var pas = 1 / alphas.length;
-    if (Math.abs(couverture(alphas, 1, seuil) - cible) < pas / 2) return 1;
+    var c1 = couverture(alphas, 1, seuil);
+    if (Math.abs(c1 - cible) < pas / 2) return 1;
     var lo = 0.05, hi = 16;
     for (var it = 0; it < 24; it++) {
       var mid = (lo + hi) / 2;
       if (couverture(alphas, mid, seuil) < cible) lo = mid; else hi = mid;
     }
-    return hi;
+    var ecLo = Math.abs(couverture(alphas, lo, seuil) - cible), ecHi = Math.abs(couverture(alphas, hi, seuil) - cible);
+    var meilleur = ecLo <= ecHi ? lo : hi, ecart = Math.min(ecLo, ecHi);
+    return ecart < Math.abs(c1 - cible) ? meilleur : 1;
   }
 
   MC.Qualite = {
