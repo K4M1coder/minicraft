@@ -226,11 +226,25 @@
       case 'sanction':
         return action('Sanction…', { type: 'admin', action: 'sanction',
           args: { nom: reste[0], type: reste[1], dureeMs: (parseInt(reste[2], 10) || 0) * 60000 } });
+      // SPEC-FACTION-013 / SPEC-ADMIN-008 : modération des factions de joueurs (admin ou modérateur)
+      case 'factions':
+        return action('Factions…', { type: 'admin', action: 'faction_gerer', args: { op: 'lister' } });
+      case 'faction': {
+        var op = (reste[0] || '').toLowerCase();
+        if (op === 'renommer' && reste[1] && reste[2]) {
+          return action('Renommage de la faction…', { type: 'admin', action: 'faction_gerer', args: { op: 'renommer', faction: reste[1], nom: reste.slice(2).join(' ') } });
+        }
+        if (op === 'dissoudre' && reste[1]) {
+          return action('Dissolution de la faction…', { type: 'admin', action: 'faction_gerer', args: { op: 'dissoudre', faction: reste[1] } });
+        }
+        return msg('/admin factions | faction renommer <faction> <nouveau nom> | faction dissoudre <faction>');
+      }
       default:
         return msg('/admin auth <secret> | joueurs | sessions [nom] | inventaire <nom> | listes | journal | ' +
                    'liste ajouter|retirer <blanche|noire> <nom|email> <valeur> | ' +
                    'invitation <usagesMax> <expireMin> [email] | invitation revoquer <jeton> | ' +
-                   'role <nom> [retirer] | sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin]');
+                   'role <nom> [retirer] | sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin] | ' +
+                   'factions | faction renommer|dissoudre <faction> [nouveau nom]');
     }
   }
 

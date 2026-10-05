@@ -343,6 +343,12 @@
   .carte-rep i, .boussole i { width: 10px; height: 10px; border-radius: 50%; display: inline-block; flex: none; }
   .carte-rep span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .carte-rep small { opacity: .7; }
+  /* SPEC-FACTION-012 : membres de sa faction listés sous les repères */
+  .carte-membres { margin-top: 6px; border-top: 1px solid rgba(255,255,255,.15); padding-top: 4px; }
+  .carte-membre { display: flex; align-items: center; gap: 5px; padding: 2px 4px; }
+  .carte-membre i { width: 10px; height: 10px; transform: rotate(45deg); display: inline-block; flex: none; }
+  .carte-membre span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .carte-membre small { opacity: .7; }
   .carte-rep button { padding: 0 5px; }
   .carte-vide { opacity: .6; margin: 4px 0; }
   .boussole { position: absolute; top: 44px; left: 50%; transform: translateX(-50%); z-index: 3; pointer-events: none;

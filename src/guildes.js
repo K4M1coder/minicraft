@@ -37,16 +37,38 @@
     return pris;
   }
 
+  // ─── validation des champs venus d'un joueur (SPEC-FACTION-009/013) ────
+  /* Un nom de faction finit dans le chat, le journal du serveur et la console
+     d'administration : 2 à 24 lettres, chiffres, espaces simples, « _ », « - »,
+     « ' » ou « . » (ni balise, ni saut de ligne, ni caractère de contrôle),
+     qui ne ressemble pas à un identifiant (g12). La couleur est #rrggbb,
+     l'emblème un court mot ; la devise est nettoyée de ses caractères de
+     contrôle et bornée. */
+  var NOM_MAX = 24, DEVISE_MAX = 60, EMBLEME_MAX = 16, COULEUR_DEFAUT = '#8888ff';
+  var RE_NOM = /^[0-9A-Za-zÀ-ÖØ-öø-ɏ_'. \-]+$/;
+  var RE_MOT = /^[0-9A-Za-zÀ-ÖØ-öø-ɏ_\-]+$/;
+  var RE_CONTROLES = /[\u0000-\u001f\u007f-\u009f\u2028\u2029]/g;
+  function nomValide(nom) {
+    var brut = String(nom === undefined || nom === null ? '' : nom);
+    if (/[\u0000-\u001f\u007f-\u009f\u2028\u2029]/.test(brut)) return null;
+    var n = brut.trim().replace(/ {2,}/g, ' ');
+    if (n.length < 2 || n.length > NOM_MAX || !RE_NOM.test(n) || /^g\d+$/i.test(n)) return null;
+    return n;
+  }
+  function couleurValide(c) { return typeof c === 'string' && /^#[0-9a-fA-F]{6}$/.test(c) ? c.toLowerCase() : COULEUR_DEFAUT; }
+  function emblemeValide(e) { return typeof e === 'string' && e.length <= EMBLEME_MAX && RE_MOT.test(e) ? e : null; }
+  function deviseValide(d) { return String(d === undefined || d === null ? '' : d).replace(RE_CONTROLES, ' ').replace(/[<>]/g, '').trim().slice(0, DEVISE_MAX); }
+
   // ─── création (SPEC-FACTION-009) ───────────────────────────────────────
   function creerFaction(etat, joueurId, opts) {
     opts = opts || {};
-    var nom = String(opts.nom || '').trim();
+    var nom = nomValide(opts.nom);
     if (!nom) return { ok: false, motif: 'nom_invalide' };
     if (nomPris(etat, nom)) return { ok: false, motif: 'nom_pris' };
     var id = 'g' + (etat.prochainId++);
     var f = {
-      id: id, nom: nom, couleur: opts.couleur || '#8888ff', emblem: opts.emblem || null,
-      devise: opts.devise || '', membres: new Map(), candidatures: new Set(),
+      id: id, nom: nom, couleur: couleurValide(opts.couleur), emblem: emblemeValide(opts.emblem),
+      devise: deviseValide(opts.devise), membres: new Map(), candidatures: new Set(),
       relations: new Map(), creeLe: opts.heure || 0,
     };
     f.membres.set(joueurId, 'chef');
@@ -264,7 +286,7 @@
      le nom de faction se résout en identifiant, chaque action appelle sa
      fonction, et le résultat revient en message lisible. `dire` renvoie le
      canal (les membres à qui le serveur ou le jeu remettra le message). */
-  var MOTIFS = { nom_invalide: 'nom invalide', nom_pris: 'ce nom est déjà pris', introuvable: 'faction introuvable',
+  var MOTIFS = { nom_invalide: 'nom invalide (2 à 24 lettres, chiffres, espaces, _ - . \')',nom_pris: 'ce nom est déjà pris', introuvable: 'faction introuvable',
                  deja_membre: 'déjà membre', refuse: 'vous n\'en avez pas le droit', pas_membre: 'vous n\'en êtes pas membre',
                  relation_invalide: 'relation : alliee, neutre ou ennemie', rang_invalide: 'rang : officier, membre ou recrue',
                  cible_introuvable: 'faction cible introuvable (ni faction de joueurs, ni faction PNJ connue)' };
@@ -275,6 +297,15 @@
     etat.factions.forEach(function (f, id) { if (canon(f.nom) === c) res = id; });
     return res;
   }
+  /* SPEC-FACTION-012 : une faction PNJ se désigne par son identifiant, ou par son
+     nom tapé en un mot (« Royaume_de_Beaulac »), sans égard à la casse. */
+  function idPnjDe(etatPolitique, txt) {
+    if (!etatPolitique || !etatPolitique.factions || !txt) return null;
+    if (etatPolitique.factions.has(txt)) return txt;
+    var c = canon(String(txt).replace(/_/g, ' ')), res = null;
+    etatPolitique.factions.forEach(function (f, id) { if (!res && canon(f.nom) === c) res = id; });
+    return res;
+  }
   function appliquerAction(etat, joueurId, a, etatPolitique) {
     var x = a.args || {}, fid = idDe(etat, x.faction), r, nomF = x.faction;
     function rendu(res, ok) {
@@ -282,7 +313,7 @@
       return { ok: true, message: ok };
     }
     switch (a.action) {
-      case 'creer': r = creerFaction(etat, joueurId, x); return rendu(r, 'Faction « ' + x.nom + ' » fondée ; vous en êtes le chef.');
+      case 'creer': r = creerFaction(etat, joueurId, x); return rendu(r, 'Faction « ' + (r.ok ? etat.factions.get(r.id).nom : '') + ' » fondée ; vous en êtes le chef.');
       case 'postuler': return rendu(postuler(etat, joueurId, fid), 'Candidature envoyée à « ' + nomF + ' ».');
       case 'accepter': return rendu(accepter(etat, joueurId, fid, x.joueur), x.joueur + ' rejoint « ' + nomF + ' ».');
       case 'refuser': return rendu(refuser(etat, joueurId, fid, x.joueur), 'Candidature de ' + x.joueur + ' refusée.');
@@ -300,7 +331,8 @@
         return rendu(dissoudre(etat, fid), '« ' + nomF + ' » est dissoute.');
       case 'principale': return rendu(definirPrincipale(etat, joueurId, fid), '« ' + nomF + ' » est votre faction principale.');
       case 'relation': {
-        var cible = idDe(etat, x.cible) || x.cible;
+        // une faction de joueurs (nom ou id), sinon une faction PNJ (id, ou nom dont les espaces s'écrivent « _ »)
+        var cible = idDe(etat, x.cible) || idPnjDe(etatPolitique, x.cible) || x.cible;
         return rendu(declarerRelation(etat, joueurId, fid, cible, x.relation, etatPolitique), '« ' + nomF + ' » se déclare ' + x.relation + ' envers ' + x.cible + '.');
       }
       case 'dire': {
@@ -370,13 +402,22 @@
   function renommerParAdmin(etat, factionId, nouveauNom) {
     var f = etat.factions.get(factionId);
     if (!f) return { ok: false, motif: 'introuvable' };
-    var nom = String(nouveauNom || '').trim();
+    var nom = nomValide(nouveauNom);
     if (!nom) return { ok: false, motif: 'nom_invalide' };
     if (nomPris(etat, nom, factionId)) return { ok: false, motif: 'nom_pris' };
     f.nom = nom;
     return { ok: true };
   }
   function dissoudreParAdmin(etat, factionId) { return dissoudre(etat, factionId); }
+  /* Pour la console et le panneau d'administration : chaque faction, son chef,
+     son nombre de membres et de candidatures (jamais d'autre donnée). */
+  function listerPourAdmin(etat) {
+    return Array.from(etat.factions.values()).map(function (f) {
+      var chef = null;
+      f.membres.forEach(function (r, id) { if (r === 'chef') chef = id; });
+      return { id: f.id, nom: f.nom, couleur: f.couleur, chef: chef, membres: f.membres.size, candidatures: f.candidatures.size };
+    }).sort(function (a, b) { return a.nom < b.nom ? -1 : a.nom > b.nom ? 1 : 0; });
+  }
 
   MC.Guildes = {
     RANGS: RANGS,
@@ -390,6 +431,7 @@
     declarerRelation: declarerRelation, relationEnvers: relationEnvers,
     membresDe: membresDe, peutBlesser: peutBlesser,
     serialiser: serialiser, charger: charger,
-    renommerParAdmin: renommerParAdmin, dissoudreParAdmin: dissoudreParAdmin,
+    renommerParAdmin: renommerParAdmin, dissoudreParAdmin: dissoudreParAdmin, listerPourAdmin: listerPourAdmin,
+    idDe: idDe, idPnjDe: idPnjDe, nomValide: nomValide, NOM_MAX: NOM_MAX,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

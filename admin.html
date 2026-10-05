@@ -97,6 +97,19 @@
   </section>
 
   <section style="grid-column: 1 / -1">
+    <h2>Factions de joueurs</h2>
+    <div class="row">
+      <button id="f-rafraichir">Rafraîchir</button>
+      <input id="f-faction" placeholder="faction (nom ou identifiant)">
+      <input id="f-nom" placeholder="nouveau nom">
+      <button id="f-renommer">Renommer</button>
+      <button id="f-dissoudre">Dissoudre</button>
+    </div>
+    <table id="tbl-factions"><thead><tr><th>Nom</th><th>Identifiant</th><th>Chef</th><th>Membres</th><th>Candidatures</th></tr></thead><tbody></tbody></table>
+    <p class="msg" id="msg-factions"></p>
+  </section>
+
+  <section style="grid-column: 1 / -1">
     <h2>Journal d'administration</h2>
     <button id="j-rafraichir">Rafraîchir</button>
     <table id="tbl-journal"><thead><tr><th>Auteur</th><th>Action</th><th>Cible</th><th>Détails</th></tr></thead><tbody></tbody></table>
@@ -156,19 +169,40 @@
   function rafraichirListes() {
     api('GET', 'listes').then(function (r) { document.getElementById('out-listes').textContent = JSON.stringify(r.json.data, null, 1); });
   }
+  /* Une cellule de tableau en TEXTE (jamais en HTML) : noms de joueurs et de
+     factions, cibles et détails du journal viennent des joueurs. */
+  function ligne(tb, valeurs) {
+    var tr = document.createElement('tr');
+    valeurs.forEach(function (v) { var td = document.createElement('td'); td.textContent = v === null || v === undefined ? '' : String(v); tr.appendChild(td); });
+    tb.appendChild(tr);
+  }
   function rafraichirJournal() {
     api('GET', 'journal').then(function (r) {
       var tb = document.querySelector('#tbl-journal tbody');
       tb.innerHTML = '';
-      (r.json.data || []).slice().reverse().forEach(function (e) {
-        var tr = document.createElement('tr');
-        tr.innerHTML = '<td>' + (e.auteur || '') + '</td><td>' + e.action + '</td><td>' +
-          (e.cible === null ? '' : e.cible) + '</td><td>' + (e.details === null ? '' : e.details) + '</td>';
-        tb.appendChild(tr);
-      });
+      (r.json.data || []).slice().reverse().forEach(function (e) { ligne(tb, [e.auteur, e.action, e.cible, e.details]); });
     });
   }
-  function rafraichirTout() { rafraichirJoueurs(); rafraichirListes(); rafraichirJournal(); }
+  // SPEC-FACTION-013 / SPEC-ADMIN-008 : modération des factions de joueurs (administrateur ou modérateur)
+  function rafraichirFactions() {
+    api('GET', 'faction_gerer?op=lister').then(function (r) {
+      var tb = document.querySelector('#tbl-factions tbody');
+      tb.innerHTML = '';
+      (r.json.data || []).forEach(function (f) { ligne(tb, [f.nom, f.id, f.chef, f.membres, f.candidatures]); });
+      document.getElementById('msg-factions').textContent = r.json.ok ? (r.json.data || []).length + ' faction(s)' : 'refusé : ' + (r.json.motif || '');
+    });
+  }
+  function gererFaction(op) {
+    api('POST', 'faction_gerer', { op: op, faction: document.getElementById('f-faction').value.trim(), nom: document.getElementById('f-nom').value.trim() })
+      .then(function (r) {
+        document.getElementById('msg-factions').textContent = r.json.ok ? (op === 'renommer' ? 'renommée' : 'dissoute') : 'refusé : ' + (r.json.motif || '');
+        rafraichirFactions(); rafraichirJournal();
+      });
+  }
+  document.getElementById('f-rafraichir').onclick = rafraichirFactions;
+  document.getElementById('f-renommer').onclick = function () { gererFaction('renommer'); };
+  document.getElementById('f-dissoudre').onclick = function () { gererFaction('dissoudre'); };
+  function rafraichirTout() { rafraichirJoueurs(); rafraichirListes(); rafraichirJournal(); rafraichirFactions(); }
 
   document.getElementById('j-rafraichir').onclick = rafraichirJournal;
 

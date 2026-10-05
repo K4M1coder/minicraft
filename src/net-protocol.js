@@ -486,6 +486,7 @@
         var ACTIONS = ['auth', 'joueurs', 'inventaire', 'sessions', 'listes', 'journal',
           'liste_ajouter', 'liste_retirer', 'invitation_creer', 'invitation_revoquer',
           'role_nommer', 'sanction', 'zone_definir', 'zone_retirer', 'bloc_commande', 'heure'];
+        ACTIONS.push('faction_gerer');   // SPEC-FACTION-013 : lister, renommer, dissoudre une faction de joueurs (admin ou modérateur)
         if (typeof msg.action !== 'string' || ACTIONS.indexOf(msg.action) < 0) return null;
         // charge bornee : un panneau admin n'a jamais besoin de gros volumes
         var args = msg.args && typeof msg.args === 'object' ? msg.args : {};

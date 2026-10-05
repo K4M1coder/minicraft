@@ -222,7 +222,9 @@
         const ctx = { positions, proches: (x, z, r) => monde.habitats.lieuxProches(x, z, r, cycleLieux.lire) };
         avancerPolitique(ctx);
         diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
+        if (profilTics) profilTics.section('entretien : politique');
         avancerCaravanes(ctx);
+        if (profilTics) profilTics.section('entretien : caravanes');
         avancerCatastrophes(ctx);
         entretiensFaits++;
       } else if (!cycleLieux) {
@@ -347,6 +349,10 @@
         if (profilTics) profilTics.section('chunks: dechargement');
         peuplerLieux();
         if (profilTics) profilTics.section('peuplerLieux');
+        // SPEC-FACTION-007 : rondes des factions PNJ près des joueurs ; SPEC-FACTION-012 : membres sur la carte
+        S.animerPatrouilles();
+        S.diffuserMembresFaction();
+        if (profilTics) profilTics.section('factions : rondes et membres');
         entretienDuMonde();
         // SPEC-SECU-012 : qui s'approche d'une région redéfinie l'apprend avant d'y entrer
         clients.forEach(c => synchroniserZones(c));
@@ -742,6 +748,7 @@
             if (e.arme) o.a = e.arme;
             if (e.variante !== undefined) o.v = e.variante;
             if (e.role) { o.r = e.role; o.n = e.nom; }
+            if (e.patrouille) o.pa = 1;      // SPEC-FACTION-007 : un garde en ronde d'une faction PNJ
             /* Véhicule (SPEC-SYNC-022) : nom, vitesse, occupé, carburant, avarie — ce qu'il faut
                pour l'animer et, si le client en prend le volant, le prédire. */
             if (e.vehicule) {

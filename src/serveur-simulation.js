@@ -15,12 +15,12 @@
   function installer(S) {
     const { Buffer, process, setTimeout } = S.hote;
     const {
-      NP, C, CONF, PARAMS_HISTOIRE, regles, monde, entites, chat, politique, guildes,
+      NP, C, CA, CONF, PARAMS_HISTOIRE, regles, monde, entites, chat, politique, guildes,
       economie, banques, histoireMonde, sauvegarderMondeAsync, journal,
     } = S;
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
     Object.assign(S, {
-      peuplerLieux, avancerPolitique, diffuserPolitiqueSiChangee,
+      peuplerLieux, avancerPolitique, diffuserPolitiqueSiChangee, animerPatrouilles, diffuserMembresFaction,
       envoyerPolitiqueComplete, avancerCatastrophes, etapesCatastrophe,
       appliquerTornades, surveillerDonjonsServeur, avancerEconomie,
       avancerCaravanes, offresPour, abriServeur,
@@ -77,11 +77,79 @@
       }
       const jourCourant = Math.floor(EP.heure / MC.DayCycle.DAY_LENGTH);
       if (jourCourant <= politique.jour) return;
-      const avant = politique.annonces.length;
+      /* Les annonces nées pendant ces jours : la liste est bornée (les plus
+         anciennes en sortent), d'où le compteur monotone `nbAnnonces` — compter
+         sur la longueur ne voyait plus rien passer une fois la liste pleine. Au
+         plus ANNONCES_DIFFUSEES_MAX par rattrapage (les plus récentes) : un monde
+         aux centaines de factions en produit trop pour le chat. */
+      const avant = politique.nbAnnonces || 0;
       MC.Politique.tourDuMonde(politique, jourCourant);
-      politique.annonces.slice(avant).forEach(a => {
+      const nouvelles = Math.min((politique.nbAnnonces || 0) - avant, politique.annonces.length, ANNONCES_DIFFUSEES_MAX);
+      if (nouvelles > 0) politique.annonces.slice(-nouvelles).forEach(a => {
         const m = chat.systeme(a.texte);
         if (m) S.diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
+      });
+    }
+    const ANNONCES_DIFFUSEES_MAX = 12;
+
+    /* SPEC-FACTION-007 : les rondes décidées par la simulation (MC.Politique,
+       à gros grain, partout) prennent corps près des joueurs : des gardes en
+       marche suivent le tracé de la ronde (entities.js, `e.patrouille`). Une fois
+       par seconde (cadence d'entretien) : rondes visibles = factions × positions
+       des joueurs, plafonnées (PATROUILLES_MAX × 3 gardes) ; un garde tombé ne
+       renaît pas avant la ronde suivante ; une ronde finie ou loin de tout
+       joueur rend ses gardes. */
+    const RAYON_RONDES = 160;
+    const gardesRonde = new Map();          // `${faction}#${jour}#${i}` → entité
+    const gardesTombes = new Set();         // même clé : tué pendant la ronde
+    function animerPatrouilles() {
+      const positions = S.tousLesJoueurs().map(({ js }) => js.joueur.state.pos);
+      const voulues = new Map();
+      MC.Politique.patrouillesVisibles(politique, positions, RAYON_RONDES, politique.jour).forEach(r => {
+        for (let i = 0; i < r.gardes; i++) voulues.set(r.faction + '#' + r.jour + '#' + i, { r, i });
+      });
+      gardesRonde.forEach((e, cle) => {
+        const vivant = entites.list.indexOf(e) >= 0 && !e.dead;
+        if (!vivant) { gardesRonde.delete(cle); if (voulues.has(cle)) gardesTombes.add(cle); return; }
+        if (!voulues.has(cle)) { entites.remove(e); gardesRonde.delete(cle); }
+      });
+      voulues.forEach(({ r, i }, cle) => {
+        if (gardesRonde.has(cle) || gardesTombes.has(cle)) return;
+        const n = r.points.length, k = (i * 2) % n, p = r.points[k];
+        if (!monde.estCharge(p.x, p.z)) return;
+        const e = entites.spawn('garde', p.x + 0.5, monde.groundAt(p.x, p.z, true) + 1.05, p.z + 0.5,
+                                { patrouille: { faction: r.faction, jour: r.jour, points: r.points, i: (k + 1) % n } });
+        if (e) gardesRonde.set(cle, e);
+      });
+      if (gardesTombes.size > 512) gardesTombes.clear();
+    }
+    S.gardesRonde = gardesRonde;
+
+    /* SPEC-FACTION-012 : chaque membre voit sur sa carte les autres membres
+       CONNECTÉS de ses factions (principale et secondaires) — et rien d'autre :
+       le message ne part qu'à un client dont le joueur est membre, avec les
+       seules positions de ces factions-là. Une fois par seconde, seulement si la
+       liste a changé (positions arrondies au bloc), et une liste vide une fois
+       quand il n'y a plus personne à montrer. Coût : joueurs × membres. */
+    function diffuserMembresFaction() {
+      const parNom = new Map();
+      S.tousLesJoueurs().forEach(({ c, j, js }) => { if (j === 0 && c.nom) parNom.set(c.nom, js.joueur.state.pos); });
+      S.clients.forEach(c => {
+        if (!c.rejoint || !c.nom) return;
+        const fs = MC.Guildes.factionsDe(guildes, c.nom);
+        const ids = (fs.principale ? [fs.principale] : []).concat(fs.secondaires);
+        const l = [], vus = new Set();
+        ids.forEach(fid => MC.Guildes.membresDe(guildes, fid).forEach(nom => {
+          if (nom === c.nom || vus.has(nom + '#' + fid) || l.length >= CA.BORNES.FACTION_MEMBRES_MAX) return;
+          const p = parNom.get(nom);
+          if (!p) return;
+          vus.add(nom + '#' + fid);
+          l.push([nom, Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10, fid]);
+        }));
+        const empreinte = l.map(e => e[0] + ',' + Math.round(e[1]) + ',' + Math.round(e[2]) + ',' + e[3]).join(';');
+        if (empreinte === (c.membresVus === undefined ? '' : c.membresVus)) return;
+        c.membresVus = empreinte;
+        S.envoyer(c, { t: CA.MSG.FACTION_MEMBRES, l });
       });
     }
     /* SPEC-SYNC-024 : l'état des relations de faction tel qu'un client le reçoit.
@@ -437,6 +505,21 @@
       const t = process.env.MC_TEST_MOB;
       const m = entites.spawn(t, SPAWN.x - 0.3, SPAWN.y, SPAWN.z);
       if (m) m.wanderCd = 1e9;
+    }
+    /* MC_TEST_FACTION_RONDE=1 : réservé à tests/integration-factions.js (même
+       principe que MC_TEST_QUETE) — une faction PNJ FICTIVE a son siège au point
+       d'apparition et y commence une ronde par le VRAI chemin de la simulation
+       (MC.Politique.appliquerAction 'patrouille'), pour que la suite voie des
+       gardes en marche sans dépendre d'une ville procédurale. Jamais en exploitation. */
+    if (process.env.MC_TEST_FACTION_RONDE) {
+      journal('ATTENTION : MC_TEST_FACTION_RONDE actif — une faction PNJ FICTIVE en ronde au point d apparition (réglage de test, jamais en exploitation)');
+      const idF = 'test:ronde';
+      const f = { id: idF, type: 'ordre', nom: 'Garde du Col', caractere: 'pragmatique',
+                  siege: { x: Math.floor(SPAWN.x), z: Math.floor(SPAWN.z), site: idF }, territoire: 60,
+                  // « explorer » : un objectif qu'aucune règle ne rend à un ordre de ce rang → il change forcément au premier jour simulé
+                  ressources: { or: 50, nourriture: 50 }, objectif: 'explorer', objectifs: ['defendre', 'convertir'], naissance: 0 };
+      politique.factions.set(idF, f);
+      MC.Politique.appliquerAction(politique, f, 'patrouille', politique.jour);
     }
   }
 

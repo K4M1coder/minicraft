@@ -68,6 +68,8 @@
       onFoudroye: opts.onFoudroye || function () {},
       // SPEC-SYNC-024 : état complet des relations de faction (PNJ et joueurs)
       onPolitique: opts.onPolitique || function () {},
+      // SPEC-FACTION-012 : où sont les membres connectés de nos factions (et seulement eux)
+      onFactionMembres: opts.onFactionMembres || function () {},
       // SPEC-SECU-012 : une région redéfinie (ou rendue à la carte) par un administrateur
       onZoneMaj: opts.onZoneMaj || function () {},
     };
@@ -285,6 +287,11 @@
         case NP.MSG.FOUDROYE: {
           var fd = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
           if (fd) hooks.onFoudroye(fd);
+          break;
+        }
+        case NP.MSG.FACTION_MEMBRES: {
+          var fm = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
+          if (fm) hooks.onFactionMembres(fm.l);
           break;
         }
         // SPEC-SECU-012 : zone redéfinie là où se tient un de nos joueurs — forme

@@ -977,4 +977,90 @@
       capture('batterie-en-charge');
     } finally { await quitterPartie(g, p); }
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // L39 — factions de joueurs : la carte et le panneau (SPEC-FACTION-012)
+  // ══════════════════════════════════════════════════════════════════════════
+  e2e('SPEC-FACTION-012 : les membres de sa faction apparaissent sur la carte (C) et dans le panneau des factions (J), positions données par le serveur', {
+        "teste": "dans la vraie page contre un vrai serveur de jeu (créatif) : la page fonde « Loups » par /faction, un second client (Bob) postule et la page l'accepte ; le serveur envoie FACTION_MEMBRES ; la carte ouverte au clavier (C) dessine Bob (losange, nom) et le liste sous les repères ; le panneau J montre « Votre faction », Bob et son rang marqué en ligne, et le rappel du canal et de la diplomatie ; rendu ≥ 800×600",
+        "pourquoi": "les membres d'une faction n'apparaissaient nulle part sur la carte : le client ne recevait aucune position des membres de sa faction",
+        "attendu": "Bob dessiné sur la carte et listé avec sa distance, panneau « Votre faction » avec « Bob (recrue) ● » ; captures de la carte et du panneau",
+        "delai": 180
+  }, async function (g) {
+    A.ok(G.innerWidth >= 800 && G.innerHeight >= 600, 'rendu d\'au moins 800×600 (' + G.innerWidth + '×' + G.innerHeight + ')');
+    var p = await demarrerPartie(g, 'creatif', []);
+    var bob = null;
+    try {
+      T.etape('fonder la faction et accepter Bob');
+      g.net.envoyerChat('/faction creer Loups #c03030');
+      var guildeDe = function (nom) {
+        var gu = g.etatPolitique && g.etatPolitique.guildes;
+        return gu && (gu.factions || []).filter(function (e) { return e[1] && e[1].nom === nom; })[0];
+      };
+      await preparer(function () { return !!guildeDe('Loups'); }, 10000, 'le serveur confirme la faction « Loups » (POLITIQUE)');
+      bob = MC.createNetClient({});
+      p.temoin = bob;
+      bob.connecter('ws://127.0.0.1:' + p.port, 'Bob', 1);
+      await preparer(function () { return bob.etat === 'en ligne'; }, 30000, 'Bob (second client) est admis');
+      bob.envoyerChat('/faction postuler Loups');
+      await frames(30);       // la candidature arrive au serveur avant l'acceptation
+      g.net.envoyerChat('/faction accepter Loups Bob');
+      await sonder(function () { return (g.membresFaction || []).some(function (m) { return m.nom === 'Bob'; }); }, 10000);
+      var mb = (g.membresFaction || []).filter(function (m) { return m.nom === 'Bob'; })[0];
+      A.ok(mb, 'SPEC-FACTION-012 : le serveur envoie à la page la position de Bob, membre de sa faction (FACTION_MEMBRES)\n' +
+        J.resumerMessages(p.sp.recus, function (m) { return m.t === 'faction_membres' || m.t === 'chat'; }, 0));
+      A.ok(mb && Math.hypot(mb.x - g.player.state.pos.x, mb.z - g.player.state.pos.z) < 40, 'la position de Bob est celle d\'un joueur près du point d\'apparition');
+      // Bob s'éloigne (avant + course, 4 s d'entrées à 60 Hz) : sa marque se détache de la flèche du joueur
+      var sB = 0, tB = performance.now();
+      var marche = setInterval(function () {
+        var n = performance.now(), dt = Math.min(0.05, (n - tB) / 1000); tB = n;
+        if (dt > 0) bob.envoyerEntree({ s: ++sB, dt: dt, k: 1 | 32, yaw: 0, pitch: 0, v: 0 }, 0);
+      }, 16);
+      var x0 = mb.x, z0 = mb.z;
+      await sonder(function () { var m = (g.membresFaction || []).filter(function (q) { return q.nom === 'Bob'; })[0]; return m && Math.hypot(m.x - x0, m.z - z0) > 12; }, 12000);
+      clearInterval(marche);
+      var mb2 = (g.membresFaction || []).filter(function (q) { return q.nom === 'Bob'; })[0];
+      A.ok(mb2 && Math.hypot(mb2.x - x0, mb2.z - z0) > 12, 'SPEC-FACTION-012 : la position de Bob suit ses déplacements (' + JSON.stringify(mb) + ' → ' + JSON.stringify(mb2) + ')');
+
+      T.etape('carte');
+      fakeLock(g, true); g.input.setState('playing');
+      key('KeyC');
+      await sonder(function () { return g.ui.carteOuverte(); }, 3000);
+      A.ok(g.ui.carteOuverte(), 'la touche C ouvre la carte (créatif)');
+      // zoom maximal (0,5 bloc par pixel) : la marque de Bob se détache nettement de la flèche du joueur
+      var plus = document.querySelector('.carte-zoom button[data-z="1"]');
+      if (plus) { plus.click(); plus.click(); }
+      await frames(2);
+      await sonder(function () { return g.ui.membresSurCarte().some(function (m) { return m.nom === 'Bob'; }); }, 5000);
+      var marque = g.ui.membresSurCarte().filter(function (m) { return m.nom === 'Bob'; })[0];
+      A.ok(marque, 'SPEC-FACTION-012 : Bob est dessiné sur la carte');
+      var cv = document.querySelector('.carte canvas, .carte-corps canvas');
+      A.ok(marque && cv && marque.px >= 0 && marque.px <= cv.width && marque.py >= 0 && marque.py <= cv.height, 'dans le cadre de la carte (' + JSON.stringify(marque) + ')');
+      // le losange est peint à la couleur de la faction (#c03030) là où la carte dit l'avoir dessiné
+      var px = marque ? cv.getContext('2d').getImageData(marque.px, marque.py, 1, 1).data : [0, 0, 0];
+      A.ok(Math.abs(px[0] - 192) < 30 && Math.abs(px[1] - 48) < 30 && Math.abs(px[2] - 48) < 30, 'SPEC-FACTION-012 : la marque de Bob est peinte à la couleur de sa faction (pixel ' + Array.from(px).slice(0, 3).join(',') + ')');
+      var dCentre = marque ? Math.hypot(marque.px - cv.width / 2, marque.py - cv.height / 2) : 0;
+      A.ok(dCentre > 4, 'la marque de Bob est détachée de la flèche du joueur (' + dCentre.toFixed(1) + ' px)');
+      var liste = Array.from(document.querySelectorAll('.carte-membre span')).map(function (s) { return s.textContent; });
+      A.ok(liste.indexOf('Bob') >= 0, 'SPEC-FACTION-012 : Bob est listé sous les repères (« Membres de la faction »), avec sa distance : ' + JSON.stringify(liste));
+      capture('carte-membres-faction');
+      key('Escape'); await frames(3);
+      fakeLock(g, true); g.input.setState('playing');
+
+      T.etape('panneau des factions');
+      key('KeyJ');
+      await sonder(function () { return g.ui.factionsOuvertes(); }, 3000);
+      A.ok(g.ui.factionsOuvertes(), 'la touche J ouvre le panneau des factions');
+      var panneau = document.querySelector('.factions-panneau');
+      var texte = panneau ? panneau.textContent : '';
+      A.ok(/Votre faction/.test(texte) && /Loups/.test(texte), 'le panneau montre « Votre faction » : Loups');
+      A.ok(/Bob \(recrue\) ●/.test(texte), 'SPEC-FACTION-012 : Bob, son rang, marqué en ligne : ' + texte.slice(0, 400));
+      A.ok(/\/faction dire/.test(texte) && /\/faction relation Loups/.test(texte), 'le panneau rappelle le canal et la diplomatie');
+      capture('panneau-factions');
+      key('Escape'); await frames(3);
+    } finally {
+      if (bob) { try { bob.deconnecter(); } catch (e) { /* déjà parti */ } p.temoin = null; }
+      await quitterPartie(g, p);
+    }
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -847,6 +847,20 @@
           var hx = e.foyer.x - e.pos.x, hz = e.foyer.z - e.pos.z, hd = Math.hypot(hx, hz);
           if (hd > RAYON_FOYER) { e.wanderDir = Math.atan2(hz, hx); e.wanderCd = 1; }
         }
+        /* SPEC-FACTION-007 : un garde en patrouille suit sa ronde, point après
+           point (le serveur lui a remis le tracé décidé par MC.Politique) ; un
+           point atteint (à 2,5 blocs), il vise le suivant. */
+        var ronde = e.patrouille;
+        if (ronde && ronde.points && ronde.points.length) {
+          var pt = ronde.points[ronde.i % ronde.points.length];
+          var px = pt.x + 0.5 - e.pos.x, pz = pt.z + 0.5 - e.pos.z;
+          if (Math.hypot(px, pz) < 2.5) {
+            ronde.i = (ronde.i + 1) % ronde.points.length;
+            pt = ronde.points[ronde.i];
+            px = pt.x + 0.5 - e.pos.x; pz = pt.z + 0.5 - e.pos.z;
+          }
+          e.wanderDir = Math.atan2(pz, px); e.wanderCd = 1;
+        }
         if (e.wanderDir === null || e.wanderDir === undefined) {
           e.vel.x = P.approach(e.vel.x, 0, 6, dt);
           e.vel.z = P.approach(e.vel.z, 0, 6, dt);

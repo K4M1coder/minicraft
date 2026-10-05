@@ -18,6 +18,7 @@
 
    Usage : node tools/mesure-tics.js [--duree 30] [--charge N] [--blocs N]
            [--cadence-sauvegarde MS] [--cpu-prof DOSSIER] [--graine N] [--yaw R] [--vol] [--json]
+           [--joueurs N]  (N joueurs dispersés, entretien du monde et passage d'un jour : mesurerDisperses)
    --vol : course en vol (mode créatif), sans obstacle — le pire cas de terrain neuf.
    Module : require('./mesure-tics.js').mesurer(opts) → résumé. */
 'use strict';
@@ -260,7 +261,82 @@ async function mesurer(o) {
   return res;
 }
 
-module.exports = { mesurer, fenetre, centile, capAuSec };
+/* --joueurs N : N joueurs DISPERSÉS (anneau de 600 à 2600 blocs autour du point
+   d'apparition, chacun debout sur la terre ferme, villes et factions comprises),
+   connectés ensemble et envoyant leurs entrées à 60 Hz, sur un monde dont
+   l'heure est placée juste avant la fin d'un jour : la fenêtre mesurée contient
+   donc l'entretien du monde à 1 Hz pour tous (lieux, politique, rondes des
+   factions, membres des factions) ET le passage d'un jour simulé (politique,
+   économie). Deux fenêtres : l'arrivée (terrain de N joueurs à générer) et le
+   régime (après le premier jour). */
+async function mesurerDisperses(o) {
+  o = Object.assign({ joueurs: 16, duree: 30, graine: 20260921 }, o || {});
+  const dossier = A.dossierTemp('mc-mesure-tics-n-');
+  const fProfil = path.join(dossier, 'profil.json');
+  const fMonde = path.join(dossier, 'monde.json');
+  const env = { MC_TEST_PROFIL_TICS: fProfil, MC_GRAINE: String(o.graine), MC_MODE: 'survie', MC_DIFFICULTE: 'paisible',
+                MC_SAUVEGARDE_MS: '3600000', MC_JOURNAL_DOSSIER: path.join(dossier, 'journal') };
+  const args = ['--port', '0', '--monde', fMonde, '--dossier-parties', dossier, '--ouvert', '--max-joueurs', String(Math.max(8, o.joueurs))];
+  const noms = []; for (let i = 0; i < o.joueurs; i++) noms.push('Disperse' + i);
+  const res = { graine: o.graine, joueurs: o.joueurs, scenarios: {} };
+  let s = null, js = [];
+  try {
+    // 1. une première venue pour que chaque joueur existe dans le fichier de monde
+    s = await A.lancer(args, env);
+    for (const n of noms) js.push(await joueur(s.port, n));
+    const spawn = js[0].bienvenue.toi[0];
+    js.forEach(j => j.fermer()); js = [];
+    await s.arreter(); s = null;
+    // 2. chacun déplacé sur la terre ferme, sur un anneau ; l'heure 8 s avant la fin du jour
+    const fichier = JSON.parse(fs.readFileSync(fMonde, 'utf8'));
+    const MCl = A.chargerModules(), wl = MCl.createWorld(o.graine);
+    const positions = [];
+    noms.forEach((n, i) => {
+      const entree = (fichier.joueurs || []).find(e => e[0] === n || (e[1] && e[1].nom === n) || String(e[0]).toLowerCase() === n.toLowerCase());
+      if (!entree || !entree[1].etat) throw new Error('joueur ' + n + ' absent du fichier de monde');
+      let cible = null;
+      for (let k = 0; k < 40 && !cible; k++) {
+        const ang = (i + k * 0.37) * 2 * Math.PI / noms.length, r = 600 + ((i * 1237 + k * 211) % 2000);
+        const x = Math.floor(spawn.x + Math.cos(ang) * r), z = Math.floor(spawn.z + Math.sin(ang) * r);
+        wl.getChunk(Math.floor(x / 16), Math.floor(z / 16), true);
+        const y = wl.groundAt(x, z, true);
+        if (y > 0 && MCl.Core.isSolid(wl.getBlock(x, y, z)) && wl.getBlock(x, y + 1, z) === 0 && wl.getBlock(x, y + 2, z) === 0) cible = { x: x + 0.5, y: y + 1, z: z + 0.5 };
+      }
+      if (!cible) throw new Error('aucune terre ferme pour ' + n);
+      Object.assign(entree[1].etat, cible);
+      positions.push(cible);
+    });
+    const jourLong = MCl.DayCycle.DAY_LENGTH;
+    fichier.heure = (Math.floor((fichier.heure || 0) / jourLong) + 1) * jourLong - 8;
+    fs.writeFileSync(fMonde, JSON.stringify(fichier));
+    res.positions = positions.map(p => [Math.round(p.x), Math.round(p.z)]);
+    // 3. relance, arrivée de tous, puis régime (le jour passe pendant la mesure)
+    s = await A.lancer(args, env);
+    const d0 = Date.now();
+    js = await Promise.all(noms.map(n => joueur(s.port, n)));
+    js.forEach(j => { j.demarrer(); j.courir(0, 0); });
+    await A.dodo(Math.max(10, o.duree / 3) * 1000);
+    const d1 = Date.now();
+    res.scenarios.arrivee = fenetre(await lireProfil(fProfil), d0, d1, 'arrivée de ' + o.joueurs + ' joueurs dispersés');
+    await A.dodo(o.duree * 1000);
+    const d2 = Date.now();
+    res.scenarios.regime = fenetre(await lireProfil(fProfil), d1, d2, o.joueurs + ' joueurs dispersés, entretien et jour simulé');
+    // ce que la politique est devenue (factions découvertes, jour simulé) : relu par un client
+    const pol = js[0].client.messages.filter(m => m.t === NP.MSG.POLITIQUE && m.pol);
+    res.factionsPnj = pol.reduce((n, m) => n + ((m.pol.f || []).length), 0);     // nées au join puis découvertes en route
+    res.jourSimule = pol.length ? Math.max(...pol.map(m => m.pol.jour || 0)) : null;
+    res.annoncesPolitiques = js[0].client.messages.filter(m => m.t === NP.MSG.CHAT && m.type === 'systeme' &&
+      /change d'objectif|caravane|patrouille|raid|avant-poste|alliance|guerre|rivales|neutres|voit le jour/.test(m.texte || '')).length;
+    res.gardesEnRonde = Math.max(0, ...js.map(j => { const e = j.client.dernier(NP.MSG.ETAT); return e ? (e.mobs || []).filter(x => x.pa).length : 0; }));
+  } finally {
+    js.forEach(j => { try { j.fermer(); } catch (e) { /* déjà */ } });
+    if (s) await s.arreter();
+    A.supprimerDossier(dossier);
+  }
+  return res;
+}
+
+module.exports = { mesurer, mesurerDisperses, fenetre, centile, capAuSec };
 
 if (require.main === module) {
   const a = process.argv.slice(2), o = {};
@@ -275,8 +351,9 @@ if (require.main === module) {
     else if (a[i] === '--yaw') o.yaw = +a[++i];
     else if (a[i] === '--vol') o.vol = true;
     else if (a[i] === '--sol-lent') o.solLent = true;
+    else if (a[i] === '--joueurs') o.joueurs = +a[++i];
   }
-  mesurer(o).then((r) => {
+  (o.joueurs ? mesurerDisperses(o) : mesurer(o)).then((r) => {
     console.log(o.json ? JSON.stringify(r) : JSON.stringify(r, null, 1));
     process.exit(0);
   }).catch((e) => { console.error(e && e.stack || e); process.exit(2); });

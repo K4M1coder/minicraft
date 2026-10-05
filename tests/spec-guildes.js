@@ -156,6 +156,73 @@
       A.notOk(e2.factions.has(f1));
     });
 
+    it('SPEC-FACTION-012 : diplomatie envers une faction PNJ désignée par son nom (espaces écrits « _ »), réciproque côté PNJ', function () {
+      var e = GU.creerEtat();
+      GU.creerFaction(e, 'Alice', { nom: 'Loups' });
+      var ep = MC.Politique.creer(1);
+      MC.Politique.decouvrir(ep, [{ id: 'ville:0,0', kind: 'ville', x: 100, z: 100, nom: 'Beaulac' }]);
+      var pnjId = Array.from(ep.factions.keys())[0], pnjNom = ep.factions.get(pnjId).nom;
+      A.equal(GU.idPnjDe(ep, pnjNom.replace(/ /g, '_')), pnjId, 'le nom en un mot désigne la faction PNJ');
+      A.equal(GU.idPnjDe(ep, pnjNom.replace(/ /g, '_').toUpperCase()), pnjId, 'sans égard à la casse');
+      var r = GU.appliquerAction(e, 'Alice', { action: 'relation', args: { faction: 'Loups', cible: pnjNom.replace(/ /g, '_'), relation: 'ennemie' } }, ep);
+      A.ok(r.ok, r.message);
+      A.equal(MC.Politique.relationEntre(ep, pnjId, GU.idDe(e, 'Loups')), 'guerre', 'perçue comme une guerre côté PNJ');
+      var r2 = GU.appliquerAction(e, 'Alice', { action: 'relation', args: { faction: 'Loups', cible: 'Personne_de_connu', relation: 'alliee' } }, ep);
+      A.notOk(r2.ok, 'une cible inconnue est refusée');
+    });
+
+    it('SPEC-FACTION-012 : sécurité — nom de faction sans caractère de contrôle, sans balise, borné, distinct d\'un identifiant ; couleur, emblème et devise nettoyés', function () {
+      var e = GU.creerEtat();
+      ['', 'a', 'Loups\nINFO admin', 'L<script>', 'x'.repeat(25), 'g12', 'Lou\u0007ps', 'Lou\u2028ps'].forEach(function (nom) {
+        var r = GU.creerFaction(e, 'Alice', { nom: nom });
+        A.notOk(r.ok, 'refusé : ' + JSON.stringify(nom));
+        A.equal(r.motif, 'nom_invalide');
+      });
+      var ok = GU.creerFaction(e, 'Alice', { nom: '  Les   Aigles-d\'Or  ', couleur: 'red;background:url(x)', emblem: '<img>', devise: 'Vive\u0000 la <b>meute</b>' + 'x'.repeat(80) });
+      A.ok(ok.ok);
+      var f = e.factions.get(ok.id);
+      A.equal(f.nom, 'Les Aigles-d\'Or', 'espaces en trop retirés');
+      A.equal(f.couleur, '#8888ff', 'une couleur qui n\'est pas #rrggbb retombe sur la couleur par défaut');
+      A.equal(f.emblem, null, 'emblème refusé');
+      A.ok(f.devise.length <= 60 && f.devise.indexOf('<') < 0 && !/[\u0000-\u001f]/.test(f.devise), 'devise nettoyée et bornée : ' + f.devise);
+      A.equal(GU.creerFaction(e, 'Bob', { nom: 'Ours', couleur: '#A0B1C2' }).ok, true);
+      A.equal(e.factions.get(GU.idDe(e, 'Ours')).couleur, '#a0b1c2', 'couleur valide gardée');
+      // le renommage par la modération suit les mêmes règles
+      A.equal(GU.renommerParAdmin(e, ok.id, 'Mal\nveillant').motif, 'nom_invalide');
+      A.equal(GU.renommerParAdmin(e, ok.id, 'ours').motif, 'nom_pris');
+    });
+
+    it('SPEC-FACTION-013 : membres, rangs, candidatures, invitations et relations survivent à l\'aller-retour ; liste de modération sans donnée superflue', function () {
+      var e = GU.creerEtat();
+      var f1 = GU.creerFaction(e, 'Alice', { nom: 'Aube' }).id;
+      var f2 = GU.creerFaction(e, 'Zoe', { nom: 'Crepuscule' }).id;
+      GU.postuler(e, 'Bob', f1); GU.accepter(e, 'Alice', f1, 'Bob'); GU.promouvoir(e, 'Alice', f1, 'Bob');
+      GU.postuler(e, 'Dan', f1);                       // candidature en attente
+      GU.inviter(e, 'Alice', f1, 'Eve');               // invitation en attente
+      GU.declarerRelation(e, 'Alice', f1, f2, 'ennemie');
+      var e2 = GU.charger(JSON.parse(JSON.stringify(GU.serialiser(e))));
+      A.equal(GU.rangDe(e2, f1, 'Bob'), 'membre', 'rang conservé');
+      A.ok(GU.accepter(e2, 'Alice', f1, 'Dan').ok, 'la candidature en attente est toujours là');
+      A.ok(GU.accepterInvitation(e2, 'Eve', f1).ok, 'l\'invitation en attente est toujours là');
+      A.equal(GU.relationEnvers(e2, f1, f2), 'ennemie', 'relation conservée');
+      A.equal(e2.prochainId, e.prochainId, 'les identifiants ne se recyclent pas');
+      var l = GU.listerPourAdmin(e);
+      A.deep(l.map(function (x) { return x.nom; }), ['Aube', 'Crepuscule']);
+      A.deep(Object.keys(l[0]).sort(), ['candidatures', 'chef', 'couleur', 'id', 'membres', 'nom'], 'ni membres nommés ni relations');
+      A.equal(l[0].chef, 'Alice'); A.equal(l[0].membres, 2); A.equal(l[0].candidatures, 1);
+    });
+
+    it('SPEC-FACTION-013 : /admin factions et /admin faction renommer|dissoudre se traduisent en action faction_gerer, réservée à l\'administrateur et au modérateur', function () {
+      var r = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'renommer', 'Loups', 'La', 'Meute'] }, { enLigne: true });
+      A.deep(r.actions[0], { type: 'admin', action: 'faction_gerer', args: { op: 'renommer', faction: 'Loups', nom: 'La Meute' } });
+      var d = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'dissoudre', 'Loups'] }, { enLigne: true });
+      A.deep(d.actions[0].args, { op: 'dissoudre', faction: 'Loups' });
+      A.deep(MC.Commandes.executer({ nom: 'admin', args: ['factions'] }, { enLigne: true }).actions[0].args, { op: 'lister' });
+      A.ok(MC.Admin.peutAgir(MC.Admin.ROLES.ADMIN, 'faction_gerer'));
+      A.ok(MC.Admin.peutAgir(MC.Admin.ROLES.MODERATEUR, 'faction_gerer'));
+      A.notOk(MC.Admin.peutAgir(null, 'faction_gerer'), 'un simple joueur ne modère pas');
+    });
+
     it('SPEC-FACTION-010 : les commandes /faction s appliquent par nom de faction et répondent en clair', function () {
       var G2 = MC.Guildes, e = G2.creerEtat();
       function cmd(qui, texte) {

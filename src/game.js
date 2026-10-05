@@ -287,6 +287,13 @@
         if (m.guildes) ep.guildes = m.guildes;
         if (typeof m.moi === 'string') ep.moi = m.moi;                         // le nom que le serveur nous connaît
       },
+      /* SPEC-FACTION-012 : les membres connectés de nos factions, positions
+         données par le serveur (lui seul sait qui est membre) ; la carte ouverte
+         se met à jour (son fond reste en cache, seules les marques se redessinent). */
+      onFactionMembres: function (l) {
+        g.membresFaction = l || [];
+        if (ui.carteOuverte()) ui.dessinerCarte();
+      },
       onHistoireEtat: function (m) { surHistoireEtat(m); },
       onHistoireNotif: function (m) { surHistoireNotif(m); },
       onBloc: function (x, y, z, id, etat) {
@@ -409,6 +416,17 @@
           return;
         }
         if (!m.ok) { chat.systeme('/admin ' + m.action + ' — refusé' + (m.erreur ? ' (' + m.erreur + ')' : '')); return; }
+        // SPEC-FACTION-013 : la liste des factions de joueurs, lisible
+        if (m.action === 'faction_gerer' && Array.isArray(m.data)) {
+          chat.systeme(m.data.length ? 'Factions : ' + m.data.map(function (f) {
+            return f.nom + ' [' + f.id + '] — chef ' + (f.chef || '?') + ', ' + f.membres + ' membre(s)' + (f.candidatures ? ', ' + f.candidatures + ' candidature(s)' : '');
+          }).join(' · ') : 'Aucune faction de joueurs.');
+          return;
+        }
+        if (m.action === 'faction_gerer' && m.data) {
+          chat.systeme(m.data.nom ? 'Faction renommée « ' + m.data.nom + ' ».' : 'Faction ' + m.data.faction + ' dissoute.');
+          return;
+        }
         chat.systeme('/admin ' + m.action + ' → ' + JSON.stringify(m.data).slice(0, 400));
       },
       /* L45, SPEC-SYNC-023 : offres à jour d'un PNJ (réponse à 'consulter' ou
@@ -2214,6 +2232,15 @@
       world.exploration.explorer(world, player.state.pos.x, player.state.pos.z);
       ui.ouvrirCarte({ world: world, joueur: player.state, reperes: world.reperes,
                        exploration: world.exploration,
+                       // SPEC-FACTION-012 : membres de nos factions, à la couleur de leur faction
+                       membres: function () {
+                         var ep = g.etatPolitique, fs = ep && ep.guildes && ep.guildes.factions;
+                         var couleurs = {};
+                         (fs || []).forEach(function (e) { if (Array.isArray(e) && e[1]) couleurs[e[0]] = e[1].couleur; });
+                         return (g.membresFaction || []).map(function (mb) {
+                           return { nom: mb.nom, x: mb.x, z: mb.z, faction: mb.faction, couleur: couleurs[mb.faction] || null };
+                         });
+                       },
                        surChange: function (quoi, r) {
                          if (quoi === 'ajout') ui.toast('Repère « ' + r.nom + ' » posé');
                        } });
@@ -2555,7 +2582,9 @@
       } else if (act === 'factions') {
         var ep = g.etatPolitique;      // SPEC-SYNC-024 : l'état du serveur, s'il est arrivé
         ui.panneauFactions(world.reputation, ep && ep.etat ? { etat: ep.etat } : null,
-                           ep && ep.guildes ? { donnees: ep.guildes, joueur: ep.moi || g.nomJoueur || 'Joueur' } : null);
+                           ep && ep.guildes ? { donnees: ep.guildes, joueur: ep.moi || g.nomJoueur || 'Joueur',
+                                                // SPEC-FACTION-012 : qui, parmi les membres, est en ligne (FACTION_MEMBRES)
+                                                enLigne: (g.membresFaction || []).map(function (mb) { return mb.nom; }) } : null);
         input.setState('ui');
       } else if (act === 'succes') {
         ui.panneauSucces(g.succes);

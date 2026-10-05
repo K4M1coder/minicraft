@@ -215,6 +215,32 @@
           MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'bloc_commande', cible: `${x},${y},${z}`, details: texte, heure: EP.heure });
           return { ok: true, data: { texte } };
         }
+        /* SPEC-FACTION-013 / SPEC-ADMIN-008 : un administrateur OU un modérateur
+           (droit partagé « faction_gerer », MC.Admin.peutAgir) liste, renomme ou
+           dissout une faction de joueurs. `op` : lister | renommer | dissoudre ;
+           `faction` : identifiant ou nom ; `nom` : le nouveau nom (validé comme à la
+           création). Journalisé ; les membres sont prévenus ; tous les clients
+           reçoivent l'état des guildes à jour (POLITIQUE). */
+        case 'faction_gerer': {
+          const G2 = MC.Guildes, op = args.op;
+          if (op === 'lister') return { ok: true, data: G2.listerPourAdmin(S.guildes) };
+          if (op !== 'renommer' && op !== 'dissoudre') return { ok: false, motif: 'op_invalide' };
+          const fid = typeof args.faction === 'string' ? G2.idDe(S.guildes, args.faction.slice(0, 64)) : null;
+          if (!fid) return { ok: false, motif: 'introuvable' };
+          const avant = S.guildes.factions.get(fid).nom;
+          const membres = G2.membresDe(S.guildes, fid);
+          const r = op === 'renommer' ? G2.renommerParAdmin(S.guildes, fid, args.nom) : G2.dissoudreParAdmin(S.guildes, fid);
+          if (!r.ok) return { ok: false, motif: r.motif };
+          const apres = op === 'renommer' ? S.guildes.factions.get(fid).nom : null;
+          MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'faction_' + op, cible: fid, details: apres ? avant + ' → ' + apres : avant, heure: EP.heure });
+          const texte = op === 'renommer' ? 'La faction « ' + avant + ' » a été renommée « ' + apres + ' » par la modération.'
+                                          : 'La faction « ' + avant + ' » a été dissoute par la modération.';
+          const destinataires = new Set(membres);
+          clients.forEach(cl => { if (cl.rejoint && destinataires.has(cl.nom)) envoyer(cl, { t: NP.MSG.CHAT, auteur: null, texte, type: 'systeme' }); });
+          EP.guildesSales = true;
+          S.diffuserPolitiqueSiChangee();
+          return { ok: true, data: { faction: fid, nom: apres, membres: membres.length } };
+        }
         case 'sanction': {
           const res = Adm.sanctionner(admin, { nom: args.nom, type: args.type, dureeMs: args.dureeMs, auteur: nomActeur }, EP.heure);
           if (res.ok && (args.type === 'expulser' || args.type === 'bannir')) {

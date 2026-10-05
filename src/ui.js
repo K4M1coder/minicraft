@@ -73,8 +73,17 @@
       if (!carte) return;
       var W = carteCanvas.width, H = carteCanvas.height;
       var j = carte.joueur, ech = carte.echelle;
-      var img = carteCtx.createImageData(W, H), px = img.data;
       var cxMonde = j.pos.x, czMonde = j.pos.z;
+      /* Le fond (terrain et zones, une passe par pixel) ne change pas tant que le
+         joueur (immobile pendant que la carte est ouverte) et l'échelle restent :
+         redessiner les membres d'une faction qui bougent ne le recalcule pas. */
+      var cleFond = Math.floor(cxMonde) + ',' + Math.floor(czMonde) + ',' + ech;
+      if (carte.fond && carte.fond.cle === cleFond) {
+        carteCtx.putImageData(carte.fond.img, 0, 0);
+        dessinerMarques(W, H, j, ech, cxMonde, czMonde);
+        return;
+      }
+      var img = carteCtx.createImageData(W, H), px = img.data;
       var tuiles = {};
       var zoneFn = carte.world && carte.world.zoneEn;
       for (var y = 0; y < H; y++) for (var x = 0; x < W; x++) {
@@ -103,6 +112,12 @@
         px[o] = rC; px[o + 1] = gC; px[o + 2] = bC; px[o + 3] = 255;
       }
       carteCtx.putImageData(img, 0, 0);
+      carte.fond = { cle: cleFond, img: img };
+      dessinerMarques(W, H, j, ech, cxMonde, czMonde);
+    }
+    /* Repères, membres de sa faction (SPEC-FACTION-012) et flèche du joueur,
+       par-dessus le fond. */
+    function dessinerMarques(W, H, j, ech, cxMonde, czMonde) {
       // repères
       carteCtx.font = 'bold 12px ui-monospace, Menlo, Consolas, monospace';
       carte.reperes.liste.forEach(function (r) {
@@ -112,6 +127,24 @@
         carteCtx.beginPath(); carteCtx.arc(p.px, p.py, 6, 0, 7); carteCtx.fill(); carteCtx.stroke();
         if (carte.reperes.suivi === r.id) { carteCtx.beginPath(); carteCtx.arc(p.px, p.py, 10, 0, 7); carteCtx.stroke(); }
         carteCtx.fillStyle = '#111'; carteCtx.fillText(r.nom, p.px + 9, p.py - 7);
+      });
+      /* SPEC-FACTION-012 : les autres membres connectés de ses factions, tels que
+         le serveur les annonce (FACTION_MEMBRES) — un losange à la couleur de la
+         faction, son nom à côté ; au bord de la carte s'il est plus loin. */
+      var membres = carte.membres ? carte.membres() : [];
+      carte.membresDessines = [];
+      membres.forEach(function (mb) {
+        var p = MC.Carte.versCarte(mb.x, mb.z, W, H, cxMonde, czMonde, ech);
+        var bord = p.px < 6 || p.py < 6 || p.px > W - 6 || p.py > H - 6;
+        var x = Math.max(6, Math.min(W - 6, p.px)), y = Math.max(6, Math.min(H - 6, p.py));
+        carteCtx.fillStyle = /^#[0-9a-fA-F]{6}$/.test(mb.couleur || '') ? mb.couleur : '#8888ff';
+        carteCtx.strokeStyle = '#fff'; carteCtx.lineWidth = 2;
+        carteCtx.beginPath(); carteCtx.moveTo(x, y - 7); carteCtx.lineTo(x + 6, y); carteCtx.lineTo(x, y + 7); carteCtx.lineTo(x - 6, y);
+        carteCtx.closePath(); carteCtx.fill(); carteCtx.stroke();
+        carteCtx.lineWidth = 1;
+        carteCtx.fillStyle = '#111';
+        carteCtx.fillText(mb.nom + (bord ? ' ' + Math.round(Math.hypot(mb.x - cxMonde, mb.z - czMonde)) + ' m' : ''), x + 9, y + 4);
+        carte.membresDessines.push({ nom: mb.nom, px: Math.round(x), py: Math.round(y), bord: bord });
       });
       // le joueur : une flèche dans le sens du regard
       carteCtx.save();
@@ -133,6 +166,15 @@
           '<button class="suivre" data-id="' + r.id + '" title="Suivre">◎</button>' +
           '<button class="retirer" data-id="' + r.id + '" title="Retirer">✕</button></div>';
       }).join('') || '<p class="carte-vide">Aucun repère.</p>';
+      // SPEC-FACTION-012 : les membres de sa faction en ligne, avec leur distance
+      var mbs = carte.membres ? carte.membres() : [];
+      if (mbs.length) {
+        l.innerHTML += '<div class="carte-membres"><b>Membres de la faction</b>' + mbs.map(function (mb) {
+          var d = Math.round(Math.hypot(mb.x - carte.joueur.pos.x, mb.z - carte.joueur.pos.z));
+          var coul = /^#[0-9a-fA-F]{6}$/.test(mb.couleur || '') ? mb.couleur : '#8888ff';
+          return '<div class="carte-membre"><i style="background:' + coul + '"></i><span>' + echapper(mb.nom) + '</span><small>' + d + ' m</small></div>';
+        }).join('') + '</div>';
+      }
       l.querySelectorAll('.suivre').forEach(function (b) {
         b.onclick = function () {
           var id = +b.getAttribute('data-id');
@@ -192,7 +234,8 @@
 
     function ouvrirCarte(opts) {
       carte = { world: opts.world, joueur: opts.joueur, reperes: opts.reperes, exploration: opts.exploration,
-                echelle: carte ? carte.echelle : 2, surChange: opts.surChange };
+                echelle: carte ? carte.echelle : 2, surChange: opts.surChange,
+                membres: opts.membres || null };   // SPEC-FACTION-012 : () → [{ nom, x, z, couleur }]
       carteEl.style.display = '';
       dessinerCarte();
       return carteEl;
@@ -431,7 +474,7 @@
       /* SPEC-SYNC-024 : `guilde.donnees` = les factions de joueurs reçues du
          serveur (message POLITIQUE), relues ici : le jeu n'en tient aucun état. */
       if (guilde && guilde.donnees && !guilde.etat && MC.Guildes) {
-        guilde = { etat: MC.Guildes.charger(guilde.donnees), joueur: guilde.joueur };
+        guilde = { etat: MC.Guildes.charger(guilde.donnees), joueur: guilde.joueur, enLigne: guilde.enLigne };
       }
       var html = '<div class="carte-tete"><b>Factions</b><span class="carte-aide">J pour fermer</span></div>' +
         F.ORDRE.map(function (id) {
@@ -465,7 +508,8 @@
           var type = P.TYPES[f.type] ? P.TYPES[f.type].nom : (f.type || '?');     // un type inconnu ne casse pas le panneau
           return '<div class="faction"><div class="faction-l"><b>' + ech(f.nom) + '</b>' +
             '<span class="st ' + (st2 === 'allie' ? 'amical' : st2) + '">' + (LIBELLES_POL[st2] || st2) + '</span></div>' +
-            '<small>' + ech(type) + ' · ' + ech(f.caractere || '') + ' · objectif : ' + ech(f.objectif || '') + '</small>' +
+            '<small>' + ech(type) + ' · ' + ech(f.caractere || '') + ' · objectif : ' + ech(f.objectif || '') +
+            (typeof f.territoire === 'number' ? ' · territoire : ' + Math.round(f.territoire) + ' blocs' : '') + '</small>' +
             '<small class="relations">' + ligneRel(resume.get(id)) + '</small></div>';
         }).join('') : '<p class="aide">Aucune faction découverte pour l\'instant.</p>');
       }
@@ -480,7 +524,15 @@
             '<small class="relations">' + (relsG.length ? relsG.map(function (e) {
               var cible = ge.factions.get(e[0]);
               return ech(e[1] === 'ennemie' ? 'Ennemie de ' : 'Alliée de ') + ech(cible ? cible.nom : nomFaction(e[0]));
-            }).join(' · ') : 'Aucune relation déclarée') + '</small></div>';
+            }).join(' · ') : 'Aucune relation déclarée') + '</small>' +
+            /* SPEC-FACTION-012 : les membres et leur rang, ceux en ligne marqués (leur
+               position est sur la carte) ; la diplomatie et le canal, en rappel */
+            (fp && fp.membres ? '<small class="membres">Membres : ' + Array.from(fp.membres.entries()).map(function (e) {
+              var enLigne = (guilde.enLigne || []).indexOf(e[0]) >= 0 || e[0] === guilde.joueur;
+              return '<span class="membre' + (enLigne ? ' en-ligne' : '') + '">' + ech(e[0]) + ' (' + ech(e[1]) + ')' + (enLigne ? ' ●' : '') + '</span>';
+            }).join(', ') + '</small>' : '') +
+            '<small class="aide">Canal : /faction dire &lt;texte&gt; · diplomatie : /faction relation ' + ech(fp ? fp.nom : '') +
+            ' &lt;faction&gt; alliee|neutre|ennemie (une faction du monde s\'écrit avec des _ : Royaume_de_…)</small></div>';
         } else {
           html += '<p class="aide">Vous n\'appartenez à aucune faction — /faction creer &lt;nom&gt;</p>';
         }
@@ -2181,6 +2233,8 @@
       updateHUD: updateHUD, updateHUDJoueur: updateHUDJoueur, placerHuds: placerHuds,
       hudDe: hudDe, updateChat: updateChat, toast: toast, iconStyle: iconStyle,
       barreBoss: barreBoss, ouvrirCarte: ouvrirCarte, fermerCarte: fermerCarte, carteOuverte: carteOuverte,
+      // SPEC-FACTION-012 : ce que la carte montre des membres (nom, pixel, au bord ?), pour les tests
+      membresSurCarte: function () { return carte && carte.membresDessines ? carte.membresDessines.slice() : []; },
       ouvrirLivre: ouvrirLivre, fermerLivreEcran: fermerLivreEcran, livreEcranOuvert: livreEcranOuvert,
       dessinerCarte: dessinerCarte, boussole: boussole, zoneIndicateur: zoneIndicateur,
       panneauFactions: panneauFactions, fermerFactions: fermerFactions, factionsOuvertes: factionsOuvertes,
