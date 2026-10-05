@@ -51,6 +51,7 @@ const path = require('path');
 const crypto = require('crypto');
 const { execFileSync } = require('child_process');
 const { envGitPour } = require('./git-propre.js'); // jamais les GIT_* d'un crochet sur un autre dépôt
+const { moteurTestActuel } = require('./moteur-test.js');   // SPEC-BANC-112 : la version du moteur qui produit chaque run
 
 const RACINE = path.join(__dirname, '..');
 const DOSSIER_REGISTRE = path.join(RACINE, 'tests', 'registre');
@@ -398,7 +399,8 @@ function inscrire(dossierCahier, opts) {
   // SPEC-BANC-058 : un arbre modifié à l'inscription cite HEAD (`o.citerHead`),
   // le code testé n'étant de toute façon pas exactement un commit
   const commitCourt = o.citerHead ? null : (env.commit || null);
-  const commit = (commitCourt && commitPlein(dossierRepo, commitCourt)) || commitPlein(dossierRepo, 'HEAD');
+  // `o.commitTeste` : le commit rejoué par `historiser` (SPEC-BANC-112), pas celui que le cahier cite
+  const commit = o.commitTeste || (commitCourt && commitPlein(dossierRepo, commitCourt)) || commitPlein(dossierRepo, 'HEAD');
   if (!commit) return { ok: false, motif: 'hors dépôt git : impossible de résoudre le commit testé' };
 
   const seuilLentMs = o.seuilLentMs;
@@ -423,12 +425,13 @@ function inscrire(dossierCahier, opts) {
     });
   });
 
-  const date = new Date().toISOString();
+  // `o.date` : l'heure RÉELLE d'exécution de la campagne (debut_run) quand elle diffère de l'inscription (historiser)
+  const date = o.date || new Date().toISOString();
   const entree = {
     id: idDeRun(commit, campagne.preset || '', date),
     dossierCahier: dossierCahier,
     commit: commit,
-    branche: brancheCourante(dossierRepo) || null,
+    branche: o.branche !== undefined ? o.branche : (brancheCourante(dossierRepo) || null),
     date: date,
     preset: campagne.preset || null,
     origine: o.origine || 'pre-push',
@@ -448,6 +451,10 @@ function inscrire(dossierCahier, opts) {
     perimetre: campagne.perimetre || null,
     perimetre_detail: campagne.perimetreDetail || null,
     trous_perimetre: campagne.trousPerimetre || null,
+    // SPEC-BANC-112 : la version du MOTEUR de test qui a produit ce run (celle du dépôt courant, même en rejeu d'un vieux commit)
+    moteurTest: o.moteurTest || campagne.moteurTest || moteurTestActuel(),
+    // SPEC-BANC-113 : métadonnées git du commit rejoué par `historiser` (message, parents, branche fusionnée, auteur…)
+    ...(o.metaCommit ? { meta_commit: o.metaCommit } : {}),
     tests: tests,
   };
   const fichier = ecrireEntreeFichier(dossierRegistre, entree);
@@ -1236,6 +1243,7 @@ function calculerInstabilites(opts) {
 }
 
 // ── CLI ──────────────────────────────────────────────────────────────────
+let aHistoriser = null;
 if (require.main === module) {
   const args = process.argv.slice(2);
   const sous = args[0];
@@ -1291,6 +1299,9 @@ if (require.main === module) {
     const r = restaurerCompaction(DOSSIER_REGISTRE, args[1] || '');
     console.log(JSON.stringify(r));
     process.exit(r.ok ? 0 : 1);
+  } else if (sous === 'historiser') {
+    // SPEC-BANC-111 à 116 : campagnes sur l'historique des merges, PR et releases (tools/historiser.js)
+    aHistoriser = args;       // lancé après `module.exports` : tools/historiser.js relit ce module
   } else if (sous === 'instables') {
     const res = calculerInstabilites({});
     const liste = Object.keys(res).filter(k => res[k].instable).sort((a, b) => res[b].score - res[a].score);
@@ -1304,7 +1315,8 @@ if (require.main === module) {
       '                        | temoin <testId> <commit> <image> [--cle-image role|libelle]\n' +
       '                        | compacter [--a-blanc] [--jusqu-a ref] [--version vX.Y.Z] [--sauvegarde dossier] [--json]   (rétention, SPEC-BANC-090/091)\n' +
       '                        | restaurer <dossier-de-sauvegarde>\n' +
-      '                        | instables [--json]   (score d\'instabilité, SPEC-BANC-088)');
+      '                        | instables [--json]   (score d\'instabilité, SPEC-BANC-088)\n' +
+      '                        | historiser [--depuis ref] [--preset pr] [--lister] [--max N]   (campagnes sur les merges, PR et releases, SPEC-BANC-111 à 116)');
     process.exit(sous ? 1 : 0);
   }
 }
@@ -1317,3 +1329,6 @@ module.exports = {
   inscrire, inscrireDepuisBanc, arbreModifie, MOTIF_LONGUEUR_MAX, dejaInscrit, aDesEntreesEnAttente, compacter, compacterTest, restaurerCompaction, ecrireAtomique, calculerInstabilites, FENETRE_INSTABILITE_DEFAUT, SEUIL_INSTABILITE_ALTERNANCES_DEFAUT, marquerEnAttenteCommitees,
   historiqueTest, runsUnifies, marquerTemoin, temoinDe, exporterHistoriqueHTML, commiterRegistre,
 };
+
+// SPEC-BANC-111 : `historiser` s'exécute ici, une fois les exports posés (tools/historiser.js requiert ce module)
+if (require.main === module && aHistoriser) process.exit(require('./historiser.js').cli(aHistoriser));
