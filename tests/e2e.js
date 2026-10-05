@@ -109,7 +109,12 @@
     if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); }
   }
 
-  function ahora() { return typeof performance !== 'undefined' ? performance.now() : Date.now(); }
+  /* Horloge RÉELLE, liée au chargement : un test étiqueté `rendu` remplace
+     performance.now par une horloge déterministe (tests/rendu-repro.js,
+     SPEC-BANC-084) ; les durées et métriques d'images, elles, restent mesurées
+     en temps réel. */
+  var maintenantReel = (typeof performance !== 'undefined' && performance.now) ? performance.now.bind(performance) : function () { return Date.now(); };
+  function ahora() { return maintenantReel(); }
   function moyenne(a) { return a.length ? a.reduce(function (x, y) { return x + y; }, 0) / a.length : 0; }
 
   // ─── étapes déclarées et triplets d'images (SPEC-BANC-077 à 083) ──────────
@@ -178,11 +183,27 @@
      image entre deux lectures. La compression JPEG (`toDataURL`) est
      différée APRÈS la collecte des trois canvases, hors de cette boucle. */
   var compteurImagesTriplet = 0;
-  function capturerTriplet(g, nomEtape, bord) {
+  /* Mouvement scripté (SPEC-BANC-082) : l'image i du triplet est prise à la
+     pose pose0 + i × pas (tests/rendu-repro.js), POSÉE avant d'attendre
+     l'image du jeu — la pose ne dépend donc ni de l'horloge ni de la charge,
+     et se rejoue à l'identique. */
+  function lirePoseJoueur(g) {
+    var s = g.player.state;
+    return { x: s.pos.x, y: s.pos.y, z: s.pos.z, yaw: s.yaw, pitch: s.pitch };
+  }
+  function poserJoueur(g, p) {
+    var s = g.player.state;
+    s.pos.x = p.x; s.pos.y = p.y; s.pos.z = p.z; s.yaw = p.yaw; s.pitch = p.pitch;
+    s.vel.x = s.vel.y = s.vel.z = 0;
+  }
+  function capturerTriplet(g, nomEtape, bord, mouvement) {
     return (async function () {
       var images = [];
+      var pose0 = mouvement ? lirePoseJoueur(g) : null;
+      if (mouvement) g.player.state.flying = true;     // pas de chute pendant un mouvement scripté
       for (var i = 0; i < 3; i++) {
-        if (i > 0) await frames(1);
+        if (mouvement) { poserJoueur(g, G.MC_REPRO.poseALImage(pose0, mouvement, i)); await (G.MC_REPRO.attendreImages || frames)(1); }
+        else if (i > 0) await frames(1);
         var t = ahora();
         var c = dessinerFrame(g);
         compteurImagesTriplet++;
@@ -209,7 +230,7 @@
           pose: im.pose, instabilite: instabilite,
         };
       });
-      return { captures: captures, instabilite: instabilite };
+      return { captures: captures, instabilite: instabilite, mouvement: mouvement ? G.MC_REPRO.decrire(mouvement) : null };
     })();
   }
   /* API e2e `T.etape('nom')` (SPEC-BANC-077) : ouvre une étape et ferme la
@@ -224,26 +245,31 @@
   function fermerEtapeCourante(g, ctx) {
     var e = ctx.etapeCourante2;
     if (!e) return Promise.resolve();
-    return capturerTriplet(g, e.nom, 'fin').then(function (r) {
+    return capturerTriplet(g, e.nom, 'fin', e.mouvement || null).then(function (r) {
       e.fin = r;
       e.fin_t_ms = ahora() - ctx.t0;
       ctx.etapeCourante2 = null;
     });
   }
-  function ouvrirEtape(g, ctx, nom) {
-    return capturerTriplet(g, nom, 'debut').then(function (r) {
-      var e = { nom: nom, debut: r, debut_t_ms: ahora() - ctx.t0, fin: null, fin_t_ms: null };
+  function ouvrirEtape(g, ctx, nom, mouvement) {
+    return capturerTriplet(g, nom, 'debut', mouvement || null).then(function (r) {
+      var e = { nom: nom, mouvement: mouvement || null, debut: r, debut_t_ms: ahora() - ctx.t0, fin: null, fin_t_ms: null };
       ctx.etapesTriplets.push(e);
       ctx.etapeCourante2 = e;
     });
   }
   var T = {};
-  T.etape = function (nom) {
+  /* `T.etape(nom, { mouvement: { type: 'rotation'|'deplacement', vitesse? } })` :
+     une étape qui juge le tremblement EN MOUVEMENT (SPEC-BANC-082) ; sans
+     `mouvement`, la caméra reste immobile et on juge scintillements et artefacts. */
+  T.etape = function (nom, opts) {
     if (!enCours) return;
+    var mouvement = opts && opts.mouvement ? opts.mouvement : null;
+    if (mouvement) G.MC_REPRO.pasMouvement(mouvement, 0);    // mouvement inconnu : refusé tout de suite, pas dans la chaîne asynchrone
     var ctx = enCours;
     ctx._chaineEtapes = (ctx._chaineEtapes || Promise.resolve()).then(function () {
       var suite = ctx.etapeCourante2 ? fermerEtapeCourante(ctx.g, ctx) : Promise.resolve();
-      return suite.then(function () { return ouvrirEtape(ctx.g, ctx, nom); });
+      return suite.then(function () { return ouvrirEtape(ctx.g, ctx, nom, mouvement); });
     });
   };
 
@@ -5637,6 +5663,21 @@
     opts = opts || {};
     initRefs();
     var delaiMs = ((test.fiche && test.fiche.delai) || opts.delaiDefaut || 15 * 60) * 1000;
+    /* SPEC-BANC-084 : un test visuel (étiqueté `rendu`) fixe graine, heure,
+       météo, caméra, résolution et horloge AVANT son corps et sa première
+       capture ; `fiche.scene` ne fait que surcharger les valeurs par défaut
+       (tests/rendu-repro.js). */
+    var estRendu = !!(test.fiche && Array.isArray(test.fiche.etiquettes) && test.fiche.etiquettes.indexOf('rendu') >= 0 && G.MC_REPRO);
+    var preparation = estRendu
+      ? G.MC_REPRO.fixer(g, test.fiche.scene || {}, { frames: frames, resolution: G.MC_BANC && G.MC_BANC.reglerResolution })
+      : Promise.resolve(null);
+    return preparation.then(function (sceneEtat) { return runUnE2EPrepare(g, test, opts, delaiMs, sceneEtat); }, function (err) {
+      return { id: test.id !== undefined ? test.id : null, nom: test.name, type: 'e2e', groupe: 'end-to-end', domaines: test.domaines || [], specs: test.specs || [],
+        fiche: test.fiche || null, etat: 'echec', debut: new Date().toISOString(), duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 1 },
+        message: 'scène non fixable : ' + ((err && err.message) || err), pile: null, attendu: undefined, obtenu: undefined, metriques: null, captures: [], etapesTriplets: [] };
+    });
+  }
+  function runUnE2EPrepare(g, test, opts, delaiMs, sceneEtat) {
     return new Promise(function (resolve) {
       var ctx = { g: g, t0: ahora(), debutISO: new Date().toISOString(), images: [], etapes: [], captures: [],
                   assertions: { ok: 0, ko: 0 }, etapeCourante: null, mesures: [],
@@ -5721,7 +5762,8 @@
             (e.debut ? e.debut.captures : []).forEach(function (c) { capturesTriplets.push(c); });
             (e.fin ? e.fin.captures : []).forEach(function (c) { capturesTriplets.push(c); });
             return {
-              nom: e.nom, debut_t_ms: Math.round(e.debut_t_ms),
+              nom: e.nom, mouvement: e.fin && e.fin.mouvement ? e.fin.mouvement : (e.debut ? e.debut.mouvement : null),
+              debut_t_ms: Math.round(e.debut_t_ms),
               fin_t_ms: e.fin_t_ms === null ? null : Math.round(e.fin_t_ms),
               instabilite_debut: e.debut ? e.debut.instabilite : null,
               instabilite_fin: e.fin ? e.fin.instabilite : null,
@@ -5738,6 +5780,7 @@
             mesures: ctx.mesures,
             etapesTriplets: etapesAvecMetriques,
           };
+          if (sceneEtat) { res.scene = sceneEtat.decrit; sceneEtat.restaurer(); }
           enCours = null;
           nettoyer(g);
           resolve(res);
@@ -5846,6 +5889,8 @@
     A: A, T: T, fail: fail, frames: frames, wait: wait, key: key, fakeLock: fakeLock,
     mouseDown: mouseDown, mouseUp: mouseUp, look: look, reset: reset, sonderE2E: sonderE2E,
     serveurPresent: serveurPresent, capture: capture, initRefs: initRefs,
+    // rendu reproductible et mouvements scriptés (SPEC-BANC-082, 084)
+    capturerTriplet: capturerTriplet, poseCourante: poseCourante,
   };
   Object.defineProperty(G, 'E2E_COUNT', { get: function () { return tests.length; }, configurable: true });
   G.E2E_LISTE = tests;

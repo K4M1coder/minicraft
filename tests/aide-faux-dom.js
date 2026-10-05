@@ -82,6 +82,7 @@ function fauxDom(reponses, opts) {
   });
   ctx.window = ctx;
   if (opts && opts.avant) opts.avant(ctx);
+  vm.runInContext(lire('tests/historique-vues.js'), ctx, { filename: 'historique-vues.js' });
   vm.runInContext(lire('tests/historique.js'), ctx, { filename: 'historique.js' });
   return { H: ctx.MC_HISTORIQUE, obtenir: obtenir, appels: appels, ctx: ctx };
 }

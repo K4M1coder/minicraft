@@ -1019,7 +1019,7 @@
        le menu de sélection doit se refermer dès qu'on clique « Lancer », pas
        seulement à l'ouverture d'un test — vérifiable sans dépendre de la
        structure interne au-delà de ces quelques références. */
-  window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois, afficherLienRapport: afficherLienRapport, changerRegroupement: changerRegroupement };
+    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois, afficherLienRapport: afficherLienRapport, changerRegroupement: changerRegroupement, reglerResolution: reglerResolutionVue };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer);

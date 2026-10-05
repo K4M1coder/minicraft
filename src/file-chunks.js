@@ -130,8 +130,20 @@
       return { enFile: stats.enFile, enVol: stats.enVol, integres: stats.integres, perimes: stats.perimes };
     }
 
+    /* SPEC-BANC-094 : l'état détaillé des files, pour l'instantané de MC_DEBUG —
+       par genre (génération, maillage) : tâches en attente, en vol chez un
+       worker et résultats reçus qui attendent leur intégration. */
+    function etatDetaille() {
+      var out = { epoque: epoque };
+      Object.keys(genres).forEach(function (genre) {
+        out[genre] = { enFile: genres[genre].file.length, enVol: genres[genre].enVol.size, aIntegrer: genres[genre].integration.length };
+      });
+      return out;
+    }
+
     return {
       get epoque() { return epoque; },
+      etat: etatDetaille,
       voulus: voulus, distribuer: distribuer, recu: recu, aIntegrer: aIntegrer,
       echec: echec, oublier: oublier, nouvelleEpoque: nouvelleEpoque, stats: statsAct,
       horloge: horloge,

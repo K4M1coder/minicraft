@@ -533,6 +533,47 @@
     if (passage.dossierCahier) return '/tests/resultats/' + encodeURIComponent(passage.dossierCahier) + '/captures/' + encodeURIComponent(nom);
     return null;
   }
+  // ══════════════════════════════════════════════════════════════════════
+  // Triplets d'images (SPEC-BANC-077 à 083) : à chaque bord d'une étape, trois
+  // images consécutives. L'identité d'un triplet est (test, étape, debut|fin) ;
+  // chacune de ses images a un rang 0-2 (SPEC-BANC-080). Dans l'historique, un
+  // triplet est UNE image au sens des diaporamas (SPEC-BANC-048) et sa vignette
+  // le montre EN BOUCLE, image par image : le clignotement est le mode le plus
+  // sensible à l'œil pour un scintillement ou un tremblement.
+  // ══════════════════════════════════════════════════════════════════════
+  var CADENCE_CLIGNOTEMENT_MS = 120;     // environ 8 images par seconde
+  var boucles = [];                       // minuteurs de clignotement en cours (arrêtés à la fermeture)
+  function arreterBoucles() {
+    boucles.forEach(function (b) { if (typeof clearInterval === 'function') clearInterval(b); });
+    boucles = [];
+  }
+  /* Sépare les captures d'un passage : les images ordinaires d'un côté, les
+     triplets de l'autre — un par (étape, bord), leurs images par rang. */
+  function grouperTriplets(captures) {
+    var autres = [], parCle = {}, triplets = [];
+    (Array.isArray(captures) ? captures : []).forEach(function (c) {
+      if (!c || typeof c !== 'object') return;
+      if (c.role !== 'triplet') { autres.push(c); return; }
+      var k = String(c.etape) + '\u0000' + String(c.bord);
+      if (!parCle[k]) { parCle[k] = { etape: c.etape, bord: c.bord, images: [] }; triplets.push(parCle[k]); }
+      parCle[k].images.push(c);
+    });
+    triplets.forEach(function (t) { t.images.sort(function (a, b) { return (a.rang === null || a.rang === undefined ? 9 : a.rang) - (b.rang === null || b.rang === undefined ? 9 : b.rang); }); });
+    return { autres: autres, triplets: triplets };
+  }
+  /* Une image qui parcourt `sources` en boucle (rang 0, 1, 2, 0, 1, 2…). Avec
+     moins de deux images, elle reste fixe : le registre ne garde pas toujours le
+     triplet complet. Le minuteur est repris par `arreterBoucles`. */
+  function clignotement(sources, legende, cadenceMs) {
+    var liste = (sources || []).filter(function (s) { return !!s; });
+    var img = el('img', { src: liste[0] || '', title: legende || '', class: 'vignette hist-triplet', 'data-boucle': String(liste.length) });
+    if (liste.length > 1 && typeof setInterval === 'function') {
+      var i = 0;
+      boucles.push(setInterval(function () { i = (i + 1) % liste.length; img.setAttribute('src', liste[i]); img.setAttribute('data-rang', String(i)); }, cadenceMs || CADENCE_CLIGNOTEMENT_MS));
+    }
+    img.setAttribute('data-rang', '0');
+    return img;
+  }
   function agrandir(src, legende) {
     var overlay = el('div', { class: 'overlay-vignette', onclick: function () { overlay.remove(); } },
       [el('img', { src: src }), el('div', { class: 'legende' }, [legende || ''])]);
@@ -571,6 +612,8 @@
     if (pt) pt.className = '';
   }
   function fermerPanneauTest() {
+    ++panneau.seq;
+    arreterBoucles();
     fermerDiapos();
     var p = document.getElementById('hist-panneau-test');
     if (p) p.hidden = true;
@@ -792,12 +835,20 @@
     var V = vues();
     var vign = el('div', { class: 'vignettes' });
     var tripletsNonGardes = 0;
-    V.ordonnerCaptures(captures).forEach(function (c) {
+    var groupes = grouperTriplets(captures);
+    groupes.triplets.forEach(function (t) {
+      var srcs = t.images.map(function (c) { return urlImage(pa, c); });
+      tripletsNonGardes += srcs.filter(function (s) { return !s; }).length;
+      var presentes = srcs.filter(function (s) { return !!s; });
+      if (!presentes.length) return;
+      var leg = 'triplet ' + (t.etape || '?') + ' (' + (t.bord || '?') + ') — ' + presentes.length + ' image(s)' + (presentes.length > 1 ? ' en boucle' : ' : la centrale seule');
+      var vt = clignotement(presentes, leg);
+      vt.addEventListener('click', function () { agrandir(presentes[Number(vt.getAttribute('data-rang')) || 0] || presentes[0], leg); });
+      vign.appendChild(vt);
+    });
+    V.ordonnerCaptures(groupes.autres).forEach(function (c) {
       var src = urlImage(pa, c);
       var leg = (c.role || '') + (c.libelle ? ' — ' + c.libelle : '');
-      // le registre ne garde que l'image centrale d'un triplet
-      // (SPEC-BANC-083) : les autres sont normales, pas « manquantes »
-      if (!src && c.role === 'triplet') { tripletsNonGardes++; return; }
       if (!src) { vign.appendChild(el('span', { class: 'hist-pt-sans-image' }, ['(' + leg + ' : image absente)'])); return; }
       // vignette FIXE (SPEC-BANC-046) ; un clic ouvre le diaporama de CETTE image (SPEC-BANC-047)
       var img = el('img', { src: src, title: leg + ' — cliquer pour ouvrir son historique', class: 'vignette', loading: 'lazy', 'data-image': V.cleImage(c), 'data-run': pa.run });
@@ -832,6 +883,7 @@
     fetch('/tests/historique/images?' + parametresPanneau(o).toString()).then(lireJSON).then(function (data) {
       if (monSeq !== panneau.seq) return;
       var anciens = panneau.diapos.map(function (d) { return { cle: d.cle, role: d.role, libelle: d.libelle, run: d.positions[d.index] && d.positions[d.index].passage.run }; });
+      arreterBoucles();
       fermerDiapos();
       panneau.passages = Array.isArray(data.images) ? data.images : [];
       panneau.temoins = data.temoins && typeof data.temoins === 'object' ? data.temoins : {};
@@ -874,6 +926,7 @@
       anciens.forEach(function (a) { ouvrirDiaporama(a.cle, a.run, { role: a.role, libelle: a.libelle }); });
     }).catch(function (e) {
       if (monSeq !== panneau.seq) return;
+      arreterBoucles();
       corps.innerHTML = '';
       corps.appendChild(el('p', { class: 'hist-erreur' }, ['Erreur : ' + ((e && e.message) || e)]));
     });
@@ -883,6 +936,7 @@
     if (!p || !o || (!o.cle && !o.test)) return;
     var zone = racine();
     if (zone && zone.hidden) ouvrir();
+    arreterBoucles();
     fermerDiapos();
     p.hidden = false;
     p.innerHTML = '';
@@ -1212,5 +1266,6 @@
     ouvrir: ouvrir, fermer: fermer, ouvrirTest: ouvrirPanneauTest, etat: etat, _urlImage: urlImage,
     graphes: graphes, panneau: panneau, ouvrirDiaporama: ouvrirDiaporama, colonnes: COLONNES, reinitialiser: reinitialiser,
     repartition: basculerRepartition, filtrerSurValeur: filtrerSurValeur,
+    grouperTriplets: grouperTriplets, clignotement: clignotement, arreterBoucles: arreterBoucles, CADENCE_CLIGNOTEMENT_MS: CADENCE_CLIGNOTEMENT_MS,
   };
 })(typeof window !== 'undefined' ? window : this);

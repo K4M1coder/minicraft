@@ -617,4 +617,170 @@
         B.refermerSelection();
       }
     });
+  // ══════════════════════════════════════════════════════════════════════════
+  // Rendu reproductible et mouvements scriptés (SPEC-BANC-082/084)
+  // ══════════════════════════════════════════════════════════════════════════
+  var R = G.MC_REPRO;
+  var frames = API.frames;
+  function outilsScene() { return { frames: frames, resolution: G.MC_BANC && G.MC_BANC.reglerResolution }; }
+  /* Les pixels du canvas de rendu, tels que le jeu les a dessinés (pleine résolution). */
+  function lirePixels(g) {
+    g.render.render();
+    var cv = g.render.renderer.domElement;
+    var c = document.createElement('canvas');
+    c.width = cv.width; c.height = cv.height;
+    var x = c.getContext('2d', { willReadFrequently: true });
+    x.drawImage(cv, 0, 0);
+    return x.getImageData(0, 0, c.width, c.height).data;
+  }
+  /* Une « exécution » complète du même test visuel : scène fixée, N images, capture, scène libérée. */
+  async function executionVisuelle(g, scene, nbImages) {
+    var etat = await R.fixer(g, scene || {}, outilsScene());
+    try {
+      await etat.images(nbImages || 20);
+      return { pixels: lirePixels(g), decrit: etat.decrit, instant: g.time };
+    } finally { etat.restaurer(); }
+  }
+
+  e2e('SPEC-BANC-084 : un test étiqueté rendu démarre sur une scène fixée (graine, heure, météo, caméra, résolution, horloge déterministe)',
+    { teste: 'les paramètres que le moteur fixe avant le corps d\'un test visuel (étiqueté rendu)',
+      pourquoi: 'sans graine, heure, météo, caméra, résolution et horloge fixes, deux captures du même test ne sont pas comparables : on ne saurait pas si un écart vient du code ou de la scène',
+      attendu: 'le monde a la graine fixée, l\'instant est celui d\'un ciel clair à midi, la caméra est à la pose demandée, la surface est d\'au moins 800×600 et performance.now suit une horloge virtuelle qui avance de 1/60 s par image',
+      etiquettes: ['rendu'] },
+    async function (g) {
+      var sc = R.SCENE_DEFAUT;
+      A.equal(g.world.seed, sc.graine, 'graine fixée');
+      var DC = MC.DayCycle;
+      var heure = ((g.time % DC.DAY_LENGTH) / DC.DAY_LENGTH) * 24;
+      A.close(heure, sc.heure, 0.5, 'heure du jeu fixée à midi (obtenu ' + heure.toFixed(3) + ' h)');
+      A.equal(g.world.meteo.etat(g.time).type, sc.meteo, 'météo fixée : ' + sc.meteo);
+      var cv = g.render.renderer.domElement;
+      A.ok(cv.width >= 800 && cv.height >= 600, 'résolution jamais sous 800×600 : ' + cv.width + '×' + cv.height);
+      A.close(g.player.state.yaw, sc.yaw, 1e-9, 'orientation (lacet) fixée');
+      A.close(g.player.state.pitch, sc.pitch, 1e-9, 'orientation (tangage) fixée');
+      // l'horloge est virtuelle : un multiple exact de la durée d'une image, qui avance d'une image à la fois
+      var t0 = performance.now();
+      var n0 = (t0 - R.ORIGINE_HORLOGE_MS) / R.DT_MS;
+      A.close(n0, Math.round(n0), 1e-6, 'performance.now est une horloge virtuelle (origine + n × ' + R.DT_MS.toFixed(3) + ' ms)');
+      await R.attendreImages(5);
+      var n1 = (performance.now() - t0) / R.DT_MS;
+      A.ok(Math.abs(n1 - Math.round(n1)) < 1e-6 && Math.round(n1) >= 5, 'cinq images du jeu avancent l\'horloge d\'au moins cinq images virtuelles (' + n1.toFixed(3) + ')');
+    });
+
+  e2e('SPEC-BANC-084 : deux exécutions successives du même test visuel produisent des captures pixel-identiques',
+    { teste: 'la reproductibilité du rendu : la même scène fixée, rejouée deux fois sur la même machine',
+      pourquoi: 'une comparaison de captures n\'a de sens que si deux exécutions identiques donnent la même image ; sinon tout écart serait du bruit de scène (eau, nuages, particules, charge de la machine)',
+      attendu: 'deux exécutions complètes (scène fixée, 20 images, capture) donnent des images de 800×600 au moins, identiques pixel pour pixel, ou dans la tolérance négligeable documentée' },
+    async function (g) {
+      var scene = { yaw: 0.6, pitch: -0.1 };
+      var a = await executionVisuelle(g, scene);
+      var b = await executionVisuelle(g, scene);
+      A.equal(a.decrit.graine, b.decrit.graine, 'même graine');
+      A.equal(a.instant, b.instant, 'même instant du monde');
+      A.equal(a.pixels.length, b.pixels.length, 'même taille d\'image');
+      A.ok(a.decrit.resolution[0] >= 800 && a.decrit.resolution[1] >= 600, 'résolution ' + a.decrit.resolution.join('×'));
+      var cmp = R.comparer(a.pixels, b.pixels);
+      A.ok(R.negligeable(cmp), 'captures identiques : ' + cmp.pixelsDifferents + ' pixel(s) différent(s) sur ' + cmp.pixels + ', écart moyen ' + cmp.moyen.toFixed(4) + ', maximal ' + cmp.max.toFixed(1));
+      // ce que la comparaison peut voir : la scène fixée n'est pas une image vide, et une autre caméra donne une autre image
+      var autre = await executionVisuelle(g, { yaw: 2.4, pitch: 0.3 });
+      var cmp2 = R.comparer(a.pixels, autre.pixels);
+      A.gt(cmp2.pixelsDifferents, 100, 'une autre orientation de caméra donne bien une autre image (' + cmp2.pixelsDifferents + ' pixels)');
+    });
+
+  e2e('SPEC-BANC-082 : une étape en mouvement tourne ou déplace la caméra à une vitesse fixe, documentée et reproductible',
+    { teste: 'les mouvements scriptés d\'une étape (T.etape avec mouvement) : rotation à 30 degrés par seconde et déplacement à 4 blocs par seconde',
+      pourquoi: 'un tremblement en mouvement ne se juge que si la caméra bouge de la même façon à chaque run ; une caméra immobile, elle, ne montre que scintillements et artefacts',
+      attendu: 'le triplet d\'une étape en rotation avance le lacet de 0,5 degré par image, celui d\'un déplacement de 1/15 de bloc par image, les vitesses sont consignées avec leur unité, et deux exécutions donnent mêmes poses et mêmes images' },
+    async function (g) {
+      async function seance(mouvement) {
+        var etat = await R.fixer(g, {}, outilsScene());
+        try { return await API.capturerTriplet(g, 'mouvement', 'debut', mouvement); } finally { etat.restaurer(); }
+      }
+      function angle(p, q) {
+        var d = Math.abs(p.qx * q.qx + p.qy * q.qy + p.qz * q.qz + p.qw * q.qw);
+        return 2 * Math.acos(Math.min(1, d));
+      }
+      // ── rotation : 30 deg/s à 60 images/s virtuelles = 0,5 degré par image
+      var r1 = await seance({ type: 'rotation' });
+      A.equal(r1.captures.length, 3, 'un triplet : trois images consécutives');
+      egal(r1.mouvement, { type: 'rotation', vitesse: 30, unite: 'deg/s', dt_ms: R.DT_MS }, 'vitesse et unité consignées');
+      for (var i = 1; i < 3; i++) {
+        var pas = angle(r1.captures[i - 1].pose.camera, r1.captures[i].pose.camera) * 180 / Math.PI;
+        A.close(pas, 0.5, 0.01, 'rotation de la caméra entre les images ' + (i - 1) + ' et ' + i + ' : ' + pas.toFixed(4) + ' degré');
+      }
+      // reproductible : les mêmes poses et les mêmes images d'un run à l'autre
+      var r2 = await seance({ type: 'rotation' });
+      for (var k = 0; k < 3; k++) {
+        egal(r1.captures[k].pose.camera, r2.captures[k].pose.camera, 'pose de la caméra identique, image ' + k);
+        A.ok(r1.captures[k].base64 === r2.captures[k].base64, 'image ' + k + ' identique d\'un run à l\'autre');
+      }
+      // ── déplacement : 4 blocs/s = 1/15 de bloc par image
+      var d1 = await seance({ type: 'deplacement' });
+      for (var j = 1; j < 3; j++) {
+        var a = d1.captures[j - 1].pose.camera, b = d1.captures[j].pose.camera;
+        var dist = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+        A.close(dist, 4 / 60, 0.002, 'déplacement entre les images ' + (j - 1) + ' et ' + j + ' : ' + dist.toFixed(4) + ' bloc');
+      }
+      egal(d1.mouvement.unite, 'blocs/s', 'unité du déplacement');
+      var d2 = await seance({ type: 'deplacement' });
+      egal(d1.captures[2].pose.camera, d2.captures[2].pose.camera, 'déplacement reproductible');
+      // une vitesse choisie est consignée telle quelle ; un mouvement inconnu est refusé
+      var vite = await seance({ type: 'rotation', vitesse: 60 });
+      A.equal(vite.mouvement.vitesse, 60, 'vitesse choisie consignée');
+      var refuse = false;
+      try { R.pasMouvement({ type: 'secousse' }, 0); } catch (e) { refuse = true; }
+      A.ok(refuse, 'un mouvement inconnu est refusé');
+      // sans mouvement, la caméra reste immobile : les écarts de pose du triplet sont nuls
+      var etat = await R.fixer(g, {}, outilsScene());
+      try {
+        var fixe = await API.capturerTriplet(g, 'immobile', 'debut', null);
+        A.equal(fixe.instabilite.pose, 0, 'caméra immobile : aucun écart de pose');
+        A.equal(fixe.mouvement, null, 'pas de mouvement consigné');
+      } finally { etat.restaurer(); }
+    });
+  // ══════════════════════════════════════════════════════════════════════════
+  // Triplets en boucle dans l'historique (SPEC-BANC-080)
+  // ══════════════════════════════════════════════════════════════════════════
+  e2e('SPEC-BANC-080 : la vignette d\'un triplet d\'étape lit ses trois images en boucle (clignotement) dans la vraie page',
+    { teste: 'la lecture en boucle d\'un triplet (étape, début ou fin, rangs 0 à 2) par la vignette de l\'historique, avec de vrais minuteurs',
+      pourquoi: 'le clignotement image par image est le mode le plus sensible à l\'œil pour un scintillement ; les tests Node vérifient la logique avec des minuteurs simulés, seule la page prouve que la boucle tourne',
+      attendu: 'la vignette passe successivement par les images de rang 0, 1, 2 puis revient au rang 0, sans intervention, et s\'arrête quand on la libère' },
+    async function () {
+      var H = G.MC_HISTORIQUE;
+      A.ok(H && H.clignotement, 'MC_HISTORIQUE.clignotement exposé');
+      function couleur(c) {
+        var cv = document.createElement('canvas'); cv.width = 4; cv.height = 4;
+        var x = cv.getContext('2d'); x.fillStyle = c; x.fillRect(0, 0, 4, 4);
+        return cv.toDataURL('image/png');
+      }
+      var sources = [couleur('#ff0000'), couleur('#00ff00'), couleur('#0000ff')];
+      var groupes = H.grouperTriplets([
+        { role: 'triplet', etape: 'marche', bord: 'debut', rang: 2 }, { role: 'triplet', etape: 'marche', bord: 'debut', rang: 0 },
+        { role: 'triplet', etape: 'marche', bord: 'debut', rang: 1 }, { role: 'fin', libelle: 'fin' },
+      ]);
+      A.equal(groupes.triplets.length, 1, 'un triplet par (étape, bord)');
+      egal(groupes.triplets[0].images.map(function (c) { return c.rang; }), [0, 1, 2], 'images rangées par rang');
+      var img = H.clignotement(sources, 'triplet marche (début)');
+      document.body.appendChild(img);
+      try {
+        A.equal(img.getAttribute('data-boucle'), '3', 'trois images en boucle');
+        A.equal(img.getAttribute('src'), sources[0], 'commence au rang 0');
+        // on observe le rang affiché jusqu'à avoir vu un tour complet, plus le retour au rang 0
+        var vus = [Number(img.getAttribute('data-rang'))];
+        await attendre(function () {
+          var r = Number(img.getAttribute('data-rang'));
+          if (r !== vus[vus.length - 1]) vus.push(r);
+          return vus.length >= 5;
+        }, 8000, 'un tour complet de la boucle');
+        egal(vus.slice(0, 5), [0, 1, 2, 0, 1], 'rang 0, 1, 2, puis retour au rang 0 : image par image, en boucle');
+        A.equal(img.getAttribute('src'), sources[Number(img.getAttribute('data-rang'))], 'l\'image affichée est celle du rang courant');
+      } finally {
+        H.arreterBoucles();
+        img.remove();
+      }
+      // arrêtée : le rang ne bouge plus
+      var fige = img.getAttribute('data-rang');
+      await wait(3 * H.CADENCE_CLIGNOTEMENT_MS);
+      A.equal(img.getAttribute('data-rang'), fige, 'plus aucun changement une fois les boucles arrêtées');
+    });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

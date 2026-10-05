@@ -1237,6 +1237,20 @@
       return world;
     }
     g.remplacerMonde = remplacerMonde;
+    /* SPEC-BANC-094 et SPEC-BANC-084 : l'état interne qu'aucun champ de `g`
+       n'expose — files de génération et de maillage, workers (taille, libres),
+       relief lointain (grille prête ? remplie à quel point ?). Lu par
+       `MC_DEBUG.instantane()` à l'échec d'un test et par l'attente de
+       stabilité d'une scène fixée (tests/rendu-repro.js). Lecture seule. */
+    g.diagnostic = function () {
+      function pool(p) { return p ? { taille: p.taille, libres: p.libres() } : null; }
+      return {
+        files: fileChunks.etat(),
+        workers: { generation: pool(poolGeneration), maillage: pool(poolMaillage) },
+        erreursWorkers: { generation: erreursGen, maillage: erreursMaille },
+        lointain: { pret: grille.pret, enCours: grille.enCours, version: grille.version },
+      };
+    };
 
     /* Le monde est recree a chaque partie (graine differente) : entites,
        joueur et registres doivent le suivre, sinon ils pointent sur l ancien. */
