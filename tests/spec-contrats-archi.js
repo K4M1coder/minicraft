@@ -19,7 +19,8 @@
       var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE', 'SUCCES_ETAT', 'FOUDROYE',
                       'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER', 'VEHICULE_EVT',
                       'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF', 'ACTIONNER',
-                      'LIVRE_ECRIRE'];
+                      'LIVRE_ECRIRE',
+                      'FACTION_MEMBRES'];
       A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
       A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
@@ -232,6 +233,25 @@
       A.equal(K.validerActionner(null), null);
       A.deep(K.valider({ t: 'actionner', x: 1, y: 2, z: 3 }), { t: 'actionner', j: 0, x: 1, y: 2, z: 3 }, 'routé par valider');
       A.deep(NP.valider({ t: 'actionner', x: 1, y: 2, z: 3 }), { t: 'actionner', j: 0, x: 1, y: 2, z: 3 }, 'et par NP.valider côté serveur');
+    });
+
+    it('SPEC-FACTION-012 : FACTION_MEMBRES (s→c) — nom, position et faction de chaque membre, tout le reste rejeté', function () {
+      A.equal(K.MSG.FACTION_MEMBRES, 'faction_membres');
+      A.equal(K.SENS.faction_membres, 's>c');
+      A.deep(K.validerFactionMembres({ t: 'faction_membres', l: [['Bob', 10.26, -3.04, 'g1']] }),
+             { t: 'faction_membres', l: [{ nom: 'Bob', x: 10.3, z: -3, faction: 'g1' }] }, 'arrondi au dixième, en copie');
+      A.deep(K.validerFactionMembres({ t: 'faction_membres', l: [] }), { t: 'faction_membres', l: [] }, 'liste vide : plus aucun membre à montrer');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['Bob', 1, 2]] }), null, 'faction manquante');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['Bo\nb', 1, 2, 'g1']] }), null, 'caractère de contrôle dans le nom');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['B'.repeat(25), 1, 2, 'g1']] }), null, 'nom trop long');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['Bob', NaN, 2, 'g1']] }), null, 'coordonnée non finie');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['Bob', 1e9, 2, 'g1']] }), null, 'coordonnée hors borne');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: [['Bob', 1, 2, 'royaume:ville']] }), null, 'identifiant de faction de joueurs seulement');
+      var trop = []; for (var i = 0; i < 65; i++) trop.push(['J' + i, 0, 0, 'g1']);
+      A.equal(K.validerFactionMembres({ t: 'faction_membres', l: trop }), null, 'au plus 64 entrées');
+      A.equal(K.validerFactionMembres({ t: 'faction_membres' }), null, 'liste manquante');
+      A.deep(K.validerRecu({ t: 'faction_membres', l: [['Bob', 1, 2, 'g1']] }), { t: 'faction_membres', l: [{ nom: 'Bob', x: 1, z: 2, faction: 'g1' }] }, 'routé par validerRecu');
+      A.equal(K.valider({ t: 'faction_membres', l: [] }), null, 'jamais accepté d\'un client');
     });
 
     it('SPEC-ARCHI-003 : les origines locales du mode fermé sont exactement trois, figées', function () {

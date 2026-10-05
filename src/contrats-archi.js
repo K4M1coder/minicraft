@@ -45,6 +45,8 @@
     ACTIONNER: 'actionner',               // c→s : { j, x, y, z } — actionner la commande (levier, bouton) de cette case
     // amendement L24 (SPEC-INTERIEUR-003) : écrire ou signer le livre/la note d'une case ; le serveur applique et signe
     LIVRE_ECRIRE: 'livre_ecrire',         // c→s : { j, seq, i, titre, pages[], signer } — contenu proposé, borné et nettoyé
+    // amendement L39 (SPEC-FACTION-012) : où se trouvent les membres de SES factions — jamais ceux des autres
+    FACTION_MEMBRES: 'faction_membres',   // s→c : { l: [[nom, x, z, factionId], …] } — membres connectés des factions du destinataire
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
@@ -54,6 +56,7 @@
     succes_etat: 's>c', foudroye: 's>c',
     actionner: 'c>s',
     livre_ecrire: 'c>s',
+    faction_membres: 's>c',
   };
   // évènements de VEHICULE_EVT et motifs de refus, listes fermées
   var EVT_VEHICULE = { POSE: 'pose', MONTE: 'monte', DESCEND: 'descend', REPARE: 'repare', REFUS: 'refus' };
@@ -95,6 +98,9 @@
     WORLD_H: 128,               // = C.WORLD_H, dupliqué pour la même raison
     VEHICULE_NOM_MAX: 16,       // longueur d'un nom de véhicule (« sous_marin »)
     PORTEE_VEHICULE: 6,         // blocs : monter, poser (œil du joueur → véhicule ou bloc visé)
+    FACTION_MEMBRES_MAX: 64,    // amendement L39 (SPEC-FACTION-012) : entrées au plus dans FACTION_MEMBRES
+    NOM_JOUEUR_MAX: 24,         // = longueur d'un nom de REJOINDRE (net-protocol.js)
+    ID_FACTION_MAX: 32,
   };
   /* Budgets anti-flood des messages c→s, en messages par seconde et par
      connexion (ou par joueur local pour DORMIR). */
@@ -227,6 +233,21 @@
     if (m.signer !== undefined && typeof m.signer !== 'boolean') return null;
     return { t: MSG.LIVRE_ECRIRE, j: j, seq: m.seq, i: m.i, titre: nettoyerTexteLivre(m.titre, false),
              pages: m.pages.map(function (pg) { return nettoyerTexteLivre(pg, true); }), signer: m.signer === true };
+  }
+  // ── amendement L39 (SPEC-FACTION-012) : positions des membres de ses factions ──
+  // Côté client : chaque entrée [nom, x, z, factionId] est vérifiée ; une entrée mal formée invalide le message.
+  function validerFactionMembres(m) {
+    if (!objet(m) || m.t !== MSG.FACTION_MEMBRES || !Array.isArray(m.l) || m.l.length > BORNES.FACTION_MEMBRES_MAX) return null;
+    var l = [];
+    for (var i = 0; i < m.l.length; i++) {
+      var e = m.l[i];
+      if (!Array.isArray(e) || e.length !== 4) return null;
+      if (typeof e[0] !== 'string' || !e[0] || e[0].length > BORNES.NOM_JOUEUR_MAX || /[\u0000-\u001f\u007f-\u009f]/.test(e[0])) return null;
+      if (!estFini(e[1]) || !estFini(e[2]) || Math.abs(e[1]) > BORNES.COORD_MAX || Math.abs(e[2]) > BORNES.COORD_MAX) return null;
+      if (typeof e[3] !== 'string' || !/^[a-z0-9]+$/.test(e[3]) || e[3].length > BORNES.ID_FACTION_MAX) return null;
+      l.push({ nom: e[0], x: Math.round(e[1] * 10) / 10, z: Math.round(e[2] * 10) / 10, faction: e[3] });
+    }
+    return { t: MSG.FACTION_MEMBRES, l: l };
   }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
@@ -375,6 +396,7 @@
       case MSG.VEHICULE_EVT: return validerVehiculeEvt(m);
       case MSG.SUCCES_ETAT: return validerSuccesEtat(m);
       case MSG.FOUDROYE: return validerFoudroye(m);
+      case MSG.FACTION_MEMBRES: return validerFactionMembres(m);
       default: return null;
     }
   }
@@ -417,5 +439,6 @@
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,
     validerActionner: validerActionner,
     validerLivreEcrire: validerLivreEcrire, LIVRE_BRUT: LIVRE_BRUT, nettoyerTexteLivre: nettoyerTexteLivre,
+    validerFactionMembres: validerFactionMembres,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
