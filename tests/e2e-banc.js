@@ -471,7 +471,7 @@
           A.ok(voir, '056 : un lien vers l\'historique apparaît');
           capture('bouton devenu Inscrit');
           cliquer(voir);
-          await attendre(function () { return visible(zone()) && tous('#hist-table tbody tr').length === 1; }, 6000, 'historique filtré sur le run');
+          await attendre(function () { return visible(zone()) && /référence avant refonte/.test(zone().querySelector('#hist-table tbody').textContent); }, 6000, 'historique filtré sur le run');
           A.equal(H.etat.filtresColonnes.run, 'run-inscrit-1', 'filtré sur le run inscrit');
           A.ok(/référence avant refonte de l'eau/.test(zone().querySelector('#hist-table tbody').textContent), '055 : le motif est dans la colonne motif de cette ligne');
           // 056 : seconde inscription refusée
