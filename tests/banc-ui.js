@@ -846,7 +846,17 @@
       // le dossier du cahier (bibliothèque tests/resultats/<dossier>/, côté
       // noyau) se lit dans le lien du rapport : /tests/resultats/<dossier>/…
       var m = url.match(/\/tests\/resultats\/([^/]+)\//);
-      if (m) ajouterExports(conteneur, m[1]);
+      if (m) { ajouterExports(conteneur, m[1]); ajouterInscription(conteneur, m[1]); }
+    }
+    /* SPEC-BANC-053 : dès que la campagne est terminée (y compris après un arrêt
+       manuel, l'entrée portant alors `interrompu`), le résumé propose « Inscrire
+       au registre » à côté du lien vers le cahier. Le composant (motif, bouton,
+       retour, refus d'une seconde inscription) est celui de tests/historique.js,
+       partagé avec le tableau de l'historique. */
+    function ajouterInscription(conteneur, dossier) {
+      if (!G.MC_INSCRIRE) return;
+      conteneur.appendChild(document.createTextNode(' — '));
+      conteneur.appendChild(G.MC_INSCRIRE.creer(dossier));
     }
     /* Boutons d'export du cahier (web/PDF/Word), servis par la bibliothèque
        des cahiers du noyau (GET /tests/cahiers/<dossier>/export?format=…,
@@ -971,7 +981,7 @@
        le menu de sélection doit se refermer dès qu'on clique « Lancer », pas
        seulement à l'ouverture d'un test — vérifiable sans dépendre de la
        structure interne au-delà de ces quelques références. */
-    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois };
+    window.MC_BANC = { refs: refs, etat: etat, refermerSelection: refermerSelection, cocherSelon: cocherSelon, completer: completerUneFois, afficherLienRapport: afficherLienRapport };
   }
 
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', demarrer);

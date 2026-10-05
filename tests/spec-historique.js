@@ -416,7 +416,10 @@
     });
 
     // ── faux DOM minimal, SYNCHRONE, pour exécuter tests/historique.js sous Node ──
-    function fauxDom(reponses) {
+    function fauxDom(reponses, options) {
+      var opts = options || {};
+      var stockage = opts.stockage || {};
+      var minuteries = [];
       function SyncP(ok, v) { this.ok = ok; this.v = v; }
       SyncP.prototype.then = function (f, r) {
         try {
@@ -432,7 +435,7 @@
           get: function () { return n._texte !== undefined ? n._texte : n.children.map(function (c) { return c.textContent; }).join(' '); },
           set: function (v) { n.children = []; n._texte = String(v); },
         });
-        Object.defineProperty(n, 'innerHTML', { set: function () { n.children = []; n._texte = undefined; }, get: function () { return ''; } });
+        Object.defineProperty(n, 'innerHTML', { set: function (v) { n.children = []; n._texte = undefined; n._html = String(v); }, get: function () { return n._html || ''; } });
         Object.defineProperty(n, 'firstChild', { get: function () { return n.children[0] || null; } });
         Object.defineProperty(n, 'selectedOptions', { get: function () { return n.children.filter(function (c) { return c.selected; }); } });
         n.appendChild = function (c) { c.parent = n; n._texte = undefined; n.children.push(c); return c; };
@@ -468,7 +471,7 @@
       obtenir('__thead'); obtenir('__tbody');
       obtenir('zone-historique').hidden = true;
       obtenir('hist-panneau-test').hidden = true;
-      var appels = [];
+      var appels = [], ecritures = [];
       var document = {
         readyState: 'complete', body: noeud('body'),
         getElementById: obtenir,
@@ -480,17 +483,29 @@
         document: document, console: console, JSON: JSON, Math: Math, Date: Date, Object: Object, Array: Array, String: String,
         Number: Number, Error: Error, isFinite: isFinite, parseInt: parseInt, parseFloat: parseFloat, encodeURIComponent: encodeURIComponent,
         URLSearchParams: URLSearchParams, setTimeout: function () { return 0; }, clearTimeout: function () {},
+        // minuteries factices : jamais déclenchées d'elles-mêmes, le test les compte et les fait « sonner » (lecture automatique, clignotement)
+        setInterval: function (f, ms) { var m = { f: f, ms: ms, actif: true }; minuteries.push(m); return m; },
+        clearInterval: function (m) { if (m) m.actif = false; },
         CustomEvent: function (t, o) { this.type = t; this.detail = o && o.detail; },
-        localStorage: { getItem: function () { return null; }, setItem: function () {} },
-        fetch: function (url) {
+        // stockage indisponible (navigation privée, données bloquées) : l'accès LÈVE, la page doit rester utilisable
+        localStorage: {
+          getItem: function (k) { if (opts.stockageErreur) throw new Error('stockage bloqué'); return Object.prototype.hasOwnProperty.call(stockage, k) ? stockage[k] : null; },
+          setItem: function (k, v) { if (opts.stockageErreur) throw new Error('stockage bloqué'); stockage[k] = String(v); },
+        },
+        fetch: function (url, init) {
           appels.push(url);
-          var corps = reponses(url);
-          return new SyncP(true, { ok: true, status: 200, text: function () { return new SyncP(true, JSON.stringify(corps)); } });
+          if (init) ecritures.push({ url: url, methode: init.method, corps: init.body ? JSON.parse(init.body) : null });
+          var rep = reponses(url, init);
+          // une réponse peut être { __statut: 409, __corps: {…} } pour simuler un refus du serveur
+          var statut = rep && rep.__statut ? rep.__statut : 200;
+          var corps = rep && rep.__statut ? rep.__corps : rep;
+          return new SyncP(true, { ok: statut < 400, status: statut, text: function () { return new SyncP(true, JSON.stringify(corps)); } });
         },
       });
       ctx.window = ctx;
+      vm.runInContext(lire('tests/historique-vues.js'), ctx, { filename: 'historique-vues.js' });
       vm.runInContext(lire('tests/historique.js'), ctx, { filename: 'historique.js' });
-      return { H: ctx.MC_HISTORIQUE, obtenir: obtenir, appels: appels };
+      return { H: ctx.MC_HISTORIQUE, ctx: ctx, obtenir: obtenir, appels: appels, ecritures: ecritures, minuteries: minuteries, stockage: stockage, noeud: noeud };
     }
     function filtreDeLUrl(url) { return JSON.parse(new URLSearchParams(url.split('?')[1]).get('filtre') || '{}'); }
 
@@ -529,6 +544,454 @@
       A.ok(/1 image\(s\) de triplet non conservée/.test(p.textContent), 'image de triplet absente du registre signalée, pas « manquante »');
       var liens = p.tous(function (n) { return n.tagName === 'A'; }).map(function (n) { return n.attrs.href; });
       A.ok(liens.indexOf('/tests/resultats/c1/rapport.html') >= 0, 'lien vers le cahier du passage');
+    });
+
+    // ══════════════════════════════════════════════════════════════════════
+    // Interface du banc, exécutée dans le faux DOM (tests/historique.js tel quel)
+    // — le comportement DOM réel est prouvé par tests/e2e-banc.js (navigateur)
+    // ══════════════════════════════════════════════════════════════════════
+    var SHA = function (c) { return new Array(41).join(c); };      // 40 caractères hexadécimaux
+    function ligneDemo(o) {
+      return Object.assign({
+        run: 'r1', debut_run: '2026-01-01T00:00:00.000Z', commit: SHA('a'), commit_court: 'aaa', sujet_commit: 'sujet', rang_commit: 1,
+        branche: 'master', preset: 'pr', origine: 'pre-push', inscrit: true, test: 'N-1', cle: 'G › t', nom: 't', type: 'unitaire', groupe: 'G',
+        domaines: [], specs: [], fonctions: [], etiquettes: [], duree_ms: 10, etat: 'reussi', erreur: null, nb_captures: 0, captures: [],
+        dossierCahier: 'c1', motif: null, arbre_modifie: false, interrompu: false,
+      }, o);
+    }
+    function reponsesLignes(lignes, extra) {
+      return function (url) {
+        if (/\/lignes\?/.test(url)) return { lignes: lignes, total: lignes.length, page: 1, taille: 50, effectifs: {} };
+        return extra ? extra(url) : {};
+      };
+    }
+    function enfants(n, pred) { return n.tous(pred); }
+    function parClasse(n, classe) { return n.tous(function (c) { return (' ' + c.className + ' ').indexOf(' ' + classe + ' ') >= 0; }); }
+
+    it('SPEC-BANC-029 : le bouton « Historique » de l\'en-tête et le lien « historique » d\'un test ouvrent la MÊME zone, pré-filtrée sur le test dans le second cas', function () {
+      var page = lire('tests/index.html');
+      A.ok(/<button id="btn-historique">Historique<\/button>/.test(page) && /id="zone-historique" hidden/.test(page), 'l\'en-tête du banc porte le bouton, la zone est cachée par défaut');
+      A.ok(/G\.MC_HISTORIQUE\.ouvrir\(\{ cle: cleHistorique\(t\)/.test(lire('tests/banc-ui.js')), 'le lien d\'un test de la sélection appelle MC_HISTORIQUE.ouvrir({ cle })');
+      var d = fauxDom(reponsesLignes([ligneDemo({})], function () { return { images: [] }; }));
+      var zone = d.obtenir('zone-historique');
+      d.obtenir('btn-historique').click();
+      A.equal(zone.hidden, false, 'le bouton ouvre la zone');
+      A.deep(d.H.etat.filtresColonnes, {}, 'sans filtre de test');
+      d.H.fermer();
+      A.equal(zone.hidden, true, 'fermée');
+      d.H.ouvrir({ cle: 'G › t', nom: 't' });
+      A.equal(zone.hidden, false, 'le second chemin ouvre la même zone');
+      A.equal(d.H.etat.filtresColonnes.cle, 'G › t', 'pré-filtrée sur ce test');
+      A.equal(d.obtenir('hist-panneau-test').hidden, false, 'et son panneau est ouvert');
+    });
+
+    it('SPEC-BANC-034 : chaque propriété de la ligne a sa colonne, le sélecteur « Colonnes » les affiche ou masque et le choix survit au rechargement', function () {
+      var d = fauxDom(reponsesLignes([ligneDemo({})]));
+      var ids = d.H.colonnes.map(function (c) { return c.id; });
+      ['run', 'debut_run', 'commit', 'commit_court', 'sujet_commit', 'rang_commit', 'branche', 'preset', 'origine', 'inscrit', 'test', 'nom', 'type', 'groupe',
+        'domaines', 'specs', 'fonctions', 'etiquettes', 'fiche', 'debut_test', 'duree_ms', 'etat', 'erreur', 'nb_captures', 'captures'].forEach(function (c) {
+        A.ok(ids.indexOf(c) >= 0, 'colonne ' + c);
+      });
+      d.H.ouvrir();
+      var menu = d.obtenir('hist-colonnes-menu');
+      var cases = menu.tous(function (n) { return n.tagName === 'INPUT'; });
+      A.equal(cases.length, ids.length, 'le sélecteur propose une case par colonne');
+      var iDuree = ids.indexOf('duree_ms');
+      A.ok(d.H.etat.colonnes.indexOf('duree_ms') >= 0, 'durée affichée par défaut');
+      cases[iDuree].checked = false; cases[iDuree].declencher('change');
+      A.equal(d.H.etat.colonnes.indexOf('duree_ms'), -1, 'décocher une colonne la retire');
+      var entetes = d.obtenir('__thead').tous(function (n) { return n.tagName === 'TH'; }).map(function (n) { return n.textContent; });
+      A.ok(entetes.indexOf('Durée (ms)') < 0, 'et l\'en-tête du tableau ne la porte plus : ' + entetes.join('|'));
+      var iCaptures = ids.indexOf('nb_captures');
+      cases[iCaptures].checked = true; cases[iCaptures].declencher('change');
+      A.ok(d.H.etat.colonnes.indexOf('nb_captures') >= 0, 'cocher une colonne l\'ajoute');
+      // rechargement de la page (stockage disponible) : même jeu de colonnes
+      var d2 = fauxDom(reponsesLignes([]), { stockage: d.stockage });
+      A.deep(d2.H.etat.colonnes.slice().sort(), d.H.etat.colonnes.slice().sort(), 'le même jeu de colonnes est restitué');
+      A.equal(d2.H.etat.colonnes.indexOf('duree_ms'), -1, 'la colonne masquée le reste');
+      // stockage indisponible : la page reste utilisable, colonnes par défaut
+      var d3 = fauxDom(reponsesLignes([ligneDemo({})]), { stockageErreur: true });
+      A.ok(d3.H.etat.colonnes.length > 0, 'colonnes par défaut sans stockage');
+      d3.H.ouvrir();
+      var c3 = d3.obtenir('hist-colonnes-menu').tous(function (n) { return n.tagName === 'INPUT'; });
+      c3[0].checked = !c3[0].checked; c3[0].declencher('change');   // l'écriture lève : aucune exception ne remonte
+      A.equal(d3.obtenir('zone-historique').hidden, false, 'la zone reste ouverte et utilisable');
+    });
+
+    it('SPEC-BANC-034 : les colonnes « fiche » et « images » du serveur filtrent, trient et s\'exportent comme un texte', function () {
+      var runs = [run({ tests: [test({ nom: 'a', fiche: { teste: 'le mailleur', attendu: '6 faces' }, captures: [{ role: 'debut', libelle: 'début', image: 'a.jpg' }, { role: 'fin', libelle: 'fin', image: 'b.jpg' }] }), test({ nom: 'b', fiche: null })] })];
+      var lignes = H.construireLignes(runs);
+      A.deep(H.filtrerLignes(lignes, { fiche: 'mailleur' }).map(function (l) { return l.nom; }), ['a'], 'filtre sur la fiche');
+      A.deep(H.filtrerLignes(lignes, { captures: 'fin' }).map(function (l) { return l.nom; }), ['a'], 'filtre sur les libellés d\'images');
+      A.equal(H.valeurColonne(lignes[0], 'captures'), 'debut:début, fin:fin', 'rôle:libellé, dans l\'ordre');
+      var csv = H.exporterCSV(lignes, ['nom', 'fiche', 'captures']);
+      A.ok(/le mailleur — 6 faces/.test(csv) && /debut:début, fin:fin/.test(csv), 'et exportées');
+    });
+
+    it('SPEC-BANC-039 : un clic sur une ligne ouvre le panneau « test » sur ce test, avec CE run déjà sélectionné (pas le dernier)', function () {
+      var l1 = ligneDemo({ run: 'r1', debut_run: '2026-01-01T00:00:00.000Z' }), l2 = ligneDemo({ run: 'r2', debut_run: '2026-01-02T00:00:00.000Z' });
+      var passages = [
+        { run: 'r1', debut_run: l1.debut_run, etat: 'reussi', inscrit: true, preset: 'pr', commit_court: 'aaa', cle: 'G › t', nom: 't', captures: [] },
+        { run: 'r2', debut_run: l2.debut_run, etat: 'echec', inscrit: true, preset: 'pr', commit_court: 'bbb', cle: 'G › t', nom: 't', captures: [] },
+      ];
+      var d = fauxDom(reponsesLignes([l2, l1], function () { return { images: passages, temoins: {} }; }));
+      d.H.ouvrir();
+      var lignes = d.obtenir('__tbody').children.filter(function (tr) { return tr.tagName === 'TR'; });
+      A.equal(lignes.length, 2, 'deux lignes affichées');
+      lignes[1].click();      // le run r1, pas le plus récent
+      A.equal(d.obtenir('hist-panneau-test').hidden, false, 'le panneau s\'ouvre');
+      A.equal(d.H.panneau.o.run, 'r1', 'positionné sur le run cliqué');
+      A.ok(d.appels.some(function (u) { return u.indexOf('/tests/historique/images?test=') === 0; }), 'les passages du test sont demandés');
+      var courant = parClasse(d.obtenir('hist-panneau-test'), 'hist-pt-courant');
+      A.equal(courant.length, 1, 'un seul passage mis en avant');
+      A.equal(courant[0].getAttribute('data-run'), 'r1', 'c\'est celui du run cliqué');
+    });
+
+    // ── panneau « test », diaporamas, témoin (SPEC-BANC-046 à 052) ──────────
+    function panneauDemo(opts) {
+      var o = opts || {};
+      var passages = [
+        { run: 'p1', debut_run: '2026-01-01T00:00:00.000Z', etat: 'reussi', duree_ms: 10, inscrit: true, preset: 'pr', commit: SHA('1'), commit_court: 'c1c1', sujet_commit: 'un', cle: 'G › t', nom: 't', dossierCahier: 'k1',
+          captures: [{ role: 'fin', libelle: 'fin', image: SHA('b') + '.jpg', t_ms: 900 }, { role: 'debut', libelle: 'début', image: SHA('a') + '.jpg', t_ms: 0 }, { role: 'intermediaire', libelle: 'milieu', image: SHA('c') + '.jpg', t_ms: 400 }] },
+        { run: 'p2', debut_run: '2026-01-02T00:00:00.000Z', etat: 'echec', duree_ms: 20, inscrit: true, preset: 'pr', commit: SHA('2'), commit_court: 'c2c2', sujet_commit: 'deux', cle: 'G › t', nom: 't', dossierCahier: 'k2',
+          captures: [{ role: 'debut', libelle: 'début', image: SHA('d') + '.jpg', t_ms: 0 }, { role: 'fin', libelle: 'fin', image: SHA('e') + '.jpg', t_ms: 900 }] },
+        { run: 'p3', debut_run: '2026-01-03T00:00:00.000Z', etat: 'reussi', duree_ms: 30, inscrit: false, preset: 'commit', commit: SHA('3'), commit_court: 'c3c3', sujet_commit: 'trois', cle: 'G › t', nom: 't', dossierCahier: 'k3', arbre_modifie: true, motif: 'avant refonte',
+          captures: [{ role: 'debut', libelle: 'début', image: '0001-debut.jpg', t_ms: 0 }, { role: 'intermediaire', libelle: 'milieu', image: '0002-milieu.jpg', t_ms: 400 }, { role: 'fin', libelle: 'fin', image: '0003-fin.jpg', t_ms: 900 }] },
+      ];
+      var temoins = o.temoins === undefined ? { 'debut|début': { epingle: false, run: 'p2', commit: SHA('2'), commit_court: 'c2c2', image: SHA('d') + '.jpg' } } : o.temoins;
+      var d = fauxDom(function (url, init) {
+        if (/\/images\?/.test(url)) return { images: passages, temoins: temoins };
+        if (/\/registre\/temoin$/.test(url)) return { ok: true };
+        return { lignes: [], total: 0, effectifs: {} };
+      });
+      d.passages = passages;
+      d.H.ouvrirTest({ cle: 'G › t', nom: 't', run: 'p3' });
+      return d;
+    }
+    function vignette(d, cleImg, run) {
+      return d.obtenir('hist-panneau-test').tous(function (n) { return n.tagName === 'IMG' && n.attrs['data-image'] === cleImg && n.attrs['data-run'] === run; })[0];
+    }
+    function diapos(d) { return parClasse(d.obtenir('hist-panneau-test'), 'hist-diapo'); }
+    function dans(n, classe) { return parClasse(n, classe)[0]; }
+
+    it('SPEC-BANC-046/047 : le panneau d\'un run montre ses images en vignettes FIXES dans l\'ordre du test, et AUCUN diaporama ne s\'ouvre ni ne défile sans clic', function () {
+      var d = panneauDemo();
+      var li3 = parClasse(d.obtenir('hist-panneau-test'), 'hist-pt-courant')[0];
+      var imgs = li3.tous(function (n) { return n.tagName === 'IMG'; }).map(function (n) { return n.attrs['data-image']; });
+      A.deep(imgs, ['debut|début', 'intermediaire|milieu', 'fin|fin'], 'début, intermédiaire (par t_ms), fin — l\'ordre du test, pas celui du fichier');
+      var li1 = d.obtenir('hist-panneau-test').tous(function (n) { return n.tagName === 'LI' && n.attrs['data-run'] === 'p1'; })[0];
+      A.deep(li1.tous(function (n) { return n.tagName === 'IMG'; }).map(function (n) { return n.attrs['data-image']; }), ['debut|début', 'intermediaire|milieu', 'fin|fin'], 'même ordre pour un run dont le fichier les rangeait autrement');
+      A.equal(d.obtenir('hist-diapos').hidden, true, 'la zone des diaporamas est cachée');
+      A.equal(diapos(d).length, 0, 'aucun diaporama ouvert');
+      A.equal(d.minuteries.length, 0, 'aucune minuterie : rien ne défile tout seul');
+    });
+
+    it('SPEC-BANC-047/048 : cliquer UNE vignette n\'ouvre que le diaporama de CETTE image, sur le run cliqué ; un run sans cette image garde sa position « pas de capture »', function () {
+      var d = panneauDemo();
+      vignette(d, 'intermediaire|milieu', 'p3').click();
+      var liste = diapos(d);
+      A.equal(liste.length, 1, 'un seul diaporama');
+      A.equal(liste[0].getAttribute('data-image'), 'intermediaire|milieu', 'celui de l\'image cliquée');
+      A.equal(d.obtenir('hist-diapos').hidden, false, 'la zone apparaît');
+      var dia = d.H.panneau.diapos[0];
+      A.equal(dia.positions.length, 3, 'une position par run du test (3 sur 3)');
+      A.deep(dia.positions.map(function (p) { return p.capture ? 'image' : 'pas de capture'; }), ['image', 'pas de capture', 'image'], 'N=2 images sur M=3 runs : le run p2 reste, marqué « pas de capture »');
+      A.equal(liste[0].getAttribute('data-run'), 'p3', 'positionné sur le run cliqué');
+      A.ok(/c3c3 « trois » · reussi · 30 ms · non inscrit/.test(dans(liste[0], 'hist-diapo-legende').textContent), 'sous l\'image : date, commit + sujet, état, durée, inscrit ou non : ' + dans(liste[0], 'hist-diapo-legende').textContent);
+      dans(liste[0], 'hist-diapo-prec').click();
+      A.equal(liste[0].getAttribute('data-run'), 'p2', 'reculer : le run sans cette image');
+      A.equal(dans(liste[0], 'hist-diapo-vide').hidden, false, 'la case « pas de capture » est visible');
+      A.equal(dans(liste[0], 'hist-diapo-image').hidden, true, 'et l\'image masquée');
+      // ordre du tri choisi : le serveur reçoit le tri, les diaporamas ouverts sont rechargés dans cet ordre
+      var tri = d.obtenir('hist-panneau-test').tous(function (n) { return n.tagName === 'SELECT' && n.attrs.id === 'hist-pt-tri'; })[0];
+      tri.value = 'commit'; tri.declencher('change');
+      A.ok(/tri=commit/.test(d.appels[d.appels.length - 1]), 'le tri « commit » est demandé : ' + d.appels[d.appels.length - 1]);
+      A.equal(d.H.panneau.diapos.length, 1, 'le diaporama ouvert reste ouvert après le changement d\'ordre');
+    });
+
+    it('SPEC-BANC-049 et SPEC-BANC-050 : plusieurs diaporamas coexistent, indépendants (flèches, curseur), « synchroniser » les aligne ; la lecture ne démarre que sur le bouton', function () {
+      var d = panneauDemo();
+      vignette(d, 'debut|début', 'p3').click();
+      vignette(d, 'fin|fin', 'p3').click();
+      vignette(d, 'debut|début', 'p3').click();   // déjà ouvert : pas de doublon
+      var liste = diapos(d);
+      A.equal(liste.length, 2, 'deux diaporamas, un par image cliquée');
+      var a = liste[0], b = liste[1];
+      A.equal(d.minuteries.length, 0, 'la lecture automatique ne démarre pas à l\'ouverture');
+      a.declencher('keydown', { key: 'ArrowLeft', preventDefault: function () {} });
+      A.equal(a.getAttribute('data-run'), 'p2', 'flèche gauche : un run en arrière');
+      A.equal(b.getAttribute('data-run'), 'p3', 'l\'autre diaporama n\'a pas bougé (indépendants)');
+      a.declencher('keydown', { key: 'ArrowRight', preventDefault: function () {} });
+      A.equal(a.getAttribute('data-run'), 'p3', 'flèche droite : un run en avant');
+      var curs = dans(b, 'hist-diapo-curseur');
+      curs.value = '0'; curs.declencher('input');
+      A.equal(b.getAttribute('data-run'), 'p1', 'le curseur déplacé va directement à ce run');
+      A.equal(a.getAttribute('data-run'), 'p3', 'sans toucher l\'autre');
+      d.obtenir('hist-diapos-sync').click();
+      A.equal(a.getAttribute('data-run'), b.getAttribute('data-run'), 'synchroniser aligne les deux sur le même run');
+      // synchronisés : avancer l'un entraîne l'autre
+      dans(a, 'hist-diapo-suiv').click();
+      A.equal(b.getAttribute('data-run'), a.getAttribute('data-run'), 'ensuite ils avancent ensemble');
+      d.obtenir('hist-diapos-sync').click();
+      dans(a, 'hist-diapo-prec').click();
+      A.notEqual(a.getAttribute('data-run'), b.getAttribute('data-run'), 'désynchronisés, ils redeviennent indépendants');
+      // lecture : sur action explicite seulement, vitesse réglable, s'arrête à la fin
+      curs = dans(a, 'hist-diapo-curseur'); curs.value = '0'; curs.declencher('input');
+      dans(a, 'hist-diapo-lecture').click();
+      A.equal(d.minuteries.length, 1, 'le bouton lecture démarre une minuterie');
+      A.equal(a.getAttribute('data-lecture'), '1', 'état de lecture visible');
+      var m = d.minuteries[0];
+      var avant = a.getAttribute('data-run');
+      m.f();
+      A.notEqual(a.getAttribute('data-run'), avant, 'chaque tic avance d\'un run');
+      var vit = dans(a, 'hist-diapo-vitesse'); vit.value = '2'; vit.declencher('change');
+      A.equal(m.actif, false, 'changer la vitesse remplace la minuterie');
+      A.equal(d.minuteries[d.minuteries.length - 1].ms, 300, 'vitesse « rapide »');
+      d.minuteries[d.minuteries.length - 1].f(); d.minuteries[d.minuteries.length - 1].f();
+      A.equal(a.getAttribute('data-lecture'), '0', 'arrivée au dernier run : la lecture s\'arrête');
+      // fermeture
+      dans(a, 'hist-diapo-fermer').click();
+      A.equal(diapos(d).length, 1, 'chaque diaporama a son bouton de fermeture');
+      dans(b, 'hist-diapo-fermer').click();
+      A.equal(d.obtenir('hist-diapos').hidden, true, 'le dernier fermé cache la zone');
+    });
+
+    it('SPEC-BANC-051/052 : un témoin reste en vignette fixe au-dessus de chaque diaporama, « comparer » le superpose (rideau ou clignotement), « épingler » le persiste par POST', function () {
+      var d = panneauDemo();
+      vignette(d, 'debut|début', 'p3').click();
+      var dia = diapos(d)[0];
+      A.equal(dia.getAttribute('data-temoin'), 'derniere', 'sans épinglage, le témoin est la dernière capture inscrite');
+      var t = dans(dia, 'hist-temoin-img');
+      A.equal(t.attrs.src, '/tests/registre/images/' + SHA('d') + '.jpg', 'vignette du témoin');
+      A.ok(/dernière capture inscrite/.test(dans(dia, 'hist-temoin-legende').textContent), 'dit d\'où il vient');
+      vignette(d, 'fin|fin', 'p3').click();
+      var autre = diapos(d)[1];
+      A.equal(autre.getAttribute('data-temoin'), 'aucun', 'une image sans capture inscrite n\'a pas de témoin');
+      // comparer : rideau
+      var sup = dans(dia, 'hist-diapo-superpose');
+      A.equal(sup.hidden, true, 'pas de superposition avant « comparer »');
+      dans(dia, 'hist-diapo-comparer').click();
+      A.equal(dia.getAttribute('data-comparer'), 'rideau', 'mode rideau par défaut');
+      A.equal(sup.hidden, false, 'le témoin se superpose à l\'image courante');
+      A.equal(sup.style.clipPath, 'inset(0 50% 0 0)', 'le rideau révèle la moitié du témoin');
+      var rideau = dans(dia, 'hist-diapo-rideau'); rideau.value = '80'; rideau.declencher('input');
+      A.equal(sup.style.clipPath, 'inset(0 20% 0 0)', 'glisser le rideau révèle plus du témoin');
+      var mode = dans(dia, 'hist-diapo-mode'); mode.value = 'clignotement'; mode.declencher('change');
+      A.equal(dia.getAttribute('data-comparer'), 'clignotement', 'mode clignotement');
+      var clignote = d.minuteries[d.minuteries.length - 1];
+      A.ok(clignote.actif && clignote.ms === 500, 'une minuterie fait clignoter le témoin');
+      clignote.f();
+      A.equal(sup.style.visibility, 'hidden', 'le témoin disparaît puis réapparaît');
+      dans(dia, 'hist-diapo-comparer').click();
+      A.equal(clignote.actif, false, 'quitter la comparaison arrête le clignotement');
+      A.equal(sup.hidden, true, 'et retire la superposition');
+      // épingler : seule une capture inscrite peut l'être
+      var epingler = dans(dia, 'hist-diapo-epingler');
+      A.equal(epingler.disabled, true, 'le run p3 (cahier local) ne peut pas être épinglé');
+      dans(dia, 'hist-diapo-prec').click();      // p2, inscrit
+      A.equal(epingler.disabled, false, 'le run p2 (inscrit) le peut');
+      epingler.click();
+      var ecr = d.ecritures[d.ecritures.length - 1];
+      A.equal(ecr.url, '/tests/registre/temoin', 'route POST du témoin');
+      A.equal(ecr.methode, 'POST', 'en POST');
+      A.deep(ecr.corps, { test: 't', commit: SHA('2'), image: SHA('d') + '.jpg', cle_image: 'debut|début' }, 'cette image de ce run de ce test');
+      A.equal(dia.getAttribute('data-temoin'), 'epingle', 'le témoin est désormais marqué épinglé');
+      A.ok(/épinglé/.test(dans(dia, 'hist-temoin-legende').textContent), 'et le dit');
+    });
+
+    it('SPEC-BANC-052 : un témoin épinglé ressort comme tel dans les diaporamas suivants (rechargés depuis le serveur)', function () {
+      var d = panneauDemo({ temoins: { 'debut|début': { epingle: true, run: 'p1', commit: SHA('1'), commit_court: 'c1c1', image: SHA('a') + '.jpg' } } });
+      vignette(d, 'debut|début', 'p2').click();
+      var dia = diapos(d)[0];
+      A.equal(dia.getAttribute('data-temoin'), 'epingle', 'épinglé');
+      A.equal(dans(dia, 'hist-temoin-img').attrs.src, '/tests/registre/images/' + SHA('a') + '.jpg', 'l\'image épinglée, pas la dernière');
+    });
+
+    // ── inscription au registre depuis l'interface (SPEC-BANC-053 à 058) ────
+    function inscription(d, dossier) {
+      var el = d.ctx.MC_INSCRIRE.creer(dossier);
+      return { racine: el, motif: dans(el, 'hist-inscrire-motif'), bouton: dans(el, 'hist-inscrire-btn'), msg: dans(el, 'hist-inscrire-msg') };
+    }
+    it('SPEC-BANC-053/054/055 : le composant propose « Inscrire au registre », appelle POST /tests/registre/inscrire avec l\'identifiant du cahier et le motif facultatif', function () {
+      var d = fauxDom(function (url, init) {
+        if (/\/registre\/inscrire$/.test(url)) return { ok: true, run: 'abc123', commit: SHA('f'), arbre_modifie: false, motif: 'référence avant refonte de l\'eau' };
+        return { lignes: [], total: 0, effectifs: {} };
+      });
+      var i = inscription(d, '2026-10-05_12-00-00_pr');
+      A.equal(i.bouton.textContent, 'Inscrire au registre', 'libellé du bouton');
+      A.equal(d.ecritures.length, 0, 'rien n\'est écrit avant le clic');
+      i.motif.value = 'référence avant refonte de l\'eau';
+      i.bouton.click();
+      A.equal(d.ecritures.length, 1, 'un appel');
+      A.equal(d.ecritures[0].url, '/tests/registre/inscrire', 'la route d\'inscription');
+      A.equal(d.ecritures[0].methode, 'POST', 'en POST');
+      A.deep(d.ecritures[0].corps, { dossier: '2026-10-05_12-00-00_pr', motif: 'référence avant refonte de l\'eau' }, 'l\'identifiant du cahier et le motif');
+      var sansMotif = inscription(d, 'autre');
+      sansMotif.bouton.click();
+      A.deep(d.ecritures[1].corps, { dossier: 'autre' }, 'le motif est facultatif : absent du corps quand il est vide');
+      A.ok(d.H.colonnes.some(function (c) { return c.id === 'motif' && c.defaut; }), 'le motif est une colonne de l\'historique, affichée par défaut (SPEC-BANC-055)');
+    });
+
+    it('SPEC-BANC-056 : après l\'inscription le bouton devient « Inscrit ✓ » avec un lien vers l\'historique filtré sur ce run ; une seconde inscription est refusée avec un message clair', function () {
+      var essais = 0;
+      var d = fauxDom(function (url, init) {
+        if (/\/registre\/inscrire$/.test(url)) {
+          essais++;
+          return essais === 1 ? { ok: true, run: 'abc123', commit: SHA('f'), arbre_modifie: false }
+            : { __statut: 409, __corps: { ok: false, motif: 'ce cahier est déjà inscrit au registre — une seule inscription par cahier' } };
+        }
+        return { lignes: [], total: 0, effectifs: {} };
+      });
+      var i = inscription(d, 'cahier-1');
+      i.bouton.click();
+      A.equal(i.bouton.textContent, 'Inscrit ✓', 'le bouton change de libellé');
+      var lien = dans(i.racine, 'hist-inscrire-lien');
+      A.ok(lien, 'et propose un lien vers l\'historique');
+      lien.click();
+      A.equal(d.obtenir('zone-historique').hidden, false, 'le lien ouvre la zone Historique');
+      A.equal(d.H.etat.filtresColonnes.run, 'abc123', 'filtrée sur CE run');
+      A.ok(d.H.etat.colonnes.indexOf('run') >= 0, 'la colonne du filtre est visible');
+      i.bouton.click();
+      A.equal(d.ecritures.length, 2, 'le second clic interroge le serveur');
+      A.ok(/déjà inscrit/.test(i.msg.textContent), 'refus avec un message explicite : ' + i.msg.textContent);
+      A.equal(i.bouton.textContent, 'Inscrit ✓', 'le bouton reste « Inscrit ✓ »');
+      A.equal(parClasse(i.racine, 'hist-inscrire-lien').length, 1, 'sans créer un second lien');
+    });
+
+    it('SPEC-BANC-057/058 : une ligne d\'un cahier local non inscrit porte le bouton, une ligne inscrite non ; un arbre modifié est signalé par un avertissement visible', function () {
+      var locale = ligneDemo({ run: 'rl', inscrit: false, dossierCahier: 'cahier-local' });
+      var officielle = ligneDemo({ run: 'ro', inscrit: true, dossierCahier: 'cahier-inscrit' });
+      var modifiee = ligneDemo({ run: 'rm', inscrit: true, arbre_modifie: true, dossierCahier: 'k', motif: 'essai' });
+      var d = fauxDom(reponsesLignes([locale, officielle, modifiee]));
+      d.H.ouvrir();
+      var tr = d.obtenir('__tbody').children.filter(function (n) { return n.tagName === 'TR'; });
+      A.equal(parClasse(tr[0], 'hist-inscrire').length, 1, 'ligne locale : bouton « Inscrire au registre »');
+      A.equal(dans(tr[0], 'hist-inscrire').getAttribute('data-dossier'), 'cahier-local', 'qui vise son cahier');
+      A.equal(parClasse(tr[1], 'hist-inscrire').length, 0, 'ligne déjà inscrite : pas de bouton');
+      A.ok(/arbre-modifie/.test(tr[2].className), 'la ligne d\'un arbre modifié est marquée');
+      A.ok(/⚠ arbre modifié/.test(tr[2].textContent), 'avec un avertissement visible : ' + tr[2].textContent);
+      A.ok(/essai/.test(tr[2].textContent), 'le motif est affiché dans sa colonne');
+      A.ok(!/arbre modifié/.test(tr[1].textContent), 'une ligne propre ne porte pas l\'avertissement');
+      // cliquer le bouton d'une ligne n'ouvre pas le panneau du test
+      var ouvertAvant = d.obtenir('hist-panneau-test').hidden;
+      var cellule = tr[0].children[tr[0].children.length - 1];
+      cellule.declencher('click');
+      A.equal(d.obtenir('hist-panneau-test').hidden, ouvertAvant, 'le clic dans la cellule d\'action ne déclenche pas l\'ouverture du panneau');
+    });
+
+    it('SPEC-BANC-058 : le panneau « test » avertit d\'un arbre modifié et rappelle le motif d\'un passage', function () {
+      var d = panneauDemo();
+      var li3 = parClasse(d.obtenir('hist-panneau-test'), 'hist-pt-courant')[0];
+      A.ok(/arbre modifié/.test(li3.textContent), 'avertissement dans le passage : ' + li3.textContent.slice(0, 200));
+      A.ok(/Motif : avant refonte/.test(li3.textContent), 'motif rappelé');
+      A.equal(parClasse(li3, 'hist-inscrire').length, 1, 'un passage local non inscrit porte le bouton d\'inscription');
+    });
+
+    it('SPEC-BANC-053 : le résumé de fin de campagne du banc ajoute le bouton « Inscrire au registre » à côté du lien du cahier, y compris après un arrêt', function () {
+      var ui = lire('tests/banc-ui.js');
+      A.ok(/ajouterExports\(conteneur, m\[1\]\); ajouterInscription\(conteneur, m\[1\]\)/.test(ui), 'afficherLienRapport ajoute l\'inscription au même conteneur que le lien');
+      A.ok(/G\.MC_INSCRIRE\.creer\(dossier\)/.test(ui), 'avec le composant partagé');
+      var envoi = ui.slice(ui.indexOf('await envoyerCahier({'), ui.indexOf('// ── envoi du cahier de test'));
+      A.ok(/interrompue: etat\.arretDemande/.test(envoi), 'le cahier est envoyé aussi après un arrêt manuel, marqué interrompu');
+      A.ok(/historique-vues\.js', 'historique\.js'/.test(lire('tests/index.html')), 'tests/index.html charge les vues puis l\'interface');
+    });
+
+    // ── graphiques (SPEC-BANC-041 à 045) ───────────────────────────────────
+    function serieDemo() {
+      return [
+        { run: 'r1', x: '2026-01-01T00:00:00.000Z', debut_run: '2026-01-01T00:00:00.000Z', commit: SHA('1'), commit_court: 'c1c1', sujet_commit: 'un', etat: { reussi: 2, echec: 1, ignore: 0, avertissement: 0 }, duree_ms: { valeurs: [10, 20, 300], mediane: 20, p95: 300 }, nb_captures: { valeurs: [2, 2, 3], mediane: 2, p95: 3 } },
+        { run: 'r2', x: '2026-01-02T00:00:00.000Z', debut_run: '2026-01-02T00:00:00.000Z', commit: SHA('2'), commit_court: 'c2c2', sujet_commit: 'deux', etat: { reussi: 3, echec: 0, ignore: 0, avertissement: 0 }, duree_ms: { valeurs: [15, 25, 100], mediane: 25, p95: 100 }, nb_captures: { valeurs: [2, 2, 3], mediane: 2, p95: 3 } },
+      ];
+    }
+    function graphesDemo(nbTests) {
+      var d = fauxDom(function (url) {
+        if (/\/series\?/.test(url)) return { serie: serieDemo(), nbTests: nbTests === undefined ? 3 : nbTests, nbRuns: 2 };
+        if (/\/matrice\?/.test(url)) return { runs: [{ run: 'r1', x: 'a', commit_court: 'c1c1' }, { run: 'r2', x: 'b', commit_court: 'c2c2' }], tests: [{ cle: 'G › a', nom: 'a', echecs: 1 }, { cle: 'G › b', nom: 'b', echecs: 0 }], cellules: { 'G › a': { r1: 'echec', r2: 'reussi' }, 'G › b': { r1: 'reussi', r2: 'reussi' } }, tronque: { tests: false, runs: false }, totalTests: 2, totalRuns: 2 };
+        return { lignes: [], total: 0, effectifs: {} };
+      });
+      d.obtenir('hist-graphes').hidden = true;      // comme dans tests/index.html
+      d.H.ouvrir();
+      d.obtenir('hist-graphes-btn').click();
+      return d;
+    }
+    function dernierAppel(d, morceau) { return d.appels.filter(function (u) { return u.indexOf(morceau) >= 0; }).pop(); }
+    function figures(d) { return parClasse(d.obtenir('hist-gr-corps'), 'hist-fig'); }
+    function svgDe(fig) { return parClasse(fig, 'hist-fig-svg')[0]._html; }
+
+    it('SPEC-BANC-041 : les cases à cocher choisissent les propriétés tracées, l\'axe X choisit horodatage ou commit', function () {
+      var d = graphesDemo();
+      A.equal(d.obtenir('hist-graphes').hidden, false, 'le bouton « Graphiques » ouvre la zone');
+      var u = dernierAppel(d, '/tests/historique/series?');
+      A.ok(/props=etat/.test(u) && /x=debut_run/.test(u), 'par défaut : l\'état, par ordre de lancement : ' + u);
+      A.deep(figures(d).map(function (f) { return f.getAttribute('data-prop'); }), ['etat'], 'une figure pour l\'état');
+      var cases = d.obtenir('hist-graphes').tous(function (n) { return n.tagName === 'INPUT' && n.attrs.type === 'checkbox' && n.attrs['data-prop']; });
+      var duree = cases.filter(function (c) { return c.attrs['data-prop'] === 'duree_ms'; })[0];
+      duree.checked = true; duree.declencher('change');
+      A.ok(/props=etat%2Cduree_ms/.test(dernierAppel(d, '/series?')), 'cocher la durée la demande : ' + dernierAppel(d, '/series?'));
+      A.deep(figures(d).map(function (f) { return f.getAttribute('data-prop'); }), ['etat', 'duree_ms'], 'sa courbe apparaît');
+      duree.checked = false; duree.declencher('change');
+      A.deep(figures(d).map(function (f) { return f.getAttribute('data-prop'); }), ['etat'], 'la décocher la retire');
+      var radios = d.obtenir('hist-graphes').tous(function (n) { return n.tagName === 'INPUT' && n.attrs.type === 'radio'; });
+      var commit = radios.filter(function (r) { return r.attrs['data-axe'] === 'rang_commit'; })[0];
+      commit.checked = true; commit.declencher('change');
+      A.ok(/x=rang_commit/.test(dernierAppel(d, '/series?')), 'l\'axe commit est demandé au serveur (rang topologique) : ' + dernierAppel(d, '/series?'));
+    });
+
+    it('SPEC-BANC-042 : plusieurs tests donnent des barres empilées par état, un seul test une bande de pastilles', function () {
+      var d = graphesDemo(3);
+      A.ok(/data-graphe="etat-barres"/.test(svgDe(figures(d)[0])), 'plusieurs tests : barres empilées');
+      var d1 = graphesDemo(1);
+      var svg = svgDe(figures(d1)[0]);
+      A.ok(/data-graphe="etat-pastilles"/.test(svg), 'un seul test : pastilles');
+      A.equal((svg.match(/<circle/g) || []).length, 2, 'une pastille par run filtré');
+      A.ok(/fill="#f85149"/.test(svg) && /fill="#3fb950"/.test(svg), 'rouge pour l\'échec, vert pour la réussite');
+    });
+
+    it('SPEC-BANC-043 : la durée se trace en médiane et p95 (plusieurs tests) ou valeur brute (un test), avec le seuil « lent » en pointillés', function () {
+      function avecDuree(nb) {
+        var d = graphesDemo(nb);
+        var c = d.obtenir('hist-graphes').tous(function (n) { return n.attrs['data-prop'] === 'duree_ms' && n.tagName === 'INPUT'; })[0];
+        c.checked = true; c.declencher('change');
+        return svgDe(figures(d).filter(function (f) { return f.getAttribute('data-prop') === 'duree_ms'; })[0]);
+      }
+      var plusieurs = avecDuree(3);
+      A.ok(/courbe-mediane/.test(plusieurs) && /courbe-p95/.test(plusieurs), 'plusieurs tests : médiane et p95');
+      var seul = avecDuree(1);
+      A.ok(/courbe-valeur/.test(seul) && !/courbe-p95/.test(seul), 'un seul test : valeur brute');
+      A.ok(/class="seuil-lent"[^>]*stroke-dasharray="6 4"[^>]*data-valeur="8000"/.test(plusieurs), 'seuil lent (8 s par défaut) en pointillés');
+    });
+
+    it('SPEC-BANC-044 : la vue matrice demande tests × runs au serveur et trace une grille colorée', function () {
+      var d = graphesDemo();
+      var m = d.obtenir('hist-graphes').tous(function (n) { return n.tagName === 'INPUT' && n.attrs.id === 'hist-gr-matrice'; })[0];
+      m.checked = true; m.declencher('change');
+      A.ok(/\/tests\/historique\/matrice\?/.test(dernierAppel(d, '/matrice?')), 'route matrice');
+      var svg = svgDe(figures(d)[0]);
+      A.ok(/data-graphe="matrice" data-colonnes="2" data-lignes="2"/.test(svg), 'grille 2 × 2');
+      A.equal((svg.match(/<rect class="cel/g) || []).length, 4, 'une cellule par test et par run');
+      A.ok(/<rect class="cel etat-echec"[^>]*fill="#f85149"/.test(svg), 'colorée par état');
+    });
+
+    it('SPEC-BANC-045 : le survol d\'un point affiche une infobulle, un clic filtre le tableau sur ce run, et les graphiques suivent les filtres du tableau', function () {
+      var d = graphesDemo();
+      var corps = d.obtenir('hist-gr-corps');
+      var point = d.noeud('circle'); point.setAttribute('data-run', 'r2'); point.setAttribute('data-tip', 'run r2 · commit c2c2 « deux » · 2026-01-02 00:00 · 3 réussis');
+      corps.declencher('mouseover', { target: point, clientX: 100, clientY: 50 });
+      var tip = d.obtenir('hist-infobulle');
+      A.equal(tip.hidden, false, 'infobulle visible');
+      A.ok(/run r2/.test(tip.textContent) && /c2c2/.test(tip.textContent) && /2026-01-02/.test(tip.textContent), 'run, commit, date, valeur : ' + tip.textContent);
+      corps.declencher('mouseleave', {});
+      A.equal(tip.hidden, true, 'elle disparaît');
+      corps.declencher('click', { target: point });
+      A.equal(d.H.etat.filtresColonnes.run, 'r2', 'un clic filtre le tableau sur le run');
+      var u = dernierAppel(d, '/tests/historique/lignes?');
+      A.equal(filtreDeLUrl(u).run, 'r2', 'la requête du tableau porte le filtre');
+      A.equal(filtreDeLUrl(dernierAppel(d, '/series?')).run, undefined, 'le graphique, lui, garde tous les runs (il suit les AUTRES filtres)');
+      // un filtre du tableau met à jour les graphiques sans rechargement de page
+      var nSeries = d.appels.filter(function (x) { return x.indexOf('/series?') >= 0; }).length;
+      d.H.ouvrir({ cle: 'G › t', nom: 't' });
+      A.ok(d.appels.filter(function (x) { return x.indexOf('/series?') >= 0; }).length > nSeries, 'changer le filtre redemande la série');
+      A.equal(filtreDeLUrl(dernierAppel(d, '/series?')).cle, 'G › t', 'avec le nouveau filtre');
     });
 
     it('SPEC-BANC-117 : tests/index.html signale une liste de fichiers de tests absente au lieu d\'un catalogue vide', function () {

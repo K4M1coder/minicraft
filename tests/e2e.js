@@ -4881,7 +4881,9 @@
       A.ok(btnEchecs, 'bouton de filtre rapide « Échecs » présent');
       var pageInfoAvant = zone.querySelector('#hist-page-info').textContent;
       btnEchecs.click();
-      await attendreCondition(function () { return zone.querySelector('#hist-page-info').textContent !== pageInfoAvant; }, 8000);
+      // le clic pose « chargement… » AU MÊME INSTANT (synchrone) : attendre que ce texte parte, c'est attendre la réponse
+      // du serveur et le tableau redessiné — comparer au texte d'avant passait trop tôt (tableau encore celui d'avant)
+      await attendreCondition(function () { var t = zone.querySelector('#hist-page-info').textContent; return t !== pageInfoAvant && t.indexOf('chargement') < 0; }, 8000);
       var lignesApres = Array.prototype.slice.call(zone.querySelectorAll('#hist-table tbody tr'));
       var toutesEchecOuVide = lignesApres.length === 0 || lignesApres.every(function (tr) {
         return tr.className.indexOf('etat-echec') >= 0 || tr.textContent.indexOf('aucune ligne') >= 0;

@@ -215,7 +215,7 @@ const DOMAINE_PAR_GROUPE_E2E = {
    peut avoir son propre fichier (tests/e2e-jouabilite.js, SPEC-JOUABLE-*),
    qui enregistre ses tests par G.E2E_API (tests/e2e.js) — même lecture en
    texte, même forme d'appel e2e(nom, fiche, fn). */
-const FICHIERS_E2E = ['e2e.js', 'e2e-jouabilite.js'];
+const FICHIERS_E2E = ['e2e.js', 'e2e-jouabilite.js', 'e2e-banc.js'];
 function e2eListeDepuisTexte() {
   return FICHIERS_E2E.reduce((acc, f) => acc.concat(e2eListeDepuisFichier(f)), []);
 }

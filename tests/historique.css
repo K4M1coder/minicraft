@@ -83,6 +83,61 @@
 .t-hors { opacity: .6; font-style: italic; }
 .t-etat-echec { color: #ff8f89; }
 
+/* ── graphiques timeline (SPEC-BANC-041 à 045) ───────────────────────── */
+#hist-graphes[hidden] { display: none; }
+#hist-graphes { flex: 0 1 auto; max-height: 42%; min-height: 0; overflow: auto; border-bottom: 1px solid rgba(255,255,255,.1); background: #0d1219; }
+.hist-gr-barre { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 12px; padding: 6px 12px; font-size: 12px; position: sticky; top: 0; background: #10151d; z-index: 2; }
+.hist-gr-barre label { display: inline-flex; align-items: center; gap: 4px; }
+.hist-gr-sep { margin-left: 8px; }
+.hist-gr-corps { padding: 4px 12px 8px; font-size: 12px; }
+.hist-fig { margin: 0 0 6px; }
+.hist-fig figcaption { opacity: .7; margin: 2px 0; }
+.hist-fig-svg { max-width: 900px; overflow-x: auto; }
+.hist-svg { display: block; height: auto; font: 10px ui-monospace, Menlo, Consolas, monospace; }
+.hist-svg text { fill: #aab3c0; }
+.hist-svg .hist-axe, .hist-svg .hist-grille { stroke: rgba(255,255,255,.2); stroke-width: 1; }
+.hist-svg .hist-grille { stroke: rgba(255,255,255,.07); }
+.hist-svg [data-run] { cursor: pointer; }
+.hist-svg [data-run]:hover { stroke: #fff; stroke-width: 1.2; }
+.hist-svg .seuil-texte { fill: #f85149; }
+.hist-infobulle { position: fixed; z-index: 60; max-width: 270px; padding: 5px 8px; background: #1b222d; border: 1px solid rgba(255,255,255,.2); border-radius: 5px; font-size: 11.5px; pointer-events: none; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+.hist-infobulle[hidden] { display: none; }
+
+/* ── diaporamas par image (SPEC-BANC-046 à 052) ──────────────────────── */
+#hist-panneau-test.avec-diapos { flex-basis: 72%; }
+.hist-diapos { flex: 0 1 auto; max-height: 68%; min-height: 0; overflow: auto; padding: 6px 12px; border-bottom: 1px solid rgba(255,255,255,.1); background: #0a0e14; }
+.hist-diapos[hidden] { display: none; }
+.hist-diapos-outils { display: flex; align-items: center; gap: 10px; font-size: 12px; margin-bottom: 6px; opacity: .9; }
+.hist-diapos-outils button[aria-pressed="true"] { background: #1f6feb; color: #fff; }
+.hist-diapos-liste { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-start; }
+.hist-diapo { width: 330px; max-width: 100%; border: 1px solid rgba(255,255,255,.14); border-radius: 6px; padding: 6px; background: #10151d; font-size: 11.5px; outline: none; }
+.hist-diapo:focus-visible { border-color: #58a6ff; }
+.hist-diapo-tete { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.hist-diapo-temoin { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; opacity: .85; }
+.hist-diapo-temoin img.vignette { height: 44px; width: auto; }
+.hist-diapo-scene { position: relative; min-height: 60px; background: #05080c; border-radius: 4px; overflow: hidden; }
+.hist-diapo-image { display: block; width: 100%; height: auto; cursor: zoom-in; }
+.hist-diapo-image[hidden] { display: none; }
+.hist-diapo-superpose { position: absolute; inset: 0; pointer-events: none; }
+.hist-diapo-vide { padding: 28px 8px; text-align: center; opacity: .6; font-style: italic; border: 1px dashed rgba(255,255,255,.25); }
+.hist-diapo-vide[hidden] { display: none; }
+.hist-diapo-legende { margin: 4px 0; opacity: .85; word-break: break-word; }
+.hist-diapo-legende.etat-echec { color: #ff8f89; }
+.hist-diapo-nav, .hist-diapo-outils { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 3px; }
+.hist-diapo-curseur { flex: 1 1 80px; min-width: 60px; }
+.hist-diapo-comparer { }
+.hist-diapo-comparer[aria-pressed="true"] { background: #1f6feb; color: #fff; }
+.hist-diapo-message { min-height: 14px; opacity: .8; }
+
+/* ── inscription au registre (SPEC-BANC-053 à 058) ───────────────────── */
+.hist-inscrire { display: inline-flex; align-items: center; gap: 6px; flex-wrap: wrap; }
+.hist-inscrire-motif { width: 150px; font-size: 11px; padding: 2px 4px; }
+.hist-inscrire-btn[data-inscrit="1"] { background: #1a7f37; color: #fff; }
+.hist-avertissement, .hist-pt-avertissement { color: #f0883e; }
+#hist-table tbody tr.arbre-modifie td:first-child { box-shadow: inset 3px 0 0 #f0883e; }
+.hist-td-action { white-space: nowrap; }
+#resume .hist-inscrire { margin-left: 10px; }
+
 @media (max-width: 900px) {
   .hist-barre h2 { display: none; }
 }
