@@ -395,7 +395,9 @@ function inscrire(dossierCahier, opts) {
   // le commit RÉELLEMENT testé (celui du cahier), résolu en PLEIN — jamais
   // le HEAD courant, qui a pu avancer depuis que la campagne a tourné
   const dossierRepo = o.dossierRepo || RACINE;
-  const commitCourt = env.commit || null;
+  // SPEC-BANC-058 : un arbre modifié à l'inscription cite HEAD (`o.citerHead`),
+  // le code testé n'étant de toute façon pas exactement un commit
+  const commitCourt = o.citerHead ? null : (env.commit || null);
   const commit = (commitCourt && commitPlein(dossierRepo, commitCourt)) || commitPlein(dossierRepo, 'HEAD');
   if (!commit) return { ok: false, motif: 'hors dépôt git : impossible de résoudre le commit testé' };
 
@@ -487,7 +489,7 @@ function inscrireDepuisBanc(corps, opts) {
   }
   const modifie = arbreModifie(dossierRepo);
   const r = inscrire(corps.dossier, {
-    origine: 'manuel', statut: 'en_attente', motif: motif || null, arbreModifie: modifie === true,
+    origine: 'manuel', statut: 'en_attente', motif: motif || null, arbreModifie: modifie === true, citerHead: modifie === true,
     racineResultats: racineResultats, dossierRegistre: dossierRegistre, dossierRepo: dossierRepo,
     seuilLentMs: o.seuilLentMs,
   });
@@ -669,10 +671,16 @@ function runsUnifies(opts) {
 /* `image` : le nom de fichier complet dans images/ (« <sha1>.<ext> », tel
    que porté par `captures[*].image` — pas un sha1 nu), pour retrouver le
    fichier sans reconstruction. */
+const CLE_IMAGE_LONGUEUR_MAX = 200;
+function cleImageValide(cle) {
+  return typeof cle === 'string' && cle.length > 0 && cle.length <= CLE_IMAGE_LONGUEUR_MAX
+    && ['__proto__', 'constructor', 'prototype'].indexOf(cle) < 0;
+}
 function marquerTemoin(testId, commit, image, opts) {
   const o = opts || {};
   const dossierRegistre = o.dossierRegistre || DOSSIER_REGISTRE;
   if (!testId || !commit || !image) return { ok: false, motif: 'identifiant de test, commit et image requis' };
+  if (o.cleImage !== undefined && !cleImageValide(o.cleImage)) return { ok: false, motif: 'identité d image invalide' };
   const entrees = lireEntrees(dossierRegistre);
   const existe = entrees.some(e => e.commit === commit &&
     (e.tests || []).some(t => (t.id === testId || t.nom === testId) && (t.captures || []).some(c => c.image === image)));

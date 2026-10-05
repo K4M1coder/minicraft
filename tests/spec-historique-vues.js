@@ -331,6 +331,45 @@
       A.equal(REG.arbreModifie(os.tmpdir()), null, 'hors dépôt : inconnu, jamais « propre » par défaut');
     });
 
+    it('SPEC-BANC-058 : un arbre modifié cite le commit HEAD actuel, même quand le cahier a été testé à un commit plus ancien', function () {
+      var racine = tmp('res'), registre = tmp('reg'), dp = depot();
+      try {
+        cahier(racine, 'ancien', { commit: dp.court });
+        fs.writeFileSync(path.join(dp.d, 'b.txt'), 'b');
+        dp.g(['add', 'b.txt']);
+        dp.g(['-c', 'user.name=t', '-c', 'user.email=t@t', '-c', 'commit.gpgsign=false', '-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', 'second']);
+        var head = dp.g(['rev-parse', 'HEAD']);
+        A.ok(head !== dp.plein, 'HEAD a avancé depuis la campagne');
+        var o = { racineResultats: racine, dossierRegistre: registre, dossierRepo: dp.d };
+        fs.writeFileSync(path.join(dp.d, 'a.txt'), 'modifié');
+        var r = REG.inscrireDepuisBanc({ dossier: 'ancien' }, o);
+        A.ok(r.ok, JSON.stringify(r));
+        A.equal(r.arbre_modifie, true, 'arbre modifié');
+        A.equal(r.commit, head, 'la réponse cite HEAD');
+        A.equal(REG.lireEntrees(registre)[0].commit, head, 'l\'entrée cite HEAD, pas le commit du cahier');
+        // arbre propre : le commit réellement testé reste cité
+        dp.g(['checkout', '-q', '--', 'a.txt']);
+        cahier(racine, 'ancien2', { commit: dp.court });
+        var r2 = REG.inscrireDepuisBanc({ dossier: 'ancien2' }, o);
+        A.equal(r2.commit, dp.plein, 'arbre propre : le commit du cahier');
+      } finally { nettoyer(racine); nettoyer(registre); nettoyer(dp.d); }
+    });
+
+    it('SPEC-BANC-052 : marquerTemoin refuse une identité d\'image démesurée ou spéciale (__proto__)', function () {
+      var racine = tmp('res'), registre = tmp('reg'), dp = depot();
+      try {
+        cahier(racine, 'run1', { commit: dp.court });
+        var o = { racineResultats: racine, dossierRegistre: registre, dossierRepo: dp.d };
+        A.ok(REG.inscrireDepuisBanc({ dossier: 'run1' }, o).ok, 'inscription');
+        var img = REG.sha1(JPEG) + '.jpg';
+        ['__proto__', 'constructor', 'prototype', new Array(500).join('x')].forEach(function (cle) {
+          A.equal(REG.marquerTemoin('demo banc', dp.plein, img, { dossierRegistre: registre, cleImage: cle }).ok, false, 'refusée : ' + cle.slice(0, 20));
+        });
+        A.equal(REG.lireTemoins(registre)['demo banc'], undefined, 'rien d\'écrit par les refus');
+        A.equal(REG.marquerTemoin('demo banc', dp.plein, img, { dossierRegistre: registre, cleImage: 'debut|début' }).ok, true, 'une identité normale passe');
+      } finally { nettoyer(racine); nettoyer(registre); nettoyer(dp.d); }
+    });
+
     it('SPEC-BANC-052 : marquerTemoin épingle une image PAR IMAGE d\'un test, persistée dans temoins.json, sans effacer l\'épinglage d\'un autre test', function () {
       var racine = tmp('res'), registre = tmp('reg'), dp = depot();
       try {

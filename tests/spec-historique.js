@@ -879,6 +879,18 @@
       A.equal(d.obtenir('hist-panneau-test').hidden, ouvertAvant, 'le clic dans la cellule d\'action ne déclenche pas l\'ouverture du panneau');
     });
 
+    it('SPEC-BANC-058 : la colonne « Arbre modifié » affiche oui ou non pour chaque ligne', function () {
+      var d = fauxDom(reponsesLignes([ligneDemo({ run: 'rp', arbre_modifie: false }), ligneDemo({ run: 'rs', arbre_modifie: true })]));
+      d.H.etat.colonnes = ['run', 'arbre_modifie'];
+      d.H.ouvrir();
+      var tr = d.obtenir('__tbody').children.filter(function (n) { return n.tagName === 'TR'; });
+      var ent = d.obtenir('__thead').tous(function (n) { return n.tagName === 'TH'; }).map(function (n) { return n.textContent; });
+      var i = ent.indexOf('Arbre modifié');
+      A.ok(i >= 0, 'l\'en-tête porte la colonne : ' + ent.join('|'));
+      A.equal(tr[0].children[i].textContent, 'non', 'ligne propre : non');
+      A.equal(tr[1].children[i].textContent, 'oui', 'ligne à l\'arbre modifié : oui');
+    });
+
     it('SPEC-BANC-058 : le panneau « test » avertit d\'un arbre modifié et rappelle le motif d\'un passage', function () {
       var d = panneauDemo();
       var li3 = parClasse(d.obtenir('hist-panneau-test'), 'hist-pt-courant')[0];

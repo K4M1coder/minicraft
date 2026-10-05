@@ -54,8 +54,11 @@ recoller les deux si le besoin se confirme.
 ## 2. Serveur (`server.js`, section banc)
 
 - `GET /tests/historique/lignes?tri=<prop>&ordre=asc|desc&filtre=<json>&page=&taille=` : filtrage, tri et pagination **côté serveur**. Environ 1 250 lignes par run complet : au bout de cent runs, on dépasse 100 000 lignes, trop pour tout envoyer au navigateur. Il renvoie aussi `total` et, pour chaque énumération, les valeurs distinctes avec leur effectif (pour remplir les filtres).
-- `GET /tests/historique/series?x=debut_run|rang_commit&props=etat,duree_ms&filtre=<json>` : données agrégées pour les graphiques.
-- `GET /tests/historique/images?test=<id>&filtre=<json>&tri=<x>` : pour un test, la suite ordonnée des runs avec leurs captures, groupées par rôle.
+- `GET /tests/historique/series?x=debut_run|rang_commit&props=etat,duree_ms&filtre=<json>` : données agrégées pour les graphiques ; chaque point porte aussi `nbTests` (tests distincts retenus par le filtre) et `nbRuns` (SPEC-BANC-042/043).
+- `GET /tests/historique/matrice?filtre=<json>` : la grille tests × runs (état de chaque cellule), bornée, qui écarte d'abord les tests calmes et jamais ceux qui ont échoué (SPEC-BANC-044).
+- `GET /tests/historique/images?test=<id>&filtre=<json>&tri=<x>` : pour un test, la suite ordonnée des runs avec leurs captures, groupées par rôle ; chaque image porte son `temoins` (l'épinglé s'il existe encore, sinon la dernière capture inscrite — SPEC-BANC-051/052).
+- `POST /tests/registre/temoin { test, commit, image, cle_image? }` : épingle une image comme témoin (`image` = `<sha1>.<ext>`, `cle_image` = identité `rôle|libellé`, 200 caractères au plus) — SPEC-BANC-052.
+- `POST /tests/registre/inscrire { dossier, motif? }` : inscrit un cahier local au registre (origine `manuel`, statut `en_attente`) ; 404 cahier inconnu, 409 déjà inscrit. Si le dépôt a des modifications non commitées, l'entrée cite HEAD et porte `arbre_modifie: true` — SPEC-BANC-053 à 058.
 - `GET /tests/registre/images/<sha1>.<ext>` : sert les images, adressées par contenu, avec un cache long (immuables).
 - `GET /tests/historique/tests` : un test connu par identité (`cle`), avec son nombre de passages et son dernier état (SPEC-BANC-118).
 - `GET /tests/historique/export?format=csv|html&colonnes=…` : export de la vue filtrée, produit par le serveur, écrit par paquets, un seul à la fois (429 sinon), au plus 100 000 lignes (413 au-delà : filtrer) — SPEC-BANC-120/122.

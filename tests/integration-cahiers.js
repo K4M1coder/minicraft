@@ -327,6 +327,9 @@ async function attendrePret(port) {
     eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: '../../../etc' }, JSONH)).code, 404, 'SPEC-BANC-054 : chemin piégé refusé');
     eq((await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: 12 }, JSONH)).code, 400, 'SPEC-BANC-054 : identifiant qui n\'est pas du texte');
     eq((await requete(PORT, 'POST', '/tests/registre/temoin', { test: 't', commit: 'c', image: '../../x.jpg' }, JSONH)).code, 400, 'SPEC-BANC-052 : le témoin ne désigne qu\'une image du stockage adressé par contenu');
+    for (const imageInvalide of ['abc.jpg', 'A'.repeat(40) + '.jpg', 'a'.repeat(41) + '.jpg', 'a'.repeat(40) + '.gif', '.jpg']) {
+      eq((await requete(PORT, 'POST', '/tests/registre/temoin', { test: 't', commit: 'c', image: imageInvalide }, JSONH)).code, 400, 'SPEC-BANC-052 : nom d\'image hors du format sha1.extension refusé (' + imageInvalide.slice(0, 12) + ')');
+    }
     eq((await requete(PORT, 'POST', '/tests/registre/temoin', { test: 't', commit: 'c', image: 'a'.repeat(40) + '.jpg' }, JSONH)).code, 422, 'SPEC-BANC-052 : une image absente du registre est refusée');
     eq(lister(registreEntrees).length, entreesAvant.length, 'SPEC-BANC-054 : aucun refus n\'écrit dans le registre');
     const rInscr = await requete(PORT, 'POST', '/tests/registre/inscrire', { dossier: dossier, motif: 'intégration du banc' }, JSONH);
