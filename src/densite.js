@@ -3,8 +3,9 @@
    la graine et la position, sans dépendre de l'ordre d'exploration.
 
    Un bruit à grande échelle (« combien de monde par ici ? ») se combine à
-   une habitabilité tirée du relief, du biome et de la proximité de l'eau
-   douce ou d'une côte, pour classer chaque point en quatre bandes :
+   une habitabilité tirée du biome (fertilité), du relief, de la proximité de
+   l'eau douce ou d'une côte, du climat et des volcans, pour classer chaque
+   point en quatre bandes :
    vierge < rurale < urbaine < hyperurbaine. Les frontières sont lissées
    (smoothstep) plutôt que tranchées : `classeEn` renvoie, en plus de la
    classe, des poids de transition que `habitats.js` utilise pour moduler en
@@ -27,12 +28,29 @@
   var SEUILS = { rurale: 0.22, urbaine: 0.52, hyperurbaine: 0.82 };
   var CLASSES = ['vierge', 'rurale', 'urbaine', 'hyperurbaine'];
 
-  /* Biomes hostiles à l'installation humaine : leur fertilité chute d'autant
-     (montagnes, glace et badlands en tête ; marais et forêts denses, moins). */
-  var MALUS_BIOME = { montagnes: 0.55, desert: 0.45, badlands: 0.5, pics_glaces: 0.7,
-                       glacier: 0.75, champignons: 0.4, marais: 0.22, taiga: 0.12, jungle: 0.08 };
+  /* Biomes hostiles à l'installation humaine, en deux familles :
+     - le climat (SPEC-DENSITE-001) : les biomes que le climat seul dessine
+       (MC.Biomes les classe d'après la température et l'humidité) — grand
+       froid (taïga, pics glacés, glacier) et chaleur sèche (désert, badlands) ;
+     - la fertilité : les sols et les milieux ingrats — montagnes, île aux
+       champignons, marais, jungle dense.
+     `MALUS_BIOME` réunit les deux (une seule table, lue biome par biome). */
+  var MALUS_CLIMAT = { desert: 0.45, badlands: 0.5, pics_glaces: 0.7, glacier: 0.75, taiga: 0.12 };
+  var MALUS_FERTILITE = { montagnes: 0.55, champignons: 0.4, marais: 0.22, jungle: 0.08 };
+  var MALUS_BIOME = {};
+  [MALUS_CLIMAT, MALUS_FERTILITE].forEach(function (t) { for (var k in t) MALUS_BIOME[k] = t[k]; });
 
-  function creer(N, hauteur, biomeDe, riviereDe) {
+  /* SPEC-DENSITE-001 : le volcan pèse sur l'habitabilité — un volcan actif
+     repousse l'installation (coulées, bombes, cendres : SPEC-RELIEF-011), un
+     volcan éteint bien moins (pentes et cratère seulement). Le malus est plein
+     sur le cône (jusqu'à 0,6 × R), puis s'éteint en douceur jusqu'à 2 × R. */
+  var VOLCAN = { actif: 0.6, eteint: 0.25, plein: 0.6, portee: 2 };
+
+  /* `env` (facultatif) : les données environnementales du monde —
+     `volcanProche(x, z, facteur)` de MC.Biomes. Sans elle, la carte ne tient
+     compte que des biomes, du relief et de l'eau. */
+  function creer(N, hauteur, biomeDe, riviereDe, env) {
+    env = env || {};
     /* Le bruit de population, à une échelle bien plus large que le climat
        (SPEC-DENSITE-001) : plusieurs kilomètres séparent deux pics, si bien
        qu'une poche hyperurbaine reste un événement rare et isolé — jamais un
@@ -73,16 +91,38 @@
       return false;
     }
 
-    function habitabilite(x, z) {
+    /* Proximité d'un volcan (0..1, pondérée par son activité) : 1 sur le cône
+       d'un volcan actif, 0 au-delà de VOLCAN.portee rayons. */
+    function proximiteVolcan(x, z) {
+      if (!env.volcanProche) return 0;
+      var v = env.volcanProche(x, z, VOLCAN.portee);
+      if (!v) return 0;
+      var d = Math.hypot(x - v.x, z - v.z);
+      var k = 1 - smoothstep(v.R * VOLCAN.plein, v.R * VOLCAN.portee, d);
+      return k * (v.actif ? 1 : VOLCAN.eteint / VOLCAN.actif);
+    }
+
+    /* Les facteurs de l'habitabilité, un par donnée environnementale
+       (SPEC-DENSITE-001) : chacun est ce qu'il ajoute (+) ou retire (-) à
+       l'habitabilité de base 1 — mer, fertilité du biome, relief, eau douce
+       et côtes, climat, volcans. */
+    function facteurs(x, z) {
       var bio = biomeDe ? biomeDe(x, z) : null;
-      var h = 1;
+      var f = { mer: 0, fertilite: 0, relief: 0, eau: 0, climat: 0, volcan: 0 };
       if (bio) {
-        if (bio.marin) h -= 0.85;
-        var m = MALUS_BIOME[bio.id];
-        if (m) h -= m;
+        if (bio.marin) f.mer = -0.85;
+        if (MALUS_CLIMAT[bio.id]) f.climat = -MALUS_CLIMAT[bio.id];
+        if (MALUS_FERTILITE[bio.id]) f.fertilite = -MALUS_FERTILITE[bio.id];
       }
-      h -= (1 - planeite(x, z)) * 0.35;
-      if (pointEau(x, z)) h += 0.22;
+      f.relief = -(1 - planeite(x, z)) * 0.35;
+      if (pointEau(x, z)) f.eau = 0.22;
+      f.volcan = -VOLCAN.actif * proximiteVolcan(x, z);
+      return f;
+    }
+
+    function habitabilite(x, z) {
+      var f = facteurs(x, z);
+      var h = 1 + f.mer + f.fertilite + f.relief + f.eau + f.climat + f.volcan;
       return Math.max(0, Math.min(1, h));
     }
 
@@ -133,8 +173,9 @@
       };
     }
 
-    return { classeEn: classeEn, valeurEn: valeurEn, habitabilite: habitabilite };
+    return { classeEn: classeEn, valeurEn: valeurEn, habitabilite: habitabilite, facteurs: facteurs };
   }
 
-  MC.Densite = { creer: creer, CLASSES: CLASSES, SEUILS: SEUILS, MALUS_BIOME: MALUS_BIOME };
+  MC.Densite = { creer: creer, CLASSES: CLASSES, SEUILS: SEUILS, MALUS_BIOME: MALUS_BIOME,
+                 MALUS_CLIMAT: MALUS_CLIMAT, MALUS_FERTILITE: MALUS_FERTILITE, VOLCAN: VOLCAN };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

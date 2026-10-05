@@ -57,6 +57,69 @@
       A.equal(marinsHyper, 0, 'jamais hyperurbain en pleine mer (' + marinsHyper + '/' + testes + ')');
     });
 
+    it('SPEC-DENSITE-001 : l\'habitabilité combine eau douce et côtes, relief, climat, fertilité et volcans — un volcan actif fait le vide autour de lui', function () {
+      var w = monde(), Bio = w.bio;
+      var f0 = w.densite.facteurs(0, 0);
+      ['mer', 'eau', 'relief', 'climat', 'fertilite', 'volcan'].forEach(function (k) {
+        A.ok(typeof f0[k] === 'number', 'facteur ' + k + ' présent dans le calcul');
+      });
+      // le climat (biomes que dessinent le froid ou la chaleur sèche) et la fertilité pèsent chacun
+      A.ok(MC.Densite.MALUS_CLIMAT.glacier > 0 && MC.Densite.MALUS_CLIMAT.desert > 0, 'grand froid et chaleur sèche pénalisent');
+      A.ok(MC.Densite.MALUS_FERTILITE.montagnes > 0 && MC.Densite.MALUS_FERTILITE.marais > 0, 'sols ingrats pénalisés');
+      var climatVu = false, fertiliteVue = false;
+      for (var i = 0; i < 600 && !(climatVu && fertiliteVue); i++) {
+        var px = (i * 7919) % 30000 - 15000, pz = (i * 104729) % 30000 - 15000, f = w.densite.facteurs(px, pz);
+        if (f.climat < 0) climatVu = true;
+        if (f.fertilite < 0) fertiliteVue = true;
+      }
+      A.ok(climatVu, 'le climat retire de l\'habitabilité quelque part (désert, glace)');
+      A.ok(fertiliteVue, 'la fertilité aussi (montagnes, marais…)');
+
+      // les volcans : actifs et éteints, dans un large carré
+      var vs = Bio.volcansDansZone(-12000, -12000, 12000, 12000);
+      var actifs = vs.filter(function (v) { return v.actif; }), eteints = vs.filter(function (v) { return !v.actif; });
+      A.gt(actifs.length, 0, 'des volcans actifs dans la zone');
+      A.gt(eteints.length, 0, 'des volcans éteints dans la zone');
+      // même carte, sans les données de volcans : la référence pour isoler leur effet
+      var sansVolcan = MC.Densite.creer(MC.makeNoise(w.seed), function (x, z) { return Math.max(1, Math.min(C.WORLD_H - 14, w.heightAt(x, z))); },
+        function (x, z) { return w.biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); });
+      var v = actifs[0], ve = eteints[0];
+      var flanc = w.densite.facteurs(v.x + v.R * 0.5, v.z);
+      A.lt(flanc.volcan, -0.5, 'sur le cône d\'un volcan actif, le volcan retire beaucoup : ' + flanc.volcan);
+      A.equal(w.densite.facteurs(v.x + v.R * 2.5, v.z).volcan, 0, 'au-delà de deux rayons, plus rien');
+      var flancEteint = w.densite.facteurs(ve.x + ve.R * 0.5, ve.z).volcan;
+      A.lt(flancEteint, 0, 'un volcan éteint pèse aussi');
+      A.gt(flancEteint, flanc.volcan, 'mais bien moins qu\'un actif');
+      A.lt(w.densite.habitabilite(v.x + v.R * 0.5, v.z), sansVolcan.habitabilite(v.x + v.R * 0.5, v.z) + 1e-9,
+           'l\'habitabilité est plus basse avec le volcan que sans');
+      // sur tous les cônes actifs : la densité moyenne baisse, plus de vierge, jamais plus d'urbain
+      var vierges = 0, viergesSans = 0, urb = 0, urbSans = 0, n = 0, somme = 0, sommeSans = 0;
+      actifs.forEach(function (va) {
+        for (var a = 0; a < 12; a++) {
+          var x = va.x + Math.cos(a / 12 * Math.PI * 2) * va.R * 0.5, z = va.z + Math.sin(a / 12 * Math.PI * 2) * va.R * 0.5;
+          var c1 = w.densite.classeEn(x, z), c0 = sansVolcan.classeEn(x, z);
+          n++; somme += c1.valeur; sommeSans += c0.valeur;
+          if (c1.classe === 'vierge') vierges++;
+          if (c0.classe === 'vierge') viergesSans++;
+          if (c1.classe === 'urbaine' || c1.classe === 'hyperurbaine') urb++;
+          if (c0.classe === 'urbaine' || c0.classe === 'hyperurbaine') urbSans++;
+        }
+      });
+      A.lt(somme / n, sommeSans / n, 'densité moyenne plus basse sur les cônes actifs (' + (somme / n).toFixed(3) + ' contre ' + (sommeSans / n).toFixed(3) + ')');
+      A.gt(vierges, viergesSans, 'plus de zone vierge sur les cônes actifs (' + vierges + ' contre ' + viergesSans + ' sur ' + n + ')');
+      A.ok(urb <= urbSans, 'jamais plus d\'urbain (' + urb + ' contre ' + urbSans + ')');
+      // loin de tout volcan, la carte est inchangée (le volcan n'agit qu'autour de lui)
+      var loin = 0, identiques = 0;
+      for (var j = 0; j < 300; j++) {
+        var lx = (j * 3733) % 20000 - 10000, lz = (j * 9127) % 20000 - 10000;
+        if (Bio.volcanProche(lx, lz, MC.Densite.VOLCAN.portee + 1)) continue;
+        loin++;
+        if (Math.abs(w.densite.habitabilite(lx, lz) - sansVolcan.habitabilite(lx, lz)) < 1e-12) identiques++;
+      }
+      A.gt(loin, 100, 'des points loin des volcans');
+      A.equal(identiques, loin, 'loin des volcans, l\'habitabilité ne change pas');
+    });
+
     it('SPEC-DENSITE-002 : les lieux naissent de la carte de densité — campagne en rurale, villes en urbaine, presque rien en vierge @lent', function () {
       var w = monde();
       var maisons = lieux(w, 'maison', 4000), villages = lieux(w, 'village', 6000), villes = lieux(w, 'ville', 14000);

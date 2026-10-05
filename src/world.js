@@ -83,7 +83,7 @@
        (repartitionOk) pour que les lieux en naissent. */
     var densite = MC.Densite ? MC.Densite.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
-    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }) : null;
+    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }, Bio) : null;
     /* Zones de jeu (SPEC-ZONE-001/004) : la carte déterministe suit la
        densité (branchée juste au-dessus) et la politique choisie par le
        serveur (`opts.zonePolitique` — un réglage de lancement, comme la
@@ -135,7 +135,7 @@
     // habitations, villages et villes : même principe que les donjons
     var habitats = MC.Habitats ? MC.Habitats.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
-    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }) : null;
+    }, function (x, z) { return biomeAt(x, z); }, function (x, z) { return Bio.riviere(x, z); }, Bio) : null;
     // routes de commerce et de tourisme entre les lieux (même principe, encore)
     var routes = MC.Routes && habitats ? MC.Routes.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));

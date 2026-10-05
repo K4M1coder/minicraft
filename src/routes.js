@@ -132,7 +132,7 @@
        habitats.js (mêmes fonctions, même graine ⇒ le même classement), pour
        que les routes rarélient les zones vierges (SPEC-ROUTE-007) sans
        dépendre d'un état partagé avec habitats.js. */
-    var Dens = MC.Densite && Bio && Bio.biomeAt ? MC.Densite.creer(N, hauteur, Bio.biomeAt, Bio.riviere) : null;
+    var Dens = MC.Densite && Bio && Bio.biomeAt ? MC.Densite.creer(N, hauteur, Bio.biomeAt, Bio.riviere, Bio) : null;
 
     /* Les connexions d'un pôle — ville OU mégapole (SPEC-ROUTE-001/007),
        calculées une fois et mises en cache par lieu : mégapoles voisines (un

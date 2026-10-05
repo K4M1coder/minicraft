@@ -183,12 +183,14 @@
   /* `riviereDe` (optionnel, Bio.riviere) : L38, pour la carte de densité
      (eau douce/côtes — SPEC-DENSITE-001) et pour savoir si une mégapole ou un
      village borde un fleuve et mérite un port (HABITAT-013, ROUTE-008). */
-  function creer(N, hauteur, biomeDe, riviereDe) {
+  /* `env` : données environnementales du monde (MC.Biomes : volcans, climat),
+     transmises telles quelles à la carte de densité (SPEC-DENSITE-001). */
+  function creer(N, hauteur, biomeDe, riviereDe, env) {
     var caches = { megapole: new Map(), ville: new Map(), village: new Map(), maison: new Map() };
     var PLAFONDS = { megapole: 16, ville: 64, village: 512, maison: 4096 };
     // SPEC-DENSITE-001/002 : carte de densité, point d'extension unique
     // (repartitionOk) d'où naissent les lieux selon leur classe
-    var Dens = MC.Densite ? MC.Densite.creer(N, hauteur, biomeDe, riviereDe) : null;
+    var Dens = MC.Densite ? MC.Densite.creer(N, hauteur, biomeDe, riviereDe, env) : null;
 
     function lieuDeRegion(kind, rx, rz) {
       var cache = caches[kind], k = rx + ',' + rz;
