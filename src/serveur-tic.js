@@ -49,14 +49,24 @@
     let accEau = 0;
     let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
     let accFourMsg = 0;       // B1 (étape 7) : cadence de message des fourneaux posés (≤ 2 Hz, SPEC-SYNC-015)
-    // SPEC-MECA-005 : durée (secondes de jeu) pendant laquelle un bouton actionné reste enfoncé
-    S.DUREE_BOUTON_S = 1;
+    /* SPEC-MECA-005 : un bouton actionné reste enfoncé DUREE_BOUTON_TICS tics de
+       circuits (1 s à 5 Hz). Horloge MONOTONE (le compte des tics de circuits) :
+       l'heure du monde peut reculer (fixerHeureDuJour) et laisserait un bouton
+       enfoncé indéfiniment. */
+    S.DUREE_BOUTON_TICS = 5;
+    let ticsCircuits = 0;
+    S.ticsCircuits = () => ticsCircuits;
+    // diffusion des écrits du tic de circuits (voir plus bas) : cases touchées, niveaux de batterie annoncés
+    const changesCircuits = new Map(), batteriesEnvoyees = new Map();
+    const ECART_BATTERIE_ENVOI = 13;   // ≈ 5 % de MC.Circuits.CAPACITE_BATTERIE
     /* SPEC-MECA-002 : combustion des générateurs thermiques. Clé du conteneur →
        secondes de combustion restantes de la pièce en cours. Pas persistée : à
        la relance, la pièce entamée est perdue (au plus une), le reste du
        combustible est dans le conteneur, lui sauvegardé. */
     const FUEL_SECONDES_PAR_UNITE = 10;
     const combustionGenerateurs = new Map();
+    // un générateur cassé oublie la pièce entamée (reposé, il repart de son conteneur)
+    S.oublierCombustion = (x, y, z) => combustionGenerateurs.delete(MC.ContratsV2.cleConteneur(x, y, z));
     function brulerGenerateur(x, y, z, dt) {
       const k = MC.ContratsV2.cleConteneur(x, y, z);
       let reste = combustionGenerateurs.get(k) || 0;
@@ -357,7 +367,7 @@
         /* SPEC-MECA-005 : ce que seul le serveur sait — les corps présents
            (plaques de pression, détecteurs de présence : joueurs vivants et
            créatures, ni objets au sol ni projectiles) et les boutons encore
-           enfoncés (ACTIONNER, relâchés après DUREE_BOUTON_S). */
+           enfoncés (ACTIONNER, relâchés après DUREE_BOUTON_TICS tics). */
         const corps = [];
         tousLesJoueurs().forEach(({ js }) => {
           const st = js.joueur.state;
@@ -368,7 +378,7 @@
         });
         const boutons = {};
         const appuyes = S.boutonsAppuyes || (S.boutonsAppuyes = new Map());
-        appuyes.forEach((fin, k) => { if (EP.heure < fin) boutons[k] = true; else appuyes.delete(k); });
+        appuyes.forEach((fin, k) => { if (ticsCircuits < fin) boutons[k] = true; else appuyes.delete(k); });
         monde.tickCircuits({
           temps: EP.heure,
           entites: corps,
@@ -410,11 +420,38 @@
           // SPEC-MECA-007 : rejoue la commande stockée avec le même routage que
           // /faction plus haut — messages système, pas de diffusion large.
           onCommande: (x, y, z) => executerBlocCommandeServeur(x, y, z),
-        }).forEach(ch => diffuser({
-          t: NP.MSG.BLOC, x: ch.x, y: ch.y, z: ch.z,
-          id: ch.setBlock !== undefined ? ch.setBlock : monde.getBlock(ch.x, ch.y, ch.z),
-          etat: ch.setEtat !== undefined ? ch.setEtat : (monde.getEtat(ch.x, ch.y, ch.z) || 0),
-        }));
+        }).forEach(ch => {
+          const k = ch.x + ',' + ch.y + ',' + ch.z;
+          if (!changesCircuits.has(k)) changesCircuits.set(k, { x: ch.x, y: ch.y, z: ch.z, bloc: false });
+          if (ch.setBlock !== undefined) changesCircuits.get(k).bloc = true;
+        });
+        ticsCircuits++;
+        /* Diffusion : l'état final de chaque case touchée, une fois, aux seuls
+           clients à portée (comme les autres blocs que le monde décide,
+           SPEC-SYNC-018 : noterBlocMonde/diffuserBlocsMonde). Le niveau d'une
+           batterie qui se charge ou se décharge change à chaque tic : il n'est
+           annoncé que s'il a bougé d'au moins ECART_BATTERIE_ENVOI, ou touche
+           0 ou sa capacité, ou au plus une fois par seconde (5 tics). Un client
+           qui recharge le chunk retrouve l'état exact par les overrides. */
+        changesCircuits.forEach((ch, k) => {
+          const id = monde.getBlock(ch.x, ch.y, ch.z), etat = monde.getEtat(ch.x, ch.y, ch.z) || 0;
+          if (!ch.bloc && id === C.B.BATTERIE) {
+            const env = batteriesEnvoyees.get(k);
+            const borne = etat === 0 || etat === MC.Circuits.CAPACITE_BATTERIE;
+            if (env && !borne && Math.abs(etat - env.etat) < ECART_BATTERIE_ENVOI && ticsCircuits - env.tic < 5) { env.attente = true; return; }
+            batteriesEnvoyees.set(k, { etat, tic: ticsCircuits, attente: false });
+          } else if (id !== C.B.BATTERIE) batteriesEnvoyees.delete(k);
+          noterBlocMonde(ch.x, ch.y, ch.z, id, etat);
+        });
+        changesCircuits.clear();
+        // un niveau retenu finit toujours par partir (au plus une seconde après), même si la batterie s'arrête
+        batteriesEnvoyees.forEach((env, k) => {
+          if (!env.attente || ticsCircuits - env.tic < 5) return;
+          const p = k.split(',').map(Number);
+          if (monde.getBlock(p[0], p[1], p[2]) !== C.B.BATTERIE) { batteriesEnvoyees.delete(k); return; }
+          env.etat = monde.getEtat(p[0], p[1], p[2]) || 0; env.tic = ticsCircuits; env.attente = false;
+          noterBlocMonde(p[0], p[1], p[2], C.B.BATTERIE, env.etat);
+        });
       }
 
       if (profilTics) profilTics.section('eau+circuits');

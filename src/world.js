@@ -57,6 +57,14 @@
        torches les plus proches pour y placer ses lumières ponctuelles ; sans
        registre il faudrait balayer tous les chunks à chaque image. */
     var lights = new Map();
+    /* Version du registre des lumières : avance à chaque ajout ou retrait
+       réel (le capteur de lumière des circuits garde son résultat tant
+       qu'elle ne bouge pas — SPEC-MECA-005, lumiereCircuit). */
+    var versionLumieres = 0;
+    ['set', 'delete', 'clear'].forEach(function (m) {
+      var f = lights[m];
+      lights[m] = function () { var r = f.apply(lights, arguments); if (m !== 'delete' || r) versionLumieres++; return r; };
+    });
     /* L29 mécanismes (SPEC-MECA-008) : registre des blocs `circuit` posés,
        pour que la simulation (tick) n'ait pas à balayer tous les chunks
        chargés à chaque tic — même idée que `lights` ci-dessus. */
@@ -899,8 +907,15 @@
       // première écriture non nulle lui donne son propre tampon.
       if (c.etats === ETATS_VIDE) c.etats = new Uint8Array(ETATS_VIDE);
       c.etats[idx(wx - cx * CX, wy, wz - cz * CZ)] = e;
-      c.dirty = true;
-      c.version = prochaineVersion(cx, cz);
+      /* Seul l'état d'une FORME (escalier, dalle, meuble : MC.Formes.boitesBloc,
+         seul lecteur des états au maillage) change la géométrie : l'état d'un
+         mécanisme (niveau de batterie, signal, puissance…) ne refait pas le
+         maillage du chunk — à 5 tics par seconde, il le referait sans cesse. */
+      var dEtat = C.BLOCKS[c.blocks[idx(wx - cx * CX, wy, wz - cz * CZ)]];
+      if (!dEtat || dEtat.forme) {
+        c.dirty = true;
+        c.version = prochaineVersion(cx, cz);
+      }
       if (e) etatsOverrides.set(k3, e); else etatsOverrides.delete(k3);
       return true;
     }
@@ -1184,8 +1199,7 @@
       if (!positions.length) return [];
       var api = { getBlock: getBlock, getEtat: getEtat, setEtat: setEtat, setBlock: setBlock };
       ctx = ctx || {};
-      lumiereCircuit.temps = ctx.temps;
-      // SPEC-MECA-002 / SPEC-VENT-001 : l'éolienne lit le vent du climat de CE
+      lumiereCircuit.temps = ctx.temps;      // SPEC-MECA-002 / SPEC-VENT-001 : l'éolienne lit le vent du climat de CE
       // monde (déterministe), sauf si l'appelant en impose un autre.
       if (ctx.ventEn === undefined && ctx.vent === undefined && meteo && meteo.ventEn) {
         ctx = Object.assign({}, ctx, { ventEn: meteo.ventEn });
@@ -1231,14 +1245,40 @@
        maillage (le serveur n'en a pas) : le ciel s'il est ouvert au-dessus,
        pondéré par le soleil à cette heure, et les sources du registre
        `lights`, atténuées d'un niveau par bloc (distance de Manhattan). */
+    /* Coût borné : la part des sources se calcule une fois par capteur tant que
+       le registre `lights` ne change pas (versionLumieres) ; pour la calculer,
+       les sources sont rangées par chunk (`lumiereCircuit.parChunk`) et un
+       capteur ne lit que les 3×3 chunks autour de lui — une source porte au
+       plus 15 blocs, moins qu'un chunk de 16. Le ciel, lui, suit l'heure. */
+    var lumiereSources = new Map(), lumiereSourcesVersion = -1;   // clé du capteur → lumière des sources (cache)
     function lumiereCircuit(x, y, z) {
       var n = 0;
       if (cielOuvert(x, y, z)) n = MC.DayCycle && lumiereCircuit.temps !== undefined ? Math.round(15 * MC.DayCycle.sunIntensity(lumiereCircuit.temps)) : 15;
-      lights.forEach(function (l) {
-        var v = l.level - (Math.abs(l.x - x) + Math.abs(l.y - y) + Math.abs(l.z - z));
-        if (v > n) n = v;
-      });
-      return Math.max(0, Math.min(15, n));
+      if (lumiereSourcesVersion !== versionLumieres) { lumiereSources.clear(); lumiereSourcesVersion = versionLumieres; lumiereCircuit.parChunk = null; }
+      var kc = key3(x, y, z), memo = lumiereSources.get(kc);
+      if (memo !== undefined) return Math.max(0, Math.min(15, Math.max(n, memo)));
+      var nSources = 0;
+      var pc = lumiereCircuit.parChunk;
+      if (!pc) {
+        pc = lumiereCircuit.parChunk = new Map();
+        lights.forEach(function (l) {
+          var k = key(Math.floor(l.x / CX), Math.floor(l.z / CZ));
+          var t = pc.get(k);
+          if (!t) pc.set(k, t = []);
+          t.push(l);
+        });
+      }
+      var cx = Math.floor(x / CX), cz = Math.floor(z / CZ);
+      for (var dx = -1; dx <= 1; dx++) for (var dz = -1; dz <= 1; dz++) {
+        var t2 = pc.get(key(cx + dx, cz + dz));
+        if (!t2) continue;
+        for (var i = 0; i < t2.length; i++) {
+          var l = t2[i], v = l.level - (Math.abs(l.x - x) + Math.abs(l.y - y) + Math.abs(l.z - z));
+          if (v > nSources) nSources = v;
+        }
+      }
+      lumiereSources.set(kc, nSources);
+      return Math.max(0, Math.min(15, Math.max(n, nSources)));
     }
 
     // croissance du blé : chaque culture avance d'un stade après `stageTime`

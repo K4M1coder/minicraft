@@ -98,8 +98,8 @@ async function scenarioCommandes() {
   const d = A.dossierTemp('mc-meca-cmd-');
   try {
     const f = fichierMonde(d, { heure: NUIT });
-    const s = await demarrer(args(f, d), { MC_MODE: 'survie' });     // MC_TEST_POSE_LIBRE (aide) : poser sans inventaire
-    const { client: cl } = await rejoindre(s.port, 'Mecano', 1);
+    let s = await demarrer(args(f, d), { MC_MODE: 'survie' });     // MC_TEST_POSE_LIBRE (aide) : poser sans inventaire
+    let { client: cl } = await rejoindre(s.port, 'Mecano', 1);
     ok(await attendreImmobile(cl), 'préparation : le joueur est posé au sol');
     const p = etatToi(cl, 0);
     const bx = Math.floor(p.x) + 1, by = Math.floor(p.y) + 3, bz = Math.floor(p.z);
@@ -170,6 +170,55 @@ async function scenarioCommandes() {
     ok(!!(await poser(cl, px + 3, py, pz, B.PLAQUE_PRESSION)), 'préparation : plaque posée à côté du joueur');
     await dodo(600);
     ok(!vu('bloc').some(m => ici(px + 3, py, pz)(m) && m.etat === 1), 'SPEC-MECA-005 : une plaque où personne ne se tient reste relâchée');
+
+    // ── une lampe allumée sur batterie : diffusion du niveau, puis arrêt et relance (SPEC-MECA-008) ──
+    const ly = by + 1;
+    ok(!!(await poser(cl, bx, ly, bz, B.BATTERIE, 200)), 'préparation : seconde batterie (200)');
+    ok(!!(await poser(cl, bx + 1, ly, bz, B.LAMPE_ETEINTE)), 'préparation : seconde lampe');
+    ok(!!(await poser(cl, bx + 2, ly, bz, B.LEVIER_CIRCUIT)), 'préparation : second levier');
+    vu = cl.depuis();
+    cl.envoyer({ t: 'actionner', j: 0, x: bx + 2, y: ly, z: bz });
+    ok(!!(await jusqua(() => vu('bloc').find(m => ici(bx + 1, ly, bz)(m) && m.id === B.LAMPE_ALLUMEE), 3000)), 'préparation : la lampe s\'allume sur la batterie');
+    // le niveau qui baisse d'une unité par tic n'est annoncé qu'à ≥ 5 % d'écart ou une fois par seconde
+    const vuN = cl.depuis();
+    const tN = Date.now();
+    await jusqua(() => false, 2500);
+    const annonces = vuN('bloc').filter(ici(bx, ly, bz));
+    const secondes = (Date.now() - tN) / 1000;
+    ok(annonces.length >= 1 && annonces.length <= Math.ceil(secondes) + 1,
+       'SPEC-MECA-008 : une batterie qui se décharge n\'est pas annoncée à chaque tic (' + annonces.length + ' annonce(s) en ' + secondes.toFixed(1) + ' s, au plus une par seconde)', JSON.stringify(annonces.map(m => m.etat)));
+    const avantArret = await overrides(cl, bx, bz);
+    const nAvant = enOv(avantArret, bx, ly, bz);
+    ok(nAvant && nAvant[4] > 0 && nAvant[4] < 200, 'préparation : la batterie s\'est déchargée avant l\'arrêt (' + (nAvant && nAvant[4]) + ')');
+    cl.fermer();
+    await s.arreter();
+    // un levier posé hors de portée du joueur (9 blocs), directement dans le fichier du monde
+    const fx = Math.floor(p.x) + 9, fy = Math.floor(p.y) + 1, fz = Math.floor(p.z);
+    const fichier = JSON.parse(fs.readFileSync(f, 'utf8'));
+    fichier.overrides = (fichier.overrides || []).concat([[fx, fy, fz, B.LEVIER_CIRCUIT]]);
+    fs.writeFileSync(f, JSON.stringify(fichier));
+    s = await demarrer(args(f, d), { MC_MODE: 'survie' });
+    ({ client: cl } = await rejoindre(s.port, 'Mecano', 1));
+    ok(await attendreImmobile(cl), 'préparation : de retour, le joueur est posé au sol');
+    vu = cl.depuis();
+    const apres = await overrides(cl, bx, bz);
+    const nRepris = enOv(apres, bx, ly, bz);
+    ok(nRepris && nRepris[4] > 0, 'préparation : la batterie est reprise avec son niveau (' + (nRepris && nRepris[4]) + ')');
+    const decharge = await jusqua(() => vu('bloc').find(m => ici(bx, ly, bz)(m) && m.etat < nRepris[4]), 5000);
+    ok(!!decharge, 'SPEC-MECA-008 : après la relance, les circuits repris se simulent — la batterie continue de se décharger dans la lampe', JSON.stringify(vu('bloc').filter(ici(bx, ly, bz))));
+    vu = cl.depuis();
+    cl.envoyer({ t: 'actionner', j: 0, x: bx + 2, y: ly, z: bz });
+    ok(!!(await jusqua(() => vu('bloc').find(m => ici(bx + 1, ly, bz)(m) && m.id === B.LAMPE_ETEINTE), 3000)),
+       'SPEC-MECA-008 : après la relance, relâcher le levier éteint la lampe (un tic de circuits a lieu)');
+    // portée d'ACTIONNER : un VRAI levier, mais à 9 blocs
+    const oLoin = enOv(await overrides(cl, fx, fz), fx, fy, fz);
+    ok(oLoin && oLoin[3] === B.LEVIER_CIRCUIT, 'préparation : le levier lointain existe pour le serveur', JSON.stringify(oLoin));
+    vu = cl.depuis();
+    cl.envoyer({ t: 'actionner', j: 0, x: fx, y: fy, z: fz });
+    await jusqua(() => false, 800);
+    ok(!vu('bloc').some(ici(fx, fy, fz)), 'SPEC-MECA-005 : un levier à 9 blocs (portée 7) n\'est pas actionné');
+    const oLoin2 = enOv(await overrides(cl, fx, fz), fx, fy, fz);
+    ok(oLoin2 && !oLoin2[4], 'SPEC-MECA-005 : pour le serveur, le levier lointain est toujours relâché', JSON.stringify(oLoin2));
     cl.fermer();
     await s.arreter();
   } finally { A.supprimerDossier(d); }
@@ -211,7 +260,7 @@ async function scenarioEnergie() {
     const charge = await jusqua(() => { const b = dernierBloc(vu, gx + 1, gy, gz); return b && b.etat >= 24 ? b : null; }, 6000);
     ok(!!charge, 'SPEC-MECA-002/003 : le surplus du générateur charge la batterie voisine', JSON.stringify(dernierBloc(vu, gx + 1, gy, gz)));
     const etapes = vu('bloc').filter(ici(gx + 1, gy, gz)).map(m => m.etat);
-    ok(etapes.every((e, k) => k === 0 || e - etapes[k - 1] <= MC.Circuits.DEBIT_BATTERIE), 'SPEC-MECA-003 : la charge avance à débit borné (' + etapes.slice(0, 12).join(',') + ')');
+    ok(etapes.every((e, k) => k === 0 || e - etapes[k - 1] <= 5 * MC.Circuits.DEBIT_BATTERIE), 'SPEC-MECA-003 : la charge avance à débit borné — au plus 4 par tic, une annonce au plus toutes les 5 tics (' + etapes.slice(0, 12).join(',') + ')');
 
     // la batterie cassée : sa pile porte son niveau ; reposée, elle le retrouve
     const vuC = cl.depuis();
@@ -227,7 +276,7 @@ async function scenarioEnergie() {
     ok(!!ramasse, 'préparation : la batterie est ramassée (inventaire du serveur)', avantCasse && JSON.stringify(avantCasse));
     const niv = ramasse && ramasse[3] && ramasse[3].niveau;
     ok(niv > 0, 'SPEC-MECA-003 : la pile ramassée porte le niveau de la batterie (' + niv + ')', JSON.stringify(ramasse));
-    ok(niv >= niveauCasse && niv - niveauCasse <= MC.Circuits.DEBIT_BATTERIE, 'SPEC-MECA-003 : c\'est le niveau qu\'elle avait à la casse (dernier diffusé ' + niveauCasse + ', au plus un tic de charge en plus)');
+    ok(niv >= niveauCasse && niv - niveauCasse <= 5 * MC.Circuits.DEBIT_BATTERIE, 'SPEC-MECA-003 : c\'est le niveau qu\'elle avait à la casse (dernier annoncé ' + niveauCasse + ', au plus une seconde de charge en plus)');
     const iBat = ramasse ? (vuC('inv_maj').concat(vuC('donne')).reverse().find(x => x.inv && x.inv.some(c => c && c[0] === B.BATTERIE)).inv.findIndex(c => c && c[0] === B.BATTERIE)) : 1;
     const repose = await poser(cl, gx + 1, gy + 1, gz, B.BATTERIE, 0, iBat);
     ok(niv > 0 && repose && repose.etat === niv, 'SPEC-MECA-003/008 : reposée, la batterie reprend le niveau de la pile du SERVEUR (l\'état 0 annoncé est ignoré)', JSON.stringify(repose));
@@ -254,9 +303,37 @@ async function scenarioEnergie() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── SPEC-MECA-008 : les états que décident les circuits ne vont qu'aux clients à portée ─
+async function scenarioPortee() {
+  const d = A.dossierTemp('mc-meca-por-');
+  try {
+    const f = fichierMonde(d, {});
+    // portée de diffusion des blocs du monde réduite à 4 blocs (réglage de test du serveur)
+    const s = await demarrer(args(f, d), { MC_MODE: 'survie', MC_TEST_PORTEE_BLOCS: '4' });
+    const { client: cl } = await rejoindre(s.port, 'Lointain', 1);
+    ok(await attendreImmobile(cl), 'préparation : le joueur est posé au sol');
+    const p = etatToi(cl, 0);
+    const x0 = Math.floor(p.x), y0 = Math.floor(p.y) + 2, z0 = Math.floor(p.z);
+    ok(!!(await poser(cl, x0 + 6, y0, z0, B.BATTERIE, 200)), 'préparation : batterie à 6 blocs (au-delà de la portée de diffusion)');
+    ok(!!(await poser(cl, x0 + 6, y0, z0 + 1, B.LAMPE_ETEINTE)), 'préparation : lampe contre elle');
+    ok(!!(await poser(cl, x0 + 5, y0, z0 + 1, B.LEVIER_CIRCUIT)), 'préparation : levier contre la lampe');
+    const vu = cl.depuis();
+    cl.envoyer({ t: 'actionner', j: 0, x: x0 + 5, y: y0, z: z0 + 1 });
+    ok(!!(await jusqua(() => vu('bloc').find(m => ici(x0 + 5, y0, z0 + 1)(m) && m.etat === 1), 3000)), 'préparation : levier actionné (réponse directe à l\'action)');
+    await jusqua(() => false, 2000);
+    const ov = await overrides(cl, x0 + 6, z0);
+    const lampe = enOv(ov, x0 + 6, y0, z0 + 1), bat = enOv(ov, x0 + 6, y0, z0);
+    ok(lampe && lampe[3] === B.LAMPE_ALLUMEE && bat && bat[4] < 200, 'préparation : pour le serveur, la lampe brille et la batterie se vide', JSON.stringify([lampe, bat]));
+    const recus = vu('bloc').filter(m => (ici(x0 + 6, y0, z0)(m) || ici(x0 + 6, y0, z0 + 1)(m)));
+    eq(recus.length, 0, 'SPEC-MECA-008 : un client hors de portée ne reçoit aucun des états que les circuits changent (lampe, niveau de batterie)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 (async () => {
   const filtre = process.argv[2];
-  const scenarios = { commandes: scenarioCommandes, energie: scenarioEnergie };
+  const scenarios = { commandes: scenarioCommandes, energie: scenarioEnergie, portee: scenarioPortee };
   try {
     for (const nom of Object.keys(scenarios)) {
       if (filtre && filtre !== nom) continue;

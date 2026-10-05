@@ -343,7 +343,7 @@
            revérifie tout — joueur vivant, case à portée (comme une pose),
            bloc qui s'actionne — et décide lui-même du nouvel état
            (MC.Circuits.actionner) : le message ne porte que la case. Un bouton
-           enfoncé le reste DUREE_BOUTON_S secondes de jeu (serveur-tic le relâche). */
+           enfoncé le reste DUREE_BOUTON_TICS tics de circuits (horloge monotone, serveur-tic le relâche). */
         case NP.MSG.ACTIONNER: {
           const js = c.joueurs && c.joueurs[m.j];
           const st0 = js && js.joueur.state;
@@ -355,10 +355,13 @@
           monde.setEtat(m.x, m.y, m.z, etatA);
           if (C.BLOCKS[idA].circuit.type === 'bouton') {
             const boutons = S.boutonsAppuyes || (S.boutonsAppuyes = new Map());
-            boutons.set(m.x + ',' + m.y + ',' + m.z, EP.heure + S.DUREE_BOUTON_S);
+            boutons.set(m.x + ',' + m.y + ',' + m.z, S.ticsCircuits() + S.DUREE_BOUTON_TICS);
           }
           diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: idA, etat: etatA });
-          MC.Admin.journaliser(admin, { auteur: c.nom, action: 'bloc_actionne', cible: `${m.x},${m.y},${m.z}`, details: etatA, heure: EP.heure });
+          /* Pas d'entrée au journal d'administration : un levier actionné en boucle
+             ferait tourner JOURNAL_MAX et chasserait poses et casses. Pas de ligne
+             de vue non plus : poser et casser n'en vérifient pas davantage
+             (blocAutorise : la portée seule) — même règle pour actionner. */
           break;
         }
 
@@ -599,6 +602,7 @@
             C.dropsOf(avant, cassure.harvests, null, bonusChance).forEach(d =>
               entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n, undefined,
                                d.id === C.B.BATTERIE ? { niveau: etatAvantCasse } : undefined));
+            if (avant === C.B.GENERATEUR_THERMIQUE && S.oublierCombustion) S.oublierCombustion(m.x, m.y, m.z);
           }
           diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
           if (m.id !== 0) S.signalerRecit(c, m.j, js, { type: 'poser', bloc: m.id, x: m.x, y: m.y, z: m.z });   // ARCHI-041

@@ -206,23 +206,23 @@
       var w = MC.createWorld(85);
       w.getChunk(0, 0, true);
       w.setBlock(4, 40, 4, B.BATTERIE);
-      w.setEtat(4, 40, 4, 9);
+      w.setEtat(4, 40, 4, 209);
       // cassée : le niveau (lu avant de vider le bloc) voyage sur la pile —
       // exactement ce que player.js fait dans mineTick (voir dataDrop).
-      var niveau = w.getEtat(4, 40, 4) & 15;
-      A.equal(niveau, 9);
+      var niveau = w.getEtat(4, 40, 4) & 255;
+      A.equal(niveau, 209, 'tout le niveau, au-delà de l\'ancienne borne 15');
       var inv = Inv.create(9);
       inv.setAt(0, { id: B.BATTERIE, n: 1, data: { niveau: niveau } });
       // la pile porte son niveau, y compris après un aller-retour de sauvegarde
       var serial = inv.serialize();
       var inv2 = Inv.create(9);
       inv2.load(serial);
-      A.equal(inv2.stackAt(0).data.niveau, 9, 'le niveau survit à la sauvegarde/chargement (SPEC-SAVE-017)');
+      A.equal(inv2.stackAt(0).data.niveau, 209, 'le niveau survit à la sauvegarde/chargement (SPEC-SAVE-017)');
       // reposée : le niveau stocké sur la pile redevient l’état du bloc (même
       // logique que player.js useOn, sans dépendre du rendu/joueur ici).
       w.setBlock(5, 40, 5, B.BATTERIE);
       w.setEtat(5, 40, 5, inv2.stackAt(0).data.niveau);
-      A.equal(w.getEtat(5, 40, 5), 9, 'reposée, la batterie retrouve son niveau');
+      A.equal(w.getEtat(5, 40, 5), 209, 'reposée, la batterie retrouve son niveau');
     });
   });
 
@@ -537,8 +537,10 @@
       w.setBlock(-1, 40, 0, B.LAVA);
       var vus = [];
       for (var t = 0; t < 6; t++) { m.tic({}); vus.push(w.getEtat(2, 40, 0)); }
-      for (var i = 1; i < vus.length; i++) A.ok(vus[i] - vus[i - 1] <= K.DEBIT_BATTERIE, 'charge bornée par le débit : ' + vus.join(','));
-      A.gt(vus[5], 0, 'elle se charge');
+      A.equal(K.DEBIT_BATTERIE, 4, 'débit maximal : 4 unités par tic');
+      // le générateur s'allume au premier tic (sa production compte au suivant) ; 15 unités
+      // arrivent ensuite à chaque tic, mais la batterie n'en prend que 4
+      A.deep(vus, [0, 4, 8, 12, 16, 20], 'charge bornée à 4 par tic malgré un surplus de 15');
       w.setEtat(2, 40, 0, 253);
       m.tic({}); m.tic({});
       A.equal(w.getEtat(2, 40, 0), 255, 'et s’arrête à sa capacité');
@@ -557,6 +559,18 @@
       m.tic({});
       A.equal(w.getBlock(1, 40, 0), B.LAMPE_ETEINTE, 'batterie vide : la lampe s’éteint');
       A.equal(w.getEtat(0, 40, 0), 0, 'jamais en dessous de zéro');
+      // décharge bornée : deux ascenseurs (3 + 3 unités) sur une seule batterie, débit 4 —
+      // un seul est servi, l'autre s'arrête, et la batterie ne cède que 3 (jamais 6)
+      var m2 = monde(9112), w2 = m2.w;
+      w2.setBlock(5, 40, 5, B.BATTERIE); w2.setEtat(5, 40, 5, 100);
+      w2.setBlock(6, 40, 5, B.ASCENSEUR); w2.setBlock(4, 40, 5, B.ASCENSEUR);
+      w2.setBlock(6, 41, 5, B.LEVIER_CIRCUIT); w2.setEtat(6, 41, 5, 1);
+      w2.setBlock(4, 41, 5, B.LEVIER_CIRCUIT); w2.setEtat(4, 41, 5, 1);
+      m2.tic({});
+      A.equal((w2.getEtat(6, 40, 5) & 1) + (w2.getEtat(4, 40, 5) & 1), 1, 'demande 6 > débit 4 : un seul ascenseur tourne');
+      A.equal(w2.getEtat(5, 40, 5), 97, 'la batterie ne cède que la consommation servie (3), sous son débit');
+      m2.tic({});
+      A.equal(w2.getEtat(5, 40, 5), 94, 'et ainsi à chaque tic');
       // le levier relâché : plus de demande, la batterie ne bouge plus
       w.setEtat(0, 40, 0, 50); w.setEtat(2, 40, 0, 0);
       m.tic({}); m.tic({});
@@ -736,6 +750,34 @@
       A.ok(w.circuits.has('5,40,3'), 'une trappe rechargée aussi');
       w.reset();
       A.equal(w.circuits.size, 0, 'remise à zéro du monde : plus aucun mécanisme de l’ancienne partie');
+    });
+
+    it('SPEC-MECA-008 : l’état d’un mécanisme qui change à chaque tic ne refait pas le maillage ; celui d’une forme, si', function () {
+      var w = MC.createWorld(9113);
+      w.getChunk(0, 0, true);
+      var c = w.getChunk(0, 0);
+      w.setBlock(3, 40, 3, B.BATTERIE); w.setBlock(5, 40, 3, B.ESCALIER_STONE);
+      c.dirty = false; var v0 = c.version;
+      w.setEtat(3, 40, 3, 120);
+      A.equal(w.getEtat(3, 40, 3), 120, 'l’état est bien écrit');
+      A.ok(!c.dirty && c.version === v0, 'niveau de batterie : pas de nouveau maillage du chunk');
+      w.setEtat(5, 40, 3, 2);
+      A.ok(c.dirty && c.version !== v0, 'orientation d’un escalier : le chunk se remaille');
+    });
+
+    it('SPEC-MECA-005 : le capteur de lumière suit les sources posées et retirées (cache du registre des lumières)', function () {
+      var w = MC.createWorld(9114);
+      w.getChunk(0, 0, true);
+      for (var y = 41; y < C.WORLD_H; y++) w.setBlock(4, y, 4, B.STONE);   // pas de ciel : seules les sources comptent
+      w.setBlock(4, 40, 4, B.DETECTEUR_LUMIERE);
+      w.tickCircuits({ temps: 0 });
+      A.equal(w.getEtat(4, 40, 4), 0, 'dans le noir : bas');
+      w.setBlock(5, 40, 4, B.TORCH);
+      w.tickCircuits({ temps: 0 });
+      A.equal(w.getEtat(4, 40, 4), 1, 'une torche à côté : haut (le cache suit le registre)');
+      w.setBlock(5, 40, 4, 0);
+      w.tickCircuits({ temps: 0 });
+      A.equal(w.getEtat(4, 40, 4), 0, 'torche retirée : bas de nouveau');
     });
 
     it('SPEC-MECA-008 : l’état d’un mécanisme posé est décidé par le serveur, jamais repris tel quel du client', function () {

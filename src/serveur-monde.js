@@ -279,6 +279,12 @@
         if (v.four) cont.four = v.four;
         conteneursPoses.set(v.cle, cont);
       });
+      /* SPEC-MECA-008 : `overrides` a été rempli sans passer par setBlock —
+         les registres dérivés (mécanismes, lumières) se reconstruisent ici,
+         sinon les circuits repris ne se simulent plus tant que personne ne
+         repose un bloc. Seul chemin de reprise du monde côté serveur
+         (--monde, partie chargée, import). */
+      if (monde.rebuildRegistries) monde.rebuildRegistries();
       return true;
     }
   }
