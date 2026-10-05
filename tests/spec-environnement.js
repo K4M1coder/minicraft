@@ -5,6 +5,7 @@
   'use strict';
   var MC = G.MC, T = G.T;
   var describe = T.describe, it = T.it, A = T.assert;
+  var flatWorld = G.flatWorld, seededRand = G.seededRand;
   var H = MC.Habitats, R = MC.Routes, Vol = MC.Volcanisme, Dj = MC.Donjons, P = MC.Politique;
 
   function unVillage(w) {
@@ -171,6 +172,101 @@
       // hors éruption : toujours praticable, aucune caravane affectée
       var res3 = R.trajetsAffectesParEruption([trajetTouche], volcan, horsEruption);
       A.equal(res3[0].etat, 'praticable');
+    });
+
+    /* SPEC-ENV-005 : l'heure (en secondes du monde) d'une éruption en cours d'un volcan, ou -1. */
+    function heureEnEruption(v, graine) {
+      for (var k = 0; k < 200; k++) {
+        var e = Vol.eruptionDe(v, k * Vol.FENETRE, graine);
+        if (e) return (e.debut + e.fin) / 2;
+      }
+      return -1;
+    }
+    function horsEruption(v, graine) {
+      for (var t = 0; t < 40 * Vol.FENETRE; t += 100) if (!Vol.activite(v, t, graine).eruption) return t;
+      return -1;
+    }
+
+    it('SPEC-ENV-005 : une éruption en cours près d\'un donjon multiplie par 1,5 à 2 les renforts de son gardien, décroissant avec la distance, rien hors éruption ni hors rayon', function () {
+      var graine = 7, v = { x: 1000, z: -500, actif: true };
+      var t = heureEnEruption(v, graine);
+      A.ok(t >= 0, 'une éruption existe pour ce volcan');
+      var R5 = Vol.RAYON_RENFORTS;
+      var m0 = Vol.multiplicateurRenforts([v], { x: v.x, z: v.z }, t, graine);
+      var mMi = Vol.multiplicateurRenforts([v], { x: v.x + R5 / 2, z: v.z }, t, graine);
+      var mBord = Vol.multiplicateurRenforts([v], { x: v.x, z: v.z + R5 }, t, graine);
+      A.close(m0, 2, 1e-9, 'au pied du cratère : ×2');
+      A.close(mMi, 1.75, 1e-9, 'à mi-rayon : ×1,75');
+      A.close(mBord, 1.5, 1e-9, 'en bordure de rayon : ×1,5');
+      A.equal(Vol.multiplicateurRenforts([v], { x: v.x + R5 + 1, z: v.z }, t, graine), 1, 'hors du rayon : inchangé');
+      var th = horsEruption(v, graine);
+      A.ok(th >= 0, 'un moment sans éruption');
+      A.equal(Vol.multiplicateurRenforts([v], { x: v.x, z: v.z }, th, graine), 1, 'hors éruption : inchangé');
+      A.equal(Vol.multiplicateurRenforts([{ x: v.x, z: v.z, actif: false }], { x: v.x, z: v.z }, t, graine), 1, 'un volcan éteint ne change rien');
+      A.ok(Vol.multiplicateurRenforts([v, { x: v.x, z: v.z, actif: true }], { x: v.x, z: v.z }, t, graine) <= 2 + 1e-9,
+           'plusieurs volcans ne se cumulent pas : jamais au-delà de ×2');
+      for (var d = 0; d <= R5; d += 37) {
+        var m = Vol.multiplicateurRenforts([v], { x: v.x + d, z: v.z }, t, graine);
+        A.ok(m >= 1.5 - 1e-9 && m <= 2 + 1e-9, 'dans le rayon, toujours entre 1,5 et 2 (' + m + ' à ' + d + ')');
+      }
+      A.equal(Vol.multiplicateurRenforts([], { x: 0, z: 0 }, t, graine), 1, 'sans volcan : inchangé');
+    });
+
+    it('SPEC-ENV-005 : sur un vrai monde, un donjon proche d\'un volcan en éruption reçoit le facteur, le même donjon hors éruption non', function () {
+      var trouve = null;
+      for (var graine = 1; graine <= 60 && !trouve; graine++) {
+        var w = MC.createWorld(graine);
+        for (var rx = -4; rx <= 4 && !trouve; rx++) for (var rz = -4; rz <= 4 && !trouve; rz++) {
+          var v = w.bio.volcanDe(rx, rz);
+          if (!v || !v.actif) continue;
+          var R5 = Vol.RAYON_RENFORTS;
+          var ds = w.donjons.dansZone(v.x - R5 + 50, v.z - R5 + 50, v.x + R5 - 50, v.z + R5 - 50)
+            .filter(function (d) { return Math.hypot(d.x - v.x, d.z - v.z) <= R5 - 50; });
+          if (ds.length) trouve = { w: w, v: v, d: ds[0], graine: graine };
+        }
+      }
+      A.ok(trouve, 'un donjon à moins de 550 blocs d\'un volcan actif existe dans l\'un des 60 mondes');
+      var t = heureEnEruption(trouve.v, trouve.graine), th = horsEruption(trouve.v, trouve.graine);
+      var m = Vol.multiplicateurRenfortsDonjon(trouve.w.bio, trouve.d, t, trouve.graine);
+      A.ok(m >= 1.5 && m <= 2, 'pendant l\'éruption : ×' + m.toFixed(2) + ' pour ' + trouve.d.id);
+      A.equal(Vol.multiplicateurRenfortsDonjon(trouve.w.bio, trouve.d, th, trouve.graine), 1, 'hors éruption : ×1');
+      A.equal(Vol.multiplicateurRenfortsDonjon(null, trouve.d, t, trouve.graine), 1, 'sans monde : ×1');
+    });
+
+    it('SPEC-ENV-005 : un gardien dont le donjon est près d\'une éruption appelle ses renforts 1,5 à 2 fois plus souvent, sans jamais dépasser son plafond', function () {
+      var B = MC.Core.B, DUREE = 1800, dt = 1 / 10;
+      var joueur = { pos: { x: 12.5, y: 11, z: 0.5 } };
+      /* Même exploration simulée (le joueur ne bouge pas, les renforts sont abattus dès leur apparition
+         pour que le plafond n'intervienne pas dans le comptage) avec un facteur de renforts donné. */
+      function compter(mult, abattre) {
+        var ents = MC.createEntities(flatWorld(10, B.STONE));
+        var g = ents.spawn('boss_zombie', 0.5, 11, 0.5, { donjon: '3,4' });
+        g.onGround = true;
+        var inv = 0, maxVus = 0;
+        for (var i = 0; i < DUREE / dt; i++) {
+          var ev = ents.update(dt, joueur, { rand: seededRand(i), multRenforts: mult === null ? undefined : function (id) { return id === '3,4' ? mult : 1; } });
+          inv += ev.invocations || 0;
+          maxVus = Math.max(maxVus, ents.sbires(g));
+          if (abattre) ents.list.filter(function (e) { return e.maitre === g.eid; }).forEach(function (e) { ents.remove(e); });
+          g.hp = 1e9;                     // le gardien tient pendant toute la mesure
+          g.pos.x = 0.5; g.pos.z = 0.5;
+        }
+        return { inv: inv, maxVus: maxVus };
+      }
+      var base = compter(null, true), x15 = compter(1.5, true), x2 = compter(2, true), tel = compter(1, true);
+      A.ok(base.inv >= 100, 'sans éruption, le gardien appelle régulièrement des renforts (' + base.inv + ')');
+      A.equal(tel.inv, base.inv, 'un facteur de 1 ne change rien');
+      var r15 = x15.inv / base.inv, r2 = x2.inv / base.inv;
+      A.ok(r15 >= 1.45 && r15 <= 1.55, 'facteur 1,5 : ' + x15.inv + ' appels contre ' + base.inv + ' (×' + r15.toFixed(2) + ')');
+      A.ok(r2 >= 1.9 && r2 <= 2.1, 'facteur 2 : ' + x2.inv + ' appels contre ' + base.inv + ' (×' + r2.toFixed(2) + ')');
+      // le plafond de sbires vivants reste appliqué, éruption ou non
+      var plafond = MC.EntitySpecs.boss_zombie.invoque.max;
+      var libre = compter(2, false);
+      A.ok(libre.maxVus <= plafond, 'sans abattre les renforts, jamais plus de ' + plafond + ' sbires vivants (' + libre.maxVus + ')');
+      A.equal(libre.maxVus, plafond, 'et le plafond est atteint');
+      // un facteur absurde (NaN, négatif, < 1) est ignoré
+      A.equal(compter(NaN, true).inv, base.inv, 'un facteur NaN est ignoré');
+      A.equal(compter(0.2, true).inv, base.inv, 'un facteur < 1 est ignoré');
     });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

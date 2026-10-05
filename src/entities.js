@@ -660,6 +660,16 @@
       return { origine: o, directions: dirs, degats: tir.degats, genre: tir.genre || 'fleche' };
     }
 
+    /* SPEC-ENV-005 : délai avant les prochains renforts d'un gardien. Une éruption
+       active près de son donjon (facteur de 1,5 à 2, fourni par le serveur à
+       chaque mise à jour : `opts.multRenforts(idDonjon)`) le raccourcit d'autant,
+       donc multiplie la fréquence des renforts ; le plafond `invoque.max` de
+       sbires vivants (SPEC-DONJON-005) reste appliqué par les appelants. */
+    var multRenfortsCourant = null;
+    function cadenceInvocation(e, s) {
+      var m = e.donjon && multRenfortsCourant ? multRenfortsCourant(e.donjon) : 1;
+      return s.invoque.cadence / (m >= 1 && isFinite(m) ? m : 1);
+    }
     function sbires(maitre) {
       var n = 0;
       for (var i = 0; i < list.length; i++) if (list[i].maitre === maitre.eid && !list[i].dead) n++;
@@ -737,7 +747,7 @@
       if (s.invoque) {
         e.invocCd = (e.invocCd === undefined ? 3 : e.invocCd) - dt;
         if (!act && e.invocCd <= 0) {
-          e.invocCd = s.invoque.cadence;
+          e.invocCd = cadenceInvocation(e, s);
           if (sbires(e) < s.invoque.max) act = { invoque: s.invoque };
         }
       }
@@ -828,7 +838,7 @@
         if (s.invoque) {
           e.invocCd = (e.invocCd === undefined ? 3 : e.invocCd) - dt;
           if (!act && e.invocCd <= 0) {
-            e.invocCd = s.invoque.cadence;
+            e.invocCd = cadenceInvocation(e, s);
             if (sbires(e) < s.invoque.max) act = { invoque: s.invoque };
           }
         }
@@ -925,6 +935,7 @@
       opts = opts || {};
       refermerPortes(dt);
       var rand = opts.rand || Math.random;
+      multRenfortsCourant = typeof opts.multRenforts === 'function' ? opts.multRenforts : null;
       var events = { damage: 0, picked: [], degatsPar: [] };
       /* Plusieurs joueurs (le serveur les simule tous) : chaque entité
          s'occupe du plus proche. Sans liste, le joueur unique d'autrefois. */

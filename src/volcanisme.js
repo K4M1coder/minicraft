@@ -107,6 +107,31 @@
     return t < e.fin + REFROIDISSEMENT ? 'lave' : 'basalte';
   }
 
-  MC.Volcanisme = { eruptionDe: eruptionDe, activite: activite, projectiles: projectiles, coulee: coulee,
+  /* SPEC-ENV-005 : une éruption en cours à moins de RAYON_RENFORTS blocs d'un
+     donjon rend son gardien plus dangereux : ses renforts viennent 1,5 à 2 fois
+     plus souvent — 2 au pied du cratère, 1,5 en bordure de rayon, décroissant
+     avec la distance ; plusieurs volcans ne se cumulent pas (le plus proche
+     l'emporte). Sans éruption proche : 1. `volcans` : [{ x, z, actif }] ;
+     `cible` : { x, z } (le donjon) ; pure, déterministe par graine et heure. */
+  var RAYON_RENFORTS = 600;
+  var RENFORTS_MAX = 2, RENFORTS_MIN = 1.5;
+  function multiplicateurRenforts(volcans, cible, t, graine) {
+    var m = 1;
+    (volcans || []).forEach(function (v) {
+      var d = Math.hypot(v.x - cible.x, v.z - cible.z);
+      if (d > RAYON_RENFORTS || !activite(v, t, graine).eruption) return;
+      m = Math.max(m, RENFORTS_MAX - (RENFORTS_MAX - RENFORTS_MIN) * d / RAYON_RENFORTS);
+    });
+    return m;
+  }
+  /* Le même, pour un donjon du monde : `bio` est MC.createWorld(...).bio. */
+  function multiplicateurRenfortsDonjon(bio, donjon, t, graine) {
+    if (!bio || !bio.volcansDansZone || !donjon) return 1;
+    var R = RAYON_RENFORTS;
+    return multiplicateurRenforts(bio.volcansDansZone(donjon.x - R, donjon.z - R, donjon.x + R, donjon.z + R), donjon, t, graine);
+  }
+
+  MC.Volcanisme = { multiplicateurRenforts: multiplicateurRenforts, multiplicateurRenfortsDonjon: multiplicateurRenfortsDonjon,
+                    RAYON_RENFORTS: RAYON_RENFORTS, eruptionDe: eruptionDe, activite: activite, projectiles: projectiles, coulee: coulee,
                     etatCellule: etatCellule, FENETRE: FENETRE, GRONDEMENT: GRONDEMENT, REFROIDISSEMENT: REFROIDISSEMENT };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

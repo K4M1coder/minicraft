@@ -599,8 +599,16 @@
       liberSoutesDetruites();
       const etats = joueurs.map(x => x.js.joueur.state);
       const ref = joueurs.length ? { pos: joueurs[0].js.joueur.state.pos } : joueurReference();
+      /* SPEC-ENV-005 : une éruption active près du donjon d'un gardien multiplie par 1,5 à 2 la
+         fréquence de ses renforts. Évalué seulement quand un gardien prépare ses renforts. */
+      const multRenfortsDonjon = (idDonjon) => {
+        const p = String(idDonjon).split(',');
+        const d = monde.donjons && monde.donjons.deRegion && p.length === 2 ? monde.donjons.deRegion(+p[0], +p[1]) : null;
+        return d && MC.Volcanisme ? MC.Volcanisme.multiplicateurRenfortsDonjon(monde.bio, d, EP.heure, CONF.graine) : 1;
+      };
       const ev = entites.update(dt, ref, { joueurs: etats.length ? etats : [ref],
-        hiver: MC.DayCycle.saison(EP.heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs });
+        hiver: MC.DayCycle.saison(EP.heure).nom === 'hiver', pvpOk: pvpAutorise, peutBlesser: peutBlesserJoueurs,
+        multRenforts: multRenfortsDonjon });
       // SPEC-DONJON-018 : la victoire RÉELLE sur un gardien (événement 'boss_vaincu'
       // du journal d'entites.js, jamais un appel direct isolé) marque le donjon
       // vaincu (pré-existant : jamais fait par le serveur avant ce lot, seulement
