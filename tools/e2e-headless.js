@@ -219,6 +219,7 @@ async function executerUnTest(session, portServeur, test, opts) {
     message: resultatJS.message, pile: resultatJS.pile, attendu: resultatJS.attendu, obtenu: resultatJS.obtenu,
     assertions: resultatJS.assertions || { ok: 0, ko: 0 }, etapes: resultatJS.etapes || [],
     etapesTriplets: resultatJS.etapesTriplets || [], metriques: resultatJS.metriques || null,
+    mesures: resultatJS.mesures || [],
     captures: (resultatJS.captures || []).map((c) => ({ libelle: c.libelle, type: c.type, base64: base64Pur(c.base64), role: c.role,
       etape: c.etape, bord: c.bord, rang: c.rang, t_ms: c.t_ms, numero_image: c.numero_image, duree_image_ms: c.duree_image_ms,
       pose: c.pose, instabilite: c.instabilite })),
@@ -347,7 +348,7 @@ async function executerCampagne(selection, options) {
         fonctions: test.fonctions || [],
         etat: r.etat, debut: r.debut || null, duree_ms: r.duree_ms,
         etapes: r.etapes || [], etapesTriplets: r.etapesTriplets || [],
-        assertions: r.assertions, metriques: r.metriques || undefined,
+        assertions: r.assertions, metriques: r.metriques || undefined, mesures: (r.mesures && r.mesures.length) ? r.mesures : undefined,
         message, pile: r.pile, attendu: r.attendu, obtenu: r.obtenu,
         captures: r.captures.map((c, i) => ({
           libelle: c.libelle, type: c.type, role: c.role, etape: c.etape, bord: c.bord, rang: c.rang,

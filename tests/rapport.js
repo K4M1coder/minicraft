@@ -140,6 +140,11 @@
         .filter(function (p) { return p[1] !== undefined && p[1] !== null; });
       if (champs.length) out.push({ type: 'paragraphe', texte: champs.map(function (p) { return p[0] + ' : ' + p[1]; }).join(' · '), meta: { classe: 'dur' } });
     }
+    /* SPEC-LIMITE-007 : tableaux de mesures d'un test (T.mesure), sous ses métriques. */
+    (t.mesures || []).forEach(function (m) {
+      out.push({ type: 'paragraphe', texte: m.titre, meta: { classe: 'dur' } });
+      out.push({ type: 'tableau', entetes: m.entetes || [], lignes: (m.lignes || []).map(function (l) { return { cellules: l }; }) });
+    });
     (t.captures || []).forEach(function (c) {
       out.push({ type: 'image', fichier: c.fichier, legende: c.libelle });
     });

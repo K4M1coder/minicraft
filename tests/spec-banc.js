@@ -405,6 +405,27 @@
       } finally { nettoyer(dossier); }
     });
 
+    it('SPEC-LIMITE-007 : les tableaux de mesures d\'un test (T.mesure) entrent au cahier, dans le modèle comme dans le HTML', function () {
+      var mesure = { titre: 'Rendu loin de l\'origine', entetes: ['distance (blocs)', 'écart moyen'], lignes: [['10^4', '0.207'], ['10^7', '0.995']] };
+      var resultats = {
+        schema: 1,
+        campagne: { preset: 'demo', totaux: { total: 1, passes: 1, echecs: 0, ignores: 0, parType: { e2e: 1 }, parDomaine: {} } },
+        tests: [{ id: 'E', nom: 'sonde', type: 'e2e', groupe: 'end-to-end', domaines: ['LIMITE'], specs: ['SPEC-LIMITE-007'], fiche: null,
+                  etat: 'ok', duree_ms: 5, etapes: [], assertions: { ok: 1, ko: 0 }, mesures: [mesure], captures: [] }],
+      };
+      var blocs = MC_RAPPORT.modele(resultats).blocs;
+      var i = blocs.findIndex(function (b) { return b.type === 'paragraphe' && b.texte === mesure.titre; });
+      A.ok(i >= 0, 'le titre du tableau de mesures figure au cahier');
+      var tab = blocs[i + 1];
+      A.equal(tab.type, 'tableau', 'suivi d\'un tableau');
+      A.equal(JSON.stringify(tab.entetes), JSON.stringify(mesure.entetes), 'avec ses en-têtes');
+      A.equal(JSON.stringify(tab.lignes.map(function (l) { return l.cellules; })), JSON.stringify(mesure.lignes), 'et une ligne par distance');
+      var html = MC_RAPPORT.html(resultats);
+      A.ok(html.indexOf('0.995') >= 0 && html.indexOf('écart moyen') >= 0, 'le HTML du cahier montre les mesures');
+      var sans = MC_RAPPORT.modele({ schema: 1, campagne: {}, tests: [Object.assign({}, resultats.tests[0], { mesures: undefined })] }).blocs;
+      A.equal(sans.some(function (b) { return b.texte === mesure.titre; }), false, 'sans mesure, aucun tableau ajouté');
+    });
+
     it('SPEC-BANC-022 : les rendus HTML et .docx d\'un même cahier partagent le même modèle (mêmes sections, tests, lignes, captures)', function () {
       var { construireDocx } = require(path.join(RACINE, 'tools', 'docx.js'));
       var { lireZip } = require(path.join(RACINE, 'tools', 'zip.js'));

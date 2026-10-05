@@ -247,6 +247,18 @@
     });
   };
 
+  /* `T.mesure(titre, entetes, lignes)` (SPEC-LIMITE-007) : ajoute un tableau de
+     mesures au cahier de test, sous les captures du test en cours (clé
+     `mesures` de resultats.json, rendue par tests/rapport.js). `lignes` :
+     tableaux de cellules (texte ou nombre). Sans test instrumenté, ne fait rien. */
+  T.mesure = function (titre, entetes, lignes) {
+    if (!enCours) return;
+    enCours.mesures.push({
+      titre: String(titre), entetes: entetes.map(String),
+      lignes: lignes.map(function (l) { return l.map(function (c) { return String(c); }); }),
+    });
+  };
+
   // ─── utilitaires ───────────────────────────────────────────────────────────
   /* Attend n images RÉELLES. Piège : une version qui teste le compteur avant
      le premier requestAnimationFrame résout de façon synchrone pour n=1, et
@@ -5477,6 +5489,117 @@
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // Limites de rendu loin de l'origine (SPEC-LIMITE-007)
+  // ══════════════════════════════════════════════════════════════════════════
+  /* Sonde non bloquante, dans l'esprit de SPEC-LIMITE-006 : elle MESURE et
+     écrit le tableau au cahier ; seul son fonctionnement (une image rendue et
+     un relevé par distance) la fait échouer, jamais ce qu'elle trouve. Tout
+     se passe dans UN bloc synchrone par image (caméra, ambiance, rendu, relevé
+     des pixels) : la boucle de jeu ne peut pas s'intercaler et fausser l'écart. */
+  function imageReduite(g, canvas, ctx2d) {
+    rendreTout(g);
+    ctx2d.drawImage(g.render.renderer.domElement, 0, 0, canvas.width, canvas.height);
+    return ctx2d.getImageData(0, 0, canvas.width, canvas.height).data;
+  }
+  /* Écart moyen (en % de l'échelle 0-255) entre deux images, sur la luminosité de chaque canal. */
+  function ecartImages(a, b) {
+    var somme = 0, n = 0;
+    for (var i = 0; i < a.length; i += 4) { somme += Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]); n += 3; }
+    return n ? somme / n / 255 * 100 : 0;
+  }
+  function diversite(a) {            // une image uniforme (rien rendu, ou tout au fond) a une variance nulle
+    var m = 0, v = 0, n = 0, i;
+    for (i = 0; i < a.length; i += 4) { m += a[i] + a[i + 1] + a[i + 2]; n += 3; }
+    m /= n;
+    for (i = 0; i < a.length; i += 4) { v += Math.pow(a[i] - m, 2) + Math.pow(a[i + 1] - m, 2) + Math.pow(a[i + 2] - m, 2); }
+    return Math.sqrt(v / n);
+  }
+  function statsEcarts(serie) {
+    var moy = serie.reduce(function (x, y) { return x + y; }, 0) / (serie.length || 1);
+    var max = serie.length ? Math.max.apply(null, serie) : 0;
+    return { moy: moy, max: max, saut: moy > 1e-9 ? max / moy : (max > 1e-9 ? Infinity : 1) };
+  }
+  function f2(v) { return isFinite(v) ? v.toFixed(3) : '∞'; }
+
+  e2e('SPEC-LIMITE-007 : la sonde de rendu mesure, à 10⁴, 10⁵, 10⁶ et 10⁷ blocs, le tremblement de la géométrie et des animations', {
+        "teste": "que le jeu, téléporté à 10⁴, 10⁵, 10⁶ puis 10⁷ blocs de l'origine (et à l'origine pour référence), rend une image de la scène et que l'on mesure, entre images fixes, l'écart produit par un déplacement de caméra de 1/64 de bloc (tremblement de la géométrie) et par l'avance du temps de 0,05 s (eau, vent, nuages)",
+        "pourquoi": "les positions sont en 32 bits côté GPU : la limite de rendu loin de l'origine n'était calculée qu'en théorie (SPEC-LIMITE-004), jamais observée dans le navigateur",
+        "attendu": "une image rendue et un relevé chiffré par distance (écart moyen, saut maximal) dans le tableau du cahier, avec une capture par distance ; la sonde ne juge pas ce qu'elle mesure"
+  }, async function (g) {
+    var s = await reset(g), w = g.world, B = MC.Core.B;
+    var dist0 = g.render.RENDER_DIST, temps0 = g.time;
+    var canvas = document.createElement('canvas'); canvas.width = 400; canvas.height = 300;
+    var ctx2d = canvas.getContext('2d');
+    var DISTANCES = [0, 1e4, 1e5, 1e6, 1e7];
+    var lignes = [], releves = [];
+    g.render.setDistance(3);
+    try {
+      for (var di = 0; di < DISTANCES.length; di++) {
+        var D = DISTANCES[di];
+        T.etape('distance ' + (D === 0 ? 'origine' : D.toExponential(0)));
+        var x = D + 8, z = 8;
+        chargerAutour(g, x, z, 2);
+        var y = surfaceDe(w, x, z);
+        s.flying = true; s.vel.x = s.vel.y = s.vel.z = 0; s.fallFrom = null;
+        s.pos.x = x + 0.5; s.pos.z = z + 0.5; s.pos.y = y + 6; s.yaw = 0.7; s.pitch = -0.45;
+        g.streamChunks(true);
+        // attend que les maillages soient prêts : le nombre de triangles dessinés cesse de bouger (borné à 6 s)
+        var dernier = -1, stable = 0, t0 = Date.now();
+        while (stable < 5 && Date.now() - t0 < 6000) {
+          await frames(2);
+          var tri = g.render.renderer.info.render.triangles;
+          stable = (tri > 0 && tri === dernier) ? stable + 1 : 0;
+          dernier = tri;
+        }
+        capture('rendu-a-' + (D === 0 ? 'l-origine' : D.toExponential(0).replace('e+', 'e')));
+        // ── relevés dans un bloc SYNCHRONE : la boucle de jeu ne s'y glisse jamais ──
+        var cam = { x: s.pos.x, y: s.pos.y + 1.62, z: s.pos.z };   // hauteur des yeux (src/player.js)
+        var T0 = g.time;
+        g.render.setCamera(cam, s.yaw, s.pitch);
+        g.render.updateAmbience(T0, false);
+        var ref = imageReduite(g, canvas, ctx2d);
+        var vari = diversite(ref);
+        var tri2 = g.render.renderer.info.render.triangles;
+        // tremblement de la géométrie : 8 pas de 1/64 de bloc, temps figé
+        var serieG = [], prec = ref;
+        for (var k = 1; k <= 8; k++) {
+          g.render.setCamera({ x: cam.x + k / 64, y: cam.y, z: cam.z }, s.yaw, s.pitch);
+          g.render.updateAmbience(T0, false);
+          var img = imageReduite(g, canvas, ctx2d);
+          serieG.push(ecartImages(prec, img)); prec = img;
+        }
+        // tremblement des animations : caméra fixe, 8 pas de 0,05 s
+        g.render.setCamera(cam, s.yaw, s.pitch);
+        var serieA = [], precA = null;
+        for (var m = 0; m <= 8; m++) {
+          g.render.updateAmbience(T0 + m * 0.05, false);
+          var imgA = imageReduite(g, canvas, ctx2d);
+          if (precA) serieA.push(ecartImages(precA, imgA));
+          precA = imgA;
+        }
+        g.render.updateAmbience(g.time, false);
+        var eg = statsEcarts(serieG), ea = statsEcarts(serieA);
+        releves.push({ D: D, diversite: vari, triangles: tri2, eg: eg, ea: ea });
+        lignes.push([D === 0 ? 'origine (référence)' : D.toExponential(0).replace('e+', ' × 10^').replace('1 × 10^', '10^'),
+          tri2, vari.toFixed(1), f2(eg.moy), f2(eg.max), f2(eg.saut), f2(ea.moy), f2(ea.max), f2(ea.saut)]);
+      }
+      T.mesure('Rendu loin de l\'origine — écart entre images fixes (% de l\'échelle 0-255, image 400 × 300)',
+        ['distance (blocs)', 'triangles', 'contraste', 'géométrie : écart moyen / pas de 1/64', 'géométrie : saut max', 'géométrie : saut/moyenne',
+         'animations : écart moyen / 0,05 s', 'animations : saut max', 'animations : saut/moyenne'], lignes);
+      // la sonde elle-même doit fonctionner : une image rendue et un relevé fini par distance
+      A.equal(releves.length, DISTANCES.length, 'un relevé par distance');
+      releves.forEach(function (r) {
+        A.ok(isFinite(r.eg.moy) && isFinite(r.ea.moy) && isFinite(r.diversite), 'relevé chiffré à ' + r.D + ' blocs');
+      });
+      A.gt(releves[0].triangles, 0, 'la référence à l\'origine dessine bien la scène');
+    } finally {
+      g.render.setDistance(dist0);
+      g.time = temps0; s.flying = false;
+      await reset(g);
+    }
+  });
+
   // ─── nettoyage ─────────────────────────────────────────────────────────────
   /* SPEC-BANC-016 : fin de test et fin de campagne referment tout ce qu'un
      test peut avoir laissé ouvert (dialogue d'histoire, journal, écrans de
@@ -5514,7 +5637,7 @@
     var delaiMs = ((test.fiche && test.fiche.delai) || opts.delaiDefaut || 15 * 60) * 1000;
     return new Promise(function (resolve) {
       var ctx = { g: g, t0: ahora(), debutISO: new Date().toISOString(), images: [], etapes: [], captures: [],
-                  assertions: { ok: 0, ko: 0 }, etapeCourante: null,
+                  assertions: { ok: 0, ko: 0 }, etapeCourante: null, mesures: [],
                   // étapes déclarées et triplets (SPEC-BANC-077 à 081)
                   etapesTriplets: [], etapeCourante2: null, _chaineEtapes: null };
       enCours = ctx;
@@ -5610,6 +5733,7 @@
             assertions: ctx.assertions, message: message || null, pile: pile || null,
             attendu: attendu, obtenu: obtenu, metriques: metriques(),
             captures: ctx.captures.concat(capturesTriplets),
+            mesures: ctx.mesures,
             etapesTriplets: etapesAvecMetriques,
           };
           enCours = null;
