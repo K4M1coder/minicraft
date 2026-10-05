@@ -295,6 +295,10 @@
     },
     economie: CHAMPS_IDS.economie,
     vehicules: CHAMPS_IDS.vehicules,
+    // présentoirs et socles tenus par le serveur (SPEC-SYNC-027) : [x, y, z, case] — la case est une pile sérialisée
+    expositions: function (l, conv) {
+      pilesIds(liste(l).map(function (e) { return Array.isArray(e) ? e[3] : null; }), conv);
+    },
     // récit de chaque joueur nommé : { recit: MC.Recits.serialiser, fin } (RS.exporter),
     // ou l'ancien format solo tel quel ; seuls les indices d'enquête portent un id
     histoire: function (h, conv) {

@@ -182,6 +182,7 @@
       quetes: [['alice', [{ id: 'f1:quete:0', faction: 'f1', type: 'livrer', ressource: 'or', statut: 'active' }]]],
       commandes: [],
       vehicules: [['camion', 5.5, 40, 5.5, 0, soute]],
+      expositions: [[4, 40, 4, [id, 1]], [5, 40, 4, [id, 1, 0, { titre: 'Mémoires' }]]],
       histoire: { v: 1, liens: null, recits: [['alice#0', { recit: enquete(id), fin: null }]] },
       soloJoueur: enregistrement(id),
       extras: { explores: [], reperes: [], suivi: 0, reputation: null, expositions: [['3,40,3', id, 1, null]],
@@ -237,6 +238,8 @@
       A.deep(une.conteneurs[1].slots[1], [I.COAL, 1], 'combustible d\'un fourneau posé');
       A.equal(une.histoire.recits[0][1].recit.enquete.indices[0].objet, I.COAL, 'indice d\'enquête d\'un joueur');
       A.equal(une.extras.expositions[0][1], I.COAL, 'présentoir d\'une partie importée');
+      A.deep(une.expositions[0][3], [I.COAL, 1], 'SPEC-SYNC-027 : objet exposé sur un présentoir du serveur');
+      A.deep(une.expositions[1][3], [I.COAL, 1, 0, { titre: 'Mémoires' }], 'SPEC-SYNC-027 : et la donnée de ce livre reste intacte');
       A.deep(MC.Save.migrerIdsObjetsMonde(copie(une), conv), une, 'migrer deux fois = migrer une fois');
     });
   });
