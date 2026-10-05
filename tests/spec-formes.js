@@ -32,6 +32,61 @@
         });
     });
 
+    /* « chaque matériau de construction » : la liste est celle de
+       SPEC-CONSTR-006 (briques, béton, terre cuite, marbre, ardoise, pavés,
+       crépi à la chaux, bois de chaque essence en planches et poutres,
+       chaume), en plus des pierres déjà couvertes. Chaque escalier : forme,
+       matériau d'origine, mêmes tuiles (texture/couleur), même dureté et
+       outil, inflammable si son matériau l'est, recette 6 → 4, drop de lui-même. */
+    var MATERIAUX_CONSTRUCTION = [
+      'PLANKS', 'PLANCHES_SAPIN', 'PLANCHES_BOULEAU', 'PLANCHES_ACACIA', 'PLANCHES_JUNGLE',
+      'STONE', 'COBBLE', 'STONE_BRICK', 'SANDSTONE', 'BRICK', 'TUILES', 'ARDOISE',
+      'BETON_ROUGE', 'BETON_JAUNE', 'BETON_BLEU', 'BETON_VERT', 'BETON_NOIR', 'BETON_BLANC', 'BETON_GRIS',
+      'TERRACOTTA', 'TERRACOTTA_RED', 'TERRACOTTA_YELLOW', 'TERRACOTTA_BLUE', 'TERRACOTTA_GREEN',
+      'TERRACOTTA_BLACK', 'TERRACOTTA_WHITE', 'TERRACOTTA_GRAY',
+      'MARBRE', 'CHAUX', 'PAVE', 'CHAUME',
+      'POUTRE_CHENE', 'POUTRE_SAPIN', 'POUTRE_BOULEAU', 'POUTRE_ACACIA', 'POUTRE_JUNGLE',
+    ];
+    it('SPEC-CONSTR-001 : chaque matériau de construction (béton, terre cuite, marbre, chaux, pavé, chaume, poutres…) a son escalier, fidèle à son matériau', function () {
+      var manquants = MATERIAUX_CONSTRUCTION.filter(function (m) { return !C.BLOCKS[B[m]].escalier; });
+      A.deep(manquants, [], 'matériaux sans escalier');
+      MATERIAUX_CONSTRUCTION.forEach(function (m) {
+        var base = C.BLOCKS[B[m]], esc = C.BLOCKS[base.escalier];
+        A.equal(esc.forme, 'escalier', m + ' : forme escalier');
+        A.equal(esc.mat, base.id, m + ' : connaît son matériau');
+        A.deep(esc.tiles, base.tiles, m + ' : mêmes tuiles (texture et couleur) que le bloc plein');
+        A.equal(esc.hardness, base.hardness, m + ' : même dureté');
+        A.equal(esc.tool, base.tool, m + ' : même outil');
+        A.equal(!!esc.inflammable, !!C.isInflammable(base.id) || !!base.inflammable, m + ' : inflammable comme son matériau');
+        A.ok(/^Escalier \(/.test(esc.name), m + ' : nommé « Escalier (…) »');
+      });
+    });
+
+    it('SPEC-CONSTR-001 : chaque escalier de matériau se fabrique (6 → 4) et se ramasse tel quel une fois cassé', function () {
+      MATERIAUX_CONSTRUCTION.forEach(function (m) {
+        var id = B[m], esc = C.BLOCKS[id].escalier;
+        var r = Inv.matchRecipe([id, 0, 0, id, id, 0, id, id, id], 3, 3);
+        A.ok(r && r.id === esc && r.n === 4, m + ' : la marche de 6 blocs rend 4 escaliers');
+        A.deep(C.dropsOf(esc, true, function () { return 0; }), [{ id: esc, n: 1 }], m + ' : l\'escalier cassé se ramasse');
+      });
+    });
+
+    it('SPEC-CONSTR-001 : un escalier de béton se pose orienté selon le regard et s\'inverse sous un plafond', function () {
+      [B.ESCALIER_BETON_ROUGE, B.ESCALIER_MARBRE, B.ESCALIER_CHAUME].forEach(function (escId) {
+        var g = partie();
+        g.s.inv.add(escId, 2); g.s.selected = 0;
+        g.s.yaw = Math.PI / 2; g.s.pitch = 0;     // regard vers -x (ouest)
+        A.equal(g.pl.useOn({ x: 5, y: 9, z: 5, block: B.STONE, nx: 0, ny: 1, nz: 0, t: 1 }), 'place', 'posé');
+        A.equal(g.w.getBlock(5, 10, 5), escId);
+        var e = F.unpackEscalier(g.w.getEtat(5, 10, 5));
+        A.equal(e.orientation, C.orientDeRegard(g.pl.lookDir()), 'orienté selon le regard');
+        A.notOk(e.inverse, 'à l\'air libre : à l\'endroit');
+        g.w.setBlock(8, 11, 5, B.STONE);
+        A.equal(g.pl.useOn({ x: 8, y: 9, z: 5, block: B.STONE, nx: 0, ny: 1, nz: 0, t: 1 }), 'place', 'posé sous un plafond');
+        A.ok(F.unpackEscalier(g.w.getEtat(8, 10, 5)).inverse, 'sous un plafond : inversé');
+      });
+    });
+
     it('SPEC-CONSTR-001 : recette — 6 blocs en marche font 4 escaliers', function () {
       var grid = [B.STONE, 0, 0, B.STONE, B.STONE, 0, B.STONE, B.STONE, B.STONE];
       var r = Inv.matchRecipe(grid, 3, 3);

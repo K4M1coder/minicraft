@@ -155,16 +155,16 @@
     it('SPEC-SAVE-019 : le prochain id libre se propose dans la plage de la famille, jamais dans une plage réservée', function () {
       var R = registre();
       function plage(nom) { return C.PLAGES_IDS.filter(function (p) { return p.nom === nom; })[0]; }
-      A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('formes-l24')), C.B.RAMBARDE + 1, 'formes : juste après la rambarde');
+      A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('formes-l24')), C.B.ESCALIER_POUTRE_JUNGLE + 1, 'formes : juste après le dernier escalier de matériau (SPEC-CONSTR-001)');
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('flore-marine-l35')), C.B.CORAIL_BLANC + 1, 'flore marine : après le corail blanc');
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('interieur')), C.B.SOCLE + 1, 'intérieur : après le socle');
       A.equal(prochainLibre(R.objets, R.retires.objets, plage('objets-l24')), C.I.BRIQUET + 1, 'objets L24 : après le briquet');
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('blocs-origine')), null, 'plage d\'origine pleine (127 ids)');
       // un id retiré n'est jamais reproposé
-      var ret = {}; ret[C.B.RAMBARDE + 1] = 'ANCIEN';
-      A.equal(prochainLibre(R.blocs, ret, plage('formes-l24')), C.B.RAMBARDE + 2, 'l\'id retiré est sauté');
+      var ret = {}; ret[C.B.ESCALIER_POUTRE_JUNGLE + 1] = 'ANCIEN';
+      A.equal(prochainLibre(R.blocs, ret, plage('formes-l24')), C.B.ESCALIER_POUTRE_JUNGLE + 2, 'l\'id retiré est sauté');
       var s = suggestions(R.blocs, R.retires.blocs, 'bloc');
-      A.ok(/formes-l24 → 230/.test(s) && /interieur → 961/.test(s), 'une suggestion par plage : ' + s);
+      A.ok(new RegExp('formes-l24 → ' + (C.B.ESCALIER_POUTRE_JUNGLE + 1)).test(s) && /interieur → 961/.test(s), 'une suggestion par plage : ' + s);
       A.notOk(/reserve/.test(s), 'aucune suggestion dans la plage réservée aux anciens ids d\'objets');
     });
   });

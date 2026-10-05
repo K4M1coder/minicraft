@@ -711,6 +711,33 @@
    B.HAY, B.BOOKSHELF, B.TALL_GRASS, B.DEAD_BUSH, B.COBWEB,
   ].forEach(function (id) { BLOCKS[id].inflammable = true; });
   function isInflammable(id) { var d = BLOCKS[id]; return !!d && !!d.inflammable; }
+
+  // ─── L24 formes (SPEC-CONSTR-001) : escaliers des matériaux de SPEC-CONSTR-006 ───
+  /* Déclarés ICI, après les matériaux (ils doivent exister) et après tous les
+     idForme de la liste du haut : les ids auto-incrémentés continuent à 230
+     sans décaler un seul escalier, dalle ou raccord existant — le registre
+     figé (tests/donnees/ids.json, SPEC-SAVE-019) le vérifie. Le drapeau
+     inflammable du matériau est fixé juste au-dessus : l'escalier en hérite
+     (chaume, poutres). */
+  [['ESCALIER_BETON_ROUGE', B.BETON_ROUGE], ['ESCALIER_BETON_JAUNE', B.BETON_JAUNE],
+   ['ESCALIER_BETON_BLEU', B.BETON_BLEU], ['ESCALIER_BETON_VERT', B.BETON_VERT],
+   ['ESCALIER_BETON_NOIR', B.BETON_NOIR], ['ESCALIER_BETON_BLANC', B.BETON_BLANC],
+   ['ESCALIER_BETON_GRIS', B.BETON_GRIS],
+   ['ESCALIER_TERRACOTTA', B.TERRACOTTA], ['ESCALIER_TERRACOTTA_RED', B.TERRACOTTA_RED],
+   ['ESCALIER_TERRACOTTA_BLUE', B.TERRACOTTA_BLUE], ['ESCALIER_TERRACOTTA_GREEN', B.TERRACOTTA_GREEN],
+   ['ESCALIER_TERRACOTTA_BLACK', B.TERRACOTTA_BLACK], ['ESCALIER_TERRACOTTA_WHITE', B.TERRACOTTA_WHITE],
+   ['ESCALIER_TERRACOTTA_GRAY', B.TERRACOTTA_GRAY],
+   ['ESCALIER_MARBRE', B.MARBRE], ['ESCALIER_CHAUX', B.CHAUX], ['ESCALIER_PAVE', B.PAVE],
+   ['ESCALIER_CHAUME', B.CHAUME],
+   ['ESCALIER_POUTRE_CHENE', B.POUTRE_CHENE], ['ESCALIER_POUTRE_SAPIN', B.POUTRE_SAPIN],
+   ['ESCALIER_POUTRE_BOULEAU', B.POUTRE_BOULEAU], ['ESCALIER_POUTRE_ACACIA', B.POUTRE_ACACIA],
+   ['ESCALIER_POUTRE_JUNGLE', B.POUTRE_JUNGLE],
+  ].forEach(function (p) { escalierDe(p[0], p[1]); });
+  // un escalier ou une dalle brûle comme son matériau (bois, foin, chaume…) :
+  // ceux du haut ont été déclarés avant que le bois ne soit marqué inflammable
+  BLOCKS.forEach(function (d) {
+    if (d && (d.forme === 'escalier' || d.forme === 'dalle') && BLOCKS[d.mat].inflammable) d.inflammable = true;
+  });
   function estFumigene(id) { var d = BLOCKS[id]; return !!d && !!d.fumee; }
 
   // ─── définitions des objets ────────────────────────────────────────────────
@@ -1108,7 +1135,7 @@
         defItem(I[nomCle], {
           name: NOM_PIECE[slot] + ' ' + m.nom, tile: tileArmure++,
           equipSlot: slot.toLowerCase(), defense: m.def[i], durability: m.dur,
-          couleurArmure: m.couleur, maxStack: 1,
+          couleurArmure: m.couleur, matiereArmure: m.cle.toLowerCase(), maxStack: 1,
         });
       });
     });
