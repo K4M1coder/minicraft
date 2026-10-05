@@ -34,6 +34,14 @@ const vm = require('vm');
 const { execSync } = require('child_process');
 
 const root = path.join(__dirname, '..');
+/* SPEC-BANC-112 : REJEU d'un vieux commit par `node tools/registre.js historiser` (tools/historiser.js). Le moteur —
+   ce fichier, le harnais, le catalogue, les préréglages, le rapport, l'orchestration CDP, l'écriture du cahier et du
+   registre — est celui du dépôt COURANT (`root`) ; le code du jeu (src/), les fichiers de tests, SPECS.md, les
+   scripts d'intégration et le serveur de test sont ceux du commit rejoué, dans son worktree temporaire
+   (`racineJeu`, donnée par MC_RACINE_JEU). Sans cette variable, les deux racines sont la même. */
+const racineJeu = process.env.MC_RACINE_JEU ? path.resolve(process.env.MC_RACINE_JEU) : root;
+const MODE_REJEU = racineJeu !== root;
+const modulesAbsents = [], fichiersIllisibles = [];     // ce que le commit rejoué n'a pas (ou ne charge pas)
 const args = process.argv.slice(2);
 const option = (nom) => { const i = args.indexOf(nom); return i >= 0 ? args[i + 1] : null; };
 const optionsToutes = (nom) => { const out = []; for (let i = 0; i < args.length; i++) if (args[i] === nom) out.push(args[i + 1]); return out; };
@@ -98,11 +106,26 @@ if (option('--delai') && !process.env.MC_RUN_ENFANT) {
 }
 /* Liste partagée avec tools/perimetre.js (carte d'impact, SPEC-BANC-067) :
    tests/sources-node.js. */
-const SRC = require('./sources-node.js');
+let SRC = require('./sources-node.js');
 /* Liste PARTAGÉE avec le banc navigateur (tests/index.html) : un seul fichier,
    tests/fichiers-tests.js — deux copies à la main avaient divergé (SPEC-BANC-117). */
-require('./fichiers-tests.js');
-const TESTS = globalThis.MC_FICHIERS_TESTS.map(e => e.f);
+let TESTS;
+if (MODE_REJEU) {
+  // la liste des tests de CE commit (un commit ancien n'a pas les fichiers de tests d'aujourd'hui, ni toujours cette liste)
+  try {
+    const bac = { MC_FICHIERS_TESTS: null }; bac.globalThis = bac;
+    vm.runInNewContext(fs.readFileSync(path.join(racineJeu, 'tests', 'fichiers-tests.js'), 'utf8'), bac);
+    TESTS = bac.MC_FICHIERS_TESTS.map(e => e.f);
+    globalThis.MC_FICHIERS_TESTS = bac.MC_FICHIERS_TESTS;
+  } catch (e) {
+    require('./fichiers-tests.js');
+    TESTS = globalThis.MC_FICHIERS_TESTS.map(e2 => e2.f);
+  }
+  try { SRC = require(path.join(racineJeu, 'tests', 'sources-node.js')); } catch (e) { /* liste du moteur, modules absents ignorés ci-dessous */ }
+} else {
+  require('./fichiers-tests.js');
+  TESTS = globalThis.MC_FICHIERS_TESTS.map(e => e.f);
+}
 
 /* `require`, `process`, `__dirname` : exposés UNIQUEMENT pour que
    tests/spec-banc.js (Node-only, voir son en-tête) puisse vérifier
@@ -113,23 +136,29 @@ const ctx = vm.createContext(Object.assign(Object.create(null), {
   console, Math, JSON, Date, Error, Number, String, Array, Object, Boolean,
   Map, Set, Uint8Array, Float32Array, isNaN, isFinite, parseInt, parseFloat,
   performance: { now: () => Date.now() },
-  require, process, __dirname: path.join(root, 'tests'), Buffer,
+  require, process, __dirname: path.join(racineJeu, 'tests'), Buffer,
 }));
 ctx.globalThis = ctx;
 
-function loadInto(file) {
-  const p = path.join(root, file);
+function loadInto(file, base) {
+  const p = path.join(base || root, file);
+  if (MODE_REJEU && base === racineJeu && !fs.existsSync(p)) {
+    // SPEC-BANC-114 : ce commit n'a pas ce fichier — le moteur actuel l'ignore, sans arrêter la campagne
+    if (/^src\//.test(file)) modulesAbsents.push(file.replace(/^src\//, '').replace(/\.js$/, ''));
+    return;
+  }
   const code = fs.readFileSync(p, 'utf8');
   try {
     vm.runInContext(code, ctx, { filename: file });
   } catch (e) {
+    if (MODE_REJEU && base === racineJeu) { fichiersIllisibles.push({ fichier: file, motif: e.message }); return; }   // idem : ce commit ne se charge pas avec ce moteur
     console.error(`\n  Échec du chargement de ${file}\n  ${e.message}\n`);
     process.exit(2);
   }
 }
 
 loadInto('tests/harness.js');
-SRC.forEach(f => loadInto(`src/${f}.js`));
+SRC.forEach(f => loadInto(`src/${f}.js`, racineJeu));
 loadInto('tests/presets.js');
 loadInto('tests/catalogue.js');
 loadInto('tests/rapport.js');
@@ -137,8 +166,8 @@ loadInto('tests/rapport.js');
 // (branches pas encore fusionnées) : on les ignore s'ils n'existent pas
 // encore, plutôt que d'arrêter toute la suite pour un fichier qui arrive
 TESTS.forEach((f) => {
-  if (!fs.existsSync(path.join(root, `tests/${f}.js`))) return;
-  ctx.T.fichierCourant = `tests/${f}.js`; loadInto(`tests/${f}.js`);
+  if (!fs.existsSync(path.join(racineJeu, `tests/${f}.js`))) return;
+  ctx.T.fichierCourant = `tests/${f}.js`; loadInto(`tests/${f}.js`, racineJeu);
 });
 ctx.T.fichierCourant = null;
 
@@ -220,7 +249,7 @@ function e2eListeDepuisTexte() {
   return FICHIERS_E2E.reduce((acc, f) => acc.concat(e2eListeDepuisFichier(f)), []);
 }
 function e2eListeDepuisFichier(nomFichier) {
-  const fichier = path.join(root, 'tests', nomFichier);
+  const fichier = path.join(racineJeu, 'tests', nomFichier);
   if (!fs.existsSync(fichier)) return [];
   const texte = fs.readFileSync(fichier, 'utf8');
   const lignes = texte.split('\n');
@@ -311,15 +340,17 @@ const FICHE_INTEGRATION = {
   'integration-archi-succes.js': { teste: "SPEC-ARCHI-042 (lot P-SUCC) : les succès sont suivis et attribués par le serveur pour tous les joueurs — casser un bloc (et rien si la casse est refusée), fabriquer, manger, ouvrir la banque, tuer une créature hostile, distance de 200 ± 10 blocs sur les positions du serveur, altitude, foudre (FOUDROYE puis « Rescapé »), succès jamais renvoyés après rechargement, succès d'une partie solo importée repris par le joueur, deux joueurs locaux aux succès séparés, et un client qui ne peut s'attribuer aucun succès.", pourquoi: "En solo le serveur est toujours présent : un succès qui ne dépendrait que du client serait perdu ou falsifiable. Seul un vrai serveur, avec de vrais clients WebSocket, un vrai fichier de monde rechargé et de vrais messages truqués prouve qu'il est le seul arbitre.", attendu: "le script se termine sans échec (code de sortie 0) — compter 1 à 2 minutes (le vol de 200 blocs se mesure en temps de jeu).", domaines: ['ARCHI', 'SUCCES'], etiquettes: ['lent'] },
   'integration-saisons.js': { teste: "SPEC-SAISON-005 : sur un vrai serveur démarré d'un fichier de monde juste avant l'hiver, au bord d'un lac froid de la graine 20260921 — le serveur gèle la surface du lac à l'heure de son monde (rien avant l'hiver), diffuse chaque glace au joueur proche avec son état 1, ne gèle que ce que la règle pure MC.Eau.eauDormante dit gelable ; le fichier sauvegardé porte la glace et son état ; relancé au printemps, le joueur posé sur la glace y tient debout, puis la glace fond (BLOC eau, état 0) et il tombe dans l'eau ; rien ne regèle.", pourquoi: "Le gel est décidé par le serveur, diffusé par BLOC et persisté par le fichier de monde : seul un vrai processus, de vraies sockets et un vrai redémarrage le prouvent (le serveur ne chargeait pas le module de l'eau, et rien n'y gelait).", attendu: "le script se termine sans échec (code de sortie 0) — une minute environ.", domaines: ['SAISON', 'EAU', 'SYNC'] },
   'integration-audio.js': { teste:"SPEC-AUDIO-002 et 005 : sur un vrai serveur, les sons que seul le serveur connaît partent au client par le message SONS — la blessure et la mort d'une créature frappée (son espèce, sa position), le réveil d'un gardien de donjon (son espèce, pour sa voix).", pourquoi: "En ligne comme en solo fermé, le client ne simule plus les créatures : sans ce message, blessures, morts et réveils resteraient muets. Seul un vrai processus server.js, son journal d'entités et de vrais clients prouvent que le relais fonctionne de bout en bout.", attendu: "le script se termine sans échec (code de sortie 0) — une vingtaine de secondes.", domaines: ['AUDIO'] },
+  'integration-banc-diagnostics.js': { teste: "SPEC-BANC-092 à 103 : les diagnostics joints aux échecs et aux lenteurs, contre de vrais serveurs et un vrai navigateur sans fenêtre — exceptions et promesses rejetées de la page, d'un worker et du serveur, messages du navigateur lui-même, ressources introuvables, erreurs de shader, contexte WebGL perdu puis restauré, instantané et vol d'un test en échec, profil CPU .cpuprofile et profil GPU en couches d'un test lent, trace des messages réseau des deux côtés.", pourquoi: "CDP, les workers, WebGL, le Profiler et un serveur qui plante pour de vrai ne se vérifient qu'en les provoquant : les tests Node (spec-banc-diagnostics, spec-banc-erreurs, spec-banc-profils) vérifient la logique avec de faux environnements.", attendu: "le script se termine sans échec (code de sortie 0) ; sans aucun Edge/Chrome installé, la partie navigateur s'ignore avec un avertissement ; aucun serveur ni navigateur ne reste.", domaines: ['BANC'], etiquettes: ['lent'] },
+  'integration-banc-historiser.js': { teste: "SPEC-BANC-111, 112, 113 et 115 : `historiser` sur un VRAI vieux commit (la release v0.8.0) — un vrai worktree temporaire sur ce commit, la campagne du lanceur ACTUEL qui lit le jeu et les tests de ce commit (MC_RACINE_JEU), l'entrée de registre complète avec ses métadonnées git et la version du moteur courant, le worktree supprimé, la reprise sans rejouer le commit déjà inscrit.", pourquoi: "Le rejeu d'un vieux commit par le moteur actuel (deux racines : le moteur et le jeu) ne se prouve qu'avec un vrai dépôt, un vrai worktree et le vrai lanceur ; tests/spec-banc-historiser.js couvre le reste avec de petits dépôts jetables.", attendu: "le script se termine sans échec (code de sortie 0) — quelques secondes (la campagne est réduite à deux tests ; un commit complet coûte de 5 à 10 minutes) ; ignoré si l'étiquette v0.8.0 est absente.", domaines: ['BANC'] },
   'integration-factions.js': { teste: "SPEC-FACTION-006, 007, 012 et 013 (L39) : sur de vrais serveurs, une ronde de faction PNJ prend corps près des joueurs (gardes marqués `pa` qui marchent dans le territoire), la simulation politique avance d'un jour côté serveur et l'objectif de la faction évolue, transmis (POLITIQUE `maj`) et annoncé ; membres d'une faction de joueurs sur la carte par FACTION_MEMBRES, envoyé aux seuls membres et sans fuite vers une autre faction ; canal réservé aux membres ; diplomatie envers une faction de joueurs et une faction PNJ ; pas de dégâts entre membres (témoin : un non-membre est blessé) ; nom balisé refusé, rafale bornée par l'anti-flood ; renommage par l'administrateur et dissolution par un modérateur (refusés à un joueur), membres prévenus, journal ; arrêt et relance : factions, rangs, candidature et relations rendus ; en solo fermé, sauvegarde à la pause et reprise.", pourquoi: "Ces règles n'existent que dans un vrai processus server.js : la cadence d'entretien, l'apparition des gardes, le jour de jeu qui passe, la diffusion par client, les droits d'administration et la sauvegarde du fichier de monde ne se vérifient qu'avec de vraies sockets et plusieurs clients.", attendu: "le script se termine sans échec (code de sortie 0) — compter environ 35 s (l'anti-flood du chat impose d'espacer les commandes).", domaines: ['FACTION'], etiquettes: ['lent'] },
 };
 function integrationListeDepuisFichiers() {
-  return fs.readdirSync(path.join(root, 'tests'))
+  return fs.readdirSync(path.join(racineJeu, 'tests'))
     .filter(f => /^integration-.*\.js$/.test(f) || f === 'charge.js')
     .map(f => ({ nom: f + ' (intégration)', groupe: f, fichier: 'tests/' + f, type: f === 'charge.js' ? 'charge' : 'integration', fiche: FICHE_INTEGRATION[f] }));
 }
 
-const specsTexte = fs.readFileSync(path.join(root, 'SPECS.md'), 'utf8');
+const specsTexte = fs.readFileSync(path.join(racineJeu, 'SPECS.md'), 'utf8');
 const specsIndex = ctx.MC_TESTS.indexSpecs(specsTexte);
 const e2eListe = e2eListeDepuisTexte().concat(integrationListeDepuisFichiers());
 const catalogue = ctx.MC_TESTS.construire(ctx.T, e2eListe, specsIndex);
@@ -526,7 +557,7 @@ if (drapeau('--lister')) {
 const e2eSelectionnes = selection.filter(t => t.type === 'e2e');
 const integrationSelectionnes = selection.filter(t => t.type === 'integration' || t.type === 'charge');
 const aExecuter = selection.filter(t => t.type !== 'e2e' && t.type !== 'integration' && t.type !== 'charge');
-let ignoresE2E = 0;
+let ignoresE2E = 0, ignoresIncompatibles = 0;
 let environnementE2E = null;
 let capturesGlobalesE2E = [];
 
@@ -544,7 +575,7 @@ const secondes = (ms) => (ms / 1000).toFixed(1) + ' s';
    (`arbre_modifie`) au moment de l'inscription, jamais recalculé après
    coup (l'arbre peut avoir changé entretemps). */
 let arbreModifieAuDebut = false;
-try { arbreModifieAuDebut = execSync('git status --porcelain', { cwd: root, encoding: 'utf8' }).trim().length > 0; }
+try { arbreModifieAuDebut = execSync('git status --porcelain', { cwd: racineJeu, encoding: 'utf8' }).trim().length > 0; }
 catch (e) { /* hors dépôt : tant pis, jamais bloquant */ }
 
 // entrées resultats.json construites au fil de l'eau (SPEC-BANC-014), pour
@@ -565,9 +596,9 @@ function ecrireInstantane() {
 
 function environnement() {
   let commit = null;
-  try { commit = execSync('git rev-parse --short HEAD', { cwd: root, encoding: 'utf8' }).trim(); } catch (e) { /* hors dépôt */ }
+  try { commit = execSync('git rev-parse --short HEAD', { cwd: racineJeu, encoding: 'utf8' }).trim(); } catch (e) { /* hors dépôt */ }
   let versionJeu = null;
-  try { versionJeu = /var VERSION_JEU = '([^']+)'/.exec(fs.readFileSync(path.join(root, 'src', 'core.js'), 'utf8'))[1]; } catch (e) { /* rien */ }
+  try { versionJeu = /var VERSION_JEU = '([^']+)'/.exec(fs.readFileSync(path.join(racineJeu, 'src', 'core.js'), 'utf8'))[1]; } catch (e) { /* rien */ }
   return { source: 'node', versionJeu, commit, node: process.version };
 }
 
@@ -715,11 +746,13 @@ const res = ctx.T.run(nomsAExecuter, {
       message: detail && detail.message, attendu: detail && detail.attendu, obtenu: detail && detail.obtenu, pile: detail && detail.pile,
       // SPEC-BANC-106 : sortie « rapport de test » du journal (entrées warn et plus de ce test, codes d'erreur compris)
       ...(detail && detail.journal ? { journal: detail.journal } : {}),
+      // SPEC-BANC-093 : enregistreur de vol (tampon circulaire, tous niveaux) — seulement si le test échoue ou est lent
+      ...(detail && detail.vol ? { vol: detail.vol, volPerdues: detail.volPerdues } : {}),
     });
   },
   finGroupe: (nom, p, f, ms) => { ecrire((f ? '  ✗ ' : '  ✓ ') + p + '/' + (p + f) + ' en ' + secondes(ms) +
                                         ' — total écoulé ' + secondes(Date.now() - debut)); ecrireInstantane(); },
-}, { delaiMs: DELAI_TEST_MS_DEFAUT });
+}, { delaiMs: DELAI_TEST_MS_DEFAUT, seuilLentMs: SEUIL_LENT * 1000 });
 
 // ── tests/integration-*.js et tests/charge.js : chacun un vrai processus ───
 /* Pas de describe/it ici : un lancement, un code de sortie. Le journal du
@@ -731,9 +764,9 @@ const res = ctx.T.run(nomsAExecuter, {
    marcheraient dessus et échoueraient au démarrage. Un verrou inter-processus
    (fichier créé en exclusivité, PID dedans, repris s'il est périmé) sérialise
    donc cette phase — l'attente est bornée par le filet d'inactivité. */
+const os = require('os');
 const verrouIntegration = (function () {
   if (!integrationSelectionnes.length) return { toucher() {}, relacher() {} };
-  const os = require('os');
   const chemin = path.join(os.tmpdir(), 'mc-integration.lock');
   const dort = (ms) => { try { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms); } catch (e) { /* pas de pause : tant pis */ } };
   const vivant = (pid) => { try { process.kill(pid, 0); return true; } catch (e) { return e.code === 'EPERM'; } };
@@ -768,7 +801,20 @@ integrationSelectionnes.forEach((t) => {
   if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom); } catch (e) { /* rien */ }
   verrouIntegration.toucher();
   const t0 = Date.now();
-  const lancer = () => require('child_process').spawnSync(process.execPath, [path.join(root, t.fichier)], { encoding: 'utf8', cwd: root });
+  /* SPEC-BANC-100 : les serveurs lancés par ce script écrivent leur journal dans un dossier à EUX (MC_JOURNAL_DOSSIER,
+     hérité par les processus enfants) : leur sortie, leurs exceptions non rattrapées et leurs promesses rejetées
+     (process.on('uncaughtException'/'unhandledRejection') de server.js) sont ensuite jointes au rapport du test, s'il
+     échoue ou s'il est lent. */
+  const dossierJournal = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-journal-int-'));
+  /* SPEC-BANC-103 : un test RÉSEAU (domaine RESEAU, SYNC, SECU, ARCHI ou PVP) en échec est rejoué UNE fois (voir plus bas) ;
+     ce rejeu-là trace les messages échangés — côté serveur (--journal RESEAU:trace, dans son journal) et côté client
+     (MC_TRACE_CLIENT_FICHIER) — pour que le rapport joigne les derniers messages des deux côtés. Le premier essai, lui,
+     ne trace rien : le coût (une ligne de journal par message) fausserait les budgets de latence. */
+  const estReseau = (t.domaines || []).some(d => ['RESEAU', 'SYNC', 'SECU', 'ARCHI', 'PVP'].indexOf(d) >= 0);
+  const fichierTraceClient = path.join(dossierJournal, 'trace-client.json');
+  const lancer = (avecTrace) => require('child_process').spawnSync(process.execPath, [path.join(racineJeu, t.fichier)],
+    { encoding: 'utf8', cwd: racineJeu, env: Object.assign({}, process.env, { MC_JOURNAL_DOSSIER: dossierJournal },
+        avecTrace ? { MC_TRACE_RESEAU: '1', MC_TRACE_CLIENT_FICHIER: fichierTraceClient } : {}) });
   let r = lancer();
   /* Un échec d'intégration sous charge machine (horloge de jeu du serveur qui
      ralentit, bureau saturé) est rejoué UNE fois : une vraie régression
@@ -780,17 +826,30 @@ integrationSelectionnes.forEach((t) => {
     ecrire('  ↻ ' + t.nom + ' : échec au premier essai, rejeu unique');
     if (fichierEtat) try { fs.writeFileSync(fichierEtat, t.nom + ' (rejeu)'); } catch (e) { /* rien */ }
     verrouIntegration.toucher();
-    r = lancer();
+    r = lancer(estReseau);
     instable = r.status === 0;
   }
   const ms = Date.now() - t0;
   const ok = r.status === 0;
+  const DIAG = require('../tools/diagnostics.js');
+  const serveur = DIAG.recolterJournalServeur(dossierJournal, { maxLignes: 300 });
+  let reseau = null;
+  if (estReseau && !ok) {
+    let client = [];
+    try { client = JSON.parse(fs.readFileSync(fichierTraceClient, 'utf8')); } catch (e) { /* le test n'utilise pas le client commun */ }
+    const rapport = DIAG.rapportReseau(client, serveur.lignes, 50);
+    if (rapport.messages.length) reseau = rapport;
+  }
+  try { fs.rmSync(dossierJournal, { recursive: true, force: true }); } catch (e) { /* verrouillé un instant : dossier temporaire */ }
   ecrire((ok ? '  ✓ ' : '  ✗ ') + t.nom + ' en ' + secondes(ms) + (instable ? ' ⚠ instable : réussi au 2e essai' : ''));
   if (ok) res.passed++; else res.failed++;
   testsResultats.push({
     id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
     etat: ok ? 'ok' : 'echec', duree_ms: ms, etapes: [], assertions: { ok: ok ? 1 : 0, ko: ok ? 0 : 1 },
     message: ok ? (instable ? 'instable : échec au premier essai, réussi au rejeu.\n' + sortiePremier : undefined) : resumeEchec((r.stdout || '') + (r.stderr || '')),
+    // SPEC-BANC-092 : joint, mais le cahier ne le garde que pour un test en échec ou lent
+    ...(serveur.lignes.length ? { serveur: { journal: serveur.lignes, pannes: serveur.pannes } } : {}),
+    ...(reseau ? { reseau } : {}),
   });
   ecrireInstantane();
 });
@@ -829,6 +888,8 @@ if (e2eSelectionnes.length) {
     path.join(root, 'tools', 'e2e-headless.js'),
     '--entree', tmpEntree, '--sortie', tmpSortie,
     '--delai-demarrage', '25000', '--delai-test', String(delaiTestE2eMs), '--delai-global', String(delaiGlobalE2eMs),
+    // SPEC-BANC-101/102 : au-delà de ce seuil, profil CPU et trace GPU (jointes au rapport du test lent)
+    '--seuil-lent', String(SEUIL_LENT * 1000), '--pieces', path.join(os.tmpdir(), 'mc-diagnostics', 'run-' + process.pid + '-' + Date.now().toString(36)),
   ], { cwd: root, stdio: silencieux ? 'ignore' : ['ignore', 'inherit', 'inherit'] });
   let resultatE2E = null;
   try { resultatE2E = JSON.parse(fs.readFileSync(tmpSortie, 'utf8')); } catch (e) { /* rien : voir la branche d'échec plus bas */ }
@@ -837,7 +898,7 @@ if (e2eSelectionnes.length) {
 
   if (resultatE2E && resultatE2E.ok) {
     resultatE2E.tests.forEach((t) => {
-      if (t.etat === 'ok') res.passed++; else res.failed++;
+      if (t.etat === 'ok') res.passed++; else if (t.etat === 'ignore') ignoresIncompatibles++; else res.failed++;
       testsResultats.push(t);
     });
     capturesGlobalesE2E = resultatE2E.captures || [];
@@ -896,6 +957,20 @@ if (environnementE2E) {
   environnementFinal.os = environnementE2E.os;
   environnementFinal.avecFenetre = environnementE2E.avecFenetre;
 }
+/* SPEC-BANC-114 : sur un commit REJOUÉ, un test que le moteur ne peut pas faire tourner — il appelle un module ou une
+   API que ce commit n'a pas encore (ou plus) — n'est ni réussi ni en échec : il est `ignore`, avec une raison explicite.
+   Le critère est volontairement étroit : un module attendu par le moteur manque ET l'erreur est de la famille « absent /
+   indéfini / n'est pas une fonction » ; toute autre panne reste un échec, c'est un vrai résultat pour ce commit. */
+if (MODE_REJEU && (modulesAbsents.length || fichiersIllisibles.length)) {
+  const HIST = require('../tools/historiser.js');
+  testsResultats.forEach((t) => {
+    if (t.etat !== 'echec' && t.etat !== 'delai') return;
+    const raison = HIST.classerIncompatibilite(t.message, modulesAbsents);
+    if (!raison) return;
+    t.etat = 'ignore'; t.raison = raison;
+    res.failed--; ignoresIncompatibles++;
+  });
+}
 // SPEC-BANC-070 : raison de sélection de chaque test retenu
 testsResultats.forEach((t) => { if (!t.raison_selection) t.raison_selection = raisonSelectionDe(P.cleTest(t.type, t.groupe, t.nom)); });
 /* SPEC-BANC-076 : trous de périmètre. Sur un run COMPLET (pr, regression)
@@ -933,8 +1008,11 @@ const resultatsFinaux = {
   campagne: {
     preset: etiquetteCampagne, criteres, debut: debutISO, fin: finISO, duree_ms: Date.now() - debut,
     interrompue: false, arbreModifie: arbreModifieAuDebut, environnement: environnementFinal,
-    totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E, parType, parDomaine },
-    lents, observationFonctions: surcoutFonctions,
+    totaux: { total: testsResultats.length, passes: res.passed, echecs: res.failed, ignores: ignoresE2E + ignoresIncompatibles, parType, parDomaine },
+    lents, seuilLentMs: SEUIL_LENT * 1000, observationFonctions: surcoutFonctions,
+    // SPEC-BANC-112 : la version du MOTEUR de test qui a produit ce run (celui du dépôt courant, même en rejeu d'un vieux commit)
+    moteurTest: require('../tools/moteur-test.js').moteurTestActuel(root),
+    ...(MODE_REJEU ? { rejeu: { racineJeu: racineJeu, modulesAbsents: modulesAbsents, fichiersIllisibles: fichiersIllisibles } } : {}),
     perimetre: NATURE_PERIMETRE,
     perimetreDetail: perimetreCalcule ? {
       mode: perimetreCalcule.mode, depuis: perimetreCalcule.depuis, repli: perimetreCalcule.repli || null,

@@ -138,6 +138,7 @@
 
           let msg;
           try { msg = JSON.parse(NP.utf8Decoder(d.charge)); } catch (e) { continue; }
+          if (S.traceReseauActive()) S.tracerMessage('recu', msg, d.charge.length, c);      // SPEC-BANC-103
           // SPEC-SECU-001 : une exception pendant le traitement NE DOIT fermer
           // QUE cette connexion fautive — jamais arrêter le processus ni couper
           // les autres clients déjà connectés.

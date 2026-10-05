@@ -25,7 +25,9 @@
      `limiteOctets` (64 Mo par défaut). */
 'use strict';
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
+const DIAG = require('./diagnostics.js');
 
 const RACINE = path.join(__dirname, '..');
 const DOSSIER_RESULTATS = path.join(RACINE, 'tests', 'resultats');
@@ -97,6 +99,38 @@ function assainirCampagne(campagne) {
   return c;
 }
 
+/* Pièces de diagnostic volumineuses (profils CPU `.cpuprofile`, traces Chrome)
+   produites par tools/e2e-headless.js dans un dossier temporaire dédié, puis
+   copiées dans `profils/` du cahier (SPEC-BANC-101/102). Seules les pièces
+   situées SOUS ce dossier sont copiées : un chemin venu d'un envoi HTTP ne
+   doit jamais faire lire un autre fichier du poste. */
+const DOSSIER_PIECES = path.join(os.tmpdir(), 'mc-diagnostics');
+function sousDossier(fichier, dossier) {
+  const rel = path.relative(path.resolve(dossier), path.resolve(fichier));
+  return !!rel && !rel.startsWith('..') && !path.isAbsolute(rel);
+}
+function copierPieces(resultats, dossier, autorisees) {
+  const piece = (obj) => {
+    if (!obj || typeof obj !== 'object' || obj.source === undefined) return;
+    const src = String(obj.source);
+    delete obj.source;
+    if (!autorisees || !sousDossier(src, DOSSIER_PIECES)) return;
+    try {
+      const dest = path.join(dossier, 'profils');
+      fs.mkdirSync(dest, { recursive: true });
+      const nom = path.basename(src);
+      fs.copyFileSync(src, path.join(dest, nom));
+      obj.fichier = 'profils/' + nom;
+      try { fs.unlinkSync(src); } catch (e) { /* déjà parti */ }
+    } catch (e) { /* pièce illisible : le rapport garde ses chiffres, sans lien */ }
+  };
+  (resultats.tests || []).forEach((t) => {
+    piece(t.profilCPU);
+    piece(t.trace);
+    if (t.profilGPU && t.profilGPU.couches && t.profilGPU.couches.processus) piece(t.profilGPU.couches.processus.trace);
+  });
+}
+
 /* Écrit resultats.json + rapport.html + captures/. `resultats` suit le
    schéma de tests/rapport.js. `captures` (facultatif) : [{ libelle, type,
    base64 }] — le fichier fabriqué pour chacune est reporté dans
@@ -137,6 +171,13 @@ function ecrireCahier(resultats, options) {
   // reporte les noms de fichiers fabriqués dans les entrées de test correspondantes
   const resultatsFinaux = JSON.parse(JSON.stringify(resultats || {}));
   if (resultatsFinaux.campagne) assainirCampagne(resultatsFinaux.campagne);
+  /* SPEC-BANC-092 : un diagnostic (journal, vol, instantané, profils, trace…)
+     n'est conservé que pour un test en échec ou lent, quel que soit le chemin
+     qui a produit ce résultat ; les métriques restent toujours. */
+  const seuilLent = resultatsFinaux.campagne && typeof resultatsFinaux.campagne.seuilLentMs === 'number'
+    ? resultatsFinaux.campagne.seuilLentMs : DIAG.SEUIL_LENT_DEFAUT_MS;
+  DIAG.appliquerPolitiqueCampagne(resultatsFinaux, seuilLent);
+  copierPieces(resultatsFinaux, dossier, !opts.sansPieces);
   (resultatsFinaux.tests || []).forEach((t) => {
     (t.captures || []).forEach((c) => {
       const parIndex = typeof c.fichier === 'number' ? fichierParIndex[c.fichier] : undefined;
@@ -213,12 +254,12 @@ function traiterEnvoi(corps, contexte) {
     return { ok: false, code: 400, motif: 'corps invalide : resultats manquant' };
   }
   const captures = Array.isArray(corps.captures) ? corps.captures.filter((c) => c && typeof c.base64 === 'string') : [];
-  const r = ecrireCahier(corps.resultats, { captures });
+  const r = ecrireCahier(corps.resultats, { captures, sansPieces: true });   // un envoi HTTP ne désigne jamais de fichier du poste
   return { ok: true, code: 200, dossier: r.dossier, rapport: r.rapport, dossierAbsolu: r.dossierAbsolu };
 }
 
 module.exports = {
   estAdresseLocale, peutRecevoirResultats, slug, nomDossier, ecrireCahier, elaguer, traiterEnvoi,
-  assainirCampagne, assainirChamp,
+  assainirCampagne, assainirChamp, copierPieces, DOSSIER_PIECES,
   DOSSIER_RESULTATS, MAX_DOSSIERS, LIMITE_OCTETS_DEFAUT, LIMITE_CHAMP,
 };

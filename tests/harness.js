@@ -41,6 +41,11 @@
     return J ? (J.outilsHarnais || J) : null;
   }
 
+  /* Enregistreur de vol (SPEC-BANC-093) : taille du tampon circulaire d'un
+     test. Le journal y écrit TOUT, niveaux trace et debug compris ; il n'est
+     joint au rapport que si le test échoue ou est lent (SPEC-BANC-092). */
+  var CAPACITE_VOL = 500;
+
   function normaliserFiche(f) {
     if (!f || typeof f !== 'object') return null;
     return {
@@ -247,11 +252,12 @@
         /* SPEC-BANC-105 : le test en cours entre dans le contexte de chaque
            entrée du journal ; SPEC-BANC-106 : sortie « rapport de test » —
            les entrées warn et plus de CE test, jointes à son résultat. */
-        var J = journalDuTest(), collecte = null;
+        var J = journalDuTest(), collecte = null, vol = null;
         if (J) {
           J.contexte({ test: idDe(t.name) || t.name });
           collecte = J.sortieCollecte('rapport', 'warn');
           J.ajouterSortie(collecte);
+          if (J.sortieAnneau) { vol = J.sortieAnneau('vol', 'trace', opts.capaciteVol || CAPACITE_VOL); J.ajouterSortie(vol); }
         }
         try {
           var retour = t.fn();
@@ -279,9 +285,15 @@
         } finally {
           enCours = null;
           pileAssertions.pop();
-          if (J) { J.retirerSortie('rapport'); J.contexte({ test: null }); }
+          if (J) { J.retirerSortie('rapport'); J.retirerSortie('vol'); J.contexte({ test: null }); }
         }
-        var journalTest = collecte && collecte.entrees.length ? collecte.lignes() : null;
+        /* SPEC-BANC-092 : un diagnostic n'est joint que si le test échoue ou est lent
+           (`options.seuilLentMs`) ; sinon il est jeté, seules les métriques restent. */
+        var dureeTest = maintenant() - t0;
+        var lent = !!(opts.seuilLentMs && dureeTest > opts.seuilLentMs);
+        var joindre = !ok || lent;
+        var journalTest = joindre && collecte && collecte.entrees.length ? collecte.lignes() : null;
+        var volTest = joindre && vol && vol.entrees.length ? vol.lignes() : null;
         /* `detail`, toujours fourni (succès compris) : c'est ce dont
            tests/run.js a besoin pour construire une entrée resultats.json
            complète au fil de l'eau (SPEC-BANC-014), sans devoir attendre la
@@ -289,8 +301,9 @@
         if (suivi && suivi.finTest) {
           var detail = { etapes: contexte.etapes, assertions: contexte.assertions,
             message: info && info.message, attendu: info && info.attendu, obtenu: info && info.obtenu,
-            pile: info && info.pile, delai: !!(info && info.delai), debut: debutISO, journal: journalTest };
-          suivi.finTest(s.name, t.name, ok, maintenant() - t0, detail);
+            pile: info && info.pile, delai: !!(info && info.delai), debut: debutISO, journal: journalTest,
+            vol: volTest, volPerdues: volTest ? vol.perdues : 0, lent: lent };
+          suivi.finTest(s.name, t.name, ok, dureeTest, detail);
         }
       }
       if (suivi && suivi.finGroupe) suivi.finGroupe(s.name, sp, sf, maintenant() - t0g);

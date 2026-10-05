@@ -13,12 +13,14 @@
   })();
   // ordre de src/world.js dans index.html (sous-ensemble) — voir
   // docs/vague-2/B3.md § 10 « pièges connus »
-  var MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs',
+  var MODULES = ['journal', 'worker-erreurs', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs',
                  'donjons', 'habitats', 'routes', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits',
                  'lumiere', 'factions', 'inventory', 'daycycle', 'contrats-vague2', 'taches-chunks'];
   importScripts.apply(self, MODULES.map(function (m) { return m + '.js' + suffixe; }));
 
   var MC = self.MC;
+  // SPEC-BANC-097 : exceptions et promesses rejetées de ce worker remontent au journal du fil principal
+  MC.WorkerErreurs.installer(self, 'worker-monde');
   var monde = null, epoqueCourante = -1;
 
   self.onmessage = function (ev) {

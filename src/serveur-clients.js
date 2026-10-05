@@ -21,7 +21,7 @@
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
     Object.assign(S, {
       definirPause, armerAbsence, marquerPoste, diffuser, noterBlocMonde,
-      diffuserBlocsMonde, guildeResume, envoyer, fermer,
+      diffuserBlocsMonde, guildeResume, envoyer, fermer, traceReseauActive, tracerMessage,
     });
 
     // ── clients ──────────────────────────────────────────────────────────────────
@@ -83,10 +83,23 @@
       if (EP.pauseParAbsence) definirPause(false);
     }
 
+    /* SPEC-BANC-103 : trace des messages échangés, côté serveur. Avec `--journal RESEAU:trace`,
+       chaque message reçu ou envoyé laisse une ligne `recu|envoi <type> seq=<seq|-> taille=<octets>
+       joueur=#<id>` dans le journal (console ET fichier du serveur) : un test réseau en échec joint
+       ces lignes, avec le journal du serveur pendant le test (tools/diagnostics.js). Sans cette
+       option, rien n'est construit : un test sur un message ne coûte rien en exploitation. */
+    function traceReseauActive() { return !!S.logReseau && J.niveau('RESEAU') === 'trace'; }
+    function tracerMessage(sens, msg, taille, c) {
+      const seq = msg && msg.seq !== undefined ? msg.seq : (msg && msg.s !== undefined ? msg.s : null);
+      S.logReseau.trace(sens + ' ' + (msg ? msg.t : '?') + ' seq=' + (typeof seq === 'number' ? seq : '-') + ' taille=' + taille + ' joueur=#' + (c ? c.id : '*'));
+    }
     function diffuser(msg, saufId) {
-      const trame = NP.encoder(JSON.stringify(msg), NP.OP.TEXTE, Buffer.alloc);
+      const texte = JSON.stringify(msg);
+      const trame = NP.encoder(texte, NP.OP.TEXTE, Buffer.alloc);
+      const trace = traceReseauActive();
       clients.forEach(c => {
         if (c.id === saufId || !c.vivant) return;
+        if (trace) tracerMessage('envoi', msg, texte.length, c);
         try { c.socket.write(trame); } catch (e) { fermer(c, 'ecriture impossible'); }
       });
     }
@@ -127,7 +140,9 @@
     function envoyer(c, msg) {
       if (!c || !c.vivant) return;
       try {
-        c.socket.write(NP.encoder(JSON.stringify(msg), NP.OP.TEXTE, Buffer.alloc));
+        const texte = JSON.stringify(msg);
+        if (traceReseauActive()) tracerMessage('envoi', msg, texte.length, c);
+        c.socket.write(NP.encoder(texte, NP.OP.TEXTE, Buffer.alloc));
       } catch (e) { fermer(c, 'ecriture impossible'); }
     }
 

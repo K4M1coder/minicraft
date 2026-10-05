@@ -463,6 +463,7 @@
     journal.validerRemontee = validerRemontee;
     journal.sortieRemontee = sortieRemontee;
     journal.sortieCollecte = sortieCollecte;
+    journal.sortieAnneau = sortieAnneau;
     journal.heureDe = heureDe;
     journal.NIVEAUX = NIVEAUX;
     journal.MODES = MODES;
@@ -473,7 +474,7 @@
        rapport) : un OBJET, que l'observation des fonctions de tests/run.js
        n'enveloppe pas — sans quoi chaque test « appellerait » le journal et
        la carte d'impact rattacherait tous les tests à src/journal.js. */
-    journal.outilsHarnais = { contexte: contexte, ajouterSortie: ajouterSortie, retirerSortie: retirerSortie, sortieCollecte: sortieCollecte };
+    journal.outilsHarnais = { contexte: contexte, ajouterSortie: ajouterSortie, retirerSortie: retirerSortie, sortieCollecte: sortieCollecte, sortieAnneau: sortieAnneau };
     return journal;
   }
 
@@ -503,6 +504,31 @@
       nom: nom || 'collecte', seuil: niveauValide(seuil) ? seuil : 'warn', entrees: [],
       ecrire: function (e) { if (s.entrees.length < borne) s.entrees.push(e); },
       lignes: function () { return s.entrees.map(formater); },
+    };
+    return s;
+  }
+
+  /* Sortie « enregistreur de vol » (SPEC-BANC-093) : un tampon CIRCULAIRE de
+     capacité bornée — quand il est plein, l'entrée la plus ancienne cède la
+     place à la plus récente (`perdues` les compte). Le harnais en pose un par
+     test, au niveau trace : son contenu est joint au rapport d'un test qui
+     échoue ou qui est lent, jeté sinon. Contrairement à `sortieCollecte`, qui
+     s'arrête de collecter quand elle est pleine, celle-ci garde la FIN du test,
+     là où se trouve en général la cause. */
+  function sortieAnneau(nom, seuil, capacite) {
+    var cap = typeof capacite === 'number' && isFinite(capacite) ? Math.max(1, Math.floor(capacite)) : 500;
+    var cases = new Array(cap), debut = 0, taille = 0, perdues = 0;
+    var s = {
+      nom: nom || 'vol', seuil: niveauValide(seuil) ? seuil : 'trace',
+      ecrire: function (e) {
+        if (taille < cap) { cases[(debut + taille) % cap] = e; taille++; }
+        else { cases[debut] = e; debut = (debut + 1) % cap; perdues++; }
+      },
+      get entrees() { var out = []; for (var i = 0; i < taille; i++) out.push(cases[(debut + i) % cap]); return out; },
+      get perdues() { return perdues; },
+      get capacite() { return cap; },
+      lignes: function () { return s.entrees.map(formater); },
+      vider: function () { cases = new Array(cap); debut = 0; taille = 0; perdues = 0; },
     };
     return s;
   }

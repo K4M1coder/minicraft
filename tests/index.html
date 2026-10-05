@@ -3,6 +3,10 @@
 <head>
 <meta charset="utf-8">
 <title>MiniCraft — banc de test</title>
+<!-- SPEC-BANC-095/098/099 : TOUT PREMIER script de la page, avant three.js et le jeu — les exceptions
+     non rattrapées, promesses rejetées, ressources introuvables et erreurs de shaders sont captées dès
+     le chargement ; sans fenêtre, tools/e2e-headless.js l'installe aussi par CDP -->
+<script src="erreurs-page.js"></script>
 <!-- les styles du jeu sont partagés : sans eux, l'interface testée ne serait
      pas celle qui tourne réellement (le viseur ne serait même pas positionné) -->
 <link rel="icon" href="data:,">

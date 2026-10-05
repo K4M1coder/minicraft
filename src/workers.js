@@ -28,6 +28,20 @@
      `libres()` : nombre de workers actuellement inoccupés — c'est sur cette
      valeur que l'appelant (game.js, via MC.FileChunks.distribuer) borne le
      nombre de tâches à distribuer par image. */
+  /* SPEC-BANC-097 : les erreurs d'un worker vont au journal (domaine WORKER).
+       E-WORK-001  `worker.onerror` : exception non rattrapée / script introuvable (le
+                   fil principal ne reçoit ni pile ni objet d'erreur, seulement message,
+                   fichier et ligne) ;
+       E-WORK-002  message `journal` envoyé PAR le worker (src/worker-erreurs.js) : l'erreur
+                   ou la promesse rejetée vue de l'intérieur, avec sa pile ;
+       E-WORK-004  `worker.onmessageerror` : un message reçu n'a pas pu être désérialisé. */
+  function logWorker() { return MC.Journal ? MC.Journal('WORKER') : null; }
+  function relayerJournal(d, script) {
+    var log = logWorker();
+    if (!log) return;
+    log.error('E-WORK-002 ' + String(d.message || 'erreur dans un worker').slice(0, 1000),
+      { worker: d.worker || script, origine: d.origine || null, fichier: d.fichier || null, ligne: d.ligne === undefined ? null : d.ligne }, d.pile || null);
+  }
   function creerPool(opts) {
     if (typeof Worker === 'undefined') return null;
     var taille = Math.max(1, (opts && opts.taille) || 1);
@@ -37,12 +51,21 @@
         var w = new Worker(opts.script);
         (function (idx) {
           w.onmessage = function (ev) {
+            // un message de journal n'est PAS le résultat d'une tâche : il ne libère pas le worker
+            if (ev.data && ev.data.type === 'journal') { relayerJournal(ev.data, opts.script); return; }
             occupe[idx] = false;
             if (opts.onMessage) opts.onMessage(ev.data);
           };
           w.onerror = function (ev) {
             occupe[idx] = false;
+            var log = logWorker();
+            if (log) log.error('E-WORK-001 erreur non rattrapée dans un worker : ' + String((ev && ev.message) || 'erreur sans message'),
+              { worker: opts.script, fichier: (ev && ev.filename) || null, ligne: (ev && ev.lineno) || null });
             if (opts.onErreur) opts.onErreur(ev);
+          };
+          w.onmessageerror = function () {
+            var log = logWorker();
+            if (log) log.error('E-WORK-004 message de worker illisible (désérialisation impossible)', { worker: opts.script });
           };
         })(i);
         workers.push(w);

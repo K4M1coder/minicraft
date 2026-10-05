@@ -55,9 +55,13 @@
     // historique global : vues, séries, inscription depuis le banc, préréglages et crochets (SPEC-BANC-004, 006, 041 à 058)
     'spec-historique-vues',
     // banc de tests, 2e moitié : répartition et sélection regroupée (SPEC-BANC-063 à 065)
-    'spec-banc-repartition', 'spec-banc-rendu'];
+    'spec-banc-repartition', 'spec-banc-rendu',
+    // banc de tests : diagnostics joints aux échecs et aux lenteurs (SPEC-BANC-092 à 103)
+    'spec-banc-diagnostics', 'spec-banc-erreurs', 'spec-banc-profils',
+    // banc de tests : campagnes sur l'historique des merges, PR et releases (SPEC-BANC-111 à 116)
+    'spec-banc-historiser'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true, 'spec-serveur-modules': true, 'spec-historique-vues': true, 'spec-banc-repartition': true, 'spec-banc-rendu': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true, 'spec-serveur-modules': true, 'spec-historique-vues': true, 'spec-banc-repartition': true, 'spec-banc-rendu': true, 'spec-commandes': true, 'spec-banc-diagnostics': true, 'spec-banc-erreurs': true, 'spec-banc-profils': true, 'spec-banc-historiser': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

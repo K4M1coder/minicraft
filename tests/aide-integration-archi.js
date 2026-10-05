@@ -67,6 +67,20 @@ function adressesNonLocales() {
   return out;
 }
 
+// ── trace des messages du client (SPEC-BANC-103) ────────────────────────────
+/* Les N derniers messages que les clients de ce processus ont envoyés et reçus (sens, type, seq, taille,
+   horodatage). Écrits dans `MC_TRACE_CLIENT_FICHIER` à la sortie du processus quand tests/run.js rejoue un test
+   réseau en échec : il les joint à son rapport avec le journal du serveur (tools/diagnostics.js). */
+const TRACE_CLIENT = [];
+function noterClient(sens, msg, taille) {
+  const seq = msg && msg.seq !== undefined ? msg.seq : (msg && msg.s !== undefined ? msg.s : null);
+  TRACE_CLIENT.push({ cote: 'client', sens, type: msg ? msg.t : null, seq: typeof seq === 'number' ? seq : null, taille, t: Date.now() });
+  if (TRACE_CLIENT.length > 400) TRACE_CLIENT.shift();
+}
+if (process.env.MC_TRACE_CLIENT_FICHIER) {
+  process.on('exit', () => { try { fs.writeFileSync(process.env.MC_TRACE_CLIENT_FICHIER, JSON.stringify(TRACE_CLIENT)); } catch (e) { /* trace perdue : le rapport s'en passe */ } });
+}
+
 // ── client WebSocket minimal ────────────────────────────────────────────────
 /* opts : { hote (défaut 127.0.0.1), origine, hoteHttp (en-tête Host) }.
    Résout avec le client, ou rejette avec Error('http <code>') si la poignée de
@@ -92,7 +106,7 @@ function connecter(port, opts) {
     const attentes = [];
     const client = {
       socket: sock, messages, pongs: 0, fermee: false,
-      envoyer(obj) { client.trame(0x1, Buffer.from(JSON.stringify(obj), 'utf8')); },
+      envoyer(obj) { const brut = JSON.stringify(obj); noterClient('envoi', obj, brut.length); client.trame(0x1, Buffer.from(brut, 'utf8')); },
       trame(opcode, charge) {
         const m = crypto.randomBytes(4);
         const n = charge.length;
@@ -149,6 +163,7 @@ function connecter(port, opts) {
         let msg;
         try { msg = JSON.parse(NP.utf8Decoder(d.charge)); } catch (e) { continue; }
         messages.push(msg);
+        noterClient('recu', msg, d.charge.length);
         if (client.surMessage) client.surMessage(msg);
         for (let k = attentes.length - 1; k >= 0; k--) {
           if (attentes[k].test(msg)) { attentes[k].res(msg); attentes.splice(k, 1); }
@@ -197,6 +212,9 @@ function sonde(port, hote) {
    Résout avec { proc, logs, port, sortie(), arreter() } une fois `MC_PORT=`
    lu ET l'index servi ; rejette si le processus se termine avant. */
 function lancer(args, env) {
+  /* SPEC-BANC-103 : quand tests/run.js rejoue un test réseau en échec (MC_TRACE_RESEAU=1), le serveur trace chaque
+     message échangé dans son journal (--journal RESEAU:trace), sauf si le test règle déjà ce domaine lui-même. */
+  if (process.env.MC_TRACE_RESEAU === '1' && (args || []).indexOf('--journal') < 0) args = (args || []).concat(['--journal', 'RESEAU:trace']);
   const proc = spawn(process.execPath, [path.join(RACINE, 'server.js')].concat(args || []),
     { cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], env: Object.assign({}, process.env, { MC_TEST_POSE_LIBRE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid) }, env || {}) });   // SPEC-SYNC-028 : les suites d'inventaire passent MC_TEST_POSE_LIBRE: ''
   const logs = [];

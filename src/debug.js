@@ -127,8 +127,70 @@
       tampon: MC.Journal.tampon, vider: MC.Journal.viderTampon,
     } : null;
 
+    /* SPEC-BANC-094 : l'INSTANTANÉ de l'état du jeu, pris par le banc dans le
+       `finally` d'un test (donc même si l'échec survient au milieu du test) et
+       joint au rapport d'un test en échec ou lent. Lecture seule, bornée, et qui
+       ne lève JAMAIS : un champ illisible vaut null et son motif va dans
+       `erreurs` — un instantané qui planterait masquerait l'échec qu'il
+       documente. Champs : graine, position, heure, météo, chunks chargés / en
+       attente / en maillage, files et workers, versions de chunk, entités, mode
+       réseau. */
+    function instantane() {
+      var out = { t: Date.now(), erreurs: [] };
+      function champ(nom, fn) {
+        try { out[nom] = fn(); } catch (e) { out[nom] = null; out.erreurs.push(nom + ' : ' + ((e && e.message) || e)); }
+      }
+      function arrondi(v) { return typeof v === 'number' && isFinite(v) ? Math.round(v * 1000) / 1000 : v; }
+      champ('graine', function () { return g.world.seed; });
+      champ('position', function () {
+        var s = etatJoueur();
+        return { x: arrondi(s.pos.x), y: arrondi(s.pos.y), z: arrondi(s.pos.z), yaw: arrondi(s.yaw), pitch: arrondi(s.pitch), vivant: !s.dead, vol: !!s.flying };
+      });
+      champ('heure', function () {
+        var DC = MC.DayCycle;
+        return { temps: arrondi(g.time), heure_du_jour: DC ? arrondi(((g.time % DC.DAY_LENGTH) / DC.DAY_LENGTH) * 24) : null };
+      });
+      champ('meteo', function () { return g.meteo ? { type: g.meteo.type || null, nom: g.meteo.nom || null, couverture: g.meteo.couverture === undefined ? null : g.meteo.couverture, precipitation: g.meteo.precipitation === undefined ? null : g.meteo.precipitation } : null; });
+      champ('chunks', function () {
+        var charges = 0, sales = 0, sansMaillage = 0, min = Infinity, max = -Infinity;
+        var versions = {}, nbVersions = 0;
+        g.world.chunks.forEach(function (c, cle) {
+          charges++;
+          if (c.dirty) sales++;
+          if (!(c.mesh || c.meshC || c.meshT || c.meshL)) sansMaillage++;
+          if (typeof c.version === 'number') {
+            if (c.version < min) min = c.version;
+            if (c.version > max) max = c.version;
+            if (nbVersions < 40) { versions[cle] = c.version; nbVersions++; }     // un échantillon borné, jamais tout le monde
+          }
+        });
+        var files = g.diagnostic ? g.diagnostic().files : null;
+        return {
+          charges: charges, a_remailler: sales, sans_maillage: sansMaillage,
+          en_attente_generation: files ? files.genere.enFile + files.genere.enVol : null,
+          en_maillage: files ? files.maille.enFile + files.maille.enVol : null,
+          versions: { min: min === Infinity ? null : min, max: max === -Infinity ? null : max, echantillon: versions },
+        };
+      });
+      champ('files', function () { return g.diagnostic ? g.diagnostic().files : null; });
+      champ('workers', function () { var d = g.diagnostic ? g.diagnostic() : null; return d ? { pools: d.workers, erreurs: d.erreursWorkers } : null; });
+      champ('lointain', function () { return g.diagnostic ? g.diagnostic().lointain : null; });
+      champ('entites', function () {
+        var parType = {}, n = 0;
+        g.entities.list.forEach(function (e) { n++; parType[e.type] = (parType[e.type] || 0) + 1; });
+        var distants = g.net && g.net.mobsDistants ? g.net.mobsDistants.size : 0;
+        return { total: n, par_type: parType, mobs_distants: distants };
+      });
+      champ('reseau', function () {
+        var net = g.net;
+        return { etat: net ? net.etat : null, en_ligne: net && net.enLigne ? !!net.enLigne() : false, hote_distant: !!g.hoteDistant, joueurs_distants: net && net.distants ? net.distants.size : 0 };
+      });
+      champ('jeu', function () { return { etat_entree: g.input ? g.input.state : null, fps: g.fps, qualite: g.qualite ? g.qualite.palier : null, distance_de_vue: g.render ? g.render.RENDER_DIST : null }; });
+      return out;
+    }
+
     return {
-      journal: journal,
+      journal: journal, instantane: instantane,
       teleporter: teleporter, heure: heure, saison: saison, meteo: meteo,
       distanceVue: distanceVue, agrandir: agrandir, reduire: reduire, capture: capture,
       get estAgrandi() { return !!agrandi; },

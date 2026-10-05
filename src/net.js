@@ -14,6 +14,17 @@
     var mobsDistants = new Map();
     var derniereErreur = null;
     var envoiT = 0;
+    var log = MC.Journal ? MC.Journal('NET') : null;
+    /* SPEC-BANC-103 : les N derniers messages échangés (sens, type, seq, taille,
+       horodatage), pour le rapport d'un test réseau en échec. Un tampon circulaire
+       borné : il ne grossit jamais, et ne coûte qu'une petite structure par message. */
+    var TRACE_MAX = 200;
+    var trace = [];
+    function noter(sens, m, taille) {
+      var seq = m && m.seq !== undefined ? m.seq : (m && m.s !== undefined ? m.s : null);
+      trace.push({ sens: sens, type: m ? m.t : null, seq: typeof seq === 'number' ? seq : null, taille: taille, t: Date.now() });
+      if (trace.length > TRACE_MAX) trace.shift();
+    }
 
     var hooks = {
       onBienvenue: opts.onBienvenue || function () {},
@@ -115,20 +126,34 @@
         if (!courante()) return;
         var m;
         try { m = JSON.parse(ev.data); } catch (e) { return; }
+        noter('recu', m, typeof ev.data === 'string' ? ev.data.length : null);
         recevoir(m);
       };
 
       /* Une coupure ne doit pas emporter la partie : on repasse en solo et on
          le dit. Sans cela, le joueur se retrouve devant un monde fige sans
          comprendre pourquoi. */
-      socket.onclose = function () {
+      socket.onclose = function (ev) {
         if (!courante()) return;
+        /* SPEC-BANC-099 : le code de fermeture va au journal — 1000 (normale), 1001 (page quittée) et
+           1005 (sans code) sont attendus ; tout autre (1006 coupure anormale, 1008 politique, 1011 erreur du
+           serveur…) est une panne à lire. */
+        if (log) {
+          var code = ev && typeof ev.code === 'number' ? ev.code : null;
+          var normal = code === null || code === 1000 || code === 1001 || code === 1005;
+          if (normal) log.info('connexion fermée', { code: code, raison: (ev && ev.reason) || null });
+          else log.warn('E-NET-002 connexion fermée anormalement (code ' + code + ')', { code: code, raison: (ev && ev.reason) || null, propre: !!(ev && ev.wasClean) });
+        }
         ws = null;
         distants.clear();
         mobsDistants.clear();
         if (etat !== 'erreur') statut('hors ligne', 'connexion perdue');
       };
-      socket.onerror = function () { if (courante()) statut('erreur', 'connexion impossible'); };
+      socket.onerror = function () {
+        if (!courante()) return;
+        if (log) log.error('E-NET-001 erreur WebSocket : connexion impossible ou interrompue', { url: socket.url });
+        statut('erreur', 'connexion impossible');
+      };
       return true;
     }
 
@@ -144,7 +169,7 @@
 
     function envoyer(msg) {
       if (!ws || ws.readyState !== 1) return false;
-      try { ws.send(JSON.stringify(msg)); return true; } catch (e) { return false; }
+      try { var texte = JSON.stringify(msg); ws.send(texte); noter('envoi', msg, texte.length); return true; } catch (e) { return false; }
     }
 
     function recevoir(m) {
@@ -497,6 +522,8 @@
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
+      // SPEC-BANC-103 : les n derniers messages échangés, du plus ancien au plus récent
+      derniersMessages: function (n) { return trace.slice(Math.max(0, trace.length - (n || TRACE_MAX))); },
       envoyer: envoyer, dormir: dormir, actionner: actionner, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,

@@ -75,6 +75,8 @@
   // ══════════════════════════════════════════════════════════════════════
   function demarrer() {
     var host = document.getElementById('host');
+    // le journal existe : ce que la page a capté avant lui (erreurs-page.js) y est versé, la suite y va directement
+    if (window.MC_ERREURS_PAGE && window.MC && MC.Journal) window.MC_ERREURS_PAGE.brancher(MC.Journal);
 
     // ── surface virtuelle (SPEC-BANC-017) ───────────────────────────────────
     /* Le jeu intégré tourne à une résolution FIXE et réaliste (jamais celle,
@@ -677,6 +679,9 @@
           var r = { etat: ok ? 'reussi' : 'echec', duree_ms: ms, etapes: (detail && detail.etapes) || [],
                     assertions: (detail && detail.assertions) || { ok: 0, ko: 0 },
                     message: (detail && detail.message) || null, pile: (detail && detail.pile) || null, captures: [] };
+          // SPEC-BANC-092/093 : l'enregistreur de vol et le journal du test, seulement s'il a échoué ou était lent
+          if (detail && detail.vol) { r.vol = detail.vol; r.volPerdues = detail.volPerdues; }
+          if (detail && detail.journal) r.journal = detail.journal;
           // un test qui a besoin de Node (require/process/__dirname dans son
           // corps — spec-perf, spec-workers…) n'a rien prouvé ici, mais n'a pas
           // échoué non plus : ignoré, avec sa raison (SPEC-BANC-089)
@@ -692,7 +697,7 @@
       };
       for (var i = 0; i < liste.length; i++) {
         if (etat.arretDemande) break;
-        G.T.run([liste[i].nom], suivi, { delaiMs: DELAI_UNITAIRE_MS });
+        G.T.run([liste[i].nom], suivi, { delaiMs: DELAI_UNITAIRE_MS, seuilLentMs: etat.seuilLentMs });
         if ((i + 1) % 12 === 0) await attendre0();  // laisse le DOM se rafraîchir
       }
       await attendre0();
@@ -735,6 +740,7 @@
         // filet de sécurité anti-deadlock (SPEC-BANC-010, révisé), pas un
         // couperet pour un test lent — voir tests/e2e.js runUnE2E()
         delaiDefaut: 15 * 60,
+        seuilLentMs: etat.seuilLentMs,      // SPEC-BANC-092 : au-delà, diagnostics joints même à un test réussi
         arretee: function () { return etat.arretDemande; },
       });
     }
@@ -858,7 +864,7 @@
           },
           totaux: { total: etat.resultats.length, passes: passes, echecs: echecs, ignores: ignores,
                     parType: totauxPar(etat.resultats, 'parType'), parDomaine: totauxPar(etat.resultats, 'parDomaine') },
-          lents: lents, fps_moyen: fpsMoyen,
+          lents: lents, fps_moyen: fpsMoyen, seuilLentMs: etat.seuilLentMs,
         },
         tests: resultatsPourEnvoi,
       };

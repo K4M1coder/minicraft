@@ -618,7 +618,9 @@
           MC_TEST_BOUCLE_LOCALE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
         });
         if (inv.length) env.MC_TEST_INV = JSON.stringify(inv);
-        const enfant = require('child_process').spawn(process.execPath, [__filename, '--port', '0', '--serveur', '--admin', jeton], {
+        // SPEC-BANC-103 : `traceReseau: true` — chaque message échangé laisse une ligne dans la sortie du serveur de jeu (journal relu par le banc)
+        const args = [__filename, '--port', '0', '--serveur', '--admin', jeton].concat(corps && corps.traceReseau === true ? ['--journal', 'RESEAU:trace'] : []);
+        const enfant = require('child_process').spawn(process.execPath, args, {
           cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env,
         });
         const sj = { enfant, port: 0, jeton };

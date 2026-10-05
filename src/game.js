@@ -110,9 +110,13 @@
       if (poolGeneration) { poolGeneration.fermer(); poolGeneration = null; }
       if (poolMaillage) { poolMaillage.fermer(); poolMaillage = null; }
     }
+    var logWorkers = MC.Journal('WORKER');
     function onMessagePool(genre, data) {
       if (data && data.type === 'erreur') {
         var ferme = false;
+        // SPEC-BANC-097 : un worker qui a répondu « erreur » pour UNE tâche (message natif sans cx/cz : voir
+        // src/workers.js, E-WORK-001) — la cause (message du worker) et la tâche vont au journal
+        if (data.cx !== undefined) logWorkers.warn('E-WORK-003 tâche de ' + (genre === 'genere' ? 'génération' : 'maillage') + ' en échec dans un worker : ' + String(data.message || 'sans détail'), { cx: data.cx, cz: data.cz, epoque: data.epoque });
         if (data.cx !== undefined) {
           // le worker a répondu (il fonctionne) mais CETTE tâche a échoué :
           // elle revient en jeu, et 3 échecs d'affilée coupent le pool

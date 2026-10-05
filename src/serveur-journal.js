@@ -71,7 +71,7 @@
         } catch (e) { /* rotation au prochain jour */ }
       }
       return {
-        nom: 'fichier', seuil: 'info',
+        nom: 'fichier', seuil: 'info', suitDomaines: true,      // un domaine relevé (--journal RESEAU:trace) y écrit aussi ses traces (SPEC-BANC-103)
         ecrire(e) {
           if (enPanne || e.domaine === 'SECRET') return;
           try {

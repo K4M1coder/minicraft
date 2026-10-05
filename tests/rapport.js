@@ -23,6 +23,9 @@
          message?, pile?, attendu?, obtenu?,
          metriques?: { images, fps_moy, fps_min, fps_p95, ms_image, appels, triangles, memoire },
          captures?: [{ libelle, fichier }],
+         // diagnostics (SPEC-BANC-092 à 103), SEULEMENT pour un test en échec ou lent :
+         diagnostic_pour?: 'echec'|'lent'|'echec+lent', journal?, vol?, volPerdues?, instantane?,
+         erreursCachees?, longtasks?, histogrammeImages?, profilCPU?, profilGPU?, trace?, reseau?, serveur?,
        },
        ...
      ],
@@ -101,6 +104,67 @@
     return champs.length ? { type: 'paragraphe', texte: champs.join('\n'), meta: { classe: 'identite' } } : null;
   }
 
+  /* SPEC-BANC-092 à 103 : les diagnostics joints à un test en échec ou lent —
+     enregistreur de vol, instantané de l'état du jeu, erreurs que la console ne
+     montre pas, tâches longues, profils CPU et GPU, messages réseau, journal du
+     serveur. Un test qui a réussi sans être lent n'en porte aucun (le cahier
+     les retire à l'écriture, tools/diagnostics.js) ; seules ses métriques restent. */
+  function texteJSON(v, max) {
+    var s;
+    try { s = JSON.stringify(v, null, 1); } catch (x) { s = String(v); }
+    return s && s.length > (max || 6000) ? s.slice(0, max || 6000) + '\n… (tronqué)' : s;
+  }
+  function blocsDiagnostics(t) {
+    var out = [];
+    var cles = ['journal', 'vol', 'instantane', 'erreursCachees', 'longtasks', 'histogrammeImages', 'profilCPU', 'profilGPU', 'trace', 'reseau', 'serveur'];
+    if (!cles.some(function (k) { return t[k] !== undefined && t[k] !== null; })) return out;
+    out.push({ type: 'paragraphe', texte: 'diagnostics joints (déclenchés par : ' + (t.diagnostic_pour || 'échec ou lenteur') + ')', meta: { classe: 'diag-titre' } });
+    if (t.journal && t.journal.length) out.push({ type: 'paragraphe', texte: 'journal du test (warn et plus)\n' + t.journal.join('\n'), meta: { classe: 'pile' } });
+    if (t.vol && t.vol.length) {
+      out.push({ type: 'paragraphe', texte: 'enregistreur de vol (' + t.vol.length + ' entrée(s)' + (t.volPerdues ? ', ' + t.volPerdues + ' plus ancienne(s) perdue(s)' : '') + ', tous niveaux)\n' + t.vol.join('\n'), meta: { classe: 'pile' } });
+    }
+    if (t.instantane) out.push({ type: 'paragraphe', texte: 'instantané de l\'état du jeu\n' + texteJSON(t.instantane), meta: { classe: 'pile' } });
+    if (t.erreursCachees && t.erreursCachees.length) {
+      out.push({ type: 'paragraphe', texte: 'erreurs que la console ne montre pas (' + t.erreursCachees.length + ')', meta: { classe: 'msg' } });
+      out.push({ type: 'liste', items: t.erreursCachees.map(function (x) {
+        return '[' + (x.source || '?') + (x.type ? ':' + x.type : '') + (x.worker ? ' worker' : '') + '] ' + (x.message || '') + (x.pile ? '\n' + x.pile : '');
+      }) });
+    }
+    if (t.longtasks && t.longtasks.length) {
+      out.push({ type: 'paragraphe', texte: 'tâches longues du fil principal (' + t.longtasks.length + ')', meta: { classe: 'dur' } });
+      out.push({ type: 'liste', items: t.longtasks.map(function (x) { return Math.round(x.duree_ms) + ' ms à +' + Math.round(x.debut_ms) + ' ms' + (x.attribution ? ' — ' + x.attribution : ''); }) });
+    }
+    if (t.histogrammeImages) out.push({ type: 'paragraphe', texte: 'histogramme des temps d\'image : ' + texteJSON(t.histogrammeImages, 1200).replace(/\s+/g, ' '), meta: { classe: 'dur' } });
+    if (t.profilCPU) {
+      var p = t.profilCPU;
+      out.push({ type: 'paragraphe', texte: 'profil CPU (' + (p.duree_ms !== undefined ? p.duree_ms + ' ms, ' : '') + (p.echantillons || '?') + ' échantillons) : ' + (p.fichier || 'fichier non conservé') +
+        ' — à ouvrir dans les DevTools (Performance › charger le profil)', meta: { classe: 'dur', lien: p.fichier || undefined } });
+      if (p.top && p.top.length) out.push({ type: 'liste', items: p.top.map(function (x) { return x.ms + ' ms — ' + x.fonction; }) });
+    }
+    if (t.profilGPU && t.profilGPU.couches) {
+      var c = t.profilGPU.couches;
+      out.push({ type: 'tableau', entetes: ['couche GPU', 'état', 'détail'], lignes: Object.keys(c).map(function (k) {
+        var l = c[k] || {};
+        return { cellules: [k, l.disponible ? 'renseignée' : 'non disponible', l.disponible ? texteJSON(l, 600).replace(/\s+/g, ' ') : (l.raison || '')] };
+      }) });
+      if (c.processus && c.processus.trace && c.processus.trace.fichier) out.push({ type: 'paragraphe', texte: 'trace GPU : ' + c.processus.trace.fichier, meta: { classe: 'dur', lien: c.processus.trace.fichier } });
+    }
+    if (t.reseau) {
+      if (t.reseau.messages && t.reseau.messages.length) {
+        out.push({ type: 'paragraphe', texte: 'derniers messages réseau (' + t.reseau.messages.length + ', ordre du temps)', meta: { classe: 'dur' } });
+        out.push({ type: 'tableau', entetes: ['côté', 'sens', 'type', 'seq', 'taille', 'horodatage'], lignes: t.reseau.messages.map(function (m) {
+          return { cellules: [m.cote || '', m.sens || '', m.type || '', m.seq === undefined || m.seq === null ? '' : String(m.seq), m.taille === undefined || m.taille === null ? '' : String(m.taille), m.t ? new Date(m.t).toISOString() : ''] };
+        }) });
+      }
+      if (t.reseau.journal_serveur && t.reseau.journal_serveur.length) out.push({ type: 'paragraphe', texte: 'journal du serveur pendant le test\n' + t.reseau.journal_serveur.join('\n'), meta: { classe: 'pile' } });
+    }
+    if (t.serveur) {
+      if (t.serveur.pannes && t.serveur.pannes.length) out.push({ type: 'paragraphe', texte: 'pannes du serveur\n' + t.serveur.pannes.map(function (x) { return x.ligne + (x.pile ? '\n' + x.pile : ''); }).join('\n'), meta: { classe: 'msg' } });
+      if (t.serveur.journal && t.serveur.journal.length) out.push({ type: 'paragraphe', texte: 'journal du serveur (' + t.serveur.journal.length + ' ligne(s))\n' + t.serveur.journal.join('\n'), meta: { classe: 'pile' } });
+    }
+    return out;
+  }
+
   function blocsTest(t) {
     var out = [];
     var etat = t.etat || (t.ok === false ? 'echec' : 'ok');
@@ -145,6 +209,7 @@
       out.push({ type: 'paragraphe', texte: m.titre, meta: { classe: 'dur' } });
       out.push({ type: 'tableau', entetes: m.entetes || [], lignes: (m.lignes || []).map(function (l) { return { cellules: l }; }) });
     });
+    out = out.concat(blocsDiagnostics(t));
     (t.captures || []).forEach(function (c) {
       out.push({ type: 'image', fichier: c.fichier, legende: c.libelle });
     });
@@ -283,6 +348,7 @@
       'td,th{padding:3px 8px;text-align:left;border-bottom:1px solid var(--border);}' +
       'p{margin:4px 0;white-space:pre-wrap;} p.fiche{background:rgba(127,127,127,.08);border-radius:6px;padding:6px 8px;font-size:12px;}' +
       'p.msg{color:var(--ko);font-size:12px;} p.pile{color:var(--muted);font-size:11px;white-space:pre-wrap;}' +
+      'p.diag-titre{font-weight:bold;color:var(--warn);margin-top:8px;}' +
       'p.avobt{background:rgba(127,127,127,.08);border-radius:6px;padding:6px 8px;}' +
       'p.dur{color:var(--muted);font-size:11px;} p.sousgroupe{font-weight:bold;margin-top:10px;}' +
       'p.sousgroupe2{color:var(--muted);margin-left:10px;}' +
@@ -297,7 +363,8 @@
 
   function rendreBlocHTML(b, capturesRel) {
     if (b.type === 'titre') return '<h' + b.niveau + (b.meta && b.meta.etat ? ' class="' + e(b.meta.etat) + '"' : '') + '>' + e(b.texte) + '</h' + b.niveau + '>';
-    if (b.type === 'paragraphe') return '<p' + (b.meta && b.meta.classe ? ' class="' + e(b.meta.classe) + '"' : '') + '>' + e(b.texte) + '</p>';
+    if (b.type === 'paragraphe') return '<p' + (b.meta && b.meta.classe ? ' class="' + e(b.meta.classe) + '"' : '') + '>' + e(b.texte) +
+      (b.meta && b.meta.lien && /^profils\/[A-Za-z0-9._-]+$/.test(b.meta.lien) ? ' <a href="' + e(b.meta.lien) + '">télécharger</a>' : '') + '</p>';
     if (b.type === 'liste') return '<ul>' + (b.items || []).map(function (i) { return '<li>' + e(i) + '</li>'; }).join('') + '</ul>';
     if (b.type === 'tableau') {
       var head = '<tr>' + b.entetes.map(function (h) { return '<th>' + e(h) + '</th>'; }).join('') + '</tr>';

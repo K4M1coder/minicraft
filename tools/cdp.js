@@ -118,7 +118,8 @@ class SessionCDP {
       const fns = this._ecouteurs.get(msg.method);
       if (!fns) return;
       fns.forEach((fn) => {
-        try { fn(msg.params || {}); }
+        // 2e argument : la session fille (worker auto-attaché, mode « flatten ») qui a émis l'événement, sinon undefined
+        try { fn(msg.params || {}, msg.sessionId); }
         catch (e) { /* un écouteur en échec n'interrompt jamais les autres, ni la session */ }
       });
     }
@@ -129,7 +130,10 @@ class SessionCDP {
     this._ecouteurs.get(methode).push(fn);
   }
 
-  envoyer(methode, params, delaiMs) {
+  /* `sessionId` (facultatif) : adresse une session fille — un worker auto-attaché
+     par Target.setAutoAttach en mode « flatten », qui partage cette connexion
+     (SPEC-BANC-097). Sans lui, la commande vise la cible de la connexion. */
+  envoyer(methode, params, delaiMs, sessionId) {
     if (!this.ws) return Promise.reject(new Error('session CDP non connectée'));
     return new Promise((resolve, reject) => {
       const id = ++this._id;
@@ -141,7 +145,7 @@ class SessionCDP {
         resolve: (r) => { clearTimeout(minuteur); resolve(r); },
         reject: (e) => { clearTimeout(minuteur); reject(e); },
       });
-      try { this.ws.send(JSON.stringify({ id, method: methode, params: params || {} })); }
+      try { this.ws.send(JSON.stringify(sessionId ? { id, method: methode, params: params || {}, sessionId } : { id, method: methode, params: params || {} })); }
       catch (e) { clearTimeout(minuteur); this._enAttente.delete(id); reject(e); }
     });
   }

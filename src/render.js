@@ -105,14 +105,19 @@
     var contexteGen = 0;
     var cbContextLost = typeof opts.onContextLost === 'function' ? opts.onContextLost : null;
     var cbContextRestored = typeof opts.onContextRestored === 'function' ? opts.onContextRestored : null;
+    // SPEC-BANC-098 : la perte et la restauration du contexte sont JOURNALISÉES (une panne de GPU
+    // ne laisse sinon aucune trace ailleurs que dans l'image qui se fige)
+    var log = MC.Journal ? MC.Journal('RENDU') : { trace: function () {}, debug: function () {}, info: function () {}, warn: function () {}, error: function () {} };
     renderer.domElement.addEventListener('webglcontextlost', function (ev) {
       ev.preventDefault();
       contextePerdu = true;
+      log.warn('E-RENDU-001 contexte WebGL perdu : le rendu est suspendu jusqu\'à sa restauration', { generation: contexteGen });
       if (cbContextLost) cbContextLost();
     }, false);
     renderer.domElement.addEventListener('webglcontextrestored', function () {
       contextePerdu = false;
       contexteGen++;
+      log.info('E-RENDU-002 contexte WebGL restauré : textures et matériaux reconstruits', { generation: contexteGen });
       // textures et matériaux : on force un ré-upload/relien plutôt que de
       // supposer que le navigateur les a conservés
       atlas.texture.needsUpdate = true;
@@ -2700,6 +2705,110 @@
        Au-dessus de l'eau proche, une passe du décor sans l'eau (à demi-
        résolution) : la surface la relit en la déformant. Sous l'eau, toute
        l'image passe par un calque qui l'ondule et la bleuit. */
+    // ── SPEC-BANC-098 et SPEC-BANC-102 : sonde d'erreurs WebGL, passes nommées, profil GPU ──
+    /* Les erreurs de compilation et de liaison des shaders sont écrites par three.js via
+       console.error si `checkShaderErrors` est vrai (c'est son défaut, posé ici pour qu'un
+       réglage futur ne le coupe pas en silence) : le journal les capte (tests/erreurs-page.js). */
+    renderer.debug.checkShaderErrors = true;
+    /* `gl.getError()` synchronise le processeur et le GPU : coûteux. Interrogé UNE image sur 60,
+       en mode test seulement (MC.Journal en mode « test », posé par tests/harness.js), jamais
+       dans une vraie partie. */
+    var PERIODE_SONDE_GL = 60;
+    var sondeGL = { actif: !!(MC.Journal && MC.Journal.configuration && MC.Journal.configuration().mode === 'test'), images: 0, interrogations: 0, erreurs: 0 };
+    function nomErreurGL(gl, code) {
+      var noms = { 0x0500: 'INVALID_ENUM', 0x0501: 'INVALID_VALUE', 0x0502: 'INVALID_OPERATION', 0x0505: 'OUT_OF_MEMORY', 0x0506: 'INVALID_FRAMEBUFFER_OPERATION', 0x9242: 'CONTEXT_LOST_WEBGL' };
+      return noms[code] || ('0x' + code.toString(16));
+    }
+    function sonderGL() {
+      if (!sondeGL.actif || contextePerdu) return;
+      if (++sondeGL.images % PERIODE_SONDE_GL !== 0) return;
+      sondeGL.interrogations++;
+      var gl = renderer.getContext();
+      var code = gl.getError();
+      if (code !== 0) { sondeGL.erreurs++; log.error('E-RENDU-003 erreur WebGL ' + nomErreurGL(gl, code), { code: code }); }
+    }
+    /* Passes de l'image courante : chaque renderer.render() porte un nom (principale, refraction,
+       antialias, sous_eau, calque_eau, vue_N) ; les appels de dessin et triangles sont comptés par
+       passe, et — quand le profil GPU est démarré et que le navigateur expose
+       EXT_disjoint_timer_query_webgl2 — le temps GPU de chacune. Les ombres sont dessinées DANS
+       la passe principale (three.js rend la carte d'ombres au début de render()). */
+    var passesImage = {}, passesDerniereImage = {};
+    var profilGPU = { actif: false, ext: null, gl: null, enAttente: [], echantillons: {}, images: [], imageNo: 0 };
+    var MAX_ECHANTILLONS_GPU = 240;
+    function extTempsGPU() {
+      if (profilGPU.ext !== null) return profilGPU.ext || null;
+      try {
+        var gl = renderer.getContext();
+        profilGPU.ext = (typeof WebGL2RenderingContext !== 'undefined' && gl instanceof WebGL2RenderingContext) ? (gl.getExtension('EXT_disjoint_timer_query_webgl2') || false) : false;
+        profilGPU.gl = gl;
+      } catch (e) { profilGPU.ext = false; }
+      return profilGPU.ext || null;
+    }
+    function collecterRequetesGPU() {
+      var gl = profilGPU.gl, ext = profilGPU.ext;
+      if (!gl || !ext || !profilGPU.enAttente.length) return;
+      var disjoint = gl.getParameter(ext.GPU_DISJOINT_EXT);
+      while (profilGPU.enAttente.length) {
+        var e = profilGPU.enAttente[0];
+        if (disjoint) { gl.deleteQuery(e.q); profilGPU.enAttente.shift(); continue; }          // mesure invalidée par le GPU : on la jette
+        if (!gl.getQueryParameter(e.q, gl.QUERY_RESULT_AVAILABLE)) break;                       // pas prête : elle le sera à l'image suivante
+        var ms = gl.getQueryParameter(e.q, gl.QUERY_RESULT) / 1e6;
+        gl.deleteQuery(e.q); profilGPU.enAttente.shift();
+        var t = profilGPU.echantillons[e.nom] = profilGPU.echantillons[e.nom] || [];
+        t.push(ms); if (t.length > MAX_ECHANTILLONS_GPU) t.shift();
+        profilGPU.images.push({ no: e.no, ms: ms });
+        if (profilGPU.images.length > MAX_ECHANTILLONS_GPU * 6) profilGPU.images.shift();
+      }
+    }
+    function passe(nom, sc, cam) {
+      var c0 = renderer.info.render.calls, t0 = renderer.info.render.triangles, q = null;
+      if (profilGPU.actif && profilGPU.ext && profilGPU.enAttente.length < 40) {
+        q = profilGPU.gl.createQuery();
+        profilGPU.gl.beginQuery(profilGPU.ext.TIME_ELAPSED_EXT, q);
+      }
+      renderer.render(sc, cam);
+      if (q) { profilGPU.gl.endQuery(profilGPU.ext.TIME_ELAPSED_EXT); profilGPU.enAttente.push({ q: q, nom: nom, no: profilGPU.imageNo }); }
+      var p = passesImage[nom] || (passesImage[nom] = { appels: 0, triangles: 0 });
+      p.appels += renderer.info.render.calls - c0;
+      p.triangles += renderer.info.render.triangles - t0;
+    }
+    function percentile(v, p) {
+      if (!v.length) return null;
+      var t = v.slice().sort(function (a, b) { return a - b; });
+      return Math.round(t[Math.min(t.length - 1, Math.floor(t.length * p))] * 1000) / 1000;
+    }
+    /* Estimation, en octets, de ce que le JEU alloue côté GPU : attributs et index des
+       géométries de la scène, plus largeur × hauteur × 4 × 4/3 par texture mipmappée (× 1 sans
+       mipmaps). Une page web ne peut pas lire la VRAM réelle : c'est ce qu'elle a demandé. */
+    function octetsTexture(tex, w, h) {
+      if (!tex) return 0;
+      var img = tex.image || {};
+      var largeur = w || img.width || 0, hauteur = h || img.height || 0;
+      var mip = tex.generateMipmaps !== false && tex.minFilter !== THREE.LinearFilter && tex.minFilter !== THREE.NearestFilter;
+      return Math.round(largeur * hauteur * 4 * (mip ? 4 / 3 : 1));
+    }
+    function estimerOctetsGPU() {
+      var geoms = new Set(), textures = new Set();
+      scene.traverse(function (o) {
+        if (o.geometry) geoms.add(o.geometry);
+        var mats = o.material ? (Array.isArray(o.material) ? o.material : [o.material]) : [];
+        mats.forEach(function (m) {
+          ['map', 'alphaMap', 'emissiveMap', 'normalMap'].forEach(function (k) { if (m[k]) textures.add(m[k]); });
+          if (m.uniforms) Object.keys(m.uniforms).forEach(function (k) { var v = m.uniforms[k] && m.uniforms[k].value; if (v && v.isTexture) textures.add(v); });
+        });
+      });
+      var octGeo = 0;
+      geoms.forEach(function (g) {
+        Object.keys(g.attributes || {}).forEach(function (k) { var a = g.attributes[k]; if (a && a.array) octGeo += a.array.byteLength; });
+        if (g.index && g.index.array) octGeo += g.index.array.byteLength;
+      });
+      var octTex = 0;
+      textures.forEach(function (t) { octTex += octetsTexture(t); });
+      [rtRefraction, rtEcran, rtAntialias].forEach(function (rt) {
+        if (rt && rt.texture && rt.width > 4) octTex += octetsTexture(rt.texture, rt.width, rt.height) + rt.width * rt.height * 4;   // couleur + profondeur
+      });
+      return { geometries_octets: octGeo, textures_octets: octTex, total: octGeo + octTex };
+    }
     var rtRefraction = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
     var rtEcran = new THREE.WebGLRenderTarget(4, 4, { depthBuffer: true });
     var tailleTampon = new THREE.Vector2();
@@ -2758,11 +2867,11 @@
       renderer.getDrawingBufferSize(tailleTampon);
       if (rtAntialias.width !== tailleTampon.x || rtAntialias.height !== tailleTampon.y) rtAntialias.setSize(tailleTampon.x, tailleTampon.y);
       renderer.setRenderTarget(rtAntialias);
-      renderer.render(scene, cam);
+      passe('principale', scene, cam);
       renderer.setRenderTarget(null);
       passeAntialias.mat.uniforms.image.value = rtAntialias.texture;
       passeAntialias.mat.uniforms.resolution.value.set(tailleTampon.x, tailleTampon.y);
-      renderer.render(passeAntialias.scene, passeAntialias.camera);
+      passe('antialias', passeAntialias.scene, passeAntialias.camera);
     }
     var sousLEau = false, eauEnVue = 0, eauDistance = Infinity;
     // SPEC-RENDU-004 : au-delà de ce seuil, l'eau reste visible mais sans
@@ -2792,7 +2901,7 @@
       tailleEcran.value.set(tailleTampon.x, tailleTampon.y);
       maillagesEau.forEach(function (m) { m.userData.vuAvant = m.visible; m.visible = false; });
       renderer.setRenderTarget(rtRefraction);
-      renderer.render(scene, cam);
+      passe('refraction', scene, cam);
       renderer.setRenderTarget(null);
       maillagesEau.forEach(function (m) { m.visible = m.userData.vuAvant; });
       refractionTex.value = rtRefraction.texture;
@@ -2847,10 +2956,10 @@
         renderer.getDrawingBufferSize(tailleTampon);
         if (rtEcran.width !== tailleTampon.x || rtEcran.height !== tailleTampon.y) rtEcran.setSize(tailleTampon.x, tailleTampon.y);
         renderer.setRenderTarget(rtEcran);
-        renderer.render(scene, cam);
+        passe('sous_eau', scene, cam);
         renderer.setRenderTarget(null);
         calque.mat.uniforms.image.value = rtEcran.texture;
-        renderer.render(calque.scene, calque.camera);
+        passe('calque_eau', calque.scene, calque.camera);
         return;
       }
       if (refractionApplicable) {
@@ -2866,7 +2975,7 @@
       // à restructurer ce chemin déjà spécial (voir la note de sortie de ce
       // lot dans SPECS.md sur le risque d'une refonte complète des passes).
       if (optionsRendu.antialias) rendreAvecAntialias(cam);
-      else renderer.render(scene, cam);
+      else passe('principale', scene, cam);
     }
     // SPEC-RENDU-006 : `antialias` par défaut à true — remplace l'ancien
     // MSAA forcé à la création du contexte (maintenant toujours false, voir
@@ -2880,6 +2989,9 @@
       // contexte GPU — aucun appel `renderer.render` tant qu'il n'est pas
       // restauré (webglcontextrestored).
       if (contextePerdu) return 0;
+      passesDerniereImage = passesImage; passesImage = {};
+      profilGPU.imageNo++;
+      if (profilGPU.actif) collecterRequetesGPU();
       // une image complète peut désormais tenir sur plusieurs `render()`
       // (passe de réfraction, passe antialias, vue sous l'eau…) : la remise
       // à zéro manuelle (autoReset coupé plus haut) se fait UNE fois ici,
@@ -2892,6 +3004,7 @@
         placerCiel(camera);
         montrerAvatarsPour(0);
         rendreVue(camera);
+        sonderGL();
         return 1;
       }
       refractionActive.value = 0;
@@ -2914,18 +3027,19 @@
         var y = H - v.y - v.h;
         renderer.setViewport(v.x, y, v.w, v.h);
         renderer.setScissor(v.x, y, v.w, v.h);
-        var cam = cameraDe(i);
+        var cam = cameraDe(i);   // (la passe de cette vue s'appelle vue_N)
         var aspect = v.w / Math.max(1, v.h);
         if (cam.aspect !== aspect) { cam.aspect = aspect; cam.updateProjectionMatrix(); }
         placerCiel(cam);             // chaque vue a son ciel, centré sur sa caméra
         montrerAvatarsPour(i);       // SPEC-OBJET-001 : les autres joueurs locaux, pas soi
-        renderer.render(scene, cam);
+        passe('vue_' + i, scene, cam);
       }
       renderer.setScissorTest(false);
+      sonderGL();
       return vues.length;
     }
 
-    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); montrerAvatarsPour(0); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); montrerAvatarsPour(0); passe('principale', scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2952,6 +3066,44 @@
       setAntialias: setAntialias, get antialiasActif() { return optionsRendu.antialias; },
       // SPEC-RENDU-001/002/010/011 : perte de contexte et détection du rendu logiciel
       get contextePerdu() { return contextePerdu; }, get materiel() { return materiel; },
+      // SPEC-BANC-098 : sonde gl.getError() échantillonnée (mode test seulement) ; SPEC-BANC-102 : profil GPU en couches
+      sondeGL: sondeGL, activerSondeGL: function (v) { sondeGL.actif = !!v; sondeGL.images = 0; return sondeGL.actif; },
+      get passesDerniereImage() { return passesDerniereImage; },
+      /* Démarre la mesure du temps GPU par passe (timer queries) ; rend vrai si le navigateur expose
+         EXT_disjoint_timer_query_webgl2, faux sinon (la couche reste alors « non disponible »). */
+      demarrerProfilGPU: function () {
+        profilGPU.echantillons = {}; profilGPU.images = []; profilGPU.enAttente = [];
+        profilGPU.actif = !!extTempsGPU();
+        return profilGPU.actif;
+      },
+      arreterProfilGPU: function () { profilGPU.actif = false; },
+      /* Le profil GPU du JEU, en couches (SPEC-BANC-102) ; chaque couche dit « non disponible »
+         plutôt que de rendre une valeur inventée. Les couches du processus (CDP) et du système
+         (typeperf) sont complétées par tools/diagnostics.js. */
+      profilGPU: function () {
+        var info = renderer.info, nonDispo = function (raison) { return { disponible: false, raison: raison }; };
+        var out = {};
+        try {
+          var oct = estimerOctetsGPU();
+          out.memoire = { disponible: true, geometries: info.memory.geometries, textures: info.memory.textures, octets_estimes: oct.total, geometries_octets: oct.geometries_octets, textures_octets: oct.textures_octets,
+            note: 'estimation calculée par le jeu (attributs, index, textures mipmappées) : une page web ne lit pas la VRAM réelle' };
+        } catch (e) { out.memoire = nonDispo('lecture impossible : ' + ((e && e.message) || e)); }
+        try {
+          out.dessin = { disponible: true, appels: info.render.calls, triangles: info.render.triangles, programmes: info.programs ? info.programs.length : null,
+            passes: JSON.parse(JSON.stringify(passesDerniereImage)) };
+        } catch (e) { out.dessin = nonDispo('lecture impossible : ' + ((e && e.message) || e)); }
+        if (!extTempsGPU()) out.temps_gpu = nonDispo('EXT_disjoint_timer_query_webgl2 non exposée par ce navigateur ou ce GPU (fréquent en rendu logiciel)');
+        else if (!profilGPU.actif && !Object.keys(profilGPU.echantillons).length) out.temps_gpu = nonDispo('non mesuré : demarrerProfilGPU() n\'a pas été appelé pendant le test');
+        else {
+          var passes = {};
+          Object.keys(profilGPU.echantillons).forEach(function (n) { var v = profilGPU.echantillons[n]; passes[n] = { p50_ms: percentile(v, 0.5), p95_ms: percentile(v, 0.95), echantillons: v.length }; });
+          var parImage = {};
+          profilGPU.images.forEach(function (x) { parImage[x.no] = (parImage[x.no] || 0) + x.ms; });
+          var totaux = Object.keys(parImage).map(function (k) { return parImage[k]; });
+          out.temps_gpu = { disponible: true, passes: passes, image: { p50_ms: percentile(totaux, 0.5), p95_ms: percentile(totaux, 0.95), echantillons: totaux.length } };
+        }
+        return out;
+      },
       // SPEC-PERF-015 : appels de dessin/triangles de la dernière image, tels que Three.js les compte
       get metriquesDessin() { return { appelsDessin: renderer.info.render.calls, triangles: renderer.info.render.triangles }; },
       materials: { opaque: matOpaque, cutout: matCutout, blend: matBlend, lumineux: matLumineux, depthCutout: matDepthCutout },

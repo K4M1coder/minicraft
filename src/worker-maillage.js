@@ -8,10 +8,12 @@
     var m = /[?&]v=([^&]+)/.exec(self.location.search);
     return m ? '?v=' + m[1] : '';
   })();
-  var MODULES = ['journal', 'core', 'formes', 'eau', 'lumiere', 'mesher', 'contrats-vague2', 'taches-chunks'];
+  var MODULES = ['journal', 'worker-erreurs', 'core', 'formes', 'eau', 'lumiere', 'mesher', 'contrats-vague2', 'taches-chunks'];
   importScripts.apply(self, MODULES.map(function (m) { return m + '.js' + suffixe; }));
 
   var MC = self.MC;
+  // SPEC-BANC-097 : exceptions et promesses rejetées de ce worker remontent au journal du fil principal
+  MC.WorkerErreurs.installer(self, 'worker-maillage');
   var epoqueCourante = -1;
 
   self.onmessage = function (ev) {

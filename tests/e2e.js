@@ -5648,6 +5648,89 @@
     try { if (g.input) g.input.setState('menu'); } catch (e) { /* rien */ }
   }
 
+  // ─── diagnostics d'un test (SPEC-BANC-092 à 094, 099, 101) ─────────────────
+  /* Pendant un test : un enregistreur de vol (tampon circulaire du journal, tous
+     niveaux), les tâches longues du fil principal, et de quoi dater les erreurs
+     que la page capte (tests/erreurs-page.js). Joints au résultat SEULEMENT si le
+     test échoue ou est lent (opts.seuilLentMs) — sinon jetés, pour ne pas
+     transporter des Mo de journaux de tests qui vont bien. */
+  var CAPACITE_VOL_E2E = 500;
+  var BORNES_HISTOGRAMME_MS = [8, 17, 25, 34, 50, 100, 250];
+  function journalTests() {
+    return G.MC && G.MC.Journal && G.MC.Journal.outilsHarnais ? G.MC.Journal.outilsHarnais : null;
+  }
+  function demarrerDiagnostics(test) {
+    var d = { J: journalTests(), vol: null, longtasks: [], observateur: null, mur0: Date.now(), t0: maintenantReel() };
+    if (d.J && d.J.sortieAnneau) {
+      d.J.contexte({ test: test.name });
+      d.vol = d.J.sortieAnneau('vol-e2e', 'trace', CAPACITE_VOL_E2E);
+      d.J.ajouterSortie(d.vol);
+    }
+    try {
+      if (typeof PerformanceObserver === 'function' && (PerformanceObserver.supportedEntryTypes || []).indexOf('longtask') >= 0) {
+        d.observateur = new PerformanceObserver(function (liste) {
+          liste.getEntries().forEach(function (x) {
+            var attr = (x.attribution || []).map(function (a) { return [a.containerType, a.containerName || a.containerSrc || a.containerId].filter(Boolean).join(' '); }).filter(Boolean).join(', ');
+            d.longtasks.push({ debut_ms: Math.round(x.startTime - d.t0), duree_ms: Math.round(x.duration), attribution: attr || null });
+          });
+        });
+        d.observateur.observe({ type: 'longtask' });
+      }
+    } catch (x) { d.observateur = null; }
+    return d;
+  }
+  /* Histogramme des temps d'image (en ms), d'après les horodatages réels des images du test. */
+  function histogrammeImages(images) {
+    var h = {}, n = 0;
+    BORNES_HISTOGRAMME_MS.forEach(function (b) { h['<=' + b] = 0; });
+    h['>' + BORNES_HISTOGRAMME_MS[BORNES_HISTOGRAMME_MS.length - 1]] = 0;
+    for (var i = 1; i < images.length; i++) {
+      var dt = images[i] - images[i - 1];
+      if (!(dt > 0)) continue;
+      n++;
+      var place = false;
+      for (var k = 0; k < BORNES_HISTOGRAMME_MS.length && !place; k++) if (dt <= BORNES_HISTOGRAMME_MS[k]) { h['<=' + BORNES_HISTOGRAMME_MS[k]]++; place = true; }
+      if (!place) h['>' + BORNES_HISTOGRAMME_MS[BORNES_HISTOGRAMME_MS.length - 1]]++;
+    }
+    return n ? h : null;
+  }
+  /* SPEC-BANC-094 : l'instantané de l'état du jeu — jamais d'exception. */
+  function prendreInstantane(g) {
+    try {
+      if (G.MC_DEBUG && G.MC_DEBUG.instantane) return G.MC_DEBUG.instantane();
+      return G.MC.Debug.creer(g).instantane();
+    } catch (x) { return { erreurs: ['instantané impossible : ' + ((x && x.message) || x)] }; }
+  }
+  function terminerDiagnostics(d, ctx, g, etat, dureeMs, opts) {
+    try { if (d.observateur) d.observateur.disconnect(); } catch (x) { /* rien */ }
+    var out = {};
+    var lent = !!(opts && opts.seuilLentMs && dureeMs > opts.seuilLentMs);
+    var garder = etat !== 'reussi' || lent;
+    if (d.vol) {
+      var lignes = d.vol.entrees.length ? d.vol.lignes() : null;
+      var perdues = d.vol.perdues;
+      d.J.retirerSortie('vol-e2e'); d.J.contexte({ test: null });
+      if (garder && lignes) { out.vol = lignes; out.volPerdues = perdues; }
+    }
+    if (!garder) return out;
+    out.instantane = ctx.instantane || prendreInstantane(g);
+    if (G.MC_ERREURS_PAGE) {
+      var errs = G.MC_ERREURS_PAGE.depuis(d.mur0).filter(function (x) { return x.type !== 'console.warn'; });
+      if (errs.length) out.erreursCachees = errs;
+    }
+    // SPEC-BANC-103 : les derniers messages échangés côté client (le serveur de jeu du banc, lui, est relu par conclure())
+    try {
+      if (g.net && typeof g.net.derniersMessages === 'function') {
+        var msgs = g.net.derniersMessages(50);
+        if (msgs.length) out.reseau = { client: msgs };
+      }
+    } catch (x) { /* le réseau n'est pas indispensable à un diagnostic */ }
+    if (d.longtasks.length) out.longtasks = d.longtasks;
+    var hist = histogrammeImages(ctx.images);
+    if (hist) out.histogrammeImages = hist;
+    return out;
+  }
+
   // ─── exécution d'un seul test, instrumenté ─────────────────────────────────
   /* Rend un objet conforme à `tests[]` de `resultats.json` (SPEC-BANC-012/013).
      `delaiDefaut` (secondes) s'applique faute de fiche.delai (SPEC-BANC-010,
@@ -5684,6 +5767,7 @@
                   // étapes déclarées et triplets (SPEC-BANC-077 à 081)
                   etapesTriplets: [], etapeCourante2: null, _chaineEtapes: null };
       enCours = ctx;
+      var diag = demarrerDiagnostics(test);
       var c0 = capturer(g, 'début');
       if (c0) { c0.t_ms = 0; ctx.captures.push(c0); }
       // étape IMPLICITE `test` (SPEC-BANC-077) : ouverte dès le départ, comme
@@ -5780,10 +5864,19 @@
             mesures: ctx.mesures,
             etapesTriplets: etapesAvecMetriques,
           };
+          // SPEC-BANC-092 à 094, 099, 101 : vol, instantané, erreurs cachées, tâches longues — si échec ou lenteur
+          if (etat !== 'reussi' && !ctx.instantane) ctx.instantane = prendreInstantane(g);     // délai : le test ne rend jamais la main, pas de finally
+          Object.assign(res, terminerDiagnostics(diag, ctx, g, etat, res.duree_ms, opts));
           if (sceneEtat) { res.scene = sceneEtat.decrit; sceneEtat.restaurer(); }
           enCours = null;
           nettoyer(g);
-          resolve(res);
+          /* SPEC-BANC-103 : pour un test réseau en échec, le journal du serveur de jeu du banc (POST /tests/serveur-jeu)
+             pendant le test — avec `traceReseau: true` à sa création, il porte aussi une ligne par message échangé. */
+          if (res.reseau && typeof fetch === 'function') {
+            fetch('/tests/serveur-jeu/journal').then(function (rep) { return rep.json(); }).then(function (o) {
+              res.reseau.journal_serveur = String((o && o.journal) || '').split(/\r?\n/).filter(Boolean).slice(-50);
+            }, function () { /* pas de serveur de jeu de test : le journal du serveur manque, le reste est là */ }).then(function () { resolve(res); });
+          } else resolve(res);
         });
       }
       var minuteur = setTimeout(function () {
@@ -5793,7 +5886,12 @@
                  (ctx.etapeCourante ? ' — étape en cours : ' + ctx.etapeCourante : ''));
       }, delaiMs);
 
-      Promise.resolve().then(function () { return test.fn(g); }).then(function () {
+      /* SPEC-BANC-094 : l'instantané est pris dans le `finally` du test — il existe même
+         si l'échec survient au milieu du test, avant toute capture « fin ». */
+      (async function () {
+        try { return await test.fn(g); }
+        finally { ctx.instantane = prendreInstantane(g); }
+      })().then(function () {
         var c = capturer(g, 'fin');
         if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
         conclure('reussi', null);

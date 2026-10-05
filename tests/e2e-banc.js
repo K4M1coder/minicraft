@@ -783,4 +783,52 @@
       await wait(3 * H.CADENCE_CLIGNOTEMENT_MS);
       A.equal(img.getAttribute('data-rang'), fige, 'plus aucun changement une fois les boucles arrêtées');
     });
+  // ══════════════════════════════════════════════════════════════════════════
+  // Diagnostics dans la page du banc (SPEC-BANC-094, 095)
+  // ══════════════════════════════════════════════════════════════════════════
+  e2e('SPEC-BANC-094 : MC_DEBUG.instantane() produit l\'instantané de l\'état du jeu dans la vraie page',
+    { teste: 'l\'instantané de l\'état du jeu pris par MC_DEBUG.instantane() sur la vraie partie du banc',
+      pourquoi: 'un test qui échoue doit laisser de quoi comprendre l\'état du monde à ce moment-là ; seule la vraie partie (monde généré, workers ou repli, réseau) prouve que chaque champ se lit',
+      attendu: 'graine, position, heure, météo, chunks chargés/en attente/en maillage, files des workers, versions de chunk, entités et mode réseau sont présents et cohérents, sans erreur de lecture' },
+    async function (g) {
+      A.ok(G.MC_DEBUG && typeof G.MC_DEBUG.instantane === 'function', 'MC_DEBUG.instantane existe');
+      var i = G.MC_DEBUG.instantane();
+      A.equal(i.graine, g.world.seed, 'graine du monde');
+      A.close(i.position.x, g.player.state.pos.x, 0.001, 'position du joueur');
+      A.close(i.heure.temps, g.time, 1, 'temps du monde');
+      A.equal(i.chunks.charges, g.world.chunks.size, 'chunks chargés');
+      A.gt(i.chunks.charges, 0, 'des chunks sont chargés');
+      A.ok(typeof i.chunks.en_attente_generation === 'number' && typeof i.chunks.en_maillage === 'number', 'chunks en attente et en maillage');
+      A.ok(i.chunks.versions && i.chunks.versions.echantillon && Object.keys(i.chunks.versions.echantillon).length > 0, 'versions de chunk');
+      A.ok(i.files && i.files.genere && i.files.maille, 'files de génération et de maillage');
+      A.ok(i.workers && i.workers.pools, 'workers');
+      A.equal(i.entites.total, g.entities.list.length, 'entités');
+      A.ok(typeof i.reseau.etat === 'string' && typeof i.reseau.en_ligne === 'boolean', 'mode réseau');
+      egal(i.erreurs, [], 'aucun champ illisible : ' + i.erreurs.join(' | '));
+      // l'instantané ne change rien à la partie
+      var avant = g.world.chunks.size;
+      G.MC_DEBUG.instantane();
+      A.equal(g.world.chunks.size, avant, 'lecture seule');
+    });
+
+  e2e('SPEC-BANC-095 : une exception non rattrapée levée par le jeu pendant un test est captée avec sa pile, avant les scripts du jeu et jusque dans le journal',
+    { teste: 'le script tests/erreurs-page.js, premier script de la page : exception non rattrapée et promesse rejetée',
+      pourquoi: 'sans lui, une exception qui plante le jeu au milieu d\'un test n\'est visible que dans la console du navigateur, que personne ne lit pendant une campagne',
+      attendu: 'l\'exception et la promesse rejetée figurent dans MC_ERREURS_PAGE avec leur pile et dans le journal du jeu (domaine PAGE) ; le script est le premier de la page' },
+    async function () {
+      var P = G.MC_ERREURS_PAGE;
+      A.ok(P, 'window.MC_ERREURS_PAGE présent');
+      A.equal(document.querySelector('script').getAttribute('src'), 'erreurs-page.js', 'premier script de la page');
+      var t0 = Date.now();
+      setTimeout(function () { throw new Error('exception de test 095 (e2e)'); }, 0);
+      Promise.reject(new Error('rejet de test 095 (e2e)'));
+      await attendre(function () { return P.depuis(t0).length >= 2; }, 4000, 'exception et rejet captés');
+      var vus = P.depuis(t0);
+      var exc = vus.filter(function (e) { return e.type === 'exception_page'; })[0];
+      var rej = vus.filter(function (e) { return e.type === 'promesse_rejetee'; })[0];
+      A.ok(exc && /exception de test 095/.test(exc.message) && /\n\s+at /.test(exc.pile || ''), 'l\'exception est captée avec sa pile');
+      A.ok(rej && /rejet de test 095/.test(rej.message) && /\n\s+at /.test(rej.pile || ''), 'la promesse rejetée aussi');
+      var dansJournal = MC.Journal.tampon({ domaine: 'PAGE', niveau: 'error' }).filter(function (e) { return /exception de test 095/.test(e.message); });
+      A.ok(P.branche && dansJournal.length > 0, 'et l\'exception est dans le journal du jeu');
+    });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -54,6 +54,7 @@ const { spawn } = require('child_process');
 
 const CDP = require('./cdp.js');
 const NAV = require('./navigateur.js');
+const DIAG = require('./diagnostics.js');
 
 const RACINE = path.join(__dirname, '..');
 const DELAI_DEMARRAGE_DEFAUT = 20000;
@@ -63,6 +64,8 @@ const DELAI_DEMARRAGE_DEFAUT = 20000;
 const DELAI_TEST_DEFAUT = 15 * 60 * 1000;
 const DELAI_GLOBAL_DEFAUT = 20 * 60 * 1000;
 const MAX_MESSAGES_CONSOLE = 4000; // borne mémoire d'une longue campagne
+// Seuil au-delà duquel un test est LENT (SPEC-BANC-092) : profil CPU et trace GPU démarrent alors (SPEC-BANC-101/102)
+const SEUIL_LENT_DEFAUT_MS = DIAG.SEUIL_LENT_DEFAUT_MS;
 
 function dodo(ms) { return new Promise((r) => setTimeout(r, ms)); }
 
@@ -158,6 +161,24 @@ function base64Pur(donnees) {
 async function executerUnTest(session, portServeur, test, opts) {
   const debut = Date.now();
   const debutISO = new Date(debut).toISOString();
+  const seuilLentMs = opts.seuilLentMs || SEUIL_LENT_DEFAUT_MS;
+
+  /* SPEC-BANC-101/102 : un test qui dépasse le seuil de lenteur déclenche, À CE MOMENT, un profil CPU
+     (Profiler.start/stop → .cpuprofile), les timers GPU du jeu et une trace Chrome des catégories gpu —
+     le profil couvre donc la durée AU-DELÀ du seuil, là où le temps se perd. Un test rapide ne paie
+     rien. Tout est arrêté quoi qu'il arrive à la fin du test. */
+  const suivi = { cpu: null, gpuTimer: false, trace: null, minuteur: null };
+  if (opts.profilerLents !== false) {
+    suivi.minuteur = setTimeout(() => {
+      suivi.cpu = DIAG.demarrerProfilCPU(session).then(() => true, () => false);
+      session.envoyer('Runtime.evaluate', { expression: '(function(){ var g = window.GAME; return !!(g && g.render && g.render.demarrerProfilGPU && g.render.demarrerProfilGPU()); })()', returnByValue: true }, 5000)
+        .then((r) => { suivi.gpuTimer = !!(r && r.result && r.result.value); }, () => { /* pas de timers GPU */ });
+      if (opts.sessionNavigateur) {
+        const trace = new DIAG.TraceGPU(opts.sessionNavigateur);
+        suivi.trace = trace.demarrer().then(() => trace, () => null);
+      }
+    }, seuilLentMs);
+  }
 
   /* Piloté par `window.runUnE2EParNom` (tests/e2e.js), l'équivalent
      instrumenté (étapes, triplets, métriques — SPEC-BANC-077 à 087) de ce
@@ -167,7 +188,7 @@ async function executerUnTest(session, portServeur, test, opts) {
      (ms) devient `delaiDefaut` en SECONDES, ce que `runUnE2E` attend
      (`fiche.delai` reste prioritaire si le test en déclare un). */
   const expression = 'window.runUnE2EParNom(ensureGame(), ' + JSON.stringify(test.nom) +
-    ', { delaiDefaut: ' + (opts.delaiTestMs / 1000) + ' })';
+    ', { delaiDefaut: ' + (opts.delaiTestMs / 1000) + ', seuilLentMs: ' + seuilLentMs + ' })';
   let resultatJS = null;
   let erreur = null;
   let delaiDepasse = false;
@@ -191,6 +212,28 @@ async function executerUnTest(session, portServeur, test, opts) {
     }
   }
   const duree_ms = Date.now() - debut;
+  if (suivi.minuteur) clearTimeout(suivi.minuteur);
+  // profils : arrêtés ici, qu'ils servent ou non (un profil resté en route fausserait le test suivant)
+  let profilCPU = null, profilGPUJeu = null, traceGPU = null;
+  const lent = duree_ms > seuilLentMs;
+  if (suivi.cpu) {
+    const demarre = await suivi.cpu;
+    if (demarre) {
+      try { profilCPU = await DIAG.arreterProfilCPU(session, opts.dossierPieces, test.nom); } catch (e) { profilCPU = null; }
+    }
+  }
+  if (suivi.trace) {
+    const trace = await suivi.trace;
+    if (trace) { try { traceGPU = await trace.arreter(opts.dossierPieces, test.nom); } catch (e) { traceGPU = null; } }
+  }
+  const ratee = erreur !== null || !resultatJS || resultatJS.etat !== 'reussi';
+  if (lent || ratee) {
+    // la couche « jeu » du profil GPU : mémoire, dessin par passe, temps GPU si les timers ont tourné
+    try {
+      const rp = await session.envoyer('Runtime.evaluate', { expression: '(function(){ var g = window.GAME; var p = g && g.render && g.render.profilGPU ? g.render.profilGPU() : null; if (g && g.render && g.render.arreterProfilGPU) g.render.arreterProfilGPU(); return p; })()', returnByValue: true }, 8000);
+      profilGPUJeu = (rp.result && rp.result.value) || null;
+    } catch (e) { profilGPUJeu = null; }
+  }
 
   if (erreur) {
     // aucune capture possible ici : le script a explosé côté page (exception
@@ -201,6 +244,7 @@ async function executerUnTest(session, portServeur, test, opts) {
       etat: delaiDepasse ? 'delai' : 'echec', debut: debutISO, duree_ms,
       message: delaiDepasse ? 'délai dépassé (' + opts.delaiTestMs + ' ms)' : erreur,
       assertions: { ok: 0, ko: 1 }, etapes: [], captures: [],
+      diag: { profilCPU, profilGPUJeu, traceGPU },
     };
   }
   if (!resultatJS) {
@@ -220,6 +264,11 @@ async function executerUnTest(session, portServeur, test, opts) {
     assertions: resultatJS.assertions || { ok: 0, ko: 0 }, etapes: resultatJS.etapes || [],
     etapesTriplets: resultatJS.etapesTriplets || [], metriques: resultatJS.metriques || null,
     mesures: resultatJS.mesures || [],
+    diag: {
+      vol: resultatJS.vol, volPerdues: resultatJS.volPerdues, instantane: resultatJS.instantane, erreursCachees: resultatJS.erreursCachees,
+      longtasks: resultatJS.longtasks, histogrammeImages: resultatJS.histogrammeImages, scene: resultatJS.scene, reseau: resultatJS.reseau,
+      profilCPU, profilGPUJeu, traceGPU,
+    },
     captures: (resultatJS.captures || []).map((c) => ({ libelle: c.libelle, type: c.type, base64: base64Pur(c.base64), role: c.role,
       etape: c.etape, bord: c.bord, rang: c.rang, t_ms: c.t_ms, numero_image: c.numero_image, duree_image_ms: c.duree_image_ms,
       pose: c.pose, instabilite: c.instabilite })),
@@ -245,8 +294,10 @@ async function executerCampagne(selection, options) {
   let navigateurHandle = null;
   let serveurProcessus = null;
   let session = null;
+  let sessionNavigateur = null;
 
   async function nettoyer() {
+    if (sessionNavigateur) { sessionNavigateur.fermer(); sessionNavigateur = null; }
     if (session) { session.fermer(); session = null; }
     if (navigateurHandle) { NAV.arreterProprement(navigateurHandle); navigateurHandle = null; }
     if (serveurProcessus) { arreterServeurTest(serveurProcessus); serveurProcessus = null; }
@@ -269,21 +320,25 @@ async function executerCampagne(selection, options) {
     session = new CDP.SessionCDP(cible.webSocketDebuggerUrl);
     await session.connecter(opts.delaiDemarrageMs);
 
-    const messagesConsole = [];
-    session.sur('Runtime.consoleAPICalled', (p) => {
-      if (messagesConsole.length >= MAX_MESSAGES_CONSOLE) return;
-      const texte = (p.args || []).map((a) => (a.value !== undefined ? String(a.value) : (a.description || a.type))).join(' ');
-      messagesConsole.push({ t: Date.now(), niveau: p.type, texte });
-    });
-    session.sur('Log.entryAdded', (p) => {
-      if (messagesConsole.length >= MAX_MESSAGES_CONSOLE) return;
-      const e = p.entry || {};
-      messagesConsole.push({ t: Date.now(), niveau: e.level || 'log', texte: e.text || '' });
-    });
-
-    await session.envoyer('Page.enable', {}, 10000);
-    await session.envoyer('Runtime.enable', {}, 10000);
-    try { await session.envoyer('Log.enable', {}, 10000); } catch (e) { /* facultatif */ }
+    /* SPEC-BANC-095 à 099 : tout ce que le navigateur dit sans passer par console.* — exceptions non
+       rattrapées (Runtime.exceptionThrown), messages du navigateur lui-même (Log.entryAdded), ressources
+       introuvables (Network), exceptions et console des workers (Target.setAutoAttach) — est collecté par
+       tools/diagnostics.js. Le script de capture de la page (tests/erreurs-page.js) est en plus installé
+       AVANT les scripts de toute nouvelle page par Page.addScriptToEvaluateOnNewDocument : la page du banc
+       le charge déjà, mais une autre page testée (le jeu lui-même) en profite aussi. */
+    const collecteur = new DIAG.CollecteurCDP(session, { max: MAX_MESSAGES_CONSOLE });
+    await collecteur.attacher({ scriptNouveauDocument: fs.readFileSync(path.join(RACINE, 'tests', 'erreurs-page.js'), 'utf8') });
+    // la cible « navigateur » : SystemInfo (GPU, pilote) et Tracing ne se trouvent pas sur la cible d'une page
+    let infoGpuProcessus = null;
+    if (infoVersion && infoVersion.webSocketDebuggerUrl) {
+      try {
+        sessionNavigateur = new CDP.SessionCDP(infoVersion.webSocketDebuggerUrl);
+        await sessionNavigateur.connecter(opts.delaiDemarrageMs);
+        infoGpuProcessus = await DIAG.lireInfoGPUProcessus(sessionNavigateur);
+      } catch (e) { sessionNavigateur = null; }
+    }
+    opts.sessionNavigateur = sessionNavigateur;
+    opts.dossierPieces = opts.dossierPieces || path.join(os.tmpdir(), 'mc-diagnostics', 'e2e-' + process.pid + '-' + Date.now().toString(36));
     await session.envoyer('Emulation.setDeviceMetricsOverride',
       { width: navigateurHandle.largeur, height: navigateurHandle.hauteur, deviceScaleFactor: 1, mobile: false }, 10000);
 
@@ -323,14 +378,36 @@ async function executerCampagne(selection, options) {
         continue;
       }
       opts.ecrire('  ▶ ' + test.nom);
-      const debutT = Date.now();
+      collecteur.debutTest();
       const r = await executerUnTest(session, portServeur, test, opts);
       opts.ecrire((r.etat === 'ok' ? '    ✓ ' : '    ✗ ') + test.nom + ' (' + r.duree_ms + ' ms)');
-      const journalTest = messagesConsole.filter((m) => m.t >= debutT && m.t <= Date.now());
+      const vuDuNavigateur = collecteur.finTest();
       let message = r.message;
-      if (r.etat !== 'ok' && journalTest.length) {
-        const extrait = journalTest.slice(-10).map((m) => '[' + m.niveau + '] ' + m.texte).join('\n');
-        message = (message || '') + '\n\njournal de console (10 derniers messages) :\n' + extrait;
+      const declenche = DIAG.declencheur({ etat: r.etat === 'ok' ? 'ok' : r.etat, duree_ms: r.duree_ms }, opts.seuilLentMs || SEUIL_LENT_DEFAUT_MS);
+      if (r.etat !== 'ok' && vuDuNavigateur.vol.length) {
+        message = (message || '') + '\n\njournal du navigateur (10 dernières entrées) :\n' + vuDuNavigateur.vol.slice(-10).join('\n');
+      }
+      /* SPEC-BANC-092 : les diagnostics ne sont joints que si le test a échoué ou a été lent ; le vol du jeu
+         (tampon circulaire de MC.Journal, dans la page) et celui du navigateur (CDP) sont fusionnés en un
+         seul flux daté, les erreurs cachées vues par la page et par CDP dédoublonnées. */
+      const diag = {};
+      if (declenche) {
+        const d = r.diag || {};
+        const vol = (d.vol || []).concat(vuDuNavigateur.vol).sort();
+        if (vol.length) { diag.vol = vol.slice(-1000); diag.volPerdues = (d.volPerdues || 0) + vuDuNavigateur.volPerdues; }
+        if (d.instantane) diag.instantane = d.instantane;
+        const cachees = DIAG.fusionner([d.erreursCachees, vuDuNavigateur.erreursCachees]);
+        if (cachees.length) diag.erreursCachees = cachees;
+        if (d.longtasks) diag.longtasks = d.longtasks;
+        if (d.reseau) diag.reseau = d.reseau;       // normalisé (messages des deux côtés) à l'écriture du cahier
+        if (d.histogrammeImages) diag.histogrammeImages = d.histogrammeImages;
+        if (d.profilCPU) diag.profilCPU = d.profilCPU;
+        if (d.profilGPUJeu || d.traceGPU) {
+          const processus = infoGpuProcessus ? Object.assign({}, infoGpuProcessus) : null;
+          const pidGpu = sessionNavigateur ? await DIAG.pidProcessusGPU(sessionNavigateur) : null;
+          const systeme = DIAG.lireCompteursSysteme({ avecFenetre: false, accelerationMaterielle: accelerationMaterielle }, pidGpu);
+          diag.profilGPU = DIAG.assemblerProfilGPU(d.profilGPUJeu, processus, systeme, d.traceGPU);
+        }
       }
       // `fichier` porte l'INDEX de la capture dans le tableau global
       // `capturesGlobales` (voir le correctif 2174e8c, master) : deux
@@ -350,6 +427,8 @@ async function executerCampagne(selection, options) {
         etapes: r.etapes || [], etapesTriplets: r.etapesTriplets || [],
         assertions: r.assertions, metriques: r.metriques || undefined, mesures: (r.mesures && r.mesures.length) ? r.mesures : undefined,
         message, pile: r.pile, attendu: r.attendu, obtenu: r.obtenu,
+        ...(r.diag && r.diag.scene ? { scene: r.diag.scene } : {}),
+        ...diag,
         captures: r.captures.map((c, i) => ({
           libelle: c.libelle, type: c.type, role: c.role, etape: c.etape, bord: c.bord, rang: c.rang,
           t_ms: c.t_ms, numero_image: c.numero_image, duree_image_ms: c.duree_image_ms, pose: c.pose, instabilite: c.instabilite,
@@ -368,6 +447,8 @@ async function executerCampagne(selection, options) {
         vendorGpu: rGpu ? rGpu.vendor : null,
         resolution: navigateurHandle.largeur + 'x' + navigateurHandle.hauteur,
         accelerationMaterielle,
+        // SPEC-BANC-102 : GPU, pilote et fonctionnalités accélérées vus du PROCESSUS (CDP SystemInfo.getInfo)
+        gpuProcessus: infoGpuProcessus,
         // SPEC-BANC-085 : os et présence d'une fenêtre — ce module lance
         // TOUJOURS le navigateur sans fenêtre (tools/navigateur.js) ; le banc
         // navigateur normal (tests/banc-ui.js), qui s'exécute avec fenêtre,
@@ -402,7 +483,7 @@ if (require.main === module) {
   const entree = option('--entree');
   const sortie = option('--sortie');
   if (!entree || !sortie) {
-    console.error('Usage : node tools/e2e-headless.js --entree selection.json --sortie resultat.json [--navigateur chemin] [--port-serveur N] [--delai-demarrage ms] [--delai-test ms] [--delai-global ms]');
+    console.error('Usage : node tools/e2e-headless.js --entree selection.json --sortie resultat.json [--navigateur chemin] [--port-serveur N] [--delai-demarrage ms] [--delai-test ms] [--delai-global ms] [--seuil-lent ms] [--pieces dossier]');
     process.exit(2);
   }
   const selection = JSON.parse(fs.readFileSync(entree, 'utf8'));
@@ -412,6 +493,8 @@ if (require.main === module) {
     delaiDemarrageMs: parseInt(option('--delai-demarrage', String(DELAI_DEMARRAGE_DEFAUT)), 10),
     delaiTestMs: parseInt(option('--delai-test', String(DELAI_TEST_DEFAUT)), 10),
     delaiGlobalMs: parseInt(option('--delai-global', String(DELAI_GLOBAL_DEFAUT)), 10),
+    seuilLentMs: parseInt(option('--seuil-lent', String(SEUIL_LENT_DEFAUT_MS)), 10),
+    dossierPieces: option('--pieces') || null,
     ecrire: (t) => { process.stderr.write(t + '\n'); },
   };
 
