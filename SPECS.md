@@ -702,7 +702,7 @@ Dépend de SPEC-SAVE-017 (identifiants sur 16 bits et états de bloc).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-CONSTR-001 | Des escaliers existent pour chaque matériau de construction ; posés, ils s'orientent selon le regard (et s'inversent posés sous un plafond) ; ils forment d'eux-mêmes angles intérieurs et extérieurs selon leurs voisins ; on les monte sans sauter | orientation, angles automatiques, montée | ⏳ |
+| SPEC-CONSTR-001 | Des escaliers existent pour chaque matériau de construction ; posés, ils s'orientent selon le regard (et s'inversent posés sous un plafond) ; ils forment d'eux-mêmes angles intérieurs et extérieurs selon leurs voisins ; on les monte sans sauter | orientation, angles automatiques, montée | ✅ |
 | SPEC-CONSTR-002 | Des demi-blocs (dalles) existent pour les matériaux qui s'y prêtent : moitié basse ou haute selon l'endroit visé, deux dalles font un bloc plein ; on y marche à mi-hauteur | pose haute/basse, fusion, collision | ✅ |
 | SPEC-CONSTR-003 | Des toitures : pans en pente, faîtages, arêtiers et noues qui s'ajustent d'eux-mêmes aux voisins (angles automatiques) ; les bâtiments générés en sont couverts selon leur style | formes de toit, raccords, bâtiments couverts | ⏳ |
 | SPEC-CONSTR-004 | Clôtures, murets, vitres et rambardes se raccordent d'eux-mêmes à leurs voisins (et aux blocs pleins), se referment en angle et en T | connexions selon les voisins | ✅ |
@@ -717,7 +717,7 @@ Dépend de SPEC-SAVE-017 (identifiants sur 16 bits et états de bloc).
 
 | ID | Spec | Vérification | État |
 |---|---|---|---|
-| SPEC-OBJET-001 | Le tissu se tisse (laine — coton et lin laissés à une culture future) ; armures de tissu, cuir, mailles, bronze, fer, or et diamant — casque, plastron, jambières, bottes — réduisent les dégâts selon leur matière, s'usent, se réparent à l'établi, et se voient sur l'avatar | recettes, réduction des dégâts, usure, réparation, apparence | ⏳ |
+| SPEC-OBJET-001 | Le tissu se tisse (laine — coton et lin laissés à une culture future) ; armures de tissu, cuir, mailles, bronze, fer, or et diamant — casque, plastron, jambières, bottes — réduisent les dégâts selon leur matière, s'usent, se réparent à l'établi, et se voient sur l'avatar | recettes, réduction des dégâts, usure, réparation, apparence | ✅ |
 | SPEC-OBJET-002 | Davantage d'armes : dague, épée longue, hache de guerre, masse, lance, arc long, arbalète lourde, fronde, chacune avec sa portée, sa cadence, ses dégâts et son recul, dans plusieurs matières | caractéristiques, recettes | ✅ |
 | SPEC-OBJET-003 | Gemmes taillées et bijoux (anneaux, amulettes, diadèmes) : ils se portent et donnent de petits effets (résistance, vitesse, lumière, chance au butin) ; ils valent cher auprès des marchands | taille, port, effets, valeur | ✅ |
 | SPEC-OBJET-004 | Davantage de nourriture et une cuisine : fromage, soupes, ragoûts, tartes, gâteaux, baies, en plus du pain et des viandes/poissons déjà cuisinables ; chaque plat rassasie selon sa recette, certains soignent un peu ; la nourriture crue peut rendre malade | recettes, satiété, effets | ✅ |

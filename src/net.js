@@ -154,7 +154,8 @@
           (m.joueurs || []).forEach(function (j) {
             distants.set(j.id, { id: j.id, nom: j.nom,
                                  pos: { x: j.x, y: j.y, z: j.z },
-                                 cible: { x: j.x, y: j.y, z: j.z }, yaw: j.yaw || 0 });
+                                 cible: { x: j.x, y: j.y, z: j.z }, yaw: j.yaw || 0,
+                                 equip: NP.armureDepuisVisible(j.eq), eqSig: null });
           });
           hooks.onBienvenue(m);
           if (m.toi) hooks.onToi(m.toi);
@@ -236,9 +237,26 @@
 
         case NP.MSG.ARRIVE:
           distants.set(m.id, { id: m.id, nom: m.nom, pos: { x: 0, y: -100, z: 0 },
-                               cible: { x: 0, y: -100, z: 0 }, yaw: 0 });
+                               cible: { x: 0, y: -100, z: 0 }, yaw: 0,
+                               equip: NP.armureDepuisVisible(null), eqSig: null });
           hooks.onArrive(m);
           break;
+
+        /* SPEC-OBJET-001 (SPEC-SYNC-011) : une pièce d'armure d'un AUTRE joueur
+           vient de changer — l'avatar se rhabille aussitôt (render.js) ; le
+           prochain ETAT (eq) fait foi de toute façon. */
+        case NP.MSG.EQUIP_VU: {
+          var ev = MC.ContratsV2 ? MC.ContratsV2.validerEquipVu(m) : m;
+          if (!ev || NP.PIECES_VISIBLES.indexOf(ev.slot) < 0) break;
+          var dv = distants.get(ev.j ? ev.id + '/' + ev.j : ev.id);
+          if (!dv) break;
+          var une = [0, 0, 0, 0];
+          une[NP.PIECES_VISIBLES.indexOf(ev.slot)] = ev.objet;
+          dv.equip = dv.equip || NP.armureDepuisVisible(null);
+          dv.equip[ev.slot] = NP.armureDepuisVisible(une)[ev.slot];
+          dv.eqSig = null;
+          break;
+        }
 
         case NP.MSG.QUITTE:
           distants.delete(m.id);
@@ -296,6 +314,9 @@
               d.cible.x = j.x; d.cible.y = j.y; d.cible.z = j.z;
               d.yaw = j.yaw || 0;
             }
+            // SPEC-OBJET-001 : l'armure visible qui fait foi (eq absent = aucune)
+            var sig = j.eq ? String(j.eq) : '';
+            if (d.eqSig !== sig) { d.equip = NP.armureDepuisVisible(j.eq); d.eqSig = sig; }
           });
           // les joueurs d'écran partagé absents du relevé sont partis
           distants.forEach(function (d, cle) {

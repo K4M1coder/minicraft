@@ -547,7 +547,33 @@
   function estCoordHorizontale(v) { return estEntier(v) && Math.abs(v) <= COORD_MAX; }
   function estCoordVerticale(v) { return estEntier(v) && v >= 0 && v <= WORLD_H - 1; }
 
+  /* SPEC-OBJET-001 : l'armure portée par un joueur, telle que les AUTRES la
+     voient — dans chaque entrée ETAT.joueurs, `eq: [casque, plastron,
+     jambières, bottes]` (ids, 0 = rien), absente quand il n'en porte aucune
+     (aucun octet de plus pour un joueur sans armure). EQUIP_VU (SPEC-SYNC-011)
+     annonce un changement sur-le-champ ; ETAT garantit qu'un joueur arrivé à
+     portée APRÈS ce changement voit quand même l'armure. */
+  var PIECES_VISIBLES = ['casque', 'plastron', 'jambieres', 'bottes'];
+  function estArmureDe(id, piece) {
+    var d = MC.Core && typeof id === 'number' && MC.Core.ITEMS[id];
+    return !!(d && d.equipSlot === piece && d.couleurArmure !== undefined);
+  }
+  function armureVisible(equip) {
+    if (!equip) return null;
+    var eq = PIECES_VISIBLES.map(function (p) { var s = equip[p]; return s && estArmureDe(s.id, p) ? s.id : 0; });
+    return eq.some(function (id) { return id; }) ? eq : null;
+  }
+  function armureDepuisVisible(eq) {
+    var out = {};
+    PIECES_VISIBLES.forEach(function (p, i) {
+      var id = Array.isArray(eq) ? eq[i] : 0;
+      out[p] = estArmureDe(id, p) ? { id: id, n: 1 } : null;
+    });
+    return out;
+  }
+
   MC.NetProtocol = {
+    PIECES_VISIBLES: PIECES_VISIBLES, armureVisible: armureVisible, armureDepuisVisible: armureDepuisVisible,
     GUID: GUID, OP: OP, MSG: MSG,
     TAMPON_MAX: TAMPON_MAX, COORD_MAX: COORD_MAX, WORLD_H: WORLD_H,
     accepteCle: accepteCle, reponseHandshake: reponseHandshake,

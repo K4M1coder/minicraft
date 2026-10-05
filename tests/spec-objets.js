@@ -98,6 +98,99 @@
       A.equal(MC.Apparence.couleurArmure(stack), C.def(I.OR_CASQUE).couleurArmure);
       A.equal(MC.Apparence.couleurArmure(null), null, 'rien de porté : aucune couleur');
     });
+
+    /* Apparence sur l'avatar : chaque pièce, de chaque matière, habille la
+       partie du corps qu'elle couvre — casque sur la tête, plastron sur le
+       buste et les épaules, jambières en haut des jambes, bottes en bas —
+       avec la teinte et le motif (texture procédurale) de sa matière. */
+    var MATIERES = ['TISSU', 'CUIR', 'MAILLES', 'BRONZE', 'FER', 'OR', 'DIAMANT'];
+    var PIECES = ['CASQUE', 'PLASTRON', 'JAMBIERES', 'BOTTES'];
+    var DIMS = { w: 0.6, hj: 0.684, hb: 0.612, ht: 0.432, lb: 0.18 };
+    function equipComplet(mat) {
+      var e = { bijou: null };
+      PIECES.forEach(function (p) { e[p.toLowerCase()] = { id: I[mat + '_' + p], n: 1 }; });
+      return e;
+    }
+    it('SPEC-OBJET-001 : les quatre pièces de chaque matière habillent chacune leur partie du corps', function () {
+      var AP = MC.Apparence;
+      A.deep(AP.habillage({ casque: null, plastron: null, jambieres: null, bottes: null }, DIMS), [], 'rien de porté : aucune boîte');
+      A.deep(AP.habillage(null, DIMS), [], 'aucun équipement connu : aucune boîte');
+      var PARTIES = { casque: ['tete'], plastron: ['buste', 'brasG', 'brasD'], jambieres: ['jambeG', 'jambeD'], bottes: ['jambeG', 'jambeD'] };
+      MATIERES.forEach(function (mat) {
+        var bs = AP.habillage(equipComplet(mat), DIMS);
+        PIECES.forEach(function (p) {
+          var piece = p.toLowerCase(), d = C.def(I[mat + '_' + p]);
+          var siennes = bs.filter(function (b) { return b.piece === piece; });
+          A.ok(siennes.length > 0, mat + ' ' + piece + ' : visible sur l\'avatar');
+          var parties = siennes.map(function (b) { return b.partie; }).filter(function (x, i, t) { return t.indexOf(x) === i; }).sort();
+          A.deep(parties, PARTIES[piece].slice().sort(), mat + ' ' + piece + ' : sur les bonnes parties du corps');
+          siennes.forEach(function (b) {
+            A.equal(b.couleur, d.couleurArmure, mat + ' ' + piece + ' : teinte de sa matière');
+            A.equal(b.matiere, mat.toLowerCase(), mat + ' ' + piece + ' : motif de sa matière');
+            A.ok(b.lx > 0 && b.ly > 0 && b.lz > 0, 'boîte non vide');
+          });
+        });
+      });
+    });
+
+    it('SPEC-OBJET-001 : l\'armure enveloppe le corps (plus large que la partie couverte) ; jambières en haut des jambes, bottes en bas', function () {
+      var AP = MC.Apparence, bs = AP.habillage(equipComplet('FER'), DIMS);
+      function une(piece, partie) { return bs.filter(function (b) { return b.piece === piece && b.partie === partie; })[0]; }
+      var casque = une('casque', 'tete'), plastron = une('plastron', 'buste');
+      A.gt(casque.lx, DIMS.w * 0.75, 'le casque déborde de la tête');
+      A.gt(plastron.lx, DIMS.w * 0.9, 'le plastron déborde du buste');
+      // dans le repère de la jambe, la boîte pend de la hanche (y = 0) au pied (y = -hj)
+      var jamb = une('jambieres', 'jambeG'), botte = une('bottes', 'jambeG');
+      A.gt(jamb.lx, DIMS.w * 0.34, 'les jambières débordent de la jambe');
+      A.gt(jamb.y - jamb.ly / 2, -DIMS.hj * 0.75, 'les jambières couvrent le haut de la jambe');
+      A.lt(botte.y - botte.ly / 2, -DIMS.hj * 0.95, 'les bottes descendent jusqu\'au pied');
+      A.lt(botte.y + botte.ly / 2, jamb.y - jamb.ly / 2 + 1e-9, 'bottes sous les jambières, sans les recouvrir');
+    });
+
+    it('SPEC-OBJET-001 : chaque matière a son motif procédural (texture), stable et distinct des autres', function () {
+      var AP = MC.Apparence, vus = {};
+      MATIERES.forEach(function (mat) {
+        var m = AP.motifArmure(mat.toLowerCase());
+        A.equal(m.taille, 16, 'motif 16 × 16, comme les tuiles du jeu');
+        A.equal(m.pixels.length, 256);
+        A.deep(Array.prototype.slice.call(AP.motifArmure(mat.toLowerCase()).pixels), Array.prototype.slice.call(m.pixels), mat + ' : motif stable');
+        var min = 255, max = 0;
+        for (var i = 0; i < 256; i++) { min = Math.min(min, m.pixels[i]); max = Math.max(max, m.pixels[i]); }
+        A.gt(max - min, 30, mat + ' : un vrai motif, pas un aplat');
+        var cle = Array.prototype.join.call(m.pixels, ',');
+        A.notOk(vus[cle], mat + ' : motif distinct de ' + vus[cle]);
+        vus[cle] = mat;
+      });
+    });
+
+    it('SPEC-OBJET-001 : la signature de l\'armure portée change dès qu\'une pièce change (l\'avatar se rhabille)', function () {
+      var AP = MC.Apparence;
+      var e = equipComplet('CUIR'), s0 = AP.signatureArmure(e);
+      A.equal(AP.signatureArmure(equipComplet('CUIR')), s0, 'même armure, même signature');
+      e.bottes = { id: I.DIAMANT_BOTTES, n: 1 };
+      A.notEqual(AP.signatureArmure(e), s0, 'bottes changées : signature changée');
+      e.bijou = { id: I.TISSU, n: 1 };
+      var s1 = AP.signatureArmure(e);
+      e.bottes.dmg = 5;
+      A.equal(AP.signatureArmure(e), s1, 'l\'usure et le bijou ne changent pas l\'apparence');
+      A.equal(AP.signatureArmure(null), AP.signatureArmure({}), 'rien de porté');
+    });
+
+    it('SPEC-OBJET-001 : l\'armure visible voyage dans ETAT (net-protocol), compacte, et se relit à l\'identique', function () {
+      var NP = MC.NetProtocol;
+      A.equal(NP.armureVisible({ casque: null, plastron: null, jambieres: null, bottes: null, bijou: { id: 5, n: 1 } }), null,
+              'sans armure : rien n\'est ajouté au relevé');
+      var e = equipComplet('OR');
+      var eq = NP.armureVisible(e);
+      A.deep(eq, [I.OR_CASQUE, I.OR_PLASTRON, I.OR_JAMBIERES, I.OR_BOTTES], 'quatre ids, dans l\'ordre casque, plastron, jambières, bottes');
+      var relu = NP.armureDepuisVisible(eq);
+      A.equal(MC.Apparence.signatureArmure(relu), MC.Apparence.signatureArmure(e), 'relu : même apparence');
+      var partiel = NP.armureDepuisVisible([0, I.FER_PLASTRON, 0, 0]);
+      A.equal(partiel.casque, null); A.equal(partiel.plastron.id, I.FER_PLASTRON);
+      A.deep(NP.armureDepuisVisible(null), { casque: null, plastron: null, jambieres: null, bottes: null }, 'absent : rien de porté');
+      A.deep(NP.armureDepuisVisible(['x', -3, 1e9, I.FER_BOTTES]), { casque: null, plastron: null, jambieres: null, bottes: { id: I.FER_BOTTES, n: 1 } },
+             'un id invalide ou qui n\'est pas une armure de cet emplacement est ignoré');
+    });
   });
 
   // ══════════════════════════════════════════════════════════════════════════

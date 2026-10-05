@@ -549,4 +549,35 @@
       A.deep(vus, [{ x: 3, z: 4, zone: 'pvp' }, { x: 3, z: 4, zone: null }], 'deux messages valides, normalisés ; trois invalides ignorés');
     });
   });
+  describe('Armure visible des autres joueurs (SPEC-OBJET-001)', {
+    teste: 'src/net.js : l\'armure d\'un joueur distant, apprise par EQUIP_VU et par ETAT (eq), rangée dans son entrée de `distants` pour que render.js l\'habille',
+    pourquoi: 'le serveur annonçait l\'équipement (EQUIP_VU) mais le client l\'ignorait : aucune armure ne se voyait sur un autre joueur.',
+    attendu: 'EQUIP_VU change la pièce sur-le-champ (joueur d\'écran partagé compris) ; chaque ETAT fait foi (eq absent = aucune armure) ; un id invalide est ignoré.',
+  }, function () {
+    it('SPEC-OBJET-001 : client — EQUIP_VU et ETAT.eq habillent le joueur distant, ETAT fait foi', function () {
+      if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
+      var ancien = G.WebSocket, socket = null, I = C.I;
+      G.WebSocket = function () { socket = this; this.readyState = 1; this.send = function () {}; this.close = function () {}; };
+      var net;
+      try { net = MC.createNetClient({}); net.connecter('ws://faux', 'Test', 1); } finally { G.WebSocket = ancien; }
+      function recevoir(m) { socket.onmessage({ data: JSON.stringify(m) }); }
+      recevoir({ t: NP.MSG.BIENVENUE, id: 1, joueurs: [{ id: 2, nom: 'Bob', x: 0, y: 64, z: 0 }] });
+      var bob = net.distants.get(2);
+      A.equal(MC.Apparence.signatureArmure(bob.equip), '0,0,0,0', 'rien de connu : aucune armure');
+      recevoir({ t: NP.MSG.EQUIP_VU, id: 2, j: 0, slot: 'casque', objet: I.FER_CASQUE });
+      A.equal(bob.equip.casque.id, I.FER_CASQUE, 'EQUIP_VU : le casque se voit aussitôt');
+      recevoir({ t: NP.MSG.EQUIP_VU, id: 2, j: 0, slot: 'bottes', objet: I.FER_CASQUE });
+      A.equal(bob.equip.bottes, null, 'un casque annoncé aux pieds est ignoré');
+      recevoir({ t: NP.MSG.ETAT, joueurs: [{ id: 2, j: 0, nom: 'Bob', x: 1, y: 64, z: 0, yaw: 0, eq: [I.OR_CASQUE, I.OR_PLASTRON, I.OR_JAMBIERES, I.OR_BOTTES] },
+                                          { id: 2, j: 1, nom: 'Bob', x: 2, y: 64, z: 0, yaw: 0, eq: [0, 0, 0, I.CUIR_BOTTES] }], mobs: [] });
+      A.equal(MC.Apparence.signatureArmure(bob.equip), [I.OR_CASQUE, I.OR_PLASTRON, I.OR_JAMBIERES, I.OR_BOTTES].join(','), 'ETAT : les quatre pièces d\'or');
+      A.equal(net.distants.get('2/1').equip.bottes.id, I.CUIR_BOTTES, 'joueur d\'écran partagé (clé id/j) habillé aussi');
+      recevoir({ t: NP.MSG.EQUIP_VU, id: 2, j: 1, slot: 'casque', objet: I.DIAMANT_CASQUE });
+      A.equal(net.distants.get('2/1').equip.casque.id, I.DIAMANT_CASQUE, 'EQUIP_VU vise le bon joueur d\'écran partagé');
+      recevoir({ t: NP.MSG.ETAT, joueurs: [{ id: 2, j: 0, nom: 'Bob', x: 1, y: 64, z: 0, yaw: 0 }], mobs: [] });
+      A.equal(MC.Apparence.signatureArmure(bob.equip), '0,0,0,0', 'ETAT sans eq : il ne porte plus rien');
+      recevoir({ t: NP.MSG.EQUIP_VU, id: 2, j: 0, slot: 'casque', objet: 0 });
+      A.equal(bob.equip.casque, null, 'objet 0 : emplacement vidé');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

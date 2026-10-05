@@ -781,6 +781,203 @@
          'au moins un des deux a pris un angle intérieur ou extérieur');
   });
 
+  /* Une petite scène dégagée devant le joueur : un sol de pierre de
+     (2r+1)² cases sous ses pieds, de l'air sur 5 blocs au-dessus — ce qui
+     se trouvait là (arbre, maison…) ne cache rien. Le joueur y est posé. */
+  async function sceneDegagee(g, s, r) {
+    var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z), by = Math.floor(s.pos.y - 0.2);
+    for (var dx = -r; dx <= r; dx++) for (var dz = -r; dz <= r; dz++) {
+      g.world.setBlock(bx + dx, by - 1, bz + dz, B.STONE);
+      for (var yy = by; yy < by + 5; yy++) g.world.setBlock(bx + dx, yy, bz + dz, 0);
+    }
+    s.pos.y = by; s.vel.x = s.vel.y = s.vel.z = 0;
+    await frames(6);
+    return { x: bx, y: by, z: bz };
+  }
+
+  e2e('SPEC-CONSTR-001 : un escalier de chaque matériau de construction se pose et s\'affiche', {
+        "teste": "la pose, dans la vraie boucle, d'un escalier de chaque matériau de construction (béton, terre cuite, marbre, chaux, pavé, chaume, poutres…), en rangées devant le joueur, chacun orienté selon le regard ; deux rangs se raccordent en angle",
+        "pourquoi": "les 23 escaliers ajoutés pour SPEC-CONSTR-001 doivent se poser, se mailler et s'afficher avec la texture de leur matériau, pas seulement exister dans les tables",
+        "attendu": "chaque escalier est posé, orienté vers le regard, et la capture montre les rangées d'escaliers aux couleurs de leurs matériaux"
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 9);
+    var mats = ['BETON_ROUGE', 'BETON_JAUNE', 'BETON_BLEU', 'BETON_VERT', 'BETON_NOIR', 'BETON_BLANC', 'BETON_GRIS',
+                'TERRACOTTA', 'TERRACOTTA_RED', 'TERRACOTTA_YELLOW', 'TERRACOTTA_BLUE', 'TERRACOTTA_GREEN', 'TERRACOTTA_BLACK',
+                'TERRACOTTA_WHITE', 'TERRACOTTA_GRAY', 'MARBRE', 'CHAUX', 'PAVE', 'CHAUME',
+                'POUTRE_CHENE', 'POUTRE_SAPIN', 'POUTRE_BOULEAU', 'POUTRE_ACACIA', 'POUTRE_JUNGLE'];
+    s.yaw = 0; s.pitch = -0.5;               // regard vers le nord (-z), un peu vers le bas
+    var poses = [];
+    mats.forEach(function (m, i) {
+      var esc = C.BLOCKS[B[m]].escalier;
+      A.ok(esc, m + ' a un escalier');
+      // trois rangées de huit, de 3 à 7 blocs devant le joueur
+      var x = o.x - 4 + (i % 8), z = o.z - 3 - 2 * Math.floor(i / 8);
+      s.inv.load([]); s.inv.add(esc, 1); s.selected = 0;
+      var res = g.player.useOn({ x: x, y: o.y - 1, z: z, block: B.STONE, nx: 0, ny: 1, nz: 0, t: 1 });
+      A.equal(res, 'place', m + ' : l\'escalier se pose');
+      A.equal(g.world.getBlock(x, o.y, z), esc, m + ' : le bon escalier est en place');
+      A.equal(MC.Formes.unpackEscalier(g.world.getEtat(x, o.y, z)).orientation, C.orientDeRegard(g.player.lookDir()),
+              m + ' : orienté selon le regard');
+      poses.push([x, z]);
+    });
+    // un peu en hauteur (en vol) pour embrasser les trois rangées
+    s.flying = true; s.pos.y = o.y + 4; s.pos.z = o.z + 0.5; s.vel.x = s.vel.y = s.vel.z = 0;
+    s.pitch = -0.7;
+    await frames(20);
+    capture('escaliers-de-chaque-materiau');
+    // de biais : les marches, leurs contremarches et leurs textures
+    s.pos.x = o.x + 5.5; s.yaw = 0.7; s.pitch = -0.6;
+    await frames(6);
+    capture('escaliers-de-biais');
+    s.yaw = 0; s.pitch = 0; s.flying = false;
+  });
+
+  /* SPEC-OBJET-001 : un avatar de joueur DISTANT (même chemin que le réseau :
+     une entrée de net.distants, son armure dans `equip` — net.js la remplit
+     d'EQUIP_VU et d'ETAT.eq) posé devant la caméra, vu de face et de dos. */
+  e2e('SPEC-OBJET-001 : l\'armure complète de chaque matière se voit sur l\'avatar d\'un autre joueur, de face et de dos', {
+        "teste": "le rendu de l'avatar d'un joueur distant portant casque, plastron, jambières et bottes de tissu, cuir, mailles, bronze, fer, or puis diamant : boîtes d'armure accrochées à la tête, au buste, aux bras et aux jambes, teinte et texture de la matière ; vu de face et de dos",
+        "pourquoi": "SPEC-OBJET-001 : l'armure doit se voir sur l'avatar — avant ce correctif, jambières et bottes ne s'affichaient jamais et l'équipement des autres joueurs n'arrivait pas au rendu",
+        "attendu": "neuf boîtes d'armure (calotte et nuque, plastron et deux épaulières, deux jambières, deux bottes) à la couleur de la matière, qui changent l'image rendue ; captures de face et de dos pour chaque matière",
+        "delai": 300
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 4);
+    var NP = MC.NetProtocol, ID = 990001;
+    var pos = { x: o.x + 0.5, y: o.y, z: o.z + 0.5 - 3 };
+    var d = { id: ID, nom: 'Mannequin', pos: { x: pos.x, y: pos.y, z: pos.z }, cible: { x: pos.x, y: pos.y, z: pos.z }, yaw: 0,
+              equip: NP.armureDepuisVisible(null), eqSig: 'e2e' };
+    g.net.distants.set(ID, d);
+    try {
+      s.yaw = 0; s.pitch = -0.2;
+      await frames(4);
+      var m = g.render.maillagesDistants.get(ID);
+      A.ok(m, 'l\'avatar du joueur distant est dans la scène');
+      A.equal((m.userData.armure || []).length, 0, 'sans armure : aucune pièce');
+      // l'image de l'avatar sans armure, pour comparer
+      function signatureImage() {
+        g.render.render();
+        var src = g.render.renderer.domElement, c = document.createElement('canvas');
+        c.width = 64; c.height = 64;
+        var ctx = c.getContext('2d');
+        ctx.drawImage(src, src.width * 0.35, src.height * 0.2, src.width * 0.3, src.height * 0.6, 0, 0, 64, 64);
+        return ctx.getImageData(0, 0, 64, 64).data;
+      }
+      function ecart(a, b) { var n = 0; for (var i = 0; i < a.length; i += 4) if (Math.abs(a[i] - b[i]) + Math.abs(a[i + 1] - b[i + 1]) + Math.abs(a[i + 2] - b[i + 2]) > 40) n++; return n; }
+      var nu = signatureImage();
+      capture('avatar-sans-armure');
+      var MATS = ['TISSU', 'CUIR', 'MAILLES', 'BRONZE', 'FER', 'OR', 'DIAMANT'];
+      for (var k = 0; k < MATS.length; k++) {
+        var mat = MATS[k];
+        d.equip = NP.armureDepuisVisible([I[mat + '_CASQUE'], I[mat + '_PLASTRON'], I[mat + '_JAMBIERES'], I[mat + '_BOTTES']]);
+        d.yaw = Math.PI;                      // face à la caméra
+        await frames(3);
+        var pieces = m.userData.armure || [];
+        A.equal(pieces.length, 9, mat + ' : neuf boîtes d\'armure');
+        ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (p) {
+          var siennes = pieces.filter(function (b) { return b.userData.pieceArmure === p; });
+          A.ok(siennes.length > 0, mat + ' : ' + p + ' visible');
+          var attendu = C.def(I[mat + '_' + p.toUpperCase()]).couleurArmure;
+          siennes.forEach(function (b) {
+            A.equal(b.material.userData.base.getHex(), attendu, mat + ' ' + p + ' : teinte de la matière');
+            A.ok(b.material.map, mat + ' ' + p + ' : texture procédurale');
+            A.ok(b.parent && b.visible, mat + ' ' + p + ' : accrochée au corps');
+          });
+        });
+        A.equal(pieces.filter(function (b) { return b.userData.pieceArmure === 'jambieres' || b.userData.pieceArmure === 'bottes'; })
+                  .map(function (b) { return b.parent; }).filter(function (p) { return p === m.userData.membres.jambeG || p === m.userData.membres.jambeD; }).length,
+                4, mat + ' : jambières et bottes aux deux jambes');
+        A.gt(ecart(signatureImage(), nu), 40, mat + ' : l\'armure change l\'image rendue (de face)');
+        capture('face-' + mat.toLowerCase());
+        d.yaw = 0;                            // de dos
+        await frames(3);
+        A.gt(ecart(signatureImage(), nu), 40, mat + ' : l\'armure change l\'image rendue (de dos)');
+        capture('dos-' + mat.toLowerCase());
+      }
+      // retirer l'armure : l'avatar se déshabille
+      d.equip = NP.armureDepuisVisible(null);
+      await frames(3);
+      A.equal(m.userData.armure.length, 0, 'armure retirée : plus aucune pièce');
+    } finally {
+      g.net.distants.delete(ID);
+      s.pitch = 0;
+      await frames(2);
+    }
+  });
+
+  e2e('SPEC-OBJET-001 : en écran partagé, chaque joueur voit l\'armure des autres joueurs locaux, jamais son propre corps', {
+        "teste": "à deux joueurs locaux, l'avatar du joueur 2 (armure de fer complète) est dans la scène, visible dans la vue du joueur 1 et caché dans la sienne ; il se rhabille quand son équipement change",
+        "pourquoi": "SPEC-OBJET-001 : l'armure se voit sur l'avatar du joueur local aussi — en écran partagé, les joueurs locaux n'avaient pas d'avatar du tout",
+        "attendu": "un avatar par joueur local, chacun caché dans sa propre vue, neuf pièces d'armure de fer puis d'or après changement ; retour au solo : plus aucun avatar local"
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 4);
+    fausseManette([{ axes: [0, 0, 0, 0] }]);
+    g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
+    try {
+      await frames(4);
+      var s1 = g.equipe[0].player.state, s2 = g.equipe[1].player.state;
+      [s1, s2].forEach(function (st) { st.flying = true; st.vel.x = st.vel.y = st.vel.z = 0; });
+      s1.pos.x = o.x + 0.5; s1.pos.y = o.y; s1.pos.z = o.z + 0.5;
+      s2.pos.x = o.x + 0.5; s2.pos.y = o.y; s2.pos.z = o.z + 0.5 - 3;
+      s1.yaw = 0; s1.pitch = -0.2; s2.yaw = Math.PI; s2.pitch = 0;
+      ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (p) { s2.equip[p] = { id: I['FER_' + p.toUpperCase()], n: 1 }; });
+      await frames(6);
+      var av = g.render.avatarsLocaux;
+      A.equal(av.length, 2, 'un avatar par joueur local');
+      A.equal(av[1].userData.armure.length, 9, 'le joueur 2 porte ses neuf pièces de fer');
+      A.equal(av[0].userData.armure.length, 0, 'le joueur 1 ne porte rien');
+      A.close(av[1].position.z, s2.pos.z, 0.01, 'l\'avatar suit le joueur 2');
+      // la vue du joueur 1 montre le joueur 2, jamais le joueur 1 lui-même
+      g.render.render();
+      A.ok(av[1].visible && !av[0].visible, 'vue 1 : le joueur 2 visible, son propre corps caché');
+      capture('ecran-partage-joueur2-en-fer');
+      ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (p) { s2.equip[p] = { id: I['OR_' + p.toUpperCase()], n: 1 }; });
+      await frames(3);
+      A.equal(av[1].userData.armure.filter(function (b) { return b.material.userData.base.getHex() === C.def(I.OR_PLASTRON).couleurArmure; }).length, 9,
+              'changé pour de l\'or : l\'avatar se rhabille');
+      capture('ecran-partage-joueur2-en-or');
+    } finally {
+      soloRetabli(g); await frames(3);
+    }
+    A.equal(g.render.avatarsLocaux.length, 0, 'seul : aucun avatar local');
+  });
+
+  e2e('SPEC-OBJET-001 : à quatre joueurs locaux en armure complète, face à face, la cadence reste jouable', {
+        "teste": "la cadence d'images en écran partagé à quatre, chaque joueur en armure complète (quatre matières différentes) et voyant les trois autres",
+        "pourquoi": "G9 : les avatars des joueurs locaux et leurs neuf pièces d'armure ne doivent pas faire chuter la cadence de l'écran partagé",
+        "attendu": "trois avatars habillés visibles par vue, au moins 20 images/s (seuil bas du banc sans fenêtre, comme SPEC-SPLIT-005)"
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 4);
+    fausseManette([{ axes: [0, 0, 0, 0] }, { axes: [0, 0, 0, 0] }, { axes: [0, 0, 0, 0] }]);
+    g.composerEquipe(4, MC.Modes.regles('creatif', 'facile'));
+    try {
+      await frames(4);
+      var MATS = ['CUIR', 'MAILLES', 'OR', 'DIAMANT'];
+      // en carré, chacun tourné vers le centre
+      [[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]].forEach(function (p, i) {
+        var st = g.equipe[i].player.state;
+        st.flying = true; st.vel.x = st.vel.y = st.vel.z = 0;
+        st.pos.x = o.x + 0.5 + p[0]; st.pos.y = o.y; st.pos.z = o.z + 0.5 + p[1];
+        st.yaw = Math.atan2(p[0], p[1]); st.pitch = -0.2;
+        ['casque', 'plastron', 'jambieres', 'bottes'].forEach(function (q) { st.equip[q] = { id: I[MATS[i] + '_' + q.toUpperCase()], n: 1 }; });
+      });
+      await frames(10);
+      var av = g.render.avatarsLocaux;
+      A.equal(av.length, 4, 'quatre avatars locaux');
+      av.forEach(function (m, i) { A.equal(m.userData.armure.length, 9, 'joueur ' + (i + 1) + ' : armure complète'); });
+      capture('quatre-joueurs-en-armure');
+      var t0 = performance.now();
+      await frames(60);
+      var fps = 60 / ((performance.now() - t0) / 1000);
+      A.gt(fps, 20, 'au moins 20 images/s en quadrant, quatre avatars en armure (' + fps.toFixed(0) + ')');
+    } finally {
+      soloRetabli(g); await frames(3);
+    }
+  });
+
   // ══════════════════════════════════════════════════════════════════════════
   // Miner, poser, ramasser — dans la boucle réelle
   // ══════════════════════════════════════════════════════════════════════════

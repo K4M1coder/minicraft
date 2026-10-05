@@ -127,7 +127,107 @@
     return (d && d.couleurArmure !== undefined) ? d.couleurArmure : null;
   }
 
+  /* ── SPEC-OBJET-001 : l'armure portée, visible sur l'avatar ──────────────
+     Les quatre pièces dans l'ordre où elles voyagent (ETAT, net-protocol.js). */
+  var PIECES_ARMURE = ['casque', 'plastron', 'jambieres', 'bottes'];
+  function defArmure(stack, piece) {
+    if (!stack || !MC.Core) return null;
+    var d = MC.Core.ITEMS[stack.id];
+    return d && d.couleurArmure !== undefined && (!piece || d.equipSlot === piece) ? d : null;
+  }
+  /* Ce qui change l'apparence : les ids des quatre pièces (ni l'usure ni le
+     bijou). render.js rhabille un avatar quand elle change, jamais sinon. */
+  function signatureArmure(equip) {
+    return PIECES_ARMURE.map(function (p) {
+      var d = equip && defArmure(equip[p], p);
+      return d ? d.id : 0;
+    }).join(',');
+  }
+  /* Les boîtes d'armure d'un bipède, chacune dans le repère de la partie du
+     corps qui la porte — exactement celui des membres articulés de render.js
+     (mobMesh) : la tête part du cou (y de 0 à ht, l'avant vers −Z), le buste
+     est placé dans le repère du corps (pieds à y = 0), les bras et les jambes
+     pendent de leur attache (y de 0 à −longueur). `dims` : { w (largeur du
+     corps), hj (jambes), hb (buste), ht (tête), lb (bras) }. Chaque pièce
+     déborde un peu de la partie qu'elle couvre, pour s'y voir sans scintiller.
+     Renvoie [{ piece, partie, matiere, couleur, lx, ly, lz, x, y, z }]. */
+  function habillage(equip, dims) {
+    var out = [];
+    if (!equip || !dims) return out;
+    var w = dims.w, hj = dims.hj, hb = dims.hb, ht = dims.ht, lb = dims.lb;
+    function b(piece, d, partie, lx, ly, lz, x, y, z) {
+      out.push({ piece: piece, partie: partie, matiere: d.matiereArmure || 'fer', couleur: d.couleurArmure,
+                 lx: lx, ly: ly, lz: lz, x: x, y: y, z: z });
+    }
+    var d;
+    if ((d = defArmure(equip.casque, 'casque'))) {
+      b('casque', d, 'tete', w * 0.84, ht * 0.42, w * 0.84, 0, ht * 0.83, 0);          // calotte
+      b('casque', d, 'tete', w * 0.84, ht * 0.5, w * 0.42, 0, ht * 0.5, w * 0.22);       // nuque et joues, visage dégagé
+    }
+    if ((d = defArmure(equip.plastron, 'plastron'))) {
+      b('plastron', d, 'buste', w * 0.96, hb * 0.9, w * 0.58, 0, hj + hb * 0.52, 0);
+      b('plastron', d, 'brasG', lb * 1.3, hb * 0.32, lb * 1.3, 0, -hb * 0.15, 0);       // épaulières
+      b('plastron', d, 'brasD', lb * 1.3, hb * 0.32, lb * 1.3, 0, -hb * 0.15, 0);
+    }
+    if ((d = defArmure(equip.jambieres, 'jambieres'))) {
+      b('jambieres', d, 'jambeG', w * 0.4, hj * 0.62, w * 0.42, 0, -hj * 0.31, 0);    // de la hanche au genou
+      b('jambieres', d, 'jambeD', w * 0.4, hj * 0.62, w * 0.42, 0, -hj * 0.31, 0);
+    }
+    if ((d = defArmure(equip.bottes, 'bottes'))) {
+      b('bottes', d, 'jambeG', w * 0.4, hj * 0.3, w * 0.46, 0, -hj * 0.86, -w * 0.03);  // du mollet au pied, la pointe en avant
+      b('bottes', d, 'jambeD', w * 0.4, hj * 0.3, w * 0.46, 0, -hj * 0.86, -w * 0.03);
+    }
+    return out;
+  }
+  /* Motif procédural d'une matière d'armure : 16 × 16 niveaux de gris (0-255),
+     déterministe, que render.js peint dans une texture et que la teinte de la
+     matière colore (comme les tuiles de l'atlas, aucune image). */
+  var MOTIFS = {};
+  function motifArmure(matiere) {
+    if (MOTIFS[matiere]) return MOTIFS[matiere];
+    var N = 16, px = new Uint8Array(N * N);
+    function bruit(x, y, k) { return hache(x * 31 + y, k); }
+    for (var y = 0; y < N; y++) for (var x = 0; x < N; x++) {
+      var v;
+      switch (matiere) {
+        case 'tissu':       // trame et chaîne croisées, un fil plus sombre toutes les 4 rangées
+          v = ((x + y) & 1) ? 236 : 206;
+          if (y % 4 === 3) v -= 34;
+          break;
+        case 'cuir':        // grain marbré, une couture en pointillé
+          v = 170 + Math.floor(bruit(x, y, 7) * 60);
+          if ((y === 2 || y === 13) && (x & 1)) v = 245;
+          break;
+        case 'mailles': {   // anneaux entrelacés de 4 × 4, décalés d'une rangée à l'autre
+          var cx = (x + ((y >> 2) & 1) * 2) & 3, cy = y & 3;
+          var bord = cx === 0 || cx === 3 || cy === 0 || cy === 3;
+          v = bord ? ((cx + cy) & 1 ? 240 : 205) : 95;
+          break;
+        }
+        case 'bronze':      // écailles martelées en arcs
+          var sx = (x + ((y >> 2) & 1) * 2) & 3;
+          v = (y & 3) === 3 || ((y & 3) === 2 && (sx === 0 || sx === 3)) ? 120 : 190 + (3 - (y & 3)) * 18;
+          break;
+        case 'or':          // plaques lisses et un filet ciselé en diagonale
+          v = 215 + ((y & 7) === 0 ? 40 : 0) - ((y & 7) === 7 ? 70 : 0);
+          if (((x + y) % 8) === 0) v = 150;
+          break;
+        case 'diamant':     // facettes triangulaires de clartés différentes
+          var fx = x & 7, fy = y & 7, haut = fx > fy;
+          v = [250, 195, 225, 165][((x >> 3) + (y >> 3) * 2 + (haut ? 1 : 0)) & 3];
+          if (fx === fy) v = 255;
+          break;
+        default:            // fer : plaques de 8 rangées, reflet en haut, ombre en bas, rivets aux angles
+          v = 200 + ((y & 7) === 0 ? 50 : 0) - ((y & 7) === 7 ? 80 : 0);
+          if ((x === 1 || x === 14) && ((y & 7) === 2 || (y & 7) === 5)) v = 110;
+      }
+      px[y * N + x] = Math.max(0, Math.min(255, v));
+    }
+    return (MOTIFS[matiere] = { taille: N, pixels: px });
+  }
+
   MC.Apparence = { variante: variante, teinter: teinter, allure: allure, avancerPhase: avancerPhase, pose: pose,
                    regard: regard, niveauDetail: niveauDetail, graineDe: graineDe, METIERS: METIERS, DETAIL: DETAIL,
-                   couleurArmure: couleurArmure };
+                   couleurArmure: couleurArmure, PIECES_ARMURE: PIECES_ARMURE, signatureArmure: signatureArmure,
+                   habillage: habillage, motifArmure: motifArmure };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

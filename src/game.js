@@ -183,6 +183,7 @@
     /* Le solo est « une equipe d'un joueur » : meme chemin de code que
        l'ecran partage, donc teste en permanence plutot qu'en cas special. */
     var equipe = [];
+    var AUCUN_AVATAR_LOCAL = [];   // seul : aucun avatar local (render.syncAvatarsLocaux)
     var player = MC.createPlayer(world, entities, regles);
     equipe.push({ index: 0, nom: 'Joueur 1', player: player,
                   source: 'clavier', manette: null, vue: null, prediction: MC.Synchro.creerPrediction() });
@@ -3153,6 +3154,11 @@
          laissait des joueurs fantomes dans la scene apres une deconnexion. */
       render.syncEntities(entities, net, function (x, y, z) { return MC.Lumiere.lumiereEn(world.chunkDe, x, y, z); },
                           DC.sunIntensity(g.time));
+      // SPEC-OBJET-001 : en écran partagé, chacun voit l'avatar (et l'armure) des autres joueurs locaux
+      render.syncAvatarsLocaux(equipe.length > 1 ? equipe.map(function (j) {
+        var sa = j.player.state;
+        return { cle: j.index, nom: j.nom, pos: sa.pos, yaw: sa.yaw, vel: sa.vel, equip: sa.equip };
+      }) : AUCUN_AVATAR_LOCAL);
 
       // une camera par joueur, puis un rendu par vue
       var taille = [surface.clientWidth || innerWidth, surface.clientHeight || innerHeight];

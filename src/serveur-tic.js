@@ -613,8 +613,12 @@
         if (clients.size > 0) {
           const js = tousLesJoueurs().map(({ c, j, js: x }) => {
             const st = x.joueur.state;
-            return { id: c.id, j, nom: c.nom, x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2),
-                     z: +st.pos.z.toFixed(2), yaw: +st.yaw.toFixed(2), mort: st.dead ? 1 : 0 };
+            const o = { id: c.id, j, nom: c.nom, x: +st.pos.x.toFixed(2), y: +st.pos.y.toFixed(2),
+                        z: +st.pos.z.toFixed(2), yaw: +st.yaw.toFixed(2), mort: st.dead ? 1 : 0 };
+            // SPEC-OBJET-001 : l'armure visible, seulement si le joueur en porte
+            const eq = NP.armureVisible(st.equip);
+            if (eq) o.eq = eq;
+            return o;
           });
           // créatures, objets au sol et projectiles : tout ce qui vit dans le monde
           const decrire = e => {

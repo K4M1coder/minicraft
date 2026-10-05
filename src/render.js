@@ -923,16 +923,9 @@
         yeuxDans(teteG, ht * 0.55, -w * 0.38, w * 0.18);
         var acc = (va && va.accessoire) || (L.chapeau ? 'chapeau_sorciere' : null);
         accessoire(acc, teteG, buste, w, ht, hj, hb);
-        // armure visible (SPEC-OBJET-001) : teinte du casque et du plastron
-        // équipés, lue via l'apparence — petit ajout localisé, sans dupliquer
-        // la logique de couleur (déjà dans core.js/apparence.js)
-        if (entite && entite.equip && MC.Apparence) {
-          var cCasque = MC.Apparence.couleurArmure(entite.equip.casque);
-          if (cCasque !== null) teteG.add(boite(w * 0.82, ht * 0.32, w * 0.82, cCasque, 0, ht * 0.86, 0));
-          var cPlastron = MC.Apparence.couleurArmure(entite.equip.plastron);
-          if (cPlastron !== null) buste.material.color.set(cPlastron);
-        }
         membres = { jambeG: jg, jambeD: jd, brasG: bg, brasD: bd, tete: teteG, buste: buste };
+        // de quoi l'habiller (SPEC-OBJET-001) : mêmes cotes que les membres ci-dessus
+        grp.userData.dimsCorps = { w: w, hj: hj, hb: hb, ht: ht, lb: lb };
         main = { bras: bd, y: -hb * 0.95, z: -w * 0.1 };
       }
       // deux yeux, pour qu'on voie où le mob regarde
@@ -966,6 +959,7 @@
       grp.userData.ailes = ailes;
       grp.userData.queue = queue;
       grp.userData.membres = membres;
+      if (entite && entite.equip) habillerAvatar(grp, entite.equip);
       grp.userData.phase = 0;
       if (va && !(spec && spec.boss)) grp.userData.echelle = va.echelle;
       // au loin, une silhouette d'une seule boîte remplace le modèle complet
@@ -981,6 +975,63 @@
       grp.userData.yeux = spec ? spec.h * 0.85 : 1.5;
       grp.userData.vmax = spec ? spec.speed : 2;
       return grp;
+    }
+
+    /* ── SPEC-OBJET-001 : l'armure portée, visible sur l'avatar ─────────────
+       Les boîtes viennent de MC.Apparence.habillage (logique pure, testée sous
+       Node) : chacune s'accroche à la partie du corps qui la porte et suit donc
+       ses mouvements (marche, coup, regard). Texture procédurale par matière
+       (MC.Apparence.motifArmure : niveaux de gris que la teinte de la matière
+       colore), PARTAGÉE par tous les avatars — une par matière et par contexte
+       GPU, jamais libérée avec un avatar ; matériau propre à chaque boîte, comme
+       le reste du corps (l'éclat de la case et le clignotement des coups le
+       modifient). On ne rhabille que quand la signature (les quatre ids) change. */
+    var texturesArmure = {};
+    function textureArmure(matiere) {
+      var cle = matiere + '@' + contexteGen;
+      if (texturesArmure[cle]) return texturesArmure[cle];
+      var motif = MC.Apparence.motifArmure(matiere), N = motif.taille;
+      var cv = document.createElement('canvas');
+      cv.width = cv.height = N;
+      var ctx = cv.getContext('2d'), img = ctx.createImageData(N, N);
+      for (var i = 0; i < N * N; i++) {
+        var v = motif.pixels[i];
+        img.data[i * 4] = img.data[i * 4 + 1] = img.data[i * 4 + 2] = v;
+        img.data[i * 4 + 3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+      var t = new THREE.CanvasTexture(cv);
+      t.magFilter = THREE.NearestFilter;
+      t.minFilter = THREE.NearestFilter;
+      return (texturesArmure[cle] = t);
+    }
+    function habillerAvatar(m, equip) {
+      var AP = MC.Apparence, mb = m.userData.membres, dims = m.userData.dimsCorps;
+      if (!AP || !mb || !dims) return false;
+      var sig = AP.signatureArmure(equip);
+      if (m.userData.sigArmure === sig) return false;
+      (m.userData.armure || []).forEach(function (o) {
+        if (o.parent) o.parent.remove(o);
+        o.geometry.dispose(); o.material.dispose();
+      });
+      var pieces = [];
+      AP.habillage(equip, dims).forEach(function (b) {
+        var porteur = mb[b.partie];
+        if (!porteur) return;
+        var o = new THREE.Mesh(new THREE.BoxGeometry(b.lx, b.ly, b.lz), mat(b.couleur, { map: textureArmure(b.matiere) }));
+        // le buste est une boîte placée dans le repère du corps : on s'y ramène
+        if (b.partie === 'buste') o.position.set(b.x - porteur.position.x, b.y - porteur.position.y, b.z - porteur.position.z);
+        else o.position.set(b.x, b.y, b.z);
+        o.userData.pieceArmure = b.piece;
+        o.userData.matiereArmure = b.matiere;
+        o.castShadow = true;
+        porteur.add(o);
+        pieces.push(o);
+      });
+      m.userData.armure = pieces;
+      m.userData.sigArmure = sig;
+      m.userData.lumT = 0;     // la nouvelle armure prend l'éclat de la case dès l'image suivante
+      return true;
     }
 
     /* Accessoires des bipèdes : sur la tête ou le buste. */
@@ -1183,6 +1234,7 @@
         }
         m.position.set(d.pos.x, d.pos.y, d.pos.z);
         m.rotation.y = d.yaw || 0;
+        habillerAvatar(m, d.equip);          // SPEC-OBJET-001 : son armure (net.js : EQUIP_VU, ETAT.eq)
         animerMembres(m, d, dtEntites, 'j' + d.id);
       });
       maillagesDistants.forEach(function (m, id) {
@@ -1207,6 +1259,37 @@
       maillagesDistants.forEach(function (m, id) {
         if (!vus.has(id)) { libererEntite(m); maillagesDistants.delete(id); }
       });
+    }
+
+    /* SPEC-OBJET-001 : les joueurs LOCAUX de l'écran partagé ont aussi leur
+       avatar (avec son armure), que les autres vues voient ; chaque vue cache
+       le sien (sa caméra est dans sa tête, voir `montrerAvatarsPour`). Seul,
+       un joueur n'a pas d'avatar : rien ne le filme de l'extérieur.
+       `liste` : [{ cle, nom, pos, yaw, vel, equip }], dans l'ordre des vues. */
+    var avatarsLocaux = [];
+    function syncAvatarsLocaux(liste) {
+      liste = liste && liste.length > 1 ? liste : [];
+      for (var i = 0; i < liste.length; i++) {
+        var j = liste[i], m = avatarsLocaux[i];
+        if (m && m.userData.cleLocale !== j.cle) { libererEntite(m); m = null; }
+        if (!m) {
+          m = tagGen(mobMesh('joueur', { w: 0.6, h: 1.8, speed: 4.8 }, { id: j.nom || j.cle }));
+          m.userData.cleLocale = j.cle;
+          m.traverse(function (o) { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
+          scene.add(m);
+          avatarsLocaux[i] = m;
+        }
+        m.position.set(j.pos.x, j.pos.y, j.pos.z);
+        m.rotation.y = j.yaw || 0;
+        habillerAvatar(m, j.equip);
+        animerMembres(m, j, dtEntites, 'l' + j.cle);
+      }
+      while (avatarsLocaux.length > liste.length) libererEntite(avatarsLocaux.pop());
+      return avatarsLocaux.length;
+    }
+    // avant le rendu de la vue `vue` : tous les avatars locaux, sauf le sien
+    function montrerAvatarsPour(vue) {
+      for (var i = 0; i < avatarsLocaux.length; i++) avatarsLocaux[i].visible = i !== vue;
     }
 
     /* Éclat d'une créature : la lumière de sa case (ciel et sources), selon
@@ -2710,6 +2793,7 @@
         renderer.setScissorTest(false);
         renderer.setViewport(0, 0, taille[0], taille[1]);
         placerCiel(camera);
+        montrerAvatarsPour(0);
         rendreVue(camera);
         return 1;
       }
@@ -2737,13 +2821,14 @@
         var aspect = v.w / Math.max(1, v.h);
         if (cam.aspect !== aspect) { cam.aspect = aspect; cam.updateProjectionMatrix(); }
         placerCiel(cam);             // chaque vue a son ciel, centré sur sa caméra
+        montrerAvatarsPour(i);       // SPEC-OBJET-001 : les autres joueurs locaux, pas soi
         renderer.render(scene, cam);
       }
       renderer.setScissorTest(false);
       return vues.length;
     }
 
-    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); renderer.render(scene, camera); }
+    function render() { if (contextePerdu) return; renderer.info.reset(); placerCiel(camera); montrerAvatarsPour(0); renderer.render(scene, camera); }
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
@@ -2755,6 +2840,7 @@
       updateTorches: updateTorches, torchPool: torchPool, MAX_TORCH_LIGHTS: MAX_TORCH_LIGHTS,
       updateLumieresPortees: updateLumieresPortees,
       libererToutesEntites: libererToutesEntites, syncDistants: syncDistants,
+      syncAvatarsLocaux: syncAvatarsLocaux, avatarsLocaux: avatarsLocaux, maillagesDistants: maillagesDistants, habillerAvatar: habillerAvatar,
       maillagesDistants: maillagesDistants,
       get materiauxLiberes() { return liberees; },
       resize: resize, render: render, renderViews: renderViews,

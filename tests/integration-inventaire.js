@@ -235,6 +235,12 @@ function prochainSeq(qui) { return qui === 'alice' ? ++seqAlice : ++seqBob; }
     eq(pile(majEquip.inv[iCasque]), null, 'SPEC-SYNC-011 : la case source est vidée');
     const equipVu = await attenteVu;
     eq(equipVu.j, 0, 'SPEC-SYNC-011 : EQUIP_VU porte le bon joueur local');
+    // SPEC-OBJET-001 : l'armure portée voyage aussi dans ETAT (eq), pour qu'un
+    // joueur arrivé à portée après le changement la voie tout de même
+    const etatVu = await b.attendre('etat', 3000, m => (m.joueurs || []).some(j => j.id === bienvenueA.id && j.eq));
+    const alicePourBob = etatVu.joueurs.filter(j => j.id === bienvenueA.id)[0];
+    eq(JSON.stringify(alicePourBob.eq), JSON.stringify([I.CUIR_CASQUE, 0, 0, 0]),
+       'SPEC-OBJET-001 : ETAT porte l\'armure visible d\'Alice (casque, plastron, jambières, bottes)');
 
     // refus : deux côtés vides (case jamais occupée, emplacement jamais équipé)
     const nAvantVu = b.messages.filter(m => m.t === 'equip_vu').length;
