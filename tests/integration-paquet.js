@@ -92,6 +92,12 @@ async function attendrePret(port) {
       const admin = await requete(PORT, '/admin.html');
       ok(admin.code === 200, 'SPEC-PACK-001 : la console d\'administration est servie depuis l\'archive');
     }
+    /* SPEC-PACK-001 : hors dépôt git (l'archive n'a pas de .git), le démarrage
+       est SILENCIEUX sur la sortie d'erreur — aucun « fatal: not a git
+       repository » laissé par la recherche du commit courant. */
+    await dodo(300);
+    const erreurs = logs.filter(l => l.indexOf('ERR ') === 0).join('');
+    ok(!/fatal|not a git repository/i.test(erreurs) && !erreurs.trim(), 'SPEC-PACK-001 : le serveur empaqueté démarre sans rien écrire sur la sortie d\'erreur', erreurs.slice(0, 300));
   } finally {
     try { srv.kill(); } catch (e) {}
   }

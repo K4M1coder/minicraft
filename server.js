@@ -117,11 +117,17 @@ if (PARAMS.journal) {
 /* Commit courant (SPEC-BANC-012) : calculé UNE FOIS au démarrage, jamais par
    requête — `git rev-parse` par appel serait un coût inutile pour une valeur
    qui ne change pas tant que le serveur tourne. `null` hors dépôt git (par
-   exemple une installation empaquetée sans .git), plutôt qu'une erreur. */
+   exemple une installation empaquetée sans .git), plutôt qu'une erreur — et
+   en silence : git n'est même pas lancé sans .git (une archive dépaquetée
+   sous un autre dépôt n'en prendrait pas le commit), et sa sortie d'erreur
+   est ignorée (jamais de « fatal: not a git repository » au démarrage). */
 let COMMIT_GIT = null;
-try {
-  COMMIT_GIT = require('child_process').execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: RACINE, encoding: 'utf8' }).trim();
-} catch (e) { COMMIT_GIT = null; }
+if (fs.existsSync(path.join(RACINE, '.git'))) {
+  try {
+    COMMIT_GIT = require('child_process').execFileSync('git', ['rev-parse', '--short', 'HEAD'],
+      { cwd: RACINE, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'], windowsHide: true }).trim() || null;
+  } catch (e) { COMMIT_GIT = null; }
+}
 
 // ── état du monde, autoritatif ───────────────────────────────────────────────
 const CONF = {
