@@ -356,7 +356,13 @@
       accEau += dt;
       if (accEau >= 0.25) {
         accEau = 0;
-        monde.coulerEau(96).forEach(ch => diffuser({ t: NP.MSG.BLOC, x: ch[0], y: ch[1], z: ch[2], id: ch[3] }));
+        /* Comme les cultures et le feu (SPEC-SYNC-018) : aux seuls joueurs à
+           portée, plafonné par tic — l'eau ne coulait jamais avant que le
+           serveur ne charge MC.Eau (SPEC-SAISON-005), d'où une diffusion à
+           tous jamais éprouvée. Un poste lointain retrouve l'eau par les
+           modifications du chunk quand il le charge. */
+        monde.coulerEau(96).forEach(ch => noterBlocMonde(ch[0], ch[1], ch[2], ch[3], 0));
+        diffuserBlocsMonde();
       }
       // L29 mécanismes (SPEC-MECA-008) : le serveur fait foi, et diffuse chaque
       // changement — un bloc dont seul l'état a changé (une lampe, un compteur…)

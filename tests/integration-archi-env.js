@@ -364,8 +364,21 @@ async function scenarioCulturesDeux() {
     for (let cx = -1; cx <= 1; cx++) for (let cz = -1; cz <= 1; cz++) w.getChunk(Math.floor(col[0] / 16) + cx, Math.floor(col[1] / 16) + cz, true);
     const B = MC.Core.B;
     const overrides = [], crops = [], pos = [];
+    /* Une rangée de huit colonnes au sec : le serveur fait désormais couler
+       l'eau (il charge MC.Eau, SPEC-SAISON-005) — un blé posé au fond de la
+       mer, comme le faisait la rangée fixe d'origine (x + 3 … x + 10), y est
+       aussitôt noyé. On garde la même géométrie (décalage de 3, 8 colonnes),
+       dans la première des quatre directions qui reste au sec. */
+    const auSec = (x, z) => {
+      const y = w.groundAt(x, z, true);
+      return [[0, 0], [1, 0], [-1, 0], [0, 1], [0, -1]].every(d => !MC.Core.isWater(w.getBlock(x + d[0], y + 1, z + d[1])) && !MC.Core.isWater(w.getBlock(x + d[0], y, z + d[1])));
+    };
+    const sens = [[1, 0], [-1, 0], [0, 1], [0, -1]].find(([ux, uz]) => {
+      for (let i = 0; i < 8; i++) if (!auSec(col[0] + ux * (3 + i) - uz * 3, col[1] + uz * (3 + i) + ux * 3)) return false;
+      return true;
+    }) || [1, 0];
     for (let i = 0; i < 8; i++) {
-      const x = col[0] + 3 + i, z = col[1] + 3, y = w.groundAt(x, z, true);
+      const x = col[0] + sens[0] * (3 + i) - sens[1] * 3, z = col[1] + sens[1] * (3 + i) + sens[0] * 3, y = w.groundAt(x, z, true);
       overrides.push([x, y, z, B.FARMLAND], [x, y + 1, z, B.WHEAT0]);
       crops.push([x, y + 1, z, 8]);
       pos.push([x, y + 1, z]);
