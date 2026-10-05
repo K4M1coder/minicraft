@@ -606,7 +606,16 @@
         e.vel.x *= NAGE_FREIN;
         e.vel.z *= NAGE_FREIN;
       }
+      /* Tapis roulant et ascenseur en marche (SPEC-MECA-006) : ils emportent
+         aussi objets au sol et créatures, par la même règle que le joueur
+         (MC.Circuits.effetMecanique). */
+      var meca = (MC.Circuits && world.getEtat && e.type !== 'arrow') ? MC.Circuits.effetMecanique(world.getBlock, world.getEtat, e.pos) : null;
+      if (meca && meca.y > 0) e.vel.y = Math.max(e.vel.y, meca.y);
+      var porteX = meca ? meca.x : 0, porteZ = meca ? meca.z : 0;
+      e.vel.x += porteX; e.vel.z += porteZ;
       var hit = P.move(world, e, dt, e.w, e.h);
+      if (!hit.x) e.vel.x -= porteX;
+      if (!hit.z) e.vel.z -= porteZ;
       e.onGround = hit.landed || (e.onGround && !hit.y && Math.abs(e.vel.y) < 1e-3);
       if (hit.landed) e.onGround = true;
       // frottement au sol ; les objets glissent moins

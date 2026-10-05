@@ -484,6 +484,27 @@
       A.equal(appels.length, n0, 'près de la lave, aucun combustible n’est brûlé');
     });
 
+    it('SPEC-MECA-002 : la roue hydraulique tourne selon le courant de l’eau qui la touche (nature de l’eau, SPEC-EAU-002)', function () {
+      var P = MC.Eau.PARAMS;
+      A.ok(K.puissanceCourant(P.lac.courant) < K.puissanceCourant(P.riviere.courant), 'une rivière fait mieux tourner qu’un lac');
+      A.ok(K.puissanceCourant(P.riviere.courant) < K.puissanceCourant(P.chute.courant), 'une chute mieux qu’une rivière');
+      A.equal(K.puissanceCourant(0), 0); A.equal(K.puissanceCourant(1), 15); A.equal(K.puissanceCourant(7), 15, 'bornée');
+      var w = MC.createWorld(9111);
+      w.getChunk(0, 0, true);
+      w.setBlock(2, 40, 2, B.ROUE_HYDRAULIQUE);
+      w.tickCircuits({ temps: 0 });
+      A.equal(w.getEtat(2, 40, 2), 0, 'à sec : immobile');
+      w.setBlock(3, 40, 2, B.EAU_3);
+      w.tickCircuits({ temps: 0 });
+      A.equal(w.getEtat(2, 40, 2), K.puissanceCourant(P.ecoulement.courant), 'contre une eau qui s’écoule : le courant d’un écoulement');
+      w.setBlock(3, 40, 2, B.WATER);
+      w.tickCircuits({ temps: 0 });
+      var c = w.getChunk(0, 0), nat = c.eau ? c.eau.nature[2 * C.CHUNK_X + 3] : 0;
+      var attendu = K.puissanceCourant((P[MC.Eau.NOMS[nat]] || P.lac).courant);
+      A.equal(w.getEtat(2, 40, 2), attendu, 'contre une eau dormante : le courant de la nature de sa colonne (' + (MC.Eau.NOMS[nat] || 'lac, posée') + ')');
+      A.ok(attendu < K.puissanceCourant(P.ecoulement.courant), 'moins qu’un écoulement');
+    });
+
     it('SPEC-MECA-002 : un générateur alimente un appareil par câble, et un réseau trop long perd trop', function () {
       var m = monde(9102), w = m.w;
       // roue hydraulique : 2 unités au courant 2 ; un tapis en demande 2
@@ -682,6 +703,13 @@
       pl.state.pos = { x: 0.5, y: 41, z: 0.5 }; pl.state.onGround = true; pl.state.vel = { x: 0, y: 0, z: 0 };
       for (var i = 0; i < 10; i++) pl.updateMovement(0.05, {});
       A.gt(pl.state.pos.x, 0.7, 'emporté vers l’est : x = ' + pl.state.pos.x.toFixed(3));
+      // un objet posé sur le tapis part aussi (joueur de référence loin : pas d'aimantation)
+      var ents = MC.createEntities(w), loin = MC.createPlayer(w, ents);
+      loin.state.pos = { x: 40, y: 41, z: 40 };
+      var obj = ents.dropItem(0.5, 41.05, 0.5, B.COBBLE, 1);
+      obj.vel = { x: 0, y: 0, z: 0 };
+      for (var q = 0; q < 6; q++) ents.update(0.05, loin.state);
+      A.gt(obj.pos.x, 0.7, 'un objet au sol sur le tapis est emporté aussi : x = ' + obj.pos.x.toFixed(3));
       // arrêté (levier relâché), le tapis ne porte plus
       w.setEtat(0, 40, -1, 0); m.tic({});
       A.equal(w.getEtat(0, 40, 0), 2, 'tapis arrêté, orientation gardée');

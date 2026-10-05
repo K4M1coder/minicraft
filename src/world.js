@@ -1208,7 +1208,24 @@
       var detecteurs = MC.Circuits.capteurs(positions, src);
       if (ctx.detecteurs) Object.keys(ctx.detecteurs).forEach(function (k) { detecteurs[k] = ctx.detecteurs[k]; });
       ctx = Object.assign({}, ctx, { detecteurs: detecteurs });
+      // SPEC-MECA-002 : la roue hydraulique tourne selon le courant de l'eau qui la touche
+      if (ctx.courantEn === undefined && MC.Eau) ctx.courantEn = courantEau;
       return MC.Circuits.tick(positions, api, ctx);
+    }
+    /* Part de courant (0..1) de l'eau d'une case, selon sa nature (SPEC-EAU-002,
+       MC.Eau.PARAMS[nature].courant) : une eau qui s'écoule (EAU_1..7) est un
+       écoulement ; une eau source prend la nature générée de sa colonne
+       (rivière, lac, mer, océan) ; posée par un joueur hors de toute étendue
+       générée, c'est une eau dormante, comme un lac. 0 hors de l'eau. */
+    function courantEau(x, y, z) {
+      var id = getBlock(x, y, z);
+      if (!C.isWater(id) || !MC.Eau.niveauDe(id)) return 0;
+      var P = MC.Eau.PARAMS;
+      if (MC.Eau.estCourante(id)) return P.ecoulement.courant;
+      var cx = Math.floor(x / CX), cz = Math.floor(z / CZ), c = chunks.get(key(cx, cz));
+      var nat = c && c.eau && c.eau.nature ? c.eau.nature[(Math.floor(z) - cz * CZ) * CX + (Math.floor(x) - cx * CX)] : 0;
+      var nom = MC.Eau.NOMS[nat];
+      return (P[nom] || P.lac).courant;
     }
     /* Lumière d'une case pour un capteur de lumière (0..15), sans dépendre du
        maillage (le serveur n'en a pas) : le ciel s'il est ouvert au-dessus,

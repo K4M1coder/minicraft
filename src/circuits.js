@@ -163,6 +163,13 @@
   function puissanceHydraulique(niveauEau) {
     return Math.max(0, Math.min(15, niveauEau | 0));
   }
+  /* La même roue, d'après la part de courant (0..1) de l'eau qui la touche —
+     le paramètre `courant` de chaque nature d'eau (MC.Eau.PARAMS, SPEC-EAU-002) :
+     un lac (0,1) la fait à peine tourner, une rivière (0,75) bien, un
+     écoulement ou une chute presque à plein. */
+  function puissanceCourant(courant) {
+    return Math.max(0, Math.min(15, Math.round(15 * (Number(courant) || 0))));
+  }
   // Générateur thermique : lave à proximité (continu) ou combustible (fini,
   // décompté en tics, comme un fourneau) — l'un ou l'autre suffit.
   function puissanceThermique(laveProche, combustibleRestant) {
@@ -406,7 +413,8 @@
   function effetMecanique(getBlock, getEtat, pos) {
     var r = { x: 0, y: 0, z: 0 };
     if (!pos) return r;
-    var bx = Math.floor(pos.x), bz = Math.floor(pos.z), by = Math.floor(pos.y - 0.05);
+    // le bloc sous les pieds, à 0,2 bloc près : un objet au sol repose un peu au-dessus de sa case
+    var bx = Math.floor(pos.x), bz = Math.floor(pos.z), by = Math.floor(pos.y - 0.2);
     if (getBlock(bx, by, bz) === B.TAPIS_ROULANT) {
       var e = getEtat(bx, by, bz) || 0;
       if (e & 1) { var dt = DIRS_TAPIS[(e >> 1) & 3]; r.x = dt.x * VITESSE_TAPIS; r.z = dt.z * VITESSE_TAPIS; }
@@ -635,14 +643,22 @@
         nouvelEtat = puissanceEolienne(vent, b.y, ctx.altitudeMax || 128);
       } else if (t === 'hydraulique') {
         // le courant local (SPEC-EAU-002) : le plus fort niveau d'eau voisin
+        // `ctx.courantEn(x,y,z)` (0..1, fourni par world.tickCircuits) : la part
+        // de courant de l'eau voisine ; `ctx.niveauEau` rejoue une situation en test.
         var niveauEau = ctx.niveauEau;
-        if (niveauEau === undefined) {
-          niveauEau = 0;
-          if (MC.Eau) VOISINS6.forEach(function (v) {
-            niveauEau = Math.max(niveauEau, MC.Eau.niveauDe(api.getBlock(b.x + v[0], b.y + v[1], b.z + v[2])));
-          });
+        if (niveauEau === undefined && typeof ctx.courantEn === 'function') {
+          var courant = 0;
+          VOISINS6.forEach(function (v) { courant = Math.max(courant, ctx.courantEn(b.x + v[0], b.y + v[1], b.z + v[2]) || 0); });
+          nouvelEtat = puissanceCourant(courant);
+        } else {
+          if (niveauEau === undefined) {
+            niveauEau = 0;
+            if (MC.Eau) VOISINS6.forEach(function (v) {
+              niveauEau = Math.max(niveauEau, MC.Eau.niveauDe(api.getBlock(b.x + v[0], b.y + v[1], b.z + v[2])));
+            });
+          }
+          nouvelEtat = puissanceHydraulique(niveauEau);
         }
-        nouvelEtat = puissanceHydraulique(niveauEau);
       } else if (t === 'thermique') {
         var laveProche = ctx.laveProche;
         if (laveProche === undefined) {
@@ -735,6 +751,7 @@
     pasRepeteur: pasRepeteur, pasBascule: pasBascule, pasCompteur: pasCompteur, pasComparateur: pasComparateur,
     creerReseau: creerReseau, fixerEntree: fixerEntree, tickReseau: tickReseau, validerReseau: validerReseau,
     puissanceEolienne: puissanceEolienne, puissanceHydraulique: puissanceHydraulique, puissanceThermique: puissanceThermique,
+    puissanceCourant: puissanceCourant,
     transporterEnergie: transporterEnergie, tickBatterie: tickBatterie,
     CAPACITE_BATTERIE: CAPACITE_BATTERIE, DEBIT_BATTERIE: DEBIT_BATTERIE, PERTE_CABLE: PERTE_CABLE,
     CONSOMMATION: CONSOMMATION, texteNiveau: texteNiveau,
