@@ -252,6 +252,42 @@
       A.equal(S.cheminSur('/a%00b'), null, 'octet nul refusé');
     });
 
+    /* Audit : un fichier de src/ hors de la liste blanche ne serait PAS servi au
+       navigateur (404) — le jeu casserait sans bruit. Chaque fichier (sous-dossiers
+       compris) doit correspondre à RESSOURCES_JEU ; sinon, message qui dit quoi faire. */
+    function fichiersSrcHorsListe(fichiers, motifs) {
+      return fichiers.filter(function (rel) {
+        var url = '/src/' + rel.split(path.sep).join('/');
+        return !motifs.some(function (re) { return re.test(url); });
+      }).map(function (rel) {
+        return 'src/' + rel.split(path.sep).join('/') + ' ne serait pas servi par le serveur (liste blanche RESSOURCES_JEU de src/serveur-http.js) : ' +
+          'renommez-le (minuscules, chiffres et tirets, extension .js ou .css, directement dans src/) ou ajoutez un motif exact à RESSOURCES_JEU, ' +
+          'avec un test dans tests/integration-archi-securite.js';
+      });
+    }
+    function listerSrc(dossier, prefixe) {
+      var out = [];
+      fs.readdirSync(dossier, { withFileTypes: true }).forEach(function (e) {
+        var rel = prefixe ? path.join(prefixe, e.name) : e.name;
+        if (e.isDirectory()) out = out.concat(listerSrc(path.join(dossier, e.name), rel)); else out.push(rel);
+      });
+      return out;
+    }
+    it('SPEC-NET-020 : audit — tout fichier de src/ correspond à la liste blanche des ressources du jeu', function () {
+      var S = { EP: {}, hote: hote(), fs: fs, path: path, RACINE: RACINE, CONF: {}, DOSSIER_PARTIES: path.join(RACINE, 'parties') };
+      MC.ServeurHttp.installer(S);
+      A.ok(Array.isArray(S.RESSOURCES_JEU) && S.RESSOURCES_JEU.length > 0, 'RESSOURCES_JEU publiée');
+      // l'audit lui-même attrape ce qu'il doit attraper
+      ['x.json', path.join('img', 'a.png'), 'Core.js', 'mon_module.js', 'a.JS', '.cache.js', path.join('sous', 'b.js')].forEach(function (f) {
+        var m = fichiersSrcHorsListe([f], S.RESSOURCES_JEU);
+        A.equal(m.length, 1, 'src/' + f + ' signalé');
+        A.ok(/RESSOURCES_JEU/.test(m[0]) && /renommez-le/.test(m[0]), 'le message dit comment l\'autoriser');
+      });
+      A.deep(fichiersSrcHorsListe(['core.js', 'ui.css', 'worker-monde.js'], S.RESSOURCES_JEU), [], 'noms valides acceptés');
+      var hors = fichiersSrcHorsListe(listerSrc(path.join(RACINE, 'src'), ''), S.RESSOURCES_JEU);
+      A.ok(hors.length === 0, hors.join('\n'));
+    });
+
     it('SPEC-NET-020 : serveur-http — liste blanche : seules les ressources du jeu, jamais le dépôt, quel que soit l\'encodage', function () {
       var S = { EP: {}, hote: hote(), fs: fs, path: path, RACINE: RACINE, CONF: {}, DOSSIER_PARTIES: path.join(RACINE, 'parties') };
       MC.ServeurHttp.installer(S);

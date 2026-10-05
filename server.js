@@ -156,7 +156,11 @@ const CA = MC.ContratsArchi;
 EP.reseauOuvert = !!(PARAMS.ouvert || PARAMS.serveurSeul);
 const RELANCE = process.env.MC_RELANCE === '1';       // lancé par une bascule de partie (relance interne)
 const DOSSIER_PARTIES = path.resolve(RACINE, PARAMS.dossierParties);
-Object.assign(S, { PARAMS, COMMIT_GIT, CONF, CA, RELANCE, DOSSIER_PARTIES });
+/* MC_TEST_RACINE_STATIQUE : réglage de test (tests/integration-archi-securite.js), jamais en
+   exploitation — les fichiers statiques se servent depuis ce dossier au lieu de celui du serveur. */
+const RACINE_STATIQUE = process.env.MC_TEST_RACINE_STATIQUE ? path.resolve(process.env.MC_TEST_RACINE_STATIQUE) : null;
+if (RACINE_STATIQUE) journal('ATTENTION : MC_TEST_RACINE_STATIQUE actif — fichiers statiques servis depuis ' + RACINE_STATIQUE + ' (réglage de test, jamais en exploitation)');
+Object.assign(S, { PARAMS, COMMIT_GIT, CONF, CA, RELANCE, DOSSIER_PARTIES, RACINE_STATIQUE });
 MC.ServeurParties.installer(S);
 const { stockageParties, fichierMonde } = S;
 EP.partieActive = null;                              // fiche d'index de la partie chargée, ou null

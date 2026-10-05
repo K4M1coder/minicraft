@@ -42,6 +42,8 @@
       /^\/(index|admin)\.html$/,
       /^\/src\/[a-z0-9][a-z0-9-]*\.(js|css)$/,
     ];
+    // relue par l'audit « tout fichier de src/ est servi » (tests/spec-serveur-modules.js)
+    S.RESSOURCES_JEU = RESSOURCES_JEU;
     /* Le banc (SPEC-BANC-120/122) : servi seulement avec --tests et à une
        requête locale (voir `servir`) ; SPECS.md est relu par sa page. */
     const RESSOURCES_BANC = [
@@ -69,14 +71,18 @@
     /* Piège classique : « ../../etc/passwd ». La liste blanche l'exclut déjà ;
        on résout tout de même le chemin ABSOLU et on vérifie qu'il reste sous la
        racine, hors des parties (défense en profondeur). */
+    /* Racine des fichiers servis : celle du serveur, ou MC_TEST_RACINE_STATIQUE (réglage de test
+       annoncé au démarrage par server.js, jamais en exploitation) — les tests des chemins piégés
+       y posent leurs leurres sans jamais écrire dans le dépôt. */
+    const RACINE_STATIQUE = S.RACINE_STATIQUE || RACINE;
     function resoudre(brut, motifs) {
       if (typeof brut !== 'string' || !motifs.some(re => re.test(brut))) return null;
-      const resolu = path.resolve(RACINE, '.' + brut);
-      const racine = path.resolve(RACINE);
+      const resolu = path.resolve(RACINE_STATIQUE, '.' + brut);
+      const racine = path.resolve(RACINE_STATIQUE);
       // le séparateur final évite que /racine-bis passe pour /racine
       if (resolu !== racine && !resolu.startsWith(racine + path.sep)) return null;
       // les parties (index et fichiers de monde) et le fichier --monde ne se servent JAMAIS en statique
-      const prives = [DOSSIER_PARTIES, path.resolve(RACINE, 'parties')];
+      const prives = [DOSSIER_PARTIES, path.resolve(RACINE, 'parties'), path.resolve(RACINE_STATIQUE, 'parties')];
       if (CONF.mondeFichier) prives.push(CONF.mondeFichier);
       for (const d of prives) {
         if (resolu === d || resolu.startsWith(d + path.sep) || resolu.startsWith(d + '.')) return null;
@@ -343,7 +349,7 @@
       if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
       const brut = req.url.split('?')[0];
       if (brut === '/tests' || brut.indexOf('/tests/') === 0 || brut === '/SPECS.md') { servirBanc(req, res, brut); return; }
-      servirFichier(res, cheminSur(req.url));
+      servirFichier(res, cheminSur(req.url), req);
     }
     /* Le banc de test (SPEC-BANC-015/122) — pages, cahiers, historique,
        catalogue, périmètre, serveurs de test, images du registre — N'EXISTE
@@ -352,8 +358,13 @@
        (refusRequeteLocale : ni mandataire, ni Origin ou Host étrangers, ni
        requête intersites). Chaque route garde en plus ses propres contrôles. */
     function servirBanc(req, res, brut) {
-      if (!(S.PARAMS && S.PARAMS.tests)) { res.writeHead(404); res.end('404 introuvable'); return; }
       const motif = refusRequeteLocale(req);
+      if (!(S.PARAMS && S.PARAMS.tests)) {
+        // une requête non locale n'apprend rien : 404 nu, comme un fichier absent
+        if (motif) { res.writeHead(404); res.end('404 introuvable'); return; }
+        bancDesactive(res, brut);
+        return;
+      }
       if (motif) { repondreJSON(res, 403, { ok: false, motif }); return; }
       if (brut === '/tests/resultats' && S.traiterResultatsTest(req, res)) return;
       if (brut === '/tests/version' && traiterVersion(req, res)) return;
@@ -368,12 +379,29 @@
       if (brut === '/tests/catalogue' && S.filetErreurTests(S.traiterCatalogue, req, res)) return;
       if (brut === '/tests/perimetre' && S.filetErreurTests(S.traiterPerimetre, req, res)) return;
       if (brut.indexOf('/tests/registre/images/') === 0 && S.traiterImageRegistre(req, res)) return;
-      if (req.method !== 'GET' && req.method !== 'HEAD') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return; }
-      servirFichier(res, cheminBanc(req.url));
+      servirFichier(res, cheminBanc(req.url), req);
+    }
+    /* Sans --tests, la machine locale (et elle seule, voir servirBanc) apprend
+       pourquoi le banc ne répond pas : une page pour une page, du JSON pour
+       une route de données, du texte pour un fichier. */
+    const MSG_BANC_DESACTIVE = 'banc de test désactivé : relancez `node server.js --tests`';
+    function bancDesactive(res, brut) {
+      const page = brut === '/tests' || brut === '/tests/' || brut === '/tests/cahiers' || brut === '/tests/cahiers/' || /\.html$/.test(brut);
+      const fichier = /\.(js|css|md|json)$/.test(brut) && brut.indexOf('/tests/cahiers/') !== 0;
+      if (page) {
+        const corps = '<!DOCTYPE html><html lang="fr"><head><meta charset="utf-8"><title>Banc de test désactivé</title></head>' +
+          '<body><h1>Banc de test désactivé</h1><p>Ce serveur a été lancé sans <code>--tests</code> : relancez <code>node server.js --tests</code>.</p></body></html>';
+        res.writeHead(404, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Length': Buffer.byteLength(corps) });
+        res.end(corps);
+      } else if (fichier) {
+        res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' });
+        res.end('404 ' + MSG_BANC_DESACTIVE);
+      } else repondreJSON(res, 404, { ok: false, motif: MSG_BANC_DESACTIVE });
     }
     /* Hors liste blanche : 404, comme un fichier absent — la réponse ne dit
-       pas si le chemin existe sur le disque. */
-    function servirFichier(res, chemin) {
+       pas si le chemin existe sur le disque. Lecture seule : GET et HEAD. */
+    function servirFichier(res, chemin, req) {
+      if (req && req.method !== 'GET' && req.method !== 'HEAD') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return; }
       if (!chemin) { res.writeHead(404); res.end('404 introuvable'); return; }
       fs.stat(chemin, (err, st) => {
         if (err || !st.isFile()) { res.writeHead(404); res.end('404 introuvable'); return; }

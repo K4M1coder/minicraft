@@ -97,15 +97,16 @@ async function scenarioFichiersPrives() {
 
 /* Requête HTTP BRUTE (socket TCP) : le client http de Node normalise ou refuse
    certains chemins (espaces, antislashs…) ; un attaquant, lui, envoie les octets
-   qu'il veut. Résout { code, corps } (code 0 si la connexion est coupée). */
-function brute(port, chemin, entetes, methode, corps) {
+   qu'il veut. `hote` : adresse jointe (défaut 127.0.0.1). Résout { code, entetes,
+   corps } (code 0 si la connexion est coupée). */
+function brute(port, chemin, entetes, methode, corps, hote) {
   return new Promise((resolve) => {
     const net = require('net');
-    const s = net.connect({ host: '127.0.0.1', port });
+    const s = net.connect({ host: hote || '127.0.0.1', port });
     let recu = Buffer.alloc(0), fini = false;
     const finir = () => {
       if (fini) return; fini = true; clearTimeout(t);
-      const txt = recu.toString('latin1');
+      const txt = recu.toString('utf8');
       const m = /^HTTP\/1\.[01] (\d{3})/.exec(txt);
       const sep = txt.indexOf('\r\n\r\n');
       resolve({ code: m ? parseInt(m[1], 10) : 0, entetes: sep >= 0 ? txt.slice(0, sep) : txt, corps: sep >= 0 ? txt.slice(sep + 4) : '' });
@@ -123,50 +124,76 @@ function brute(port, chemin, entetes, methode, corps) {
   });
 }
 
+/* Racine statique de test (MC_TEST_RACINE_STATIQUE) : une copie minimale du jeu
+   et du banc dans un dossier TEMPORAIRE, où l'on pose les leurres (.git, dossier
+   caché, journaux, .claude, node_modules, sources du serveur…) — jamais dans le
+   dépôt. Les copies laissées par un essai interrompu sont retirées au départ ;
+   celle-ci l'est à la sortie, même sur Ctrl+C ou délai dépassé. */
+const PREFIXE_RACINE = 'mc-archi-racine-';
+function nettoyerRacinesPerimees() {
+  const tmp = require('os').tmpdir();
+  for (const n of fs.readdirSync(tmp)) {
+    if (n.indexOf(PREFIXE_RACINE) !== 0) continue;
+    const pid = parseInt(n.slice(PREFIXE_RACINE.length), 10);
+    let vivant = false;
+    try { process.kill(pid, 0); vivant = pid !== process.pid; } catch (e) { vivant = e.code === 'EPERM'; }
+    if (!vivant) supprimerDossier(path.join(tmp, n));
+  }
+}
+function preparerRacine(MARQUE) {
+  nettoyerRacinesPerimees();
+  const racine = path.join(require('os').tmpdir(), PREFIXE_RACINE + process.pid + '-' + Date.now());
+  const retirer = () => supprimerDossier(racine);
+  process.on('exit', retirer);
+  ['SIGINT', 'SIGTERM'].forEach(sig => process.once(sig, () => { retirer(); process.exit(130); }));
+  const poser = (rel, contenu) => { const abs = path.join(racine, rel); fs.mkdirSync(path.dirname(abs), { recursive: true }); fs.writeFileSync(abs, contenu); };
+  const copier = (rel) => poser(rel, fs.readFileSync(path.join(RACINE, rel)));
+  ['index.html', 'admin.html', 'SPECS.md', 'server.js', 'README.md', 'PLAN.md', 'CHANGELOG.md', '.gitignore', '.gitattributes',
+    '.githooks/pre-commit', 'tools/paquet.js', 'docs/charge.md', 'tests/registre/impact.json', 'tests/donnees/ids.json'].forEach(copier);
+  fs.readdirSync(path.join(RACINE, 'src')).forEach(f => copier('src/' + f));
+  fs.readdirSync(path.join(RACINE, 'tests')).filter(f => /\.(js|html|css)$/.test(f)).forEach(f => copier('tests/' + f));
+  // les leurres : un dépôt git complet, un dossier caché, des journaux, des réglages, des dépendances, des parties
+  poser('.git/HEAD', 'ref: refs/heads/' + MARQUE + '\n');
+  poser('.git/config', '[core]\n\tsecret = ' + MARQUE + '\n');
+  poser('.piege/HEAD', 'ref: refs/heads/' + MARQUE + '\n');
+  poser('.piege/config', '[core]\n\tsecret = ' + MARQUE + '\n');
+  poser('logs/piege.log', MARQUE);
+  poser('.claude/piege.json', JSON.stringify({ secret: MARQUE }));
+  poser('node_modules/piege/index.js', '// ' + MARQUE);
+  poser('parties/index.json', JSON.stringify({ secret: MARQUE }));
+  return { racine, retirer };
+}
+
 /* SPEC-NET-020 (revue de sécurité) : le serveur ne sert en statique QUE les
-   ressources du jeu (index.html, admin.html, src/*.js|css) — jamais le dépôt
-   (.git, fichiers cachés, outils, journaux, parties, cahiers, sources du
-   serveur), dans AUCUN mode, quel que soit l'encodage du chemin (pour-cent,
-   double encodage, antislash Windows, casse, flux NTFS « ::$DATA », noms
-   courts 8.3, point ou espace final que Windows ignore).
+   ressources du jeu (index.html, admin.html, src/*.js|css), en lecture seule
+   (GET/HEAD) — jamais le dépôt (.git, fichiers cachés, outils, journaux,
+   parties, cahiers, sources du serveur), dans AUCUN mode, quel que soit
+   l'encodage du chemin (pour-cent, double encodage, antislash Windows, casse,
+   flux NTFS « ::$DATA », noms courts 8.3, point ou espace final).
    SPEC-BANC-015/122 : les routes du banc (/tests/*, et SPECS.md qu'il relit)
-   n'existent qu'avec --tests ET pour une requête locale (refusRequeteLocale). */
+   n'existent qu'avec --tests ET pour une requête locale (refusRequeteLocale) ;
+   sans --tests, la machine locale lit pourquoi, une requête non locale
+   n'apprend rien (404 nu). */
 async function scenarioCheminsPieges() {
-  const pid = process.pid;
-  const MARQUE = 'piege-secret-' + pid;
-  const PIEGE = '.piege-' + pid;                         // un dossier caché, comme .git (qui n'est qu'un fichier dans un worktree)
-  const crees = [];                                      // fichiers puis dossiers créés ici, retirés à la fin
-  const poser = (rel, contenu) => {
-    const abs = path.join(RACINE, rel);
-    // le plus haut dossier absent est noté : c'est lui qu'on retire à la fin
-    let haut = null;
-    for (let d = path.dirname(abs); d !== RACINE && !fs.existsSync(d); d = path.dirname(d)) haut = d;
-    if (haut) { fs.mkdirSync(path.dirname(abs), { recursive: true }); crees.push(haut); }
-    fs.writeFileSync(abs, contenu); crees.push(abs);
-  };
-  poser(path.join(PIEGE, 'HEAD'), 'ref: refs/heads/' + MARQUE + '\n');
-  poser(path.join(PIEGE, 'config'), '[core]\n\tsecret = ' + MARQUE + '\n');
-  poser(path.join('logs', 'piege-' + pid + '.log'), MARQUE);
-  poser(path.join('.claude', 'piege-' + pid + '.json'), JSON.stringify({ secret: MARQUE }));
-  poser(path.join('node_modules', 'piege-' + pid, 'index.js'), '// ' + MARQUE);
-  const nomRacine = path.basename(RACINE);
-  const P = PIEGE, Pm = PIEGE.slice(1);
+  const MARQUE = 'piege-secret-' + process.pid;
+  const { racine, retirer } = preparerRacine(MARQUE);
+  const env = { MC_TEST_RACINE_STATIQUE: racine };
+  const nomRacine = path.basename(racine);
   const pieges = [
-    // le dépôt git lui-même (dossier dans un clone, fichier « gitdir: » dans un worktree)
-    '/.git', '/.git/HEAD', '/.git/config', '/%2egit/HEAD', '/%2e%2egit/HEAD', '/..%2f.git/config', '/src/../.git/HEAD',
+    // le dépôt git (un dossier, comme dans un clone)
+    '/.git', '/.git/HEAD', '/.git/config', '/%2egit/HEAD', '/%2Egit/config', '/%2e%2egit/HEAD', '/..%2f.git/config', '/src/../.git/HEAD',
     '/src/%2e%2e/.git/HEAD', '/%252e%252e%252f.git/HEAD', '/%252egit/HEAD', '/src\\..\\.git\\HEAD', '/src%5c..%5c.git%5cHEAD',
-    '/.GIT/HEAD', '/.Git/config', '/.git::$INDEX_ALLOCATION/HEAD', '/GIT~1/HEAD', '/.git./HEAD', '/.git%20/HEAD', '/.git /HEAD', '/.git%00/HEAD',
-    // le même dossier caché, présent quel que soit le poste
-    '/' + P + '/HEAD', '/%2e' + Pm + '/HEAD', '/%2E' + Pm + '/config', '/src/../' + P + '/HEAD', '/src/%2e%2e/' + P + '/HEAD',
-    '/src\\..\\' + P + '\\HEAD', '/src%5c..%5c' + P + '%5cHEAD', '/' + P.toUpperCase() + '/HEAD', '/' + P + './HEAD', '/' + P + '%20/HEAD',
-    '/' + P + '/HEAD::$DATA', '/' + P + '/HEAD.', '/' + P + '/HEAD%20', '/' + P + '::$INDEX_ALLOCATION/HEAD',
-    '/..%2f' + nomRacine + '/' + P + '/HEAD', '/..%5c' + nomRacine + '%5c' + P + '%5cHEAD', '/%252e' + Pm + '/HEAD', '/PIEGE~1/HEAD',
-    '/tests/../' + P + '/HEAD', '/tests/%2e%2e/' + P + '/HEAD', '/tests\\..\\' + P + '\\HEAD', '/tests/donnees/../../' + P + '/HEAD',
-    // le reste du dépôt et de la machine hôte : jamais des ressources du jeu
-    '/logs/piege-' + pid + '.log', '/.claude/piege-' + pid + '.json', '/node_modules/piege-' + pid + '/index.js',
+    '/.GIT/HEAD', '/.Git/config', '/.git/HEAD::$DATA', '/.git::$INDEX_ALLOCATION/HEAD', '/GIT~1/HEAD', '/.git./HEAD', '/.git%20/HEAD',
+    '/.git /HEAD', '/.git%00/HEAD', '/.git/HEAD.', '/.git/HEAD%20',
+    '/..%2f' + nomRacine + '/.git/HEAD', '/..%5c' + nomRacine + '%5c.git%5cHEAD',
+    // un autre dossier caché
+    '/.piege/HEAD', '/%2epiege/HEAD', '/.PIEGE/HEAD', '/.piege./config', '/PIEGE~1/HEAD', '/src\\..\\.piege\\HEAD',
+    '/tests/../.git/HEAD', '/tests/%2e%2e/.git/HEAD', '/tests\\..\\.git\\HEAD', '/tests/donnees/../../.git/HEAD',
+    // le reste du dossier du serveur : jamais des ressources du jeu
+    '/logs/piege.log', '/.claude/piege.json', '/node_modules/piege/index.js', '/parties/index.json',
     '/server.js', '/README.md', '/PLAN.md', '/CHANGELOG.md', '/.gitignore', '/.gitattributes', '/.githooks/pre-commit',
     '/tools/paquet.js', '/docs/charge.md', '/tests/registre/impact.json', '/tests/run.js/', '/src/../server.js', '/src%2f..%2fserver.js',
-    '//server.js', '/./server.js', '/parties/index.json', '/tests/index.html::$DATA', '/tests/donnees/../../server.js',
+    '//server.js', '/./server.js', '/tests/index.html::$DATA', '/tests/donnees/../../server.js',
     // casse et suffixes que Windows ignore, sur des ressources pourtant légitimes
     '/SRC/core.js', '/INDEX.HTML', '/index.html::$DATA', '/index.html.', '/index.html%20', '/src/core.js::$DATA', '/src/core.js.',
   ];
@@ -179,18 +206,30 @@ async function scenarioCheminsPieges() {
   const routesBancPost = ['/tests/resultats', '/tests/serveur-histoire', '/tests/serveur-jeu', '/tests/serveur-jeu/arreter', '/tests/cahiers/x/conserver'];
   const fichiersJeu = ['/', '/index.html', '/admin.html'].concat(fs.readdirSync(path.join(RACINE, 'src')).filter(f => /\.(js|css)$/.test(f)).map(f => '/src/' + f));
   const fichiersBanc = ['/tests/', '/SPECS.md', '/tests/donnees/ids.json'].concat(fs.readdirSync(path.join(RACINE, 'tests')).filter(f => /\.(js|html|css)$/.test(f)).map(f => '/tests/' + f));
+  const lan = A.adresseReseau();
+  const DESACTIVE = 'node server.js --tests';
   try {
-    const modes = [['fermé', []], ['--ouvert', ['--ouvert']], ['--serveur', ['--serveur']], ['--tests', ['--tests']], ['--serveur --tests', ['--serveur', '--tests']]];
+    const modes = [['fermé', []], ['--ouvert', ['--ouvert']], ['--serveur', ['--serveur']], ['--tests', ['--tests']],
+      ['--serveur --tests', ['--serveur', '--tests']], ['--ouvert --tests', ['--ouvert', '--tests']]];
     for (const [nomMode, args] of modes) {
       const avecTests = args.indexOf('--tests') >= 0;
+      const ouvert = args.indexOf('--ouvert') >= 0 || args.indexOf('--serveur') >= 0;
       const d = dossierTemp('mc-archi-sec4-');
-      const s = await demarrer(['--port', '0', '--dossier-parties', d].concat(args));
+      const s = await demarrer(['--port', '0', '--dossier-parties', d].concat(args), env);
       const port = s.port;
       try {
         // le jeu légitime reste servi en entier
         const ratesJeu = [];
         for (const f of fichiersJeu) { const r = await brute(port, f); if (r.code !== 200) ratesJeu.push(f + ' → ' + r.code); }
         ok(!ratesJeu.length, `SPEC-NET-019 (${nomMode}) : les ${fichiersJeu.length} ressources du jeu (index, admin, src/*.js|css) sont servies`, ratesJeu.join(', '));
+        // … en lecture seule : toute autre méthode que GET/HEAD reçoit 405
+        const methodes = [];
+        for (const [m, c] of [['POST', '/index.html'], ['PUT', '/src/core.js'], ['DELETE', '/admin.html'], ['PATCH', '/'], ['POST', '/server.js']]) {
+          const r = await brute(port, c, {}, m, '{}'); if (r.code !== 405) methodes.push(m + ' ' + c + ' → ' + r.code);
+        }
+        const tete = await brute(port, '/src/core.js', {}, 'HEAD');
+        if (tete.code !== 200) methodes.push('HEAD /src/core.js → ' + tete.code);
+        ok(!methodes.length, `SPEC-NET-020 (${nomMode}) : fichiers du jeu en lecture seule (GET/HEAD ; POST, PUT, DELETE, PATCH → 405)`, methodes.join(', '));
         // aucun chemin piégé ne sert quoi que ce soit
         const fuites = [];
         for (const c of pieges) {
@@ -206,6 +245,25 @@ async function scenarioCheminsPieges() {
           for (const c of routesBancGet) { const r = await brute(port, c); if (r.code !== 404) presentes.push('GET ' + c + ' → ' + r.code); }
           for (const c of routesBancPost) { const r = await brute(port, c, {}, 'POST', '{}'); if (r.code !== 404) presentes.push('POST ' + c + ' → ' + r.code); }
           ok(!presentes.length, `SPEC-BANC-122 (${nomMode}) : sans --tests, les ${routesBancGet.length + routesBancPost.length} routes du banc répondent 404`, presentes.join(', '));
+          // la machine locale apprend pourquoi : une page pour une page, du JSON pour une route de données
+          const page = await brute(port, '/tests/');
+          const api = await brute(port, '/tests/cahiers/api');
+          let jApi = null; try { jApi = JSON.parse(api.corps); } catch (e) { /* null */ }
+          ok(page.code === 404 && /text\/html/i.test(page.entetes) && page.corps.indexOf(DESACTIVE) >= 0,
+            `SPEC-BANC-122 (${nomMode}) : sans --tests, la page du banc demandée en local explique « relancez node server.js --tests » (HTML)`, page.code + ' ' + page.corps.slice(0, 120));
+          ok(api.code === 404 && jApi && jApi.ok === false && String(jApi.motif).indexOf(DESACTIVE) >= 0,
+            `SPEC-BANC-122 (${nomMode}) : sans --tests, une route de données du banc répond en JSON avec la même explication`, api.code + ' ' + api.corps.slice(0, 120));
+          // une requête non locale n'apprend rien : 404 nu
+          const nus = [];
+          for (const c of ['/tests/', '/tests/cahiers/api', '/SPECS.md']) {
+            const r = await brute(port, c, { Origin: 'http://evil.example' });
+            if (r.code !== 404 || r.corps.indexOf('--tests') >= 0) nus.push('Origin étrangère ' + c + ' → ' + r.code + ' ' + r.corps.slice(0, 60));
+            if (ouvert && lan) {
+              const r2 = await brute(port, c, { Host: 'localhost:' + port }, 'GET', undefined, lan);
+              if (r2.code !== 404 || r2.corps.indexOf('--tests') >= 0) nus.push(lan + ' ' + c + ' → ' + r2.code + ' ' + r2.corps.slice(0, 60));
+            }
+          }
+          ok(!nus.length, `SPEC-BANC-122 (${nomMode}) : sans --tests, une requête non locale${ouvert && lan ? ' (Origin étrangère, adresse réseau ' + lan + ')' : ' (Origin étrangère)'} reçoit un 404 nu`, nus.join(', '));
         } else {
           // avec --tests : le banc local fonctionne…
           const ratesBanc = [];
@@ -221,16 +279,34 @@ async function scenarioCheminsPieges() {
             ['mandataire', { 'X-Forwarded-For': '203.0.113.7' }], ['intersites', { 'Sec-Fetch-Site': 'cross-site' }]];
           const acceptees = [];
           for (const [nom, ent] of etrangers) {
-            for (const c of routesBancGet.concat(['/tests/donnees/ids.json', '/tests/run.js'])) { const r = await brute(port, c, ent); if (r.code !== 403) acceptees.push(nom + ' GET ' + c + ' → ' + r.code); }
+            for (const c of routesBancGet.concat(['/tests/run.js'])) { const r = await brute(port, c, ent); if (r.code !== 403) acceptees.push(nom + ' GET ' + c + ' → ' + r.code); }
             for (const c of routesBancPost) { const r = await brute(port, c, ent, 'POST', '{}'); if (r.code !== 403) acceptees.push(nom + ' POST ' + c + ' → ' + r.code); }
           }
           ok(!acceptees.length, `SPEC-BANC-122 (${nomMode}) : avec --tests, toute route du banc refuse (403) une requête non locale`, acceptees.join(', '));
+          /* L'ADRESSE seule : la requête arrive par l'adresse réseau de la machine
+             (comme d'un voisin), avec un Host local et sans Origin — seule la
+             branche « adresse non locale » de refusRequeteLocale peut la refuser. */
+          if (ouvert) {
+            if (!lan) ok(true, `(${nomMode}) aucune adresse réseau non locale sur ce poste : refus par adresse non vérifié`);
+            else {
+              const par = [];
+              for (const c of routesBancGet) {
+                const r = await brute(port, c, { Host: 'localhost:' + port }, 'GET', undefined, lan);
+                let j = null; try { j = JSON.parse(r.corps); } catch (e) { /* null */ }
+                if (r.code !== 403 || !j || j.motif !== 'adresse non locale') par.push(c + ' → ' + r.code + ' ' + r.corps.slice(0, 60));
+              }
+              for (const c of routesBancPost) {
+                const r = await brute(port, c, { Host: 'localhost:' + port }, 'POST', '{}', lan);
+                if (r.code !== 403) par.push('POST ' + c + ' → ' + r.code);
+              }
+              const jeu = await brute(port, '/index.html', { Host: lan + ':' + port }, 'GET', undefined, lan);
+              ok(!par.length && jeu.code === 200, `SPEC-BANC-122 (${nomMode}) : joint par l'adresse réseau ${lan}, le banc refuse (403 « adresse non locale ») et le jeu reste servi`, par.join(', ') + ' · jeu ' + jeu.code);
+            }
+          }
         }
       } finally { await s.arreter(); supprimerDossier(d); }
     }
-  } finally {
-    for (const p of crees.reverse()) { try { fs.rmSync(p, { recursive: true, force: true }); } catch (e) { /* tant pis */ } }
-  }
+  } finally { retirer(); }
 }
 
 (async function () {
