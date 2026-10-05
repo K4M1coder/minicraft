@@ -160,6 +160,11 @@
     // revérifié (abonnement ET portée) à CHAQUE opération par `resoudreConteneur`.
     const conteneursPoses = new Map();   // cle 'x,y,z' → conteneur MC.Conteneurs
     S.conteneursPoses = conteneursPoses;
+    /* SPEC-SYNC-027 : l'objet exposé sur un présentoir ou un socle — pas un conteneur à
+       grille mais UN emplacement par case, tenu par le serveur. Déclaré ICI (avant
+       `appliquerEtatMonde`, appelée dès la reprise `--monde`), comme `conteneursPoses`. */
+    const expositions = new Map();       // cle 'x,y,z' → { id, n: 1, data?, dmg? }
+    S.expositions = expositions;
     // dernier instantané ENVOYÉ d'un fourneau (cadence de message ≤ 2 Hz,
     // SPEC-SYNC-015) — la cuisson elle-même tourne à chaque tic (SPEC-SYNC-016).
     const derniereEmissionFour = new Map();

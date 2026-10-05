@@ -601,7 +601,7 @@ src/
   serveur-sauvegarde · serveur-simulation · serveur-clients            installés par server.js
   serveur-http · serveur-banc · serveur-reseau · serveur-antiflood     dans son contexte S,
   serveur-messages · serveur-recit · serveur-admin                     testables sous Node
-  serveur-inventaire · serveur-succes · serveur-pose
+  serveur-inventaire · serveur-succes · serveur-pose · serveur-objets
   serveur-vehicules · serveur-joueurs · serveur-tic
 server.js                    serveur Node sans dépendance : assemblage seulement
                              (paramètres, contexte S, modules, écoute, boucle de tic)

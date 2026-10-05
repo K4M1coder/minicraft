@@ -41,7 +41,7 @@ const PURS = ['journal', 'worker-erreurs', 'core', 'formes', 'noise', 'biomes', 
               // SPEC-SERVEUR-008 : les modules du serveur, purs eux aussi (dépendances injectées par S)
               'serveur-journal', 'serveur-parties', 'serveur-etat', 'serveur-monde', 'serveur-sauvegarde', 'serveur-simulation',
               'serveur-clients', 'serveur-http', 'serveur-banc', 'serveur-reseau', 'serveur-antiflood', 'serveur-messages',
-              'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-vehicules',
+              'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-objets', 'serveur-vehicules',
               'serveur-joueurs', 'serveur-tic'];
 const NAVIGATEUR = ['audio', 'atlas', 'render', 'ui', 'input', 'game', 'net', 'workers', 'worker-monde', 'worker-maillage'];
 

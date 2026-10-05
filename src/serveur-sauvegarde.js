@@ -250,7 +250,7 @@
         zones: monde.zonesEtat ? MC.Zones.serialiser(monde.zonesEtat) : null,
         politique: MC.Politique.serialiser(politique), guildes: MC.Guildes.serialiser(guildes),
         economie: MC.Economie.serialiser(economie), pvp: MC.PvpEnjeux.serialiser(pvp),
-        quetes: [], joueurs: [], conteneurs: [], commandes: [], vehicules: [],
+        quetes: [], joueurs: [], conteneurs: [], expositions: [], commandes: [], vehicules: [],
         histoire: null, soloJoueur: null, extras: null,
       };
     }

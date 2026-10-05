@@ -10,5 +10,5 @@ module.exports = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zo
   // SPEC-SERVEUR-008 : les modules du serveur (server.js les installe dans son contexte S)
   'serveur-journal', 'serveur-parties', 'serveur-etat', 'serveur-monde', 'serveur-sauvegarde', 'serveur-simulation',
   'serveur-clients', 'serveur-http', 'serveur-banc', 'serveur-reseau', 'serveur-antiflood', 'serveur-messages',
-  'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-vehicules',
+  'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-objets', 'serveur-vehicules',
   'serveur-joueurs', 'serveur-tic'];

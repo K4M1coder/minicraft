@@ -1261,9 +1261,41 @@
       });
     }
 
+    /* SPEC-SYNC-027 : l'objet exposé sur un présentoir ou un socle — un petit objet qui tourne et
+       flotte au-dessus de son support. `table` : « x,y,z » → { id } (le miroir de ce que le serveur
+       annonce, game.js `expositions`) ; un mesh n'est refait que si l'objet change. */
+    var meshExpositions = new Map();
+    function syncExpositions(table, temps) {
+      var vus = {};
+      for (var cle in table) {
+        var e = table[cle];
+        if (!e || !e.id || !C.def(e.id)) continue;      // un objet que cette version ne connaît pas ne se dessine pas
+        vus[cle] = true;
+        var m = meshExpositions.get(cle);
+        if (m && m.id !== e.id) { libererEntite(m.mesh); meshExpositions.delete(cle); m = null; }
+        if (!m) {
+          var p = cle.split(',');
+          var mesh = tagGen(itemMesh(e.id));
+          mesh.scale.setScalar(1.4);
+          m = { id: e.id, mesh: mesh, y0: +p[1] + 1.25 };
+          mesh.position.set(+p[0] + 0.5, m.y0, +p[2] + 0.5);
+          ombrer(mesh);
+          scene.add(mesh);
+          meshExpositions.set(cle, m);
+        }
+        m.mesh.rotation.y = temps * 1.2;
+        m.mesh.position.y = m.y0 + Math.sin(temps * 2) * 0.04;
+      }
+      meshExpositions.forEach(function (m, cle) {
+        if (!vus[cle]) { libererEntite(m.mesh); meshExpositions.delete(cle); }
+      });
+    }
+
     function libererToutesEntites() {
       entityMeshes.forEach(libererEntite);
       entityMeshes.clear();
+      meshExpositions.forEach(function (m) { libererEntite(m.mesh); });
+      meshExpositions.clear();
       // SPEC-RENDU-009 : les instances de foule n'ont plus d'entités
       // derrière elles — masquées, pas détruites (capacité réutilisable dès
       // la prochaine foule de la même espèce).
@@ -3043,7 +3075,7 @@
 
     return {
       scene: scene, camera: camera, renderer: renderer, sun: sun,
-      syncChunk: syncChunk, appliquerMaillage: appliquerMaillage, disposeChunk: disposeChunk, syncEntities: syncEntities,
+      syncChunk: syncChunk, appliquerMaillage: appliquerMaillage, disposeChunk: disposeChunk, syncEntities: syncEntities, syncExpositions: syncExpositions,
       // SPEC-PERF-014 : géométries de chunk réellement recréées (bornées : la
       // réutilisation en place ne les incrémente pas)
       perf: function () { return { geometriesCreees: geometriesCreees }; },

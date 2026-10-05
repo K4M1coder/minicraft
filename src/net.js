@@ -81,6 +81,8 @@
       onPolitique: opts.onPolitique || function () {},
       // SPEC-FACTION-012 : où sont les membres connectés de nos factions (et seulement eux)
       onFactionMembres: opts.onFactionMembres || function () {},
+      // SPEC-SYNC-027 : ce qu'exposent les présentoirs et socles proches (le serveur est seul à le tenir)
+      onExpositions: opts.onExpositions || function () {},
       // SPEC-SECU-012 : une région redéfinie (ou rendue à la carte) par un administrateur
       onZoneMaj: opts.onZoneMaj || function () {},
     };
@@ -319,6 +321,11 @@
           if (fm) hooks.onFactionMembres(fm.l);
           break;
         }
+        case NP.MSG.EXPOSITIONS: {
+          var ex = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
+          if (ex) hooks.onExpositions(ex);
+          break;
+        }
         // SPEC-SECU-012 : zone redéfinie là où se tient un de nos joueurs — forme
         // vérifiée (point fini, zone connue ou null pour une région rendue à la carte)
         case NP.MSG.ZONE_MAJ: {
@@ -450,6 +457,18 @@
     /* SPEC-MECA-005 : actionner le levier ou le bouton de cette case — le serveur
        revérifie portée et bloc, décide du nouvel état et le diffuse (BLOC). */
     function actionner(x, y, z, j) { return envoyer({ t: NP.MSG.ACTIONNER, j: j || 0, x: x, y: y, z: z }); }
+    /* SPEC-ARCHI-043 : exposer un exemplaire de la case `caseInv` sur le présentoir ou le socle
+       de cette case, ou reprendre l'objet qui y est exposé — le serveur revérifie portée, bloc et
+       inventaire, déplace l'objet et diffuse ce qui s'expose (EXPOSITIONS). */
+    function exposer(x, y, z, caseInv, j) { return envoyer({ t: NP.MSG.EXPOSER, j: j || 0, x: x, y: y, z: z, i: caseInv }); }
+    function retirerExposition(x, y, z, j) { return envoyer({ t: NP.MSG.EXPOSITION_RETIRER, j: j || 0, x: x, y: y, z: z }); }
+    /* SPEC-ARCHI-044 : ouvrir un coffre piégé ou doré ; `caseKit` (facultatif) : la case du kit de
+       désamorçage tenu. Piège, désamorçage et butin sont tirés par le serveur. */
+    function coffreSuspect(x, y, z, caseKit, j) {
+      var m = { t: NP.MSG.COFFRE_SUSPECT, j: j || 0, x: x, y: y, z: z };
+      if (caseKit !== undefined && caseKit !== null) m.i = caseKit;
+      return envoyer(m);
+    }
 
     /* `caseInv` (facultatif) : la case d'inventaire d'où vient le bloc posé —
        le serveur y retire l'objet (SPEC-SYNC-028). */
@@ -524,7 +543,7 @@
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
       // SPEC-BANC-103 : les n derniers messages échangés, du plus ancien au plus récent
       derniersMessages: function (n) { return trace.slice(Math.max(0, trace.length - (n || TRACE_MAX))); },
-      envoyer: envoyer, dormir: dormir, actionner: actionner, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      envoyer: envoyer, dormir: dormir, actionner: actionner, exposer: exposer, retirerExposition: retirerExposition, coffreSuspect: coffreSuspect, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       poserVehicule: poserVehicule, monterVehicule: monterVehicule, descendreVehicule: descendreVehicule, reparerVehicule: reparerVehicule,

@@ -67,6 +67,7 @@
       'DORMIR', 'HISTOIRE_PARLER', 'HISTOIRE_REPONSE',
       'ACTIONNER',
       'LIVRE_ECRIRE',
+      'EXPOSER', 'EXPOSITION_RETIRER', 'COFFRE_SUSPECT',
     ].map(k => NP.MSG[k]).filter(Boolean));
 
     /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -277,6 +278,8 @@
           envoyerPolitiqueComplete(c);
           // SPEC-SECU-012 : les régions redéfinies autour de ses joueurs (BIENVENUE n'en porte aucune)
           S.synchroniserZones(c);
+          // SPEC-SYNC-027 : ce qu'exposent les présentoirs et socles à moins de 96 blocs, pour qui arrive après
+          S.envoyerExpositionsProches(c);
           // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
           // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
           c.joueurs.forEach((js, j) => S.envoyerInvMaj(c, j, {}));
@@ -366,6 +369,14 @@
           break;
         }
 
+        /* SPEC-SYNC-027 / SPEC-ARCHI-043 : présentoirs et socles. Le contenu exposé est tenu
+           par le serveur (serveur-objets) : le message ne porte que la case de l'inventaire
+           SERVEUR à exposer et la position du support, jamais l'objet. */
+        case NP.MSG.EXPOSER: S.exposer(c, m); break;
+        case NP.MSG.EXPOSITION_RETIRER: S.retirerExposition(c, m); break;
+        // SPEC-ARCHI-044 : coffre piégé ou doré — piège, désamorçage et butin tirés par le serveur
+        case NP.MSG.COFFRE_SUSPECT: S.ouvrirCoffreSuspect(c, m); break;
+
         // ── véhicules (P-VEH, SPEC-ARCHI-021 / SPEC-SYNC-022) : le serveur crée, embarque, conduit ──
         case NP.MSG.VEHICULE_POSER: S.poserVehiculeServeur(c, m); break;
         case NP.MSG.VEHICULE_MONTER: S.monterVehiculeServeur(c, m); break;
@@ -388,6 +399,7 @@
         // bornée à ce seul chunk, jamais le monde entier.
         case NP.MSG.OVERRIDES_DEMANDE:
           envoyer(c, { t: NP.MSG.OVERRIDES_CHUNK, cx: m.cx, cz: m.cz, blocs: overridesEnVue(m.cx, m.cz, 0) });
+          S.envoyerExpositionsDuChunk(c, m.cx, m.cz);       // SPEC-SYNC-027 : ce que les présentoirs de ce chunk exposent
           break;
 
         case NP.MSG.ENTREE: {
@@ -639,6 +651,8 @@
                                          cible: `${m.x},${m.y},${m.z}`, details: m.id, heure: EP.heure });
           // SPEC-ARCHI-042 : le succès se décide ici, sur une casse que le serveur a acceptée
           if (m.id === 0 && avant) S.signalerSucces(js, { type: 'casser', bloc: avant });
+          // SPEC-ARCHI-043 : un présentoir ou un socle cassé lâche l'objet exposé sur place
+          if (m.id === 0 && avant && C.BLOCKS[avant] && C.BLOCKS[avant].expose) S.libererExposition(m.x, m.y, m.z);
           /* B1 (étape 7) : un conteneur posé cassé lâche son contenu au sol —
              UNE SEULE FOIS ici (le serveur fait autorité sur la casse), même si
              deux joueurs l'avaient ouvert en même temps. `fermerConteneurPourAbonnes`

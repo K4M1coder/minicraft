@@ -54,7 +54,7 @@ const MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zon
                  // SPEC-SERVEUR-008 : les modules du serveur, installés plus bas dans le contexte S
                  'serveur-journal', 'serveur-parties', 'serveur-etat', 'serveur-monde', 'serveur-sauvegarde',
                  'serveur-simulation', 'serveur-clients', 'serveur-http', 'serveur-banc', 'serveur-reseau', 'serveur-antiflood',
-                 'serveur-messages', 'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose',
+                 'serveur-messages', 'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-objets',
                  'serveur-vehicules', 'serveur-joueurs', 'serveur-tic'];
 
 const ctx = vm.createContext(Object.assign(Object.create(null), {
@@ -228,6 +228,7 @@ MC.ServeurAdmin.installer(S);
 MC.ServeurInventaire.installer(S);
 MC.ServeurSucces.installer(S);
 MC.ServeurPose.installer(S);
+MC.ServeurObjets.installer(S);
 MC.ServeurVehicules.installer(S);
 MC.ServeurJoueurs.installer(S);
 MC.ServeurTic.installer(S);

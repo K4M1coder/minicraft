@@ -15,13 +15,45 @@
   function installer(S) {
     const {
       SY, CONF, admin, regles, monde, entites, politique, guildes, economie, pvp,
-      joueursRegistre, banques, conteneursPoses, derniereEmissionFour, banqueDe, journal,
+      joueursRegistre, banques, conteneursPoses, expositions, derniereEmissionFour, banqueDe, journal,
     } = S;
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
     Object.assign(S, {
       etatMonde, enregistrementJoueur, appliquerEtatPersonnage,
       appliquerEtatMonde,
     });
+
+    function serialiserExpositions() {
+      return Array.from(expositions.entries()).map(([k, e]) => {
+        const p = k.split(',');
+        const pile = { id: e.id, n: 1 };
+        if (e.data !== undefined) pile.data = e.data;
+        if (e.dmg) pile.dmg = e.dmg;
+        return [+p[0], +p[1], +p[2], MC.ContratsV2.pileVersCase(pile)];
+      });
+    }
+    /* Reprise : le format de l'enregistrement [x, y, z, case] ou, pour une partie solo importée
+       (`extras.expositions`), celui de l'ancien client [« x,y,z », id, n, data]. Une entrée mal
+       formée est écartée, jamais d'exception. */
+    function restaurerExpositions(liste) {
+      (Array.isArray(liste) ? liste : []).forEach(o => {
+        if (!Array.isArray(o) || !MC.ContratsV2) return;
+        let x, y, z, pile;
+        if (typeof o[0] === 'string') {
+          [x, y, z] = o[0].split(',').map(Number);
+          pile = MC.ContratsV2.validerPile({ id: o[1], n: 1, data: o[3] === null ? undefined : o[3] });
+        } else {
+          [x, y, z] = o;
+          const cs = MC.ContratsV2.validerCase(o[3]);
+          pile = cs ? MC.ContratsV2.caseVersPile(cs) : null;
+        }
+        if (![x, y, z].every(Number.isInteger) || Math.abs(x) > 1e7 || Math.abs(z) > 1e7 || y < 0 || y >= 128 || !pile) return;
+        const e = { id: pile.id, n: 1 };
+        if (pile.data !== undefined) e.data = pile.data;
+        if (pile.dmg) e.dmg = pile.dmg;
+        expositions.set(x + ',' + y + ',' + z, e);
+      });
+    }
 
     // ── persistance du monde (SPEC-SERVEUR-001) ─────────────────────────────────
     /* `--monde fichier.json` fait vivre le monde sans joueur local : sauvegarde
@@ -85,6 +117,10 @@
             });
           })
           .filter(Boolean),
+        /* SPEC-SYNC-027 : l'objet exposé de chaque présentoir et socle, [x, y, z, case] — la case au
+           format des conteneurs (la donnée d'un livre voyage avec). Absent d'un fichier plus ancien :
+           aucun objet exposé, comme avant. */
+        expositions: serialiserExpositions(),
         // B4 (docs/vague-2/B4.md § 6) : meurtres récents, victoires et réputations
         // politiques — en dernier, comme prévu par le plan. Duels et propositions
         // sont éphémères, jamais persistés (MC.PvpEnjeux.serialiser les omet déjà).
@@ -281,6 +317,16 @@
         if (v.four) cont.four = v.four;
         conteneursPoses.set(v.cle, cont);
       });
+      /* SPEC-SYNC-027 : objets exposés — ceux du fichier, ou à défaut ceux d'une partie solo importée
+         (`extras.expositions`), reprises UNE fois puis retirées des extras (sinon la sauvegarde
+         suivante les écrirait deux fois). */
+      expositions.clear();
+      restaurerExpositions(data.expositions);
+      if (EP.extrasSolo && 'expositions' in EP.extrasSolo) {
+        if (!expositions.size) restaurerExpositions(EP.extrasSolo.expositions);
+        EP.extrasSolo = Object.assign({}, EP.extrasSolo);
+        delete EP.extrasSolo.expositions;
+      }
       /* SPEC-MECA-008 : `overrides` a été rempli sans passer par setBlock —
          les registres dérivés (mécanismes, lumières) se reconstruisent ici,
          sinon les circuits repris ne se simulent plus tant que personne ne

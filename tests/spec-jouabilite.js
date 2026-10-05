@@ -294,7 +294,7 @@
 
     it('SPEC-JOUABLE-006 : tout lâcher du serveur passe par dropStack (comptage exact) ; aucune pile à état ne retombe sur dropItem(id, n) nu', function () {
       var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
-      A.equal((src.match(/entites\.dropStack\(/g) || []).length, 6, 'coffre cassé, conteneur tronqué, soute, distributeur, trop-plein aux pieds, reliquat de ramassage');
+      A.equal((src.match(/entites\.dropStack\(/g) || []).length, 8, 'coffre cassé, conteneur tronqué, soute, distributeur, trop-plein aux pieds, reliquat de ramassage, présentoir cassé, présentoir sans support');
       A.equal((src.match(/entites\.dropItem\(/g) || []).length, 1, 'un seul dropItem nu : le butin d\'un bloc cassé (aucun état)');
       A.equal((src.match(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/g) || []).length, 1, 'jet : usure transmise');
       A.equal((src.match(/pickUp\(p\.id, p\.n, p\.data, p\.dmg\)/g) || []).length, 1, 'ramassage : usure transmise');

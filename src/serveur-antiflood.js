@@ -67,6 +67,7 @@
     FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.HISTOIRE_REPONSE);
     if (NP.MSG.ACTIONNER) FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.ACTIONNER);   // SPEC-MECA-005
     if (NP.MSG.LIVRE_ECRIRE) FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.LIVRE_ECRIRE);   // SPEC-INTERIEUR-003
+    [NP.MSG.EXPOSER, NP.MSG.EXPOSITION_RETIRER, NP.MSG.COFFRE_SUSPECT].forEach(t => { if (t) FLOOD_TYPES_PAR_JOUEUR.add(t); });   // SPEC-ARCHI-043/044
 
     /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
        TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un

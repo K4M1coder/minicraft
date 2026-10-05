@@ -11,6 +11,8 @@
      son contenu ; jeté (INV_LACHER), l'objet au sol le porte encore ;
    - relance : arrêt puis relance du serveur sur le même fichier de monde —
      le livre de l'inventaire et celui du coffre sont intacts ;
+   - exposer : le livre signé se pose sur un présentoir tenu par le serveur, survit à
+     la relance et se reprend intact (SPEC-ARCHI-043, SPEC-SYNC-027) ;
    - lire : une bibliothèque générée d'un lieu tient à sa première ouverture
      la légende du lieu, sa chronique et le carnet d'explorateur qui situe
      les donjons des environs (indices des quêtes).
@@ -188,6 +190,49 @@ async function scenarioEcranPartage() {
   } finally { A.supprimerDossier(d); }
 }
 
+// ── exposer : le livre signé se pose sur un présentoir (le serveur le tient), se relit après relance ──
+async function scenarioPresentoir() {
+  const d = A.dossierTemp('mc-livres-pr-');
+  try {
+    const f = fichierMonde(d);
+    const env = { MC_TEST_INV: JSON.stringify([[I.LIVRE, 1], [B.PRESENTOIR, 1]]), MC_TEST_POSE_LIBRE: '' };
+    let s = await demarrer(args(f, d), env);
+    let { client: cl, bienvenue } = await rejoindre(s.port, 'Aldric', 1);
+    const inv0 = (await cl.attendre('inv_maj', 4000)).inv;
+    const iL = indexDe(inv0, I.LIVRE);
+    let seq = 0;
+    cl.envoyer({ t: 'livre_ecrire', j: 0, seq: ++seq, i: iL, titre: 'Au présentoir', pages: ['Un récit à montrer.', 'Fin.'], signer: true });
+    let m = await invMaj(cl, seq);
+    const signe = pile(m.inv[iL]).data;
+    ok(signe && signe.signe === true && signe.auteur === 'Aldric', 'préparation : un livre signé dans l\'inventaire du serveur');
+    const t0 = bienvenue.toi[0];
+    const pp = { x: Math.floor(t0.x), y: Math.floor(t0.y) + 3, z: Math.floor(t0.z) };
+    cl.envoyer({ t: 'bloc', x: pp.x, y: pp.y, z: pp.z, id: B.PRESENTOIR, j: 0, i: indexDe(m.inv, B.PRESENTOIR) });
+    await cl.attendre('bloc', 3000, b => b.x === pp.x && b.y === pp.y && b.z === pp.z && b.id === B.PRESENTOIR);
+    // poser le livre sur le présentoir : accepté par le serveur (il était refusé tant que le présentoir n'était pas tenu côté serveur)
+    cl.envoyer({ t: 'exposer', j: 0, x: pp.x, y: pp.y, z: pp.z, i: iL });
+    const exp = await cl.attendre('expositions', 3000, e => (e.l || []).some(x => x[0] === pp.x && x[1] === pp.y && x[2] === pp.z && x[3] === I.LIVRE)).catch(() => null);
+    ok(!!exp, 'SPEC-INTERIEUR-003 : le livre se pose sur un présentoir, accepté et annoncé par le serveur');
+    m = await cl.attendre('inv_maj', 3000, x => indexDe(x.inv, I.LIVRE) < 0 && x.rev > m.rev).catch(() => null);
+    ok(!!m, 'SPEC-INTERIEUR-003 : le livre a quitté l\'inventaire du serveur (aucune copie)');
+    // relance : le livre exposé revient avec son contenu et sa signature
+    cl.fermer();
+    await dodo(300);
+    await s.arreter();
+    s = await demarrer(args(f, d), env);
+    ({ client: cl } = await rejoindre(s.port, 'Aldric', 1));
+    await cl.attendre('expositions', 4000, e => (e.l || []).some(x => x[0] === pp.x && x[3] === I.LIVRE));
+    const inv1 = (await cl.attendre('inv_maj', 4000)).inv;
+    cl.envoyer({ t: 'expo_retirer', j: 0, x: pp.x, y: pp.y, z: pp.z });
+    m = await cl.attendre('inv_maj', 3000, x => indexDe(x.inv, I.LIVRE) >= 0);
+    const relu = pile(m.inv[indexDe(m.inv, I.LIVRE)]);
+    ok(relu && JSON.stringify(relu.data) === JSON.stringify(signe), 'SPEC-INTERIEUR-003 : repris du présentoir après relance du serveur, le livre garde son contenu et sa signature');
+    ok(indexDe(inv1, I.LIVRE) < 0, 'SPEC-INTERIEUR-003 : et il n\'était pas dans l\'inventaire entre-temps');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
 // ── lire : la bibliothèque générée d'un lieu ────────────────────────────────
 function trouverBibliotheque() {
   const w = MC.createWorld(GRAINE);
@@ -263,6 +308,7 @@ async function scenarioCarnetVaincu() {
   try {
     await scenarioEcriture();
     await scenarioEcranPartage();
+    await scenarioPresentoir();
     await scenarioBibliotheque();
     await scenarioCarnetVaincu();
   } catch (e) {

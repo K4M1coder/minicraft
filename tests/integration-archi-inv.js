@@ -340,11 +340,7 @@ function scenarioAudit() {
     const fin = sansCommentaires.indexOf('\n' + m[1] + '}', debut);
     return sansCommentaires.slice(debut, fin);
   };
-  ['interagirExposition', 'ouvrirCoffreSuspect'].forEach((nom) => {
-    const c = corps(nom);
-    ok(!!c && /pas encore/.test(c) && !/consumeAt|dropItem|\.add\(|expositions\[|chests\[/.test(c),
-       `SPEC-ARCHI-043/044 (reportées) : ${nom} refuse avec un message et ne touche ni l'inventaire ni des tables locales`);
-  });
+  // SPEC-ARCHI-043/044 : l'audit d'interagirExposition et d'ouvrirCoffreSuspect vit dans tests/integration-archi-objets.js (elles passent désormais par le serveur)
   ['ouvrirBlocCommande', 'ouvrirConteneur', 'operer', 'purgerJournalInv', 'frameConteneurs', 'forceCloseContainer', 'ouvrirBanque'].forEach((nom) => {
     const c = corps(nom);
     if (c === null) { ok(true, `audit : ${nom} n'existe plus (branche supprimée)`); return; }

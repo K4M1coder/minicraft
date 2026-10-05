@@ -212,6 +212,15 @@
     // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles, par
     // position (« x,y,z » -> pile { id, n, data } ou undefined si vide).
     var expositions = Object.create(null);
+    /* SPEC-SYNC-027 : `expositions` n'est qu'un MIROIR de ce que le serveur annonce (clé « x,y,z » →
+       { id, n: 1 }). Un chunk redemandé repart d'une table vide pour ses cases. */
+    function exposeIci(t) { return !!expositions[t.x + ',' + t.y + ',' + t.z]; }
+    function effacerExpositionsDuChunk(cx, cz) {
+      for (var cle in expositions) {
+        var p = cle.split(',');
+        if (Math.floor(+p[0] / 16) === cx && Math.floor(+p[2] / 16) === cz) delete expositions[cle];
+      }
+    }
     // SPEC-MECA-001 : petit conteneur (9 cases) d'un distributeur, indexé
     // comme les coffres — hors ligne uniquement (voir server.js en ligne).
     var distributeurs = Object.create(null);
@@ -298,6 +307,17 @@
         g.membresFaction = l || [];
         if (ui.carteOuverte()) ui.dessinerCarte();
       },
+      /* SPEC-SYNC-027 : l'objet exposé de chaque présentoir/socle proche, tel que le serveur le tient
+         (id seulement : la donnée d'un livre reste côté serveur). Avec cx, cz : l'état complet de ce
+         chunk, qui remplace ce que nous en savions. Une entrée à 0 : présentoir vidé. */
+      onExpositions: function (m) {
+        if (m.cx !== undefined) effacerExpositionsDuChunk(m.cx, m.cz);
+        m.l.forEach(function (e) {
+          var cle = e.x + ',' + e.y + ',' + e.z;
+          if (e.id) expositions[cle] = { id: e.id, n: 1 };
+          else delete expositions[cle];
+        });
+      },
       onHistoireEtat: function (m) { surHistoireEtat(m); },
       onHistoireNotif: function (m) { surHistoireNotif(m); },
       onBloc: function (x, y, z, id, etat) {
@@ -312,6 +332,7 @@
       // SPEC-SERVEUR-009 : overrides d'un chunk demandé (BIENVENUE ne porte
       // plus qu'un voisinage borné) — même application qu'onBloc, un à un.
       onOverridesChunk: function (cx, cz, blocs) {
+        effacerExpositionsDuChunk(cx, cz);     // SPEC-SYNC-027 : le serveur renvoie, juste après, ce que ce chunk expose
         world.getChunk(cx, cz, true);
         blocs.forEach(function (b) { MC.Synchro.appliquerBloc(world, b); });   // SPEC-SAVE-024
       },
@@ -2182,10 +2203,17 @@
        exposé plutôt que de le refuser : on vise en général pour remplacer,
        et l'ancien objet retombe au sol pour ne rien perdre. */
     function interagirExposition(action, target) {
-      // SPEC-ARCHI-043 (reporté) : le contenu exposé n'est pas encore tenu par le
-      // serveur (SPEC-SYNC-027) ; toucher à l'inventaire ici sans lui dupliquerait
-      // ou perdrait l'objet. On refuse proprement, sans rien modifier.
-      ui.toast('Les présentoirs ne sont pas encore disponibles avec le serveur de jeu', 'warn');
+      /* SPEC-ARCHI-043 / SPEC-SYNC-027 : le contenu exposé est tenu par le SERVEUR. Ici on ne
+         fait que demander — jamais de prédiction, ni sur l'inventaire ni sur la table
+         `expositions` : l'objet bouge à la réponse (INV_MAJ) et ce qui s'expose arrive par
+         EXPOSITIONS. */
+      if (action === 'retirer') {
+        if (!exposeIci(target)) { ui.toast('Rien à reprendre ici', 'warn'); return; }
+        net.retirerExposition(target.x, target.y, target.z, 0);
+      } else {
+        net.exposer(target.x, target.y, target.z, player.state.selected, 0);
+      }
+      audio.play('poser');
     }
     g.interagirExposition = interagirExposition;
 
@@ -2521,10 +2549,12 @@
        lui (ou en cas d'échec), il se déclenche immédiatement. Un coffre
        surprise cache soit un butin rare, soit un mimic hostile. */
     function ouvrirCoffreSuspect(kind, target, k) {
-      // SPEC-ARCHI-044 (reporté) : pièges, surprises et kit de désamorçage
-      // modifient inventaire et monde hors du serveur ; refusés proprement
-      // plutôt que de dupliquer ou perdre des objets.
-      ui.toast('Ce coffre suspect ne peut pas encore être ouvert avec le serveur de jeu', 'warn');
+      /* SPEC-ARCHI-044 : le serveur tire le désamorçage, le piège (ou la surprise) et le butin,
+         et ses effets (dégâts, gardes, mimic, coffre ouvert) nous reviennent par ses messages. Le
+         client désigne seulement la case du kit s'il en tient un. L'écran du coffre s'ouvre à la
+         réponse du serveur (onConteneurEtat) ; un piège qui détruit le coffre n'en ouvre aucun. */
+      var kit = player.heldId() === I.KIT_DESAMORCAGE ? player.state.selected : null;
+      net.coffreSuspect(target.x, target.y, target.z, kit, 0);
     }
 
     /* Traduit une opération de MC.Conteneurs en message réseau : applique
@@ -3277,6 +3307,7 @@
                           DC.sunIntensity(g.time));
       // SPEC-OBJET-001 : en écran partagé, chacun voit l'avatar (et l'armure) des autres joueurs locaux
       render.syncAvatarsLocaux(listeAvatarsLocaux());
+      render.syncExpositions(expositions, performance.now() / 1000);   // SPEC-SYNC-027 : l'objet exposé se voit au-dessus de son support
 
       // une camera par joueur, puis un rendu par vue
       var taille = [surface.clientWidth || innerWidth, surface.clientHeight || innerHeight];
