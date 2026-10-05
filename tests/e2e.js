@@ -840,6 +840,208 @@
     s.yaw = 0; s.pitch = 0; s.flying = false;
   });
 
+  /* ── L24 : toitures (SPEC-CONSTR-003), intérieurs (SPEC-INTERIEUR-001), livres (SPEC-INTERIEUR-003) ──
+     Un bâtiment généré (MC.Habitats, `batirBatimentPourEssai` : mêmes
+     bâtisseurs que les lieux du monde) est recopié bloc par bloc, états
+     compris, dans le monde affiché, devant le joueur, sur une dalle de pierre
+     dégagée : ce qu'on voit est exactement ce que la génération pose. */
+  function degager(g, x0, z0, x1, z1, ySol, h) {
+    for (var x = x0; x <= x1; x++) for (var z = z0; z <= z1; z++) {
+      g.world.setBlock(x, ySol - 1, z, B.STONE);
+      for (var y = ySol; y < ySol + h; y++) g.world.setBlock(x, y, z, 0);
+    }
+  }
+  function poserBatiment(g, l, dy) {
+    var n = 0;
+    l.blocs.forEach(function (a) {
+      for (var i = 0; i < a.length; i += 5) {
+        g.world.setBlock(a[i], a[i + 1] + dy, a[i + 2], a[i + 3]);
+        if (a[i + 4]) g.world.setEtat(a[i], a[i + 1] + dy, a[i + 2], a[i + 4]);
+        n++;
+      }
+    });
+    return n;
+  }
+  /* Le premier bâtiment de ce type et de ce plan (une maison en L, une grange…)
+     parmi quelques parcelles d'essai voisines. */
+  function batimentDePlan(g, type, style, urbain, plan, ox, oz, L) {
+    // le plan se tire de l'origine de la parcelle : on essaie les origines voisines
+    for (var dz = 0; dz < 8; dz++) for (var dx = 0; dx < 8; dx++) {
+      var l = g.world.habitats.batirBatimentPourEssai(type, style, urbain, 0, type === 'artisan' ? 'forgeron' : null, ox + dx, oz + dz, L);
+      if (!plan || l.batiments[0].plan === plan) return l;
+    }
+    return null;
+  }
+  // dégage le terrain sous l'emprise d'un bâtiment d'essai (débord du toit compris), puis l'y pose
+  function poserSurDalle(g, l, ySol) {
+    var x0 = Infinity, x1 = -Infinity, z0 = Infinity, z1 = -Infinity;
+    l.blocs.forEach(function (a) { for (var i = 0; i < a.length; i += 5) { x0 = Math.min(x0, a[i]); x1 = Math.max(x1, a[i]); z0 = Math.min(z0, a[i + 2]); z1 = Math.max(z1, a[i + 2]); } });
+    degager(g, x0 - 2, z0 - 2, x1 + 2, z1 + 2, ySol, 26);
+    return poserBatiment(g, l, ySol - 65);
+  }
+
+  e2e('SPEC-CONSTR-003 : chaque style couvre ses bâtiments de son toit — pignon, raide, croupe, noue, plat, dôme, chapeau', {
+        "teste": "des maisons générées de chaque style (colombages, isba, case d'acacia, maison sur pilotis, ville de brique, grès, igloo, champignon) et une maison en L, recopiées dans le monde affiché puis vues d'en haut, dans la vraie boucle",
+        "pourquoi": "SPEC-CONSTR-003 : pans en pente, faîtages, arêtiers et noues doivent se mailler et s'afficher tels que la génération les pose, avec les angles automatiques des escaliers",
+        "attendu": "chaque toit en pente est fait d'escaliers de son matériau (arêtiers en coins extérieurs pour la croupe, noue en coins intérieurs pour la maison en L), les autres styles gardent toit plat, dôme ou chapeau ; une capture par style",
+        "delai": 240
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 2);
+    var H = MC.Habitats, Fo = MC.Formes;
+    var cas = [['colombages-pignon', 'plaines', false, null], ['maison-en-L-noue', 'plaines', false, 'L'], ['isba-raide', 'taiga', false, null],
+               ['case-croupe', 'savane', false, null], ['pilotis-croupe', 'jungle', false, null], ['ville-de-brique-croupe', 'plaines', true, null],
+               ['gres-plat', 'desert', false, null], ['igloo-dome', 'pics_glaces', false, null], ['champignon-chapeau', 'champignons', false, null]];
+    var ox = o.x - 5, oz = o.z - 18;
+    for (var c = 0; c < cas.length; c++) {
+      var nom = cas[c][0], sc = cas[c][1], urbain = cas[c][2], st = H.stylePour(sc, urbain);
+      var l = batimentDePlan(g, 'maison', sc, urbain, cas[c][3], ox, oz, urbain ? 12 : 9);
+      A.ok(l, nom + ' : un bâtiment généré');
+      poserSurDalle(g, l, o.y);
+      var formes = {}, escaliers = 0, b = l.batiments[0];
+      for (var x = b.x0 - 2; x <= b.x1 + 2; x++) for (var z = b.z0 - 2; z <= b.z1 + 5; z++) for (var y = o.y; y < o.y + 24; y++) {
+        var df = C.BLOCKS[g.world.getBlock(x, y, z)];
+        if (df && df.forme === 'escalier' && df.mat === st.toit) { escaliers++; var f = Fo.unpackEscalier(g.world.getEtat(x, y, z)).forme; formes[f] = (formes[f] || 0) + 1; }
+      }
+      if (st.forme === 'pignon' || st.forme === 'raide') A.ok(escaliers > 10, nom + ' : un toit d\'escaliers (' + escaliers + ')');
+      else A.equal(escaliers, 0, nom + ' : ' + st.forme + ' en blocs pleins, sans escalier');
+      if (st.croupe) A.ok((formes[Fo.EXT_G] || 0) + (formes[Fo.EXT_D] || 0) >= 4, nom + ' : des arêtiers ' + JSON.stringify(formes));
+      if (cas[c][3] === 'L') A.ok((formes[Fo.INT_G] || 0) + (formes[Fo.INT_D] || 0) >= 2, nom + ' : une noue ' + JSON.stringify(formes));
+      // assez haut et assez loin pour embrasser tout le toit, même d'une maison de ville à étages
+      var haut = b.y1 - 65 + o.y;
+      s.flying = true; s.pos.x = (b.x0 + b.x1) / 2 + 0.5; s.pos.y = haut + 6; s.pos.z = b.z1 + 8 + (haut - o.y); s.vel.x = s.vel.y = s.vel.z = 0;
+      s.yaw = 0; s.pitch = -0.55;
+      await frames(24);
+      capture('toit-' + nom);
+    }
+    s.flying = false; s.yaw = 0; s.pitch = 0;
+  });
+
+  e2e('SPEC-INTERIEUR-001 : on entre dans des intérieurs meublés — maison, grange, point info, auberge, forge, boutique', {
+        "teste": "des bâtiments générés de plusieurs fonctions et styles, recopiés dans le monde affiché ; le joueur se tient à l'intérieur, regard vers le fond",
+        "pourquoi": "SPEC-INTERIEUR-001 : aucun bâtiment généré n'est creux — le mobilier de sa fonction doit se mailler, s'éclairer et se voir de l'intérieur, pas seulement exister dans l.blocs",
+        "attendu": "chaque intérieur compte plusieurs meubles de sa fonction (lit et table de la maison, foin, tonneau et étagère de la grange, bibliothèques du point info, chaises et cheminée de l'auberge, enclume de la forge, étagères de la boutique) ; une capture par intérieur",
+        "delai": 240
+  }, async function (g) {
+    var s = await reset(g);
+    var o = await sceneDegagee(g, s, 2);
+    var MEUBLES = [B.LIT, B.TABLE, B.CHAISE, B.ARMOIRE, B.ETAGERE, B.BIBLIOTHEQUE, B.TAPIS, B.LAMPE, B.VASE, B.PRESENTOIR, B.SOCLE, B.FOYER, B.TONNEAU, B.HAY, B.ENCLUME, B.CHEST];
+    var cas = [['maison-colombages', 'maison', 'plaines', null, [B.LIT, B.TABLE]], ['maison-isba', 'maison', 'taiga', null, [B.LIT, B.FOYER]],
+               ['grange', 'ferme', 'plaines', 'grange', [B.HAY, B.TONNEAU, B.ETAGERE]], ['point-info', 'point_info', 'foret', null, [B.BIBLIOTHEQUE]],
+               ['auberge', 'salon', 'plaines', null, [B.CHAISE, B.LIT]], ['forge', 'artisan', 'montagnes', null, [B.ENCLUME]],
+               ['boutique', 'magasin', 'savane', null, [B.ETAGERE]]];
+    var ox = o.x - 6, oz = o.z - 6;
+    for (var c = 0; c < cas.length; c++) {
+      var nom = cas[c][0];
+      var l = batimentDePlan(g, cas[c][1], cas[c][2], false, cas[c][3], ox, oz, cas[c][1] === 'ferme' ? 10 : 12);
+      A.ok(l, nom + ' : un bâtiment généré');
+      var dy = o.y - 65;
+      poserSurDalle(g, l, o.y);
+      var b = l.batiments[0], zone = b.grange || b, vus = {}, n = 0;
+      for (var x = zone.x0 + 1; x < zone.x1; x++) for (var z = zone.z0 + 1; z < zone.z1; z++) for (var y = b.y0 + dy; y < b.y0 + dy + 2; y++) {
+        var id = g.world.getBlock(x, y, z);
+        if (MEUBLES.indexOf(id) >= 0) { n++; vus[id] = 1; }
+      }
+      A.ok(n >= 3, nom + ' : meublé (' + n + ' meubles)');
+      cas[c][4].forEach(function (id) { A.ok(vus[id], nom + ' : ' + C.nameOf(id)); });
+      // à l'intérieur, près de la porte, regard vers le fond (la façade est en v = 0, côté -z)
+      // tête sous le plafond, juste derrière la porte, regard plongeant vers le fond
+      var px = b.dedans ? b.dedans.x : b.porte.x + 0.5, pz = b.dedans ? b.dedans.z - 1.4 : b.porte.z + 0.9;
+      s.flying = true; s.pos.x = px; s.pos.y = b.y0 + dy + 0.75; s.pos.z = pz; s.vel.x = s.vel.y = s.vel.z = 0;
+      s.yaw = Math.PI; s.pitch = -0.62;
+      await frames(24);
+      capture('interieur-' + nom);
+    }
+    s.flying = false; s.yaw = 0; s.pitch = 0;
+  });
+
+  /* Le panneau d'un livre est du DOM, hors du canvas : il est rasterisé (SVG
+     foreignObject, styles calculés recopiés en ligne) et posé sur l'image du
+     jeu, pour que la capture montre ce que voit le joueur. */
+  // les hauteurs (et largeurs, sauf celle du panneau) restent libres : le texte
+  // rasterisé reflue sans être tronqué si la police de repli diffère un peu
+  var LIBRES = /^(height|min-height|max-height|block-size|min-block-size|max-block-size|overflow|overflow-x|overflow-y)$/;
+  function copierStyles(src, dst, racine) {
+    var cs = getComputedStyle(src), t = '';
+    for (var i = 0; i < cs.length; i++) {
+      if (LIBRES.test(cs[i]) || (!racine && /^(width|inline-size)$/.test(cs[i]))) continue;
+      t += cs[i] + ':' + cs.getPropertyValue(cs[i]) + ';';
+    }
+    dst.setAttribute('style', t);
+    for (var k = 0; k < src.children.length; k++) copierStyles(src.children[k], dst.children[k], false);
+  }
+  async function captureAvecPanneau(g, libelle, el) {
+    if (!enCours) return;
+    try {
+      rendreTout(g);
+      var src = g.render.renderer.domElement, rc = src.getBoundingClientRect();
+      var echelle = Math.min(1, 480 / src.width);
+      var c = document.createElement('canvas');
+      c.width = Math.round(src.width * echelle); c.height = Math.round(src.height * echelle);
+      var ctx = c.getContext('2d');
+      ctx.drawImage(src, 0, 0, c.width, c.height);
+      var r = el.getBoundingClientRect(), clone = el.cloneNode(true);
+      copierStyles(el, clone, true);
+      clone.style.position = 'static'; clone.style.transform = 'none'; clone.style.margin = '0';
+      var html = new XMLSerializer().serializeToString(clone);
+      var hSvg = Math.ceil(r.height * 1.6);   // marge si le texte reflue un peu plus bas
+      var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + Math.ceil(r.width) + '" height="' + hSvg + '">' +
+                '<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">' + html + '</div></foreignObject></svg>';
+      var img = new Image();
+      await new Promise(function (ok2, ko) { img.onload = ok2; img.onerror = ko; img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svg); });
+      var kx = c.width / rc.width, ky = c.height / rc.height;
+      ctx.drawImage(img, (r.left - rc.left) * kx, (r.top - rc.top) * ky, r.width * kx, hSvg * ky);
+      enCours.captures.push({ libelle: libelle, type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.8), t_ms: ahora() - enCours.t0 });
+    } catch (e) { capture(libelle); }
+  }
+
+  e2e('SPEC-INTERIEUR-003 : lire un livre de bibliothèque, puis écrire et signer son propre livre', {
+        "teste": "l'écran de lecture d'un livre du monde (carnet d'explorateur qui situe un donjon), feuilleté page à page, puis l'écran d'écriture d'un livre vierge : titre, page, signature",
+        "pourquoi": "SPEC-INTERIEUR-003 : les livres des bibliothèques se lisent et le joueur écrit et signe les siens ; l'écriture passe par l'opération « ecrire » (MC.Conteneurs, la même que le serveur applique à LIVRE_ECRIRE)",
+        "attendu": "le livre du monde s'affiche en lecture seule avec son titre, ses pages et son auteur ; le livre écrit porte titre et page ; signé, il passe en lecture seule et la pile tenue garde son contenu signé"
+  }, async function (g) {
+    var s = await reset(g);
+    var Lv = MC.Livres;
+    var monde = Lv.livreIndices(g.world.seed, { id: 'village:0,0', nom: 'Valombre', x: 0, z: 0 },
+                                [{ nom: 'Crypte', x: 320, z: -240, gardien: 'Roi squelette' }, { nom: 'Mine abandonnée', x: -90, z: 60 }]);
+    s.inv.load([]); s.inv.setAt(0, { id: I.LIVRE, n: 1, data: monde }); s.selected = 0;
+    g.ouvrirLivreEnMain(); await frames(3);
+    var el = document.querySelector('.livre-ecran');
+    A.ok(el && el.style.display !== 'none', 'l\'écran du livre est ouvert');
+    A.ok(el.textContent.indexOf('Carnet d\'explorateur') >= 0 && !el.querySelector('textarea'), 'lecture seule, titre affiché');
+    A.ok(el.textContent.indexOf(monde.auteur) >= 0, 'l\'auteur est affiché');
+    await captureAvecPanneau(g, 'ecran-lecture', el);
+    el.querySelector('.livre-suiv').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await frames(2);
+    el = document.querySelector('.livre-ecran');
+    A.ok(el.textContent.indexOf('Crypte') >= 0 && el.textContent.indexOf('au nord-est') >= 0, 'page 2 : la crypte, au nord-est');
+    await captureAvecPanneau(g, 'ecran-lecture-page-2', el);
+    key('Escape'); await frames(2);
+    A.equal(document.querySelector('.livre-ecran').style.display, 'none', 'Échap referme le livre');
+
+    // écrire et signer un livre vierge
+    g.input.setState('playing'); fakeLock(g, true);
+    s.inv.setAt(1, { id: I.LIVRE, n: 1 }); s.selected = 1;
+    g.ouvrirLivreEnMain(); await frames(3);
+    el = document.querySelector('.livre-ecran');
+    var titre = el.querySelector('.livre-titre'), page = el.querySelector('.livre-page');
+    A.ok(titre && page, 'mode écriture : un titre et une page à remplir');
+    titre.value = 'Journal de bord'; titre.dispatchEvent(new Event('input', { bubbles: true }));
+    page.value = 'Premier jour.\nUn village au bord du lac.'; page.dispatchEvent(new Event('input', { bubbles: true }));
+    await frames(2);
+    await captureAvecPanneau(g, 'ecran-ecriture', el);
+    el.querySelector('.livre-signer').dispatchEvent(new MouseEvent('mousedown', { bubbles: true }));
+    await frames(2);
+    el = document.querySelector('.livre-ecran');
+    A.ok(!el.querySelector('textarea') && el.textContent.indexOf('Journal de bord') >= 0, 'signé : lecture seule');
+    await captureAvecPanneau(g, 'livre-signe', el);
+    key('Escape'); await frames(2);
+    var d = s.inv.stackAt(1).data;
+    A.ok(d && d.signe && d.titre === 'Journal de bord' && d.pages[0] === 'Premier jour.\nUn village au bord du lac.', 'la pile tenue garde le livre écrit et signé');
+    A.ok(d.auteur && d.auteur.length > 0, 'signé d\'un nom (' + d.auteur + ')');
+    s.inv.load([]); s.selected = 0;
+  });
+
   /* SPEC-OBJET-001 : un avatar de joueur DISTANT (même chemin que le réseau :
      une entrée de net.distants, son armure dans `equip` — net.js la remplit
      d'EQUIP_VU et d'ETAT.eq) posé devant la caméra, vu de face et de dos. */
