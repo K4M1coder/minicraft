@@ -215,17 +215,19 @@
       var d = livreEnCours.data;
       var modifiable = Livres.estModifiable(d);
       var page = livreEnCours.page || 0;
+      // & d'abord : sans quoi « &lt; » tapé dans une page reviendrait « < » au rendu suivant (et partirait ainsi au serveur)
+      var esc = function (t) { return String(t).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/"/g, '&quot;'); };
       var html = '<div class="carte-tete"><b>' + (modifiable ? 'Écrire' : 'Lire') + '</b>' +
         '<span class="carte-aide">Échap : fermer' + (modifiable ? ' · Signer rend le texte définitif' : '') + '</span></div>' +
         '<div class="livre-corps">';
       html += modifiable
         ? '<input class="livre-titre" maxlength="' + Livres.MAX_TITRE + '" placeholder="Titre" value="' +
-          (d.titre || '').replace(/"/g, '&quot;') + '">'
-        : '<h3>' + (d.titre ? d.titre.replace(/</g, '&lt;') : 'Sans titre') + '</h3>';
+          esc(d.titre || '') + '">'
+        : '<h3>' + (d.titre ? esc(d.titre) : 'Sans titre') + '</h3>';
       html += modifiable
         ? '<textarea class="livre-page" maxlength="' + Livres.MAX_LONGUEUR_PAGE + '">' +
-          (d.pages[page] || '').replace(/</g, '&lt;') + '</textarea>'
-        : '<p class="livre-page-lue">' + (d.pages[page] || '').replace(/</g, '&lt;') + '</p>';
+          esc(d.pages[page] || '') + '</textarea>'
+        : '<p class="livre-page-lue">' + esc(d.pages[page] || '') + '</p>';
       html += '<div class="livre-bas"><button class="livre-prec">‹</button>' +
         '<span>page ' + (page + 1) + '/' + d.pages.length + '</span>' +
         '<button class="livre-suiv">›</button>';
@@ -234,7 +236,7 @@
         html += (livreEnCours.note ? '' : '<button class="livre-ajouter">+ page</button>') + '<button class="livre-signer">Signer</button>';
       }
       html += '</div>';
-      if (d.signe) html += '<p class="livre-auteur">— ' + (d.auteur ? d.auteur.replace(/</g, '&lt;') : 'Anonyme') + '</p>';
+      if (d.signe) html += '<p class="livre-auteur">— ' + (d.auteur ? esc(d.auteur) : 'Anonyme') + '</p>';
       html += '</div>';
       livreEcranEl.innerHTML = html;
       /* Le clavier du jeu écoute `keydown` sur `window` même hors partie

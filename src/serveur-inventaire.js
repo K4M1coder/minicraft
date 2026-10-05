@@ -215,13 +215,20 @@
         /* SPEC-INTERIEUR-003 : de quoi lire — la légende du lieu, sa chronique
            (son histoire et celle de ses voisins) et le carnet d'un explorateur
            qui situe les donjons des environs, buts des quêtes et des récits. */
-        const proches = monde.habitats.lieuxProches(x, z, 600);
-        const lieuB = proches.filter(l => Math.hypot(l.x - x, l.z - z) <= 160)[0];
+        /* Coût borné dans le tic : le lieu de la bibliothèque est celui dont la
+           plateforme la contient (déjà construit : son chunk est chargé) ; ses
+           voisins ne sont lus que dans le cache des lieux, que le serveur
+           prépare par étapes autour des joueurs (cycleLieux, 1 500 blocs) —
+           jamais construits ici. Les donjons d'un carré de ±200 blocs (une
+           vingtaine de régions, en cache dès que leurs chunks ont été vus). */
+        const lieuB = monde.habitats.lieuA(x, z);
         if (lieuB) {
+          const enCache = (k, rx, rz) => monde.habitats.lieuEnCache(k, rx, rz) || null;
+          const voisins = monde.habitats.lieuxProches(lieuB.x, lieuB.z, 600, enCache).filter(l => l !== lieuB && l.id !== lieuB.id);
           ajouterPileConteneur(cont, C.I.LIVRE, 1, MC.Livres.livreDuMonde(monde.seed, lieuB));
-          ajouterPileConteneur(cont, C.I.LIVRE, 1, MC.Livres.livreChronique(monde.seed, lieuB, proches.filter(l => l !== lieuB)));
+          ajouterPileConteneur(cont, C.I.LIVRE, 1, MC.Livres.livreChronique(monde.seed, lieuB, voisins));
           const specs = MC.EntitySpecs || {};
-          const donjons = monde.donjons ? monde.donjons.dansZone(lieuB.x - 240, lieuB.z - 240, lieuB.x + 240, lieuB.z + 240) : [];
+          const donjons = monde.donjons ? monde.donjons.dansZone(lieuB.x - 200, lieuB.z - 200, lieuB.x + 200, lieuB.z + 200) : [];
           const indices = donjons
             .map(d => ({ nom: d.nom, x: d.x, z: d.z, gardien: specs[d.boss] && specs[d.boss].nom,
                          vaincu: !!(monde.donjonsVaincus && monde.donjonsVaincus.has(d.id)), dist: Math.hypot(d.x - lieuB.x, d.z - lieuB.z) }))

@@ -576,7 +576,7 @@
           volumes: [{ u0: aile.u0, u1: aile.u0 + aile.w - 1, v0: d, v1: d + aile.d - 1 }],
           // l'aile a son faîtage perpendiculaire à celui du corps : il court
           // jusqu'au faîtage du corps, que ses pans rejoignent en noue
-          pans: [{ u0: aile.u0 - 1, u1: aile.u0 + aile.w, v0: Math.floor(d / 2), v1: d + aile.d,
+          pans: [{ u0: aile.u0 - 1, u1: aile.u0 + aile.w, v0: Math.floor(d / 2), v1: d + aile.d - 1,
                    pentes: st.croupe ? ['u0', 'u1', 'v1'] : ['u0', 'u1'] }],
         };
       }
@@ -595,7 +595,8 @@
       // un intérieur meublé selon la fonction du bâtiment (SPEC-INTERIEUR-001)
       meubler(o, p, w, d, y0, etages, type, rot || 0, etages > 1, st);
       toit(st, o, p, w, d, haut, optsToit);
-      var c0 = p(0, 0), c1 = p(w - 1, d - 1);
+      // la boîte du bâtiment couvre aussi l'aile d'un plan en L (lieu et bâtiment où l'on se trouve, dégâts)
+      var c0 = p(0, 0), c1 = p(w - 1, d - 1 + (aile ? aile.d : 0));
       var bat = { type: type, nom: nom || BATIMENTS[type].nom, lieu: l.id,
                   x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]), x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]),
                   y0: y0, y1: haut + (st.forme === 'raide' ? 2 : 1) * Math.ceil(d / 2) + 1, etages: etages,

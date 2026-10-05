@@ -356,6 +356,8 @@
       var x0 = bat.type === 'ferme' ? bat.grange.x0 : bat.x0, x1 = bat.type === 'ferme' ? bat.grange.x1 : bat.x1;
       var z0 = bat.type === 'ferme' ? bat.grange.z0 : bat.z0, z1 = bat.type === 'ferme' ? bat.grange.z1 : bat.z1;
       for (var x = x0; x <= x1; x++) for (var z = z0; z <= z1; z++) {
+        // seulement les colonnes bâties (plancher posé) : la boîte d'une maison en L déborde de l'aile sur le jardin
+        if (!acc.getBlock(x, bat.y0 - 1, z)) continue;
         var couvert = false;
         for (var y = haut; y <= bat.y1 + 2 && !couvert; y++) if (acc.getBlock(x, y, z)) couvert = true;
         if (!couvert) trous.push(x + ',' + z);

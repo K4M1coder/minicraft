@@ -2166,19 +2166,26 @@
        qu'il connaît. Les frappes sont regroupées (une écriture au plus toutes
        les 0,8 s pendant la saisie, aussitôt à la signature, à l'ajout d'une
        page et à la fermeture), bien sous le budget anti-flood. */
-    var livreEcrit = null;   // { j, i, data, auteur, sale, signe, minuterie }
-    function envoyerLivre() {
-      var e = livreEcrit;
+    var livreEcrit = null;   // { j, i, data, auteur, sale, signeEnvoye, minuterie }
+    /* Jamais deux écritures à moins de 0,3 s (le budget anti-flood du serveur
+       est de 4 par seconde : une écriture écartée par lui ne serait ni
+       acquittée ni refusée, et la dernière saisie se perdrait) ; une écriture
+       retenue part dès que l'espacement le permet, même livre fermé. */
+    var ESPACEMENT_LIVRE_MS = 300, dernierEnvoiLivre = 0;
+    function envoyerLivre(e) {
       if (!e) return;
       if (e.minuterie) { clearTimeout(e.minuterie); e.minuterie = null; }
       if (!e.sale) return;
+      var attente = ESPACEMENT_LIVRE_MS - (Date.now() - dernierEnvoiLivre);
+      if (attente > 0) { e.minuterie = setTimeout(function () { e.minuterie = null; envoyerLivre(e); }, attente); return; }
+      dernierEnvoiLivre = Date.now();
       e.sale = false;
       var d = e.data, signer = !!d.signe && !e.signeEnvoye;
       if (signer) e.signeEnvoye = true;
       var op = { k: 'ecrire', i: e.i, titre: d.titre || '', pages: d.pages.slice(), signer: signer, auteur: e.auteur };
       operer(e.j, op, { t: MC.ContratsArchi.MSG.LIVRE_ECRIRE, i: e.i, titre: op.titre, pages: op.pages, signer: signer });
     }
-    function fermerLivreEcrit() { envoyerLivre(); livreEcrit = null; }
+    function fermerLivreEcrit() { var e = livreEcrit; livreEcrit = null; envoyerLivre(e); }
     function ouvrirLivreEnMain() {
       var j = equipe[0], st = player.state, i = st.selected, stack = st.inv.stackAt(i);
       if (!stack || !MC.Livres || !j) return;
@@ -2192,8 +2199,8 @@
           if (!e) return;
           var pages = e.data.pages.length;
           e.data = nouveau; e.sale = true;
-          if (nouveau.signe || nouveau.pages.length !== pages) { envoyerLivre(); return; }
-          if (!e.minuterie) e.minuterie = setTimeout(function () { if (livreEcrit === e) { e.minuterie = null; envoyerLivre(); } }, 800);
+          if (nouveau.signe || nouveau.pages.length !== pages) { envoyerLivre(e); return; }
+          if (!e.minuterie) e.minuterie = setTimeout(function () { e.minuterie = null; envoyerLivre(e); }, 800);
         },
       });
       input.setState('ui');
@@ -2369,6 +2376,9 @@
       if (ent && entities.SPECS[ent.type] && entities.SPECS[ent.type].npc) { parlerA(ent); return; }
 
       var target = player.aim();
+      // un livre ou une note en main s'ouvre aussi en visant le ciel (SPEC-INTERIEUR-003)
+      var tenu = C.def(player.heldId());
+      if (!target && tenu && tenu.livre && (!MC.Modes || MC.Modes.peutUtiliser(regles, player.heldId()))) { ouvrirLivreEnMain(); return; }
       if (!target) return;
       var mange = player.heldId();
       var avantBascule = instantaneBascule(target);
