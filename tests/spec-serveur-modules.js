@@ -481,6 +481,49 @@
       S.tic();
       A.equal(S.EP.heure, 5, 'l\'heure reste figée en pause');
     });
+    /* SPEC-ENV-005 : le câblage serveur. serveur-tic passe à entites.update un
+       multRenforts qui convertit l'id de donjon « rx,rz » en région, lit le donjon
+       du monde, et interroge le volcanisme à l'heure EP.heure avec la graine CONF.graine. */
+    it('SPEC-ENV-005 : serveur-tic passe à entites.update un multRenforts câblé sur le monde, l\'heure et la graine du serveur', function () {
+      var Vol = MC.Volcanisme, R5 = Vol.RAYON_RENFORTS, trouve = null;
+      for (var graine = 1; graine <= 60 && !trouve; graine++) {
+        var w = MC.createWorld(graine);
+        for (var rx = -4; rx <= 4 && !trouve; rx++) for (var rz = -4; rz <= 4 && !trouve; rz++) {
+          var v = w.bio.volcanDe(rx, rz);
+          if (!v || !v.actif) continue;
+          var ds = w.donjons.dansZone(v.x - R5 + 50, v.z - R5 + 50, v.x + R5 - 50, v.z + R5 - 50)
+            .filter(function (d) { return Math.hypot(d.x - v.x, d.z - v.z) <= R5 - 50; });
+          if (ds.length) trouve = { w: w, v: v, d: ds[0], graine: graine };
+        }
+      }
+      A.ok(trouve, 'un donjon proche d\'un volcan actif');
+      var tEr = -1, tHors = -1, k, t;
+      for (k = 0; k < 200 && tEr < 0; k++) { var e = Vol.eruptionDe(trouve.v, k * Vol.FENETRE, trouve.graine); if (e) tEr = (e.debut + e.fin) / 2; }
+      for (t = 0; t < 40 * Vol.FENETRE && tHors < 0; t += 100) if (!Vol.activite(trouve.v, t, trouve.graine).eruption) tHors = t;
+      A.ok(tEr >= 0 && tHors >= 0, 'une heure en éruption et une heure calme');
+
+      var recu = null;
+      var entites = { list: [], update: function (dt, ref, opts) { recu = opts; return { degatsPar: [], picked: [] }; }, evenements: function () { return []; }, mergeItems: function () {} };
+      var base = { EP: { heure: tEr, dernier: -1e9, dureeJeu: 0 }, hote: hote(), NP: NP, C: C, CONF: { tickHz: 60, etatHz: 60, graine: trouve.graine },
+        clients: new Map(), monde: trouve.w, entites: entites, profilTics: null, conteneursPoses: new Map(), boutonsAppuyes: new Map(), pvp: MC.PvpEnjeux.creerEtat(), tousLesJoueurs: function () { return []; }, SPAWN: { x: 0, y: 64, z: 0 }, regles: MC.Modes.regles('survie', 'facile') };
+      var S = new Proxy(base, { get: function (cible, nom) {
+        if (nom in cible || typeof nom === 'symbol') return cible[nom];
+        return function () { return undefined; };
+      } });
+      MC.ServeurTic.installer(S);
+      base.EP.dernier = -1e9;   // l'installation a réglé l'horloge sur maintenant : on laisse un temps écoulé
+      S.tic();
+      A.ok(recu && typeof recu.multRenforts === 'function', 'le tic passe multRenforts à entites.update');
+      var attendu = Vol.multiplicateurRenfortsDonjon(trouve.w.bio, trouve.d, base.EP.heure, trouve.graine);
+      A.ok(attendu >= 1.5 && attendu <= 2, 'le donjon est bien touché à l\'heure du tic : ' + attendu);
+      A.equal(recu.multRenforts(trouve.d.id), attendu, 'id de donjon « rx,rz » converti en région : même facteur que le calcul pur');
+      A.equal(recu.multRenforts('n\'importe quoi'), 1, 'un id mal formé : ×1');
+      // hors éruption : même donjon, facteur 1 (l'heure du serveur est bien celle lue)
+      base.EP.heure = tHors; base.EP.dernier = -1e9;
+      recu = null; S.tic();
+      A.equal(recu.multRenforts(trouve.d.id), 1, 'hors éruption : ×1');
+    });
+
   });
   describe('Redéfinition de zone diffusée sans délai (SPEC-SECU-012)', {
     teste: 'src/serveur-admin.js (ZONE_MAJ aux postes concernés) et src/net.js (ZONE_MAJ reçu, vérifié, remis au jeu)',
