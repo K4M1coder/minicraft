@@ -309,11 +309,12 @@ async function scenarioFactions() {
        'SPEC-SYNC-024 : POLITIQUE complet suit BIENVENUE à la connexion, avec le nom que le serveur connaît');
     // une socket qui n'a pas rejoint ne reçoit rien de la politique
     const espion = await A.connecter(s.port);
+    // (le rattrapage est borné à un jour par entretien du monde : SPEC-FACTION-007, d'où des bornes d'attente larges)
     // plusieurs jours de simulation politique : le serveur rattrape les jours 0 → 4, puis la nuit passe (jour 5)
-    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 4; }, 5000)),
+    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 4; }, 20000)),
        'SPEC-SYNC-024 : le client connecté apprend les jours de simulation rattrapés (jour 4)');
     a.client.envoyer({ t: 'dormir', j: 0, actif: true });
-    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 5; }, 6000)),
+    ok(!!(await jusqua(() => { const e = etatPolitique(a.client); return e && e.etat.jour === 5; }, 20000)),
        'SPEC-SYNC-024 : la journée simulée suivante est diffusée au client déjà connecté (jour 5)');
     const apresJour = a.client.messages.filter(m => m.t === 'politique').slice(1);
     ok(apresJour.length >= 1 && apresJour.every(m => !m.pol || !m.pol.complet), 'SPEC-SYNC-024 : après le join, seules des différences sont diffusées');
