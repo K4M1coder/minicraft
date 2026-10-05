@@ -335,6 +335,14 @@
       onSuccesDebloque: function (m) { annoncerSucces(m.j, m.id); },
       onSuccesEtat: function (m) { if (m.j === 0) { g.succes.charger(m.etat); rafraichirPanneauSucces(); } },
       onFoudroye: function (m) { if (m.j === 0) { ui.toast('Foudroyé !'); audio.play('blesse'); } },
+      /* SPEC-SECU-012 : un administrateur vient de redéfinir (ou de rendre à la
+         carte) la région où se tient un de nos joueurs — la carte des zones locale
+         s'aligne tout de suite ; l'indicateur et l'annonce suivent (annoncerZone). */
+      onZoneMaj: function (m) {
+        if (!world.zonesEtat || !MC.Zones) return;
+        if (m.zone) MC.Zones.definirRegion(world.zonesEtat, m.x, m.z, m.zone, null, g.time);
+        else MC.Zones.retirerRegion(world.zonesEtat, m.x, m.z);
+      },
       /* Le serveur fait autorité : pour chacun de nos joueurs, on adopte sa
          position et ses statistiques, puis on rejoue les entrées qu'il n'a
          pas encore traitées (voir synchro.js). */

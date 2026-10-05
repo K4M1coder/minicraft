@@ -15,7 +15,7 @@
   function installer(S) {
     const { NP, C, CONF, admin, regles, monde, clients, envoyer, fermer, journal } = S;
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
-    Object.assign(S, { executerBlocCommandeServeur, traiterAdmin, executerActionAdmin });
+    Object.assign(S, { executerBlocCommandeServeur, traiterAdmin, executerActionAdmin, synchroniserZones });
 
     // ── panneau admin en jeu (SPEC-ADMIN-006) ────────────────────────────────────
     /* Le client déclare une ACTION ; le serveur ne fait jamais confiance à un rôle
@@ -115,6 +115,52 @@
       reponseAdmin(c, m.action, r.ok, r.ok ? r.data : null, r.ok ? null : r.motif);
     }
 
+    /* SPEC-SECU-012 : les régions redéfinies par un administrateur, connues de
+       chaque poste. BIENVENUE ne porte que la politique de zone, jamais les
+       régions : c'est ZONE_MAJ qui les apprend au client — un point (le centre)
+       de la région, sa redéfinition (null : rendue à la carte) et la zone qui
+       s'y applique désormais (celle que le serveur arbitre : redéfinition, sinon
+       influence politique, sinon carte).
+       `synchroniserZones(c)` envoie à un poste ce qu'il ignore encore des
+       régions où se tiennent ses joueurs locaux ET de leurs voisines (3 × 3
+       régions de MC.Zones.TAILLE_REGION blocs) : appelée dès l'action d'un
+       administrateur pour chaque poste (un joueur déjà dans la région l'apprend
+       sans délai), juste après BIENVENUE (un arrivant tardif l'apprend à son
+       arrivée) et à chaque entretien du monde (~1 s : qui s'approche d'une région
+       redéfinie l'apprend avant d'y entrer). `c.zonesVues` (région → zone
+       annoncée) borne l'envoi à ce qui a changé ; une région jamais annoncée
+       vaut « carte » (null) pour le client. */
+    const VOISINAGE_ZONES = 1;
+    function messageZone(region) {
+      const T = MC.Zones.TAILLE_REGION, p = region.split(',');
+      const x = (+p[0] + 0.5) * T, z = (+p[1] + 0.5) * T;
+      const redef = monde.zonesEtat.regions.get(region);
+      const zone = redef ? redef.zone : null;
+      return { t: NP.MSG.ZONE_MAJ, x, z, region, zone, effective: monde.zoneEn ? monde.zoneEn(x, z).zone : zone };
+    }
+    function synchroniserZones(c) {
+      if (!monde.zonesEtat || !c || !c.rejoint || !c.joueurs) return;
+      const vues = c.zonesVues || (c.zonesVues = new Map());
+      const T = MC.Zones.TAILLE_REGION, faites = new Set();
+      c.joueurs.forEach(js => {
+        const p = js.joueur && js.joueur.state && js.joueur.state.pos;
+        if (!p) return;
+        const rx = Math.floor(p.x / T), rz = Math.floor(p.z / T);
+        for (let dx = -VOISINAGE_ZONES; dx <= VOISINAGE_ZONES; dx++) {
+          for (let dz = -VOISINAGE_ZONES; dz <= VOISINAGE_ZONES; dz++) {
+            const region = (rx + dx) + ',' + (rz + dz);
+            if (faites.has(region)) continue;
+            faites.add(region);
+            const redef = monde.zonesEtat.regions.get(region);
+            const zone = redef ? redef.zone : null;
+            if (zone === (vues.has(region) ? vues.get(region) : null)) continue;
+            vues.set(region, zone);
+            envoyer(c, messageZone(region));
+          }
+        }
+      });
+    }
+    function diffuserZone() { clients.forEach(c => synchroniserZones(c)); }
     /* Cœur commun au panneau en jeu (WebSocket) ET à la console web (HTTP) : les
        deux ne doivent JAMAIS diverger sur qui a le droit de faire quoi — d'où un
        seul endroit qui décide, appelé par les deux façades. */
@@ -149,12 +195,18 @@
           // SPEC-ZONE-004 / SPEC-ADMIN-006 : un administrateur redéfinit la zone
           // de la région où se trouve le point (x, z) donné.
           const r = MC.Zones.definirRegion(monde.zonesEtat, +args.x || 0, +args.z || 0, args.zone, nomActeur, EP.heure);
-          if (r.ok) MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_definie', cible: r.region, details: r.zone, heure: EP.heure });
+          if (r.ok) {
+            MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_definie', cible: r.region, details: r.zone, heure: EP.heure });
+            diffuserZone();   // SPEC-SECU-012
+          }
           return { ok: true, data: r };
         }
         case 'zone_retirer': {
           const r = MC.Zones.retirerRegion(monde.zonesEtat, +args.x || 0, +args.z || 0);
-          if (r.ok) MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_retiree', cible: null, heure: EP.heure });
+          if (r.ok) {
+            MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'zone_retiree', cible: null, heure: EP.heure });
+            diffuserZone();   // SPEC-SECU-012
+          }
           return { ok: true, data: r };
         }
         case 'bloc_commande': {

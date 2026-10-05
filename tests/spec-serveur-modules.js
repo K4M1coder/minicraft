@@ -422,4 +422,71 @@
       A.equal(S.EP.heure, 5, 'l\'heure reste figée en pause');
     });
   });
+  describe('Redéfinition de zone diffusée sans délai (SPEC-SECU-012)', {
+    teste: 'src/serveur-admin.js (ZONE_MAJ aux postes concernés) et src/net.js (ZONE_MAJ reçu, vérifié, remis au jeu)',
+    pourquoi: 'BIENVENUE ne porte que la politique de zone : sans message dédié, un joueur déjà connecté continuait de croire sa région dans son ancienne zone (indicateur, annonces) jusqu\'à une reconnexion.',
+    attendu: 'zone_definir et zone_retirer acceptés envoient ZONE_MAJ aux seuls postes dont un joueur est dans la région ; une action refusée n\'envoie rien ; le client ne remet au jeu qu\'un ZONE_MAJ bien formé.',
+  }, function () {
+
+    it('SPEC-SECU-012 : serveur-admin — une redéfinition de zone part aussitôt aux postes dont un joueur est dans la région (ou une voisine), jamais aux autres ; un arrivant tardif et un joueur qui s\'approche l\'apprennent aussi', function () {
+      var admin = MC.Admin.creerEtat({ motDePasseAdmin: 'x' });
+      var monde = { zonesEtat: MC.Zones.creerEtat() };
+      monde.zoneEn = function (x, z) { return MC.Zones.zoneEn(null, monde.zonesEtat, x, z); };
+      var T = MC.Zones.TAILLE_REGION, recus = {};
+      function poste(id, x, z) { return { id: id, rejoint: true, joueurs: [{ joueur: { state: { pos: { x: x, y: 64, z: z } } } }] }; }
+      var dedans = poste(1, 3.5, 4.5), autreRegion = poste(4, 3 * T + 5, 4.5);
+      var S = { EP: {}, hote: hote(), NP: NP, C: C, CONF: {}, admin: admin, regles: MC.Modes.regles('survie', 'facile'), monde: monde,
+        clients: new Map([[1, dedans], [2, poste(2, 100000, 100000)], [3, { id: 3, rejoint: false }], [4, autreRegion]]),
+        envoyer: function (c, m) { (recus[c.id] = recus[c.id] || []).push(m); }, fermer: function () {}, journal: function () {} };
+      S.EP.heure = 0;
+      MC.ServeurAdmin.installer(S);
+      S.executerActionAdmin('joueur', 'Bob', 'zone_definir', { x: 3, z: 4, zone: 'pvp' });
+      A.deep(recus, {}, 'action refusée : rien n\'est annoncé');
+      S.executerActionAdmin('admin', 'Root', 'zone_definir', { x: 3, z: 4, zone: 'pvp' });
+      A.equal(recus[1].length, 1, 'le poste dans la région est prévenu, dès l\'action');
+      A.deep(recus[1][0], { t: NP.MSG.ZONE_MAJ, x: T / 2, z: T / 2, region: MC.Zones.regionDe(3, 4), zone: 'pvp', effective: 'pvp' });
+      A.equal(MC.Zones.regionDe(recus[1][0].x, recus[1][0].z), MC.Zones.regionDe(3, 4), 'le point annoncé est dans la région');
+      A.ok(!recus[2] && !recus[3] && !recus[4], 'un poste dans une autre région (au-delà des voisines), loin, ou qui n\'a pas rejoint, ne reçoit rien');
+      // un poste dans une AUTRE région redéfinie, elle aussi, l'apprend — et celui de la première région non
+      S.executerActionAdmin('admin', 'Root', 'zone_definir', { x: 3 * T + 5, z: 4, zone: 'sure' });
+      A.equal(recus[4].length, 1, 'le poste de l\'autre région est prévenu');
+      A.equal(recus[4][0].zone, 'sure');
+      A.equal(recus[1].length, 1, 'celui de la première région ne l\'est pas (trop loin)');
+      S.synchroniserZones(dedans);
+      A.equal(recus[1].length, 1, 'rien de nouveau : aucun envoi répété');
+      // arrivant tardif : il apprend la redéfinition de sa région à son arrivée (après BIENVENUE)
+      var tard = poste(5, 10, 10);
+      S.clients.set(5, tard);
+      S.synchroniserZones(tard);
+      A.equal(recus[5].length, 1, 'arrivant tardif : prévenu de la région où il naît');
+      A.equal(recus[5][0].zone, 'pvp');
+      // un joueur qui s'approche (région voisine) l'apprend avant d'y entrer
+      autreRegion.joueurs[0].joueur.state.pos.x = T + 5;
+      S.synchroniserZones(autreRegion);
+      A.ok(recus[4].some(function (m) { return m.region === MC.Zones.regionDe(3, 4) && m.zone === 'pvp'; }), 'en approchant, il apprend la région voisine redéfinie');
+      S.executerActionAdmin('admin', 'Root', 'zone_retirer', { x: 3, z: 4 });
+      var dernier = recus[1][recus[1].length - 1];
+      A.equal(dernier.zone, null, 'région rendue à la carte : zone null');
+      A.equal(dernier.effective, MC.Zones.zoneEn(null, monde.zonesEtat, 3, 4).zone, 'et la zone de la carte qui s\'y applique de nouveau');
+      var n = recus[1].length;
+      S.executerActionAdmin('admin', 'Root', 'zone_retirer', { x: 3, z: 4 });
+      A.equal(recus[1].length, n, 'retirer une région déjà rendue : rien de nouveau à annoncer');
+    });
+
+    it('SPEC-SECU-012 : client — un ZONE_MAJ bien formé est remis au jeu, normalisé ; un ZONE_MAJ invalide est ignoré', function () {
+      if (!MC.createNetClient) G.Function(fs.readFileSync(path.join(RACINE, 'src', 'net.js'), 'utf8'))();
+      var vus = [], ancien = G.WebSocket, socket = null;
+      G.WebSocket = function () { socket = this; this.readyState = 1; this.send = function () {}; this.close = function () {}; };
+      try {
+        MC.createNetClient({ onZoneMaj: function (m) { vus.push(m); } }).connecter('ws://faux', 'Test', 1);
+      } finally { G.WebSocket = ancien; }
+      function recevoir(m) { socket.onmessage({ data: JSON.stringify(m) }); }
+      recevoir({ t: NP.MSG.ZONE_MAJ, x: 3, z: 4, region: '0,0', zone: 'pvp', effective: 'pvp', parasite: 1 });
+      recevoir({ t: NP.MSG.ZONE_MAJ, x: 3, z: 4, zone: null, effective: 'pvp_pve' });
+      recevoir({ t: NP.MSG.ZONE_MAJ, x: 3, z: 4, zone: 'inconnue' });
+      recevoir({ t: NP.MSG.ZONE_MAJ, x: 'a', z: 4, zone: 'pvp' });
+      recevoir({ t: NP.MSG.ZONE_MAJ, x: 3, zone: 'sure' });
+      A.deep(vus, [{ x: 3, z: 4, zone: 'pvp' }, { x: 3, z: 4, zone: null }], 'deux messages valides, normalisés ; trois invalides ignorés');
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

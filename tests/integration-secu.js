@@ -628,6 +628,66 @@ async function rejoindre(port, nom, locaux) {
     }
   }
 
+  // ── groupe 9 : redéfinition de zone diffusée sans délai (SPEC-SECU-012) ──
+  /* Un client déjà connecté, debout dans la région qu'un administrateur
+     redéfinit, reçoit la mise à jour dans le tic qui suit l'action — sans se
+     reconnecter ; une région hors de son voisinage (au-delà des 3 × 3 régions
+     autour de lui) ne lui est pas annoncée ; un client qui arrive APRÈS la
+     redéfinition l'apprend à son arrivée ; rendre la région à la carte est
+     annoncé de même. */
+  {
+    const port = PORT + 13;
+    const s = demarrer(['--port', String(port), '--serveur', '--admin', 'secretZone']);
+    try {
+      ok(await attendrePret(port), 'le serveur démarre (groupe 9)');
+      const { cl: alice, bienvenue: bA } = await rejoindre(port, 'Alice');
+      const { cl: admin } = await rejoindre(port, 'Gardien');
+      admin.envoyer({ t: 'admin', action: 'auth', args: { secret: 'secretZone' } });
+      const auth = await admin.attendre('admin_rep', 3000, m => m.action === 'auth');
+      ok(auth && auth.ok, 'SPEC-SECU-012 : authentification admin acceptée');
+      const T = 128;   // MC.Zones.TAILLE_REGION
+      const px = Math.floor(bA.toi[0].x), pz = Math.floor(bA.toi[0].z);
+      const region = Math.floor(px / T) + ',' + Math.floor(pz / T);
+      const avant = alice.messages.filter(m => m.t === 'zone_maj').length;
+
+      // une région hors du voisinage des joueurs (3 régions plus loin) : personne n'est concerné
+      admin.envoyer({ t: 'admin', action: 'zone_definir', args: { x: px + 3 * T, z: pz, zone: 'pvp' } });
+      await admin.attendre('admin_rep', 3000, m => m.action === 'zone_definir');
+      await dodo(150);
+      eq(alice.messages.filter(m => m.t === 'zone_maj').length, avant, 'SPEC-SECU-012 : une région où personne ne se tient (ni à côté) n\'est annoncée à personne');
+
+      // la région où se tient Alice : annoncée dans le tic qui suit, sans reconnexion
+      const t0 = Date.now();
+      admin.envoyer({ t: 'admin', action: 'zone_definir', args: { x: px, z: pz, zone: 'pvp' } });
+      const maj = await alice.attendre('zone_maj', 3000, m => m.region === region);
+      const delai = Date.now() - t0;
+      ok(!!maj && maj.zone === 'pvp' && Math.floor(maj.x / T) + ',' + Math.floor(maj.z / T) === region,
+         'SPEC-SECU-012 : un client connecté AVANT l\'action reçoit la mise à jour de zone de sa région', JSON.stringify(maj));
+      ok(delai < 500, 'SPEC-SECU-012 : sans délai — reçue ' + delai + ' ms après l\'action (un tic de diffusion ≈ 17 ms)');
+      ok(maj && maj.effective === 'pvp', 'SPEC-SECU-012 : la zone qui s\'applique désormais y est annoncée', JSON.stringify(maj));
+
+      // un arrivant tardif : BIENVENUE ne porte pas les régions, ZONE_MAJ le suit aussitôt
+      const { cl: bob } = await rejoindre(port, 'Bob');
+      const majBob = await bob.attendre('zone_maj', 3000, m => m.region === region);
+      ok(!!majBob && majBob.zone === 'pvp', 'SPEC-SECU-012 : un client arrivé APRÈS la redéfinition l\'apprend à son arrivée', JSON.stringify(majBob));
+      ok(!bob.messages.some(m => m.t === 'zone_maj' && m.region !== region), 'SPEC-SECU-012 : l\'arrivant n\'apprend pas la région lointaine');
+
+      // rendre la région à la carte générée : annoncé de même, zone null
+      admin.envoyer({ t: 'admin', action: 'zone_retirer', args: { x: px, z: pz } });
+      const retrait = await alice.attendre('zone_maj', 3000, m => m.zone === null);
+      ok(!!retrait && typeof retrait.effective === 'string' && retrait.effective !== '',
+         'SPEC-SECU-012 : une région rendue à la carte est annoncée (zone null, zone effective de la carte)', JSON.stringify(retrait));
+
+      alice.fermer(); admin.fermer(); bob.fermer();
+      await dodo(150);
+    } catch (e) {
+      echecs++; details.push(`  ${C.r}✗ exception (groupe 9) : ${e.message}${C.x}\n${s.logs.join('')}`);
+    } finally {
+      try { s.kill(); } catch (e) {}
+      await dodo(150);
+    }
+  }
+
   console.log(`\n${C.b}Integration sécurité (L44 — sous-lot A1)${C.x}`);
   console.log(details.join('\n'));
   const total = passes + echecs;

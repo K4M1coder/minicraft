@@ -66,6 +66,8 @@
       onFoudroye: opts.onFoudroye || function () {},
       // SPEC-SYNC-024 : état complet des relations de faction (PNJ et joueurs)
       onPolitique: opts.onPolitique || function () {},
+      // SPEC-SECU-012 : une région redéfinie (ou rendue à la carte) par un administrateur
+      onZoneMaj: opts.onZoneMaj || function () {},
     };
 
     function statut(e, info) {
@@ -258,6 +260,15 @@
         case NP.MSG.FOUDROYE: {
           var fd = MC.ContratsArchi && MC.ContratsArchi.validerRecu(m);
           if (fd) hooks.onFoudroye(fd);
+          break;
+        }
+        // SPEC-SECU-012 : zone redéfinie là où se tient un de nos joueurs — forme
+        // vérifiée (point fini, zone connue ou null pour une région rendue à la carte)
+        case NP.MSG.ZONE_MAJ: {
+          var zoneOk = m.zone === null || (MC.Zones && MC.Zones.TYPES.indexOf(m.zone) >= 0);
+          if (typeof m.x === 'number' && isFinite(m.x) && typeof m.z === 'number' && isFinite(m.z) && zoneOk) {
+            hooks.onZoneMaj({ x: m.x, z: m.z, zone: m.zone });
+          }
           break;
         }
 

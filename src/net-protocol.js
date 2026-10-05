@@ -344,6 +344,10 @@
     // SPEC-BANC-106 (c→s) : erreur error/fatal du journal d'un client, remontée
     // au journal du serveur avec un débit limité (MC.Journal.REMONTEE)
     JOURNAL_CLIENT: 'journal_client',
+    // SPEC-SECU-012 (s→c) : une région redéfinie (ou rendue à la carte) par un
+    // administrateur, annoncée sans délai aux clients dont un joueur s'y tient
+    // — sans attendre qu'ils se reconnectent. Jamais accepté d'un client.
+    ZONE_MAJ: 'zone_maj',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });

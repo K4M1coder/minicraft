@@ -20,7 +20,7 @@
       avancerCatastrophes, catastrophesEnAttente, etapesCatastrophe, appliquerTornades,
       surveillerDonjonsServeur, avancerEconomie, avancerCaravanes, abriServeur, SPAWN,
       clients, diffuser, noterBlocMonde, diffuserBlocsMonde, envoyer, journal, profilTics,
-      signalerRecit, sonderRecit, executerBlocCommandeServeur, abonnesActuels,
+      signalerRecit, sonderRecit, executerBlocCommandeServeur, synchroniserZones, abonnesActuels,
       fermerConteneurPourAbonnes, envoyerInvMaj, signalerSucces, crediterSuccesEvenement,
       tickerSuccesJoueur, entretenirMonture, liberSoutesDetruites, tousLesJoueurs,
       verifierSommeil, pvpAutorise, joueurParEtat, joueurParNom, peutBlesserJoueurs,
@@ -275,6 +275,8 @@
         peuplerLieux();
         if (profilTics) profilTics.section('peuplerLieux');
         entretienDuMonde();
+        // SPEC-SECU-012 : qui s'approche d'une région redéfinie l'apprend avant d'y entrer
+        clients.forEach(c => synchroniserZones(c));
         if (profilTics) profilTics.section('entretien du monde');
         avancerEconomie();
         verifierSommeil();

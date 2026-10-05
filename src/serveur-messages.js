@@ -273,6 +273,8 @@
           // SPEC-SYNC-024 : aussitôt après, l'état complet des relations de faction
           // (PNJ et joueurs) — jamais déduit de l'historique du chat
           envoyerPolitiqueComplete(c);
+          // SPEC-SECU-012 : les régions redéfinies autour de ses joueurs (BIENVENUE n'en porte aucune)
+          S.synchroniserZones(c);
           // B1 (SPEC-SYNC-008) : le nouveau venu apprend son inventaire (restauré,
           // seedé par MC_TEST_INV, ou vide) avant tout autre message d'inventaire.
           c.joueurs.forEach((js, j) => S.envoyerInvMaj(c, j, {}));
