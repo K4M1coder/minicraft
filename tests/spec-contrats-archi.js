@@ -202,6 +202,8 @@
       A.deep(ok, { t: 'livre_ecrire', j: 1, seq: 3, i: 4, titre: 'Mon journal ', pages: ['ab\ncd', 'x'], signer: true },
              'tabulation et saut de ligne du titre en espaces, NUL et contrôle bidirectionnel retirés, auteur et data ignorés');
       A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: ['p'] }).signer, false, 'signer par défaut : non');
+      A.equal(K.nettoyerTexteLivre('a\r\nb\u0007c', true), 'a\nbc', 'nettoyerTexteLivre : saut de ligne normalisé, cloche retirée (page)');
+      A.equal(K.nettoyerTexteLivre('a\nb', false), 'a b', 'nettoyerTexteLivre : un titre tient sur une ligne');
       A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: [] }), null, 'au moins une page');
       A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: new Array(K.LIVRE_BRUT.PAGES_MAX + 1).fill('') }), null, 'trop de pages');
       A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: ['x'.repeat(K.LIVRE_BRUT.PAGE_MAX + 1)] }), null, 'page trop longue');

@@ -2159,15 +2159,41 @@
        c'est ainsi que le texte survit à la sauvegarde et au passage dans un
        coffre/bibliothèque (même sérialisation que n'importe quelle pile,
        voir inventory.js). */
+    /* L'écriture passe par le SERVEUR (SPEC-INTERIEUR-003) : chaque
+       modification devient une opération « ecrire » de MC.Conteneurs —
+       prédite ici, rejouée tant que le serveur ne l'a pas confirmée, et
+       envoyée en LIVRE_ECRIRE, que le serveur borne, nettoie et signe du nom
+       qu'il connaît. Les frappes sont regroupées (une écriture au plus toutes
+       les 0,8 s pendant la saisie, aussitôt à la signature, à l'ajout d'une
+       page et à la fermeture), bien sous le budget anti-flood. */
+    var livreEcrit = null;   // { j, i, data, auteur, sale, signe, minuterie }
+    function envoyerLivre() {
+      var e = livreEcrit;
+      if (!e) return;
+      if (e.minuterie) { clearTimeout(e.minuterie); e.minuterie = null; }
+      if (!e.sale) return;
+      e.sale = false;
+      var d = e.data, signer = !!d.signe && !e.signeEnvoye;
+      if (signer) e.signeEnvoye = true;
+      var op = { k: 'ecrire', i: e.i, titre: d.titre || '', pages: d.pages.slice(), signer: signer, auteur: e.auteur };
+      operer(e.j, op, { t: MC.ContratsArchi.MSG.LIVRE_ECRIRE, i: e.i, titre: op.titre, pages: op.pages, signer: signer });
+    }
+    function fermerLivreEcrit() { envoyerLivre(); livreEcrit = null; }
     function ouvrirLivreEnMain() {
-      var st = player.state, i = st.selected, stack = st.inv.stackAt(i);
-      if (!stack || !MC.Livres) return;
-      if (!stack.data) stack.data = stack.id === I.NOTE ? MC.Livres.creerNote() : MC.Livres.creerLivre();
-      ui.ouvrirLivre(stack.data, {
-        auteur: (equipe[0] && equipe[0].nom) || 'Joueur',
+      var j = equipe[0], st = player.state, i = st.selected, stack = st.inv.stackAt(i);
+      if (!stack || !MC.Livres || !j) return;
+      var data = stack.data || (stack.id === I.NOTE ? MC.Livres.creerNote() : MC.Livres.creerLivre());
+      var auteur = (g.nomJoueur || 'Joueur') + (j.index > 0 ? ' (joueur ' + (j.index + 1) + ')' : '');
+      livreEcrit = { j: j, i: i, data: data, auteur: auteur, sale: false, signeEnvoye: !!data.signe, minuterie: null };
+      ui.ouvrirLivre(data, {
+        auteur: auteur, note: stack.id === I.NOTE,
         surChange: function (nouveau) {
-          var courant = st.inv.stackAt(i);
-          if (courant) courant.data = nouveau;
+          var e = livreEcrit;
+          if (!e) return;
+          var pages = e.data.pages.length;
+          e.data = nouveau; e.sale = true;
+          if (nouveau.signe || nouveau.pages.length !== pages) { envoyerLivre(); return; }
+          if (!e.minuterie) e.minuterie = setTimeout(function () { if (livreEcrit === e) { e.minuterie = null; envoyerLivre(); } }, 800);
         },
       });
       input.setState('ui');
@@ -2591,6 +2617,7 @@
       ui.fermerCarte();
       ui.fermerFactions();
       ui.fermerSucces();
+      fermerLivreEcrit();             // SPEC-INTERIEUR-003 : la dernière saisie part au serveur
       if (ui.fermerLivreEcran) ui.fermerLivreEcran();
       if (ui.fermerJournal) ui.fermerJournal();
       forceCloseContainer();

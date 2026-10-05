@@ -230,7 +230,8 @@
         '<span>page ' + (page + 1) + '/' + d.pages.length + '</span>' +
         '<button class="livre-suiv">›</button>';
       if (modifiable) {
-        html += '<button class="livre-ajouter">+ page</button><button class="livre-signer">Signer</button>';
+        // une note n'a qu'une page (MC.Livres.borner)
+        html += (livreEnCours.note ? '' : '<button class="livre-ajouter">+ page</button>') + '<button class="livre-signer">Signer</button>';
       }
       html += '</div>';
       if (d.signe) html += '<p class="livre-auteur">— ' + (d.auteur ? d.auteur.replace(/</g, '&lt;') : 'Anonyme') + '</p>';
@@ -256,7 +257,7 @@
           livreEnCours.data = Livres.definirPage(livreEnCours.data, page, e.target.value);
           livreEnCours.surChange(livreEnCours.data);
         });
-        livreEcranEl.querySelector('.livre-ajouter').addEventListener('mousedown', function (ev) {
+        if (!livreEnCours.note) livreEcranEl.querySelector('.livre-ajouter').addEventListener('mousedown', function (ev) {
           ev.preventDefault();
           livreEnCours.data = Livres.ajouterPage(livreEnCours.data);
           livreEnCours.surChange(livreEnCours.data);
@@ -284,7 +285,7 @@
     function ouvrirLivre(data, opts) {
       livreEnCours = { data: data, page: 0,
                         surChange: (opts && opts.surChange) || function () {},
-                        auteur: (opts && opts.auteur) || 'Joueur' };
+                        auteur: (opts && opts.auteur) || 'Joueur', note: !!(opts && opts.note) };
       livreEcranEl.style.display = '';
       rendreLivreEcran();
     }

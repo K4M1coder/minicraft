@@ -288,6 +288,85 @@
       A.deep(relu.data, livre, 'titre, pages, auteur et signature intacts');
     });
 
+    /* ── l'écriture validée (opération « ecrire » de MC.Conteneurs, la même au
+       serveur et dans la prédiction du client) ── */
+    function joueurAvec(piles) {
+      var inv = Inv.create(36);
+      piles.forEach(function (p, i) { if (p) inv.setAt(i, p); });
+      return { joueur: { inv: inv }, conteneur: function () { return null; } };
+    }
+    var Ct = MC.Conteneurs;
+    it('SPEC-INTERIEUR-003 : écrire passe par une opération validée — bornée, nettoyée, refusée sur autre chose qu\'un livre', function () {
+      var ctx = joueurAvec([{ id: I.LIVRE, n: 1 }, { id: B.STONE, n: 3 }, { id: I.NOTE, n: 1 }]);
+      var ctl = String.fromCharCode(0), bidi = String.fromCharCode(0x202e);
+      var r = Ct.appliquer(ctx, { k: 'ecrire', i: 0, titre: 'Mes\nmémoires' + ctl + ' et bien plus encore, un titre bien trop long', pages: ['Jour 1' + bidi + ' : pluie', 'Jour 2'] });
+      A.ok(r.ok, 'écrit');
+      var d = ctx.joueur.inv.stackAt(0).data;
+      A.equal(d.titre, 'Mes mémoires et bien plus encore'.slice(0, L.MAX_TITRE), 'titre sur une ligne, nettoyé, borné à ' + L.MAX_TITRE);
+      A.deep(d.pages, ['Jour 1 : pluie', 'Jour 2'], 'pages nettoyées');
+      A.notOk(d.signe, 'pas encore signé');
+      A.equal(Ct.appliquer(ctx, { k: 'ecrire', i: 1, titre: 'x', pages: ['y'] }).motif, 'incompatible', 'une pierre ne s\'écrit pas');
+      A.equal(Ct.appliquer(ctx, { k: 'ecrire', i: 5, titre: 'x', pages: ['y'] }).motif, 'absent', 'une case vide non plus');
+      // une note n'a qu'une page ; une page est bornée
+      Ct.appliquer(ctx, { k: 'ecrire', i: 2, titre: '', pages: ['x'.repeat(1000), 'deuxième'] });
+      var n = ctx.joueur.inv.stackAt(2).data;
+      A.equal(n.pages.length, 1, 'une seule page pour une note');
+      A.equal(n.pages[0].length, L.MAX_LONGUEUR_PAGE, 'page bornée');
+    });
+
+    it('SPEC-INTERIEUR-003 : la signature est celle que fixe l\'appelant (le serveur), et rien ne s\'écrit plus ensuite', function () {
+      var ctx = joueurAvec([{ id: I.LIVRE, n: 1 }]);
+      A.ok(Ct.appliquer(ctx, { k: 'ecrire', i: 0, titre: 'Fin', pages: ['Le mot de la fin'], signer: true, auteur: 'Aldric' }).ok);
+      var d = ctx.joueur.inv.stackAt(0).data;
+      A.ok(d.signe, 'signé'); A.equal(d.auteur, 'Aldric', 'auteur = celui que donne l\'opération (le nom tenu par le serveur)');
+      var r = Ct.appliquer(ctx, { k: 'ecrire', i: 0, titre: 'Retouche', pages: ['autre'], signer: true, auteur: 'Usurpateur' });
+      A.equal(r.motif, 'interdit', 'un livre signé est refusé');
+      A.deep(ctx.joueur.inv.stackAt(0).data, d, 'et reste intact');
+    });
+
+    it('SPEC-INTERIEUR-003 : un livre plein tient toujours dans le `data` d\'une pile admis par les contrats (DATA_MAX)', function () {
+      var ctx = joueurAvec([{ id: I.LIVRE, n: 1 }]);
+      var pages = []; for (var k = 0; k < 8; k++) pages.push(new Array(111).join('"\n'));   // guillemets et sauts de ligne : échappés en JSON
+      Ct.appliquer(ctx, { k: 'ecrire', i: 0, titre: 'T'.repeat(64), pages: pages, signer: true, auteur: 'N'.repeat(80) });
+      var d = ctx.joueur.inv.stackAt(0).data;
+      A.ok(JSON.stringify(d).length <= MC.ContratsV2.BORNES.DATA_MAX, 'JSON ' + JSON.stringify(d).length + ' ≤ ' + MC.ContratsV2.BORNES.DATA_MAX);
+      A.ok(MC.ContratsV2.validerPile(ctx.joueur.inv.stackAt(0)), 'la pile passe validerPile (INV_MAJ ne la perdra pas)');
+      A.ok(d.auteur.length <= L.MAX_AUTEUR, 'auteur borné');
+      // borner : la forme sûre d'un livre venu d'ailleurs (fichier ancien, message), quelle qu'elle soit
+      var vieux = L.borner({ titre: 42, pages: ['a', 'b', 'c'], auteur: null, signe: 1 }, true);
+      A.deep(vieux, { titre: '42', pages: ['a'], auteur: null, signe: true }, 'borner : champs convertis, une note garde une page');
+      A.deep(L.borner(null), { titre: '', pages: [''], auteur: null, signe: false }, 'borner : rien devient un livre vierge');
+    });
+
+    it('SPEC-INTERIEUR-003 : jetée puis ramassée, la pile garde son livre (data conservée)', function () {
+      var w = G.flatWorld(9, B.STONE), ents = MC.createEntities(w);
+      var livre = L.signer(L.ecrire(null, { titre: 'Voyage', pages: ['Page une'] }), 'Iris');
+      ents.dropStack(5.5, 10.2, 5.5, { id: I.LIVRE, n: 1, data: livre });
+      var item = ents.list.filter(function (e) { return e.type === 'item'; })[0];
+      A.ok(item && item.data, 'l\'objet au sol porte le livre');
+      A.deep(item.data, livre, 'contenu intact au sol');
+      var inv = Inv.create(36);
+      inv.addStack(item.item, item.n, item.data, item.dmg);
+      A.deep(inv.stackAt(0).data, livre, 'ramassé : même livre dans l\'inventaire');
+    });
+
+    it('SPEC-INTERIEUR-003 : les bibliothèques des lieux tiennent l\'histoire du lieu et de ses voisins, et les indices des quêtes', function () {
+      var lieu = { id: 'village:3,4', nom: 'Valombre', kind: 'village', x: 100, z: 100 };
+      var voisins = [{ nom: 'Hautbourg', kind: 'ville', x: 500, z: 100 }, { nom: 'Clairval', kind: 'village', x: 100, z: -200 }];
+      var indices = [{ nom: 'Temple de la jungle', x: 400, z: -200, gardien: 'Grand serpent' }, { nom: 'Crypte', x: 60, z: 160 }];
+      var c1 = L.livreChronique(42, lieu, voisins), c2 = L.livreChronique(42, lieu, voisins);
+      A.deep(c1, c2, 'chronique déterministe');
+      A.ok(c1.signe && c1.titre.indexOf('Valombre') >= 0, 'chronique signée, au nom du lieu');
+      A.ok(c1.pages.join(' ').indexOf('Hautbourg') >= 0 && c1.pages.join(' ').indexOf('à l\'est') >= 0, 'elle situe les voisins (Hautbourg, à l\'est)');
+      var q = L.livreIndices(42, lieu, indices);
+      A.deep(q, L.livreIndices(42, lieu, indices), 'carnet déterministe');
+      var txt = q.pages.join(' ');
+      A.ok(txt.indexOf('Temple de la jungle') >= 0 && txt.indexOf('nord-est') >= 0 && txt.indexOf('Grand serpent') >= 0, 'le carnet situe le temple au nord-est et nomme son gardien : ' + txt);
+      A.ok(txt.indexOf('Crypte') >= 0, 'et la crypte voisine');
+      A.ok(L.livreIndices(42, lieu, []).pages.length >= 2, 'sans donjon proche, le carnet le dit');
+      [c1, q].forEach(function (b) { A.ok(JSON.stringify(b).length <= MC.ContratsV2.BORNES.DATA_MAX, 'tient dans une pile'); });
+    });
+
     it('SPEC-INTERIEUR-003 : une pile sans data reste sérialisable comme avant (compatibilité)', function () {
       var inv = Inv.create(9);
       inv.setAt(0, { id: B.STONE, n: 5 });

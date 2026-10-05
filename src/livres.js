@@ -11,7 +11,14 @@
   'use strict';
   var MC = G.MC = G.MC || {};
 
-  var MAX_PAGES = 12, MAX_LONGUEUR_PAGE = 400, MAX_TITRE = 32;
+  /* Bornes d'un livre écrit (SPEC-INTERIEUR-003). Un livre voyage dans le
+     `data` d'une pile, que les contrats bornent à 2000 caractères JSON
+     (MC.ContratsV2.BORNES.DATA_MAX) : au-delà, la pile serait refusée par
+     INV_MAJ et le texte perdu. Les bornes par champ (8 pages de 220
+     caractères) tiennent dans TAILLE_JSON_MAX ; `borner` rogne en plus la fin
+     du texte quand les échappements JSON (guillemets, sauts de ligne) font
+     déborder malgré tout. Une note n'a qu'une page. */
+  var MAX_PAGES = 8, MAX_LONGUEUR_PAGE = 220, MAX_TITRE = 32, MAX_AUTEUR = 40, TAILLE_JSON_MAX = 1900;
 
   /* Un livre (ou une note, structurellement identique — juste 1 page et pas
      de titre affiché) vierge : aucune page, pas d'auteur, pas signé. */
@@ -19,6 +26,43 @@
   function creerNote() { return { titre: '', pages: [''], auteur: null, signe: false }; }
 
   function estModifiable(livre) { return !!livre && !livre.signe; }
+
+  /* Caractères de contrôle retirés (mêmes règles que le contrat réseau,
+     MC.ContratsArchi.nettoyerTexteLivre, repris ici pour que ce module reste
+     autonome) : un titre ou un auteur tient sur une ligne. */
+  function nettoyer(v, multiligne) {
+    var s = String(v === undefined || v === null ? '' : v).replace(/\r\n?/g, '\n').replace(/\t/g, ' ');
+    s = s.replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u2028\u2029\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '');
+    if (!multiligne) s = s.replace(/\n/g, ' ');
+    return s;
+  }
+  /* La forme sûre d'un livre, quelle qu'en soit l'origine (client, fichier
+     de sauvegarde, message) : champs nettoyés et bornés, taille JSON sous
+     TAILLE_JSON_MAX. `note` : une seule page. */
+  function borner(livre, note) {
+    var l = livre && typeof livre === 'object' ? livre : {};
+    var pages = Array.isArray(l.pages) ? l.pages.slice(0, note ? 1 : MAX_PAGES) : [''];
+    pages = pages.map(function (p) { return nettoyer(p, true).slice(0, MAX_LONGUEUR_PAGE); });
+    if (!pages.length) pages = [''];
+    var out = { titre: nettoyer(l.titre, false).slice(0, MAX_TITRE), pages: pages,
+                auteur: l.auteur ? nettoyer(l.auteur, false).slice(0, MAX_AUTEUR) : null, signe: !!l.signe };
+    while (JSON.stringify(out).length > TAILLE_JSON_MAX) {
+      var dern = out.pages.length - 1;
+      if (out.pages[dern].length) out.pages[dern] = out.pages[dern].slice(0, Math.max(0, out.pages[dern].length - 16));
+      else if (dern > 0) out.pages.pop();
+      else break;
+    }
+    return out;
+  }
+  /* SPEC-INTERIEUR-003 : une écriture complète (titre et pages proposés),
+     appliquée seulement à un livre encore modifiable — le serveur s'en sert
+     sur sa propre pile (MC.Conteneurs, opération « ecrire »), le client pour
+     sa prédiction. Renvoie le livre inchangé s'il est signé. */
+  function ecrire(livre, contenu, note) {
+    var base = livre || (note ? creerNote() : creerLivre());
+    if (!estModifiable(base)) return base;
+    return borner({ titre: contenu && contenu.titre, pages: contenu && contenu.pages, auteur: null, signe: false }, note);
+  }
 
   /* Chaque « écriture » renvoie un NOUVEL objet (pas de mutation en place) :
      plus facile à tester, et ça évite qu'une référence partagée (le même
@@ -45,7 +89,8 @@
      vrai livre dédicacé, on n'efface pas une signature). */
   function signer(livre, auteur) {
     if (!estModifiable(livre)) return livre;
-    return Object.assign({}, livre, { auteur: String(auteur || 'Anonyme'), signe: true });
+    var nom = nettoyer(auteur || 'Anonyme', false).slice(0, MAX_AUTEUR) || 'Anonyme';
+    return Object.assign({}, livre, { auteur: nom, signe: true });
   }
 
   // ─── livres du monde (SPEC-INTERIEUR-003) ──────────────────────────────────
@@ -127,10 +172,69 @@
     return { titre: titre, pages: pages, auteur: auteur, signe: true };
   }
 
+  // x vers l'est, z vers le sud (même convention que habitats.js `cap`)
+  var CAPS = ['à l\'est', 'au sud-est', 'au sud', 'au sud-ouest', 'à l\'ouest', 'au nord-ouest', 'au nord', 'au nord-est'];
+  function cap(dx, dz) { var k = Math.round(Math.atan2(dz, dx) / (Math.PI / 4)); return CAPS[((k % 8) + 8) % 8]; }
+  function distanceArrondie(d) { return d < 100 ? Math.max(10, Math.round(d / 10) * 10) : Math.round(d / 50) * 50; }
+
+  /* SPEC-INTERIEUR-003 : les indices des quêtes. Un carnet d'explorateur
+     qui situe, depuis le lieu, les donjons des environs (ceux que le mode
+     histoire et les récits désignent comme buts) : leur nom, leur distance
+     et leur direction, le gardien qui les tient. `indices` : [{ nom, x, z,
+     gardien? }], fournis par l'appelant (le serveur, depuis monde.donjons),
+     du plus proche au plus lointain — fonction pure, déterministe. */
+  var OUVERTURES_INDICES = [
+    'Ce que j\'ai vu de mes yeux, ou appris de ceux qui en sont revenus.',
+    'Pour qui cherche l\'aventure : les lieux dont on ne parle qu\'à voix basse.',
+    'Mes routes, mes frayeurs, et ce qu\'il reste à trouver autour de {nom}.',
+  ];
+  function livreIndices(seed, lieu, indices) {
+    var nom = (lieu && lieu.nom) || 'ce lieu', lx = (lieu && lieu.x) || 0, lz = (lieu && lieu.z) || 0;
+    var cle = 0, brut = String(lieu && lieu.id !== undefined ? lieu.id : nom);
+    for (var c = 0; c < brut.length; c++) cle = (cle * 31 + brut.charCodeAt(c)) % 1000003;
+    var pages = [choisir(OUVERTURES_INDICES, seed, cle, 21).replace('{nom}', nom)];
+    (indices || []).slice(0, MAX_PAGES - 1).forEach(function (d) {
+      var dist = distanceArrondie(Math.hypot(d.x - lx, d.z - lz));
+      pages.push(String(d.nom || 'Un lieu oublié') + ' : à quelque ' + dist + ' blocs ' + cap(d.x - lx, d.z - lz) + ' de ' + nom + '.' +
+                 (d.gardien ? ' On y redoute un gardien : ' + d.gardien + ', qui veille sur un trésor.' :' Nul n\'en est revenu pour dire qui le garde.') +
+                 (d.vaincu ? ' Son gardien a été vaincu, dit-on.' : ''));
+    });
+    if (pages.length === 1) pages.push('Je n\'ai trouvé aucun donjon à des lieues à la ronde : le pays est sûr, ou bien il cache mieux ses secrets.');
+    return borner({ titre: ('Carnet d\'explorateur — ' + nom).slice(0, MAX_TITRE), pages: pages,
+                    auteur: choisir(AUTEURS, seed, cle, 23), signe: true });
+  }
+
+  /* SPEC-INTERIEUR-003 : l'histoire du monde vue d'un lieu — sa fondation et
+     ses liens avec les lieux voisins (`voisins` : [{ nom, kind, x, z }],
+     comme lieuxProches), à partir de la graine du monde. Pure, déterministe. */
+  var EPOQUES = ['Au temps des premières moissons', 'Avant la grande nuit', 'Trois générations avant nous',
+                 'L\'année où la rivière changea de lit', 'Quand les loups descendaient encore des montagnes'];
+  var LIENS = [
+    '{voisin} et {nom} commerçaient déjà : le sel montait, la laine descendait.',
+    'Une querelle de bornage brouilla longtemps {nom} et {voisin} ; un mariage la régla.',
+    'Les fondateurs de {voisin} étaient, dit-on, des cadets de {nom} partis chercher de meilleures terres.',
+    'Quand la disette frappa {voisin}, {nom} ouvrit ses greniers ; on s\'en souvient encore là-bas.',
+  ];
+  function livreChronique(seed, lieu, voisins) {
+    var nom = (lieu && lieu.nom) || 'ce lieu', lx = (lieu && lieu.x) || 0, lz = (lieu && lieu.z) || 0;
+    var cle = 0, brut = String(lieu && lieu.id !== undefined ? lieu.id : nom);
+    for (var c = 0; c < brut.length; c++) cle = (cle * 31 + brut.charCodeAt(c)) % 1000003;
+    var pages = [choisir(EPOQUES, seed, cle, 31) + ', des gens vinrent s\'établir ici et nommèrent l\'endroit ' + nom + '.'];
+    (voisins || []).filter(function (v) { return v && v.nom && v.nom !== nom; }).slice(0, 3).forEach(function (v, i) {
+      pages.push(choisir(LIENS, seed, cle, 40 + i).replace('{voisin}', v.nom).replace('{nom}', nom) +
+                 ' (' + v.nom + ' se trouve ' + cap(v.x - lx, v.z - lz) + ', à ' + distanceArrondie(Math.hypot(v.x - lx, v.z - lz)) + ' blocs.)');
+    });
+    if (pages.length === 1) pages.push('Longtemps isolé, ' + nom + ' n\'a d\'autre histoire que celle de ses saisons.');
+    return borner({ titre: ('Histoire de ' + nom).slice(0, MAX_TITRE), pages: pages, auteur: choisir(AUTEURS, seed, cle, 33), signe: true });
+  }
+
   MC.Livres = {
-    MAX_PAGES: MAX_PAGES, MAX_LONGUEUR_PAGE: MAX_LONGUEUR_PAGE, MAX_TITRE: MAX_TITRE,
+    MAX_PAGES: MAX_PAGES, MAX_LONGUEUR_PAGE: MAX_LONGUEUR_PAGE, MAX_TITRE: MAX_TITRE, MAX_AUTEUR: MAX_AUTEUR,
+    TAILLE_JSON_MAX: TAILLE_JSON_MAX,
     creerLivre: creerLivre, creerNote: creerNote, estModifiable: estModifiable,
     definirTitre: definirTitre, definirPage: definirPage, ajouterPage: ajouterPage,
     signer: signer, livreDuMonde: livreDuMonde,
+    // SPEC-INTERIEUR-003 : écriture validée (serveur et prédiction), livres des bibliothèques
+    nettoyer: nettoyer, borner: borner, ecrire: ecrire, livreIndices: livreIndices, livreChronique: livreChronique,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

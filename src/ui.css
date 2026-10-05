@@ -412,3 +412,11 @@
 .journal-histoire h4 { margin: 8px 0 4px; }
 .journal-histoire li.faite { opacity: .6; }
 .fin-histoire .epilogue { font-size: 15px; line-height: 1.5; max-width: 560px; }
+/* SPEC-INTERIEUR-003 : l'écran d'écriture et de lecture d'un livre ou d'une note */
+.livre-ecran { width: 420px; max-width: 90%; }
+.livre-ecran .livre-corps { display: flex; flex-direction: column; gap: 6px; }
+.livre-ecran .livre-titre { font: inherit; padding: 4px; }
+.livre-ecran .livre-page { font: inherit; min-height: 160px; resize: vertical; padding: 6px; }
+.livre-ecran .livre-page-lue { white-space: pre-wrap; line-height: 1.45; min-height: 120px; margin: 4px 0; }
+.livre-ecran .livre-bas { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.livre-ecran .livre-auteur { font-style: italic; text-align: right; margin: 2px 0 0; }

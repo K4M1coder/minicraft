@@ -66,6 +66,7 @@
       'DORMIR', 'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER',
       'DORMIR', 'HISTOIRE_PARLER', 'HISTOIRE_REPONSE',
       'ACTIONNER',
+      'LIVRE_ECRIRE',
     ].map(k => NP.MSG[k]).filter(Boolean));
 
     /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -765,6 +766,19 @@
           if (!js) break;
           const r = S.traiterOp(c, m, js, { k: 'equip', slot: m.slot, i: m.i });
           if (r && r.ok) S.diffuserEquipVu(c, m.j, js, m.slot);
+          break;
+        }
+        /* SPEC-INTERIEUR-003 : écrire ou signer le livre/la note d'une case de
+           l'inventaire SERVEUR. Le message a déjà été borné et nettoyé
+           (ContratsArchi.validerLivreEcrire) ; MC.Conteneurs (op « ecrire »)
+           borne encore au format d'un livre et refuse un livre signé. La
+           signature est le nom de la connexion connu du serveur (et, en écran
+           partagé, le rang du joueur local) — jamais un nom venu du client. */
+        case NP.MSG.LIVRE_ECRIRE: {
+          const js = c.joueurs && c.joueurs[m.j];
+          if (!js || !c.rejoint) break;
+          const auteur = (c.nom || 'Joueur') + (m.j > 0 ? ' (joueur ' + (m.j + 1) + ')' : '');
+          S.traiterOp(c, m, js, { k: 'ecrire', i: m.i, titre: m.titre, pages: m.pages, signer: m.signer, auteur });
           break;
         }
         /* B1 (étape 7, SPEC-SYNC-012/013) : s'abonner à un conteneur à portée —

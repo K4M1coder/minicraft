@@ -66,6 +66,7 @@
     FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.HISTOIRE_PARLER);
     FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.HISTOIRE_REPONSE);
     if (NP.MSG.ACTIONNER) FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.ACTIONNER);   // SPEC-MECA-005
+    if (NP.MSG.LIVRE_ECRIRE) FLOOD_TYPES_PAR_JOUEUR.add(NP.MSG.LIVRE_ECRIRE);   // SPEC-INTERIEUR-003
 
     /* Compte (et enregistre) l'arrivée d'un message dans sa fenêtre glissante —
        TOUJOURS, même au-delà du budget : c'est ce qui permet de distinguer un

@@ -257,6 +257,28 @@
     return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: { lache: lache } };
   }
 
+  /* SPEC-INTERIEUR-003 : écrire (et éventuellement signer) le livre ou la
+     note de la case `op.i`. Le contenu proposé est borné et nettoyé par
+     MC.Livres.ecrire ; un livre déjà signé ne change plus ; la signature est
+     `op.auteur`, que le SERVEUR fixe lui-même (le nom qu'il connaît du
+     joueur, jamais un champ du message). Même code pour la prédiction du
+     client, qui y met le nom local en attendant l'INV_MAJ du serveur. */
+  function ecrire(ctx, op) {
+    var inv = ctx.joueur.inv, S = inv.slots[op.i], L = MC.Livres;
+    if (!S) return { ok: false, motif: 'absent' };
+    var def = C().def(S.id);
+    if (!def || !def.livre || !L) return { ok: false, motif: 'incompatible' };
+    var note = S.id === C().I.NOTE;
+    var actuel = S.data && typeof S.data === 'object' ? L.borner(S.data, note) : (note ? L.creerNote() : L.creerLivre());
+    if (!L.estModifiable(actuel)) return { ok: false, motif: 'interdit' };
+    var livre = L.ecrire(actuel, { titre: op.titre, pages: op.pages }, note);
+    if (op.signer) livre = L.signer(livre, op.auteur);
+    var p = { id: S.id, n: S.n, data: livre };
+    if (S.dmg) p.dmg = S.dmg;
+    inv.slots[op.i] = p;
+    return { ok: true, modifs: { inv: true, equip: false, grille: false, conteneurs: [] }, effets: {} };
+  }
+
   function creatif(ctx, op) {
     if (!ctx.regles || !ctx.regles.blocsIllimites) return { ok: false, motif: 'creatif' };
     var inv = ctx.joueur.inv;
@@ -366,6 +388,7 @@
       case 'manger': return manger(ctx, op);
       case 'lacher': return lacher(ctx, op);
       case 'creatif': return creatif(ctx, op);
+      case 'ecrire': return ecrire(ctx, op);
       case 'rendreGrille': return rendreGrille(ctx);
       case 'declarer': {
         var cont = ctx.conteneur(op.cle);
