@@ -49,6 +49,40 @@
     let accEau = 0;
     let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
     let accFourMsg = 0;       // B1 (étape 7) : cadence de message des fourneaux posés (≤ 2 Hz, SPEC-SYNC-015)
+    // SPEC-MECA-005 : durée (secondes de jeu) pendant laquelle un bouton actionné reste enfoncé
+    S.DUREE_BOUTON_S = 1;
+    /* SPEC-MECA-002 : combustion des générateurs thermiques. Clé du conteneur →
+       secondes de combustion restantes de la pièce en cours. Pas persistée : à
+       la relance, la pièce entamée est perdue (au plus une), le reste du
+       combustible est dans le conteneur, lui sauvegardé. */
+    const FUEL_SECONDES_PAR_UNITE = 10;
+    const combustionGenerateurs = new Map();
+    function brulerGenerateur(x, y, z, dt) {
+      const k = MC.ContratsV2.cleConteneur(x, y, z);
+      let reste = combustionGenerateurs.get(k) || 0;
+      if (reste <= 0) {
+        const cont = conteneursPoses.get(k);
+        let i = -1;
+        if (cont) for (let s = 0; s < cont.slots.length; s++) {
+          const p = cont.slots[s];
+          if (p && p.n > 0 && MC.Inventory.fuelValue(p.id) > 0) { i = s; break; }
+        }
+        if (i < 0) { combustionGenerateurs.delete(k); return false; }
+        const pile = cont.slots[i];
+        reste = MC.Inventory.fuelValue(pile.id) * FUEL_SECONDES_PAR_UNITE;
+        pile.n -= 1;
+        if (pile.n <= 0) cont.slots[i] = null;
+        cont.rev = (cont.rev || 0) + 1;
+        // SPEC-SYNC-015 : qui a ce générateur ouvert voit la pièce prise
+        const abonnesG = abonnesActuels(k);
+        if (abonnesG.length) {
+          const deltaG = { cle: k, rev: cont.rev, maj: [[i, MC.ContratsV2.pileVersCase(cont.slots[i])]] };
+          abonnesG.forEach(({ c: c2 }) => envoyer(c2, Object.assign({ t: NP.MSG.CONTENEUR_MAJ }, deltaG)));
+        }
+      }
+      combustionGenerateurs.set(k, reste - dt);
+      return true;
+    }
     // SPEC-SERVEUR-005 : purge périodique de admin.sessions/invitations/sanctions
     // — cadence et seuils réglables (comme MC_SAUVEGARDE_MS) pour les tests
     // d'intégration, sans quoi il faudrait des dizaines de milliers de sessions
@@ -320,8 +354,31 @@
       accCircuits += dt;
       if (accCircuits >= 0.2) {
         accCircuits = 0;
+        /* SPEC-MECA-005 : ce que seul le serveur sait — les corps présents
+           (plaques de pression, détecteurs de présence : joueurs vivants et
+           créatures, ni objets au sol ni projectiles) et les boutons encore
+           enfoncés (ACTIONNER, relâchés après DUREE_BOUTON_S). */
+        const corps = [];
+        tousLesJoueurs().forEach(({ js }) => {
+          const st = js.joueur.state;
+          if (!st.dead) corps.push({ x: st.pos.x, y: st.pos.y, z: st.pos.z, joueur: true });
+        });
+        entites.list.forEach(en => {
+          if (en.pos && !en.dead && en.type !== 'item' && en.type !== 'arrow') corps.push({ x: en.pos.x, y: en.pos.y, z: en.pos.z });
+        });
+        const boutons = {};
+        const appuyes = S.boutonsAppuyes || (S.boutonsAppuyes = new Map());
+        appuyes.forEach((fin, k) => { if (EP.heure < fin) boutons[k] = true; else appuyes.delete(k); });
         monde.tickCircuits({
           temps: EP.heure,
+          entites: corps,
+          boutons,
+          /* SPEC-MECA-002 : le générateur thermique loin de la lave brûle le
+             combustible rangé dans son conteneur posé (9 cases) : une pièce
+             prise quand la précédente est consumée, FUEL_SECONDES_PAR_UNITE
+             secondes de jeu par unité de fuelValue (le charbon : 8). Vrai si
+             du combustible brûle pendant ce tic. */
+          bruler: (x, y, z) => brulerGenerateur(x, y, z, 0.2),
           // SPEC-MECA-001 : éjecte le premier objet du distributeur — munition
           // (ammo) en projectile, sinon un objet au sol ; les entités (item ou
           // arrow) rejoignent tout seules la diffusion d'état périodique (ETAT),

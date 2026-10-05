@@ -373,7 +373,10 @@ async function scenarioPortes() {
     // témoin : un levier ACTIONNÉ à côté d'une porte fermée l'ouvre (les circuits du serveur tournent)
     ok(!!(await poser(bx + 2, by, bz, B.PORTE_FERMEE_N)), 'préparation : porte témoin posée');
     const vu = cl.depuis();
-    ok(!!(await poser(bx + 3, by, bz, B.LEVIER_CIRCUIT, 1)), 'préparation : levier actionné posé à côté');
+    // un levier se pose relâché (l'état est celui du serveur, SPEC-MECA-008) puis s'actionne (ACTIONNER, SPEC-MECA-005)
+    ok(!!(await poser(bx + 3, by, bz, B.LEVIER_CIRCUIT)), 'préparation : levier posé à côté');
+    cl.envoyer({ t: 'actionner', j: 0, x: bx + 3, y: by, z: bz });
+    ok(!!(await jusqua(() => vu('bloc').find(m => m.x === bx + 3 && m.y === by && m.z === bz && m.etat === 1), 3000)), 'préparation : levier actionné');
     const ouverte = await jusqua(() => vu('bloc').find(m => m.x === bx + 2 && m.y === by && m.z === bz && m.id === B.PORTE_OUVERTE_N), 3000);
     ok(!!ouverte, 'SPEC-MECA-006 : témoin — le signal d\'un levier actionné ouvre la porte voisine (circuits du serveur actifs)');
     // l'état d'une porte posée n'est jamais celui du client : un « signal déjà vu » annoncé (etat 1) est ignoré

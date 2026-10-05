@@ -117,9 +117,11 @@
       else for (let k = 0; k < inv.slots.length; k++) if (inv.slots[k] && objetPoseBloc(inv.slots[k].id, idBloc)) { i = k; break; }
       if (i < 0) return false;
       const id = inv.slots[i].id;
+      // la pile débitée (SPEC-MECA-003 : le niveau d'une batterie voyage dans `data`)
+      const debitee = { id, data: inv.slots[i].data };
       inv.consumeAt(i, 1);
       crediterDebit(js, id);
-      return true;
+      return debitee;
     }
     /* Tir : true si le joueur peut tirer ce `genre` ; débite alors la munition.
        Limite documentée (SPEC-SYNC-028) : le serveur ne connaît pas la case

@@ -65,6 +65,7 @@
       'INV_CONSOMMER', 'INV_LACHER', 'INV_CREATIF', 'TROC', 'CONTENEUR_OUVRIR', 'CONTENEUR_TRANSFERT',
       'DORMIR', 'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER',
       'DORMIR', 'HISTOIRE_PARLER', 'HISTOIRE_REPONSE',
+      'ACTIONNER',
     ].map(k => NP.MSG[k]).filter(Boolean));
 
     /* SPEC-ARCHI-026 : le lieu de renaissance est décidé ICI. Le lit dont le joueur
@@ -338,6 +339,29 @@
           break;
         }
 
+        /* SPEC-MECA-005 : un levier ou un bouton actionné à la main. Le serveur
+           revérifie tout — joueur vivant, case à portée (comme une pose),
+           bloc qui s'actionne — et décide lui-même du nouvel état
+           (MC.Circuits.actionner) : le message ne porte que la case. Un bouton
+           enfoncé le reste DUREE_BOUTON_S secondes de jeu (serveur-tic le relâche). */
+        case NP.MSG.ACTIONNER: {
+          const js = c.joueurs && c.joueurs[m.j];
+          const st0 = js && js.joueur.state;
+          if (!st0 || st0.dead || !c.rejoint) break;
+          if (Math.hypot(m.x + 0.5 - st0.pos.x, m.y + 0.5 - st0.pos.y - 1.62, m.z + 0.5 - st0.pos.z) > S.PORTEE_BLOC) break;
+          const idA = monde.getBlock(m.x, m.y, m.z);
+          const etatA = MC.Circuits.actionner(idA, monde.getEtat(m.x, m.y, m.z));
+          if (etatA === null) break;
+          monde.setEtat(m.x, m.y, m.z, etatA);
+          if (C.BLOCKS[idA].circuit.type === 'bouton') {
+            const boutons = S.boutonsAppuyes || (S.boutonsAppuyes = new Map());
+            boutons.set(m.x + ',' + m.y + ',' + m.z, EP.heure + S.DUREE_BOUTON_S);
+          }
+          diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: idA, etat: etatA });
+          MC.Admin.journaliser(admin, { auteur: c.nom, action: 'bloc_actionne', cible: `${m.x},${m.y},${m.z}`, details: etatA, heure: EP.heure });
+          break;
+        }
+
         // ── véhicules (P-VEH, SPEC-ARCHI-021 / SPEC-SYNC-022) : le serveur crée, embarque, conduit ──
         case NP.MSG.VEHICULE_POSER: S.poserVehiculeServeur(c, m); break;
         case NP.MSG.VEHICULE_MONTER: S.monterVehiculeServeur(c, m); break;
@@ -541,11 +565,24 @@
               if (contNeuf) S.remplirConteneurNeuf(contNeuf, dA.interactive, m.x, m.y, m.z, kA);
             }
           }
-          if (m.id !== 0 && !regles.blocsIllimites && !S.POSE_LIBRE && !S.debiterPose(js, m.id, m.i)) {
-            envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) });
-            S.envoyerInvMaj(c, m.j, {});
-            break;
+          let pileDebitee = null;
+          if (m.id !== 0 && !regles.blocsIllimites && !S.POSE_LIBRE) {
+            pileDebitee = S.debiterPose(js, m.id, m.i);
+            if (!pileDebitee) {
+              envoyer(c, { t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: avant, etat: monde.getEtat(m.x, m.y, m.z) });
+              S.envoyerInvMaj(c, m.j, {});
+              break;
+            }
           }
+          /* SPEC-MECA-008 : l'état d'un mécanisme posé est décidé ICI — seule
+             l'orientation choisie passe (piston, tapis) ; une batterie reprend le
+             niveau de la pile débitée sur l'inventaire du SERVEUR (SPEC-MECA-003),
+             celui annoncé seulement quand rien n'est débité (créatif, pose libre). */
+          const etatMeca = m.id ? MC.Circuits.etatDePose(m.id, m.etat,
+            pileDebitee ? (pileDebitee.data && pileDebitee.data.niveau) : m.etat) : null;
+          if (etatMeca !== null) m.etat = etatMeca;
+          // SPEC-MECA-003 : le niveau d'une batterie cassée, lu avant que la case ne change
+          const etatAvantCasse = (m.id === 0 && avant === C.B.BATTERIE) ? monde.getEtat(m.x, m.y, m.z) : 0;
           const cx = Math.floor(m.x / 16), cz = Math.floor(m.z / 16);
           monde.getChunk(cx, cz, true);
           monde.setBlock(m.x, m.y, m.z, m.id);
@@ -560,7 +597,8 @@
             const bd = bijou && C.def(bijou.id);
             const bonusChance = (bd && bd.effet && bd.effet.type === 'chance') ? bd.effet.valeur : 0;
             C.dropsOf(avant, cassure.harvests, null, bonusChance).forEach(d =>
-              entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n));
+              entites.dropItem(m.x + 0.5, m.y + 0.5, m.z + 0.5, d.id, d.n, undefined,
+                               d.id === C.B.BATTERIE ? { niveau: etatAvantCasse } : undefined));
           }
           diffuser({ t: NP.MSG.BLOC, x: m.x, y: m.y, z: m.z, id: m.id, etat: m.etat || 0 });
           if (m.id !== 0) S.signalerRecit(c, m.j, js, { type: 'poser', bloc: m.id, x: m.x, y: m.y, z: m.z });   // ARCHI-041
