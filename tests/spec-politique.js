@@ -105,6 +105,11 @@
       P.appliquerAction(e, a, 'raid', jourGagne);
       A.ok(v.subis && v.subis.indexOf(jourGagne) >= 0, 'le raid subi est mémorisé par la victime');
       A.equal(P.objectifSelon(e, v, jourGagne + 1), 'defendre', 'un raid subi récent oriente vers la défense');
+      var nA = e.annonces.length;
+      A.ok(P.evoluerObjectif(e, v, jourGagne + 1), 'evoluerObjectif applique le changement');
+      A.equal(v.objectif, 'defendre');
+      A.ok(e.annonces.length > nA && /change d'objectif/.test(e.annonces[e.annonces.length - 1].texte), 'et l\'annonce');
+      A.notOk(P.evoluerObjectif(e, v, jourGagne + 1), 'rien de neuf : pas de second changement');
       A.equal(P.objectifSelon(e, v, jourGagne + 30), P.objectifSelon(e, fTest('t:victime', 'royaume', 'pragmatique', 'commercer', [60, 60], 150, 0, 0), jourGagne + 30),
               'un raid ancien ne compte plus');
 

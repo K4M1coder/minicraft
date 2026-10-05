@@ -178,6 +178,8 @@
         A.notOk(r.ok, 'refusé : ' + JSON.stringify(nom));
         A.equal(r.motif, 'nom_invalide');
       });
+      A.equal(GU.nomValide('  Meute  '), 'Meute', 'nomValide rend le nom nettoyé');
+      A.equal(GU.nomValide('Me\nute'), null, 'ou null');
       var ok = GU.creerFaction(e, 'Alice', { nom: '  Les   Aigles-d\'Or  ', couleur: 'red;background:url(x)', emblem: '<img>', devise: 'Vive\u0000 la <b>meute</b>' + 'x'.repeat(80) });
       A.ok(ok.ok);
       var f = e.factions.get(ok.id);
