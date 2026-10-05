@@ -11,6 +11,8 @@
      d'origine ; un renommage impossible interdit toute écriture (« Sauvegarder »
      → 409 ecriture_interdite) ; une erreur de lecture (dossier) arrête le
      serveur sans rien renommer ;
+   - SPEC-SAVE-017 : un monde v1, écrit avant les blocs 16 bits, est repris sans perte
+     et réécrit dans le format actuel ;
    - SPEC-SAVE-028 : un override d'id de bloc inconnu (3999) traverse un
      chargement et une sauvegarde du serveur sans être perdu.
 
@@ -21,7 +23,7 @@ const path = require('path');
 const fs = require('fs');
 const A = require('./aide-integration-archi.js');
 const { dodo, lancer, rejoindre, requete, dossierTemp, supprimerDossier, chargerModules } = A;
-const R = A.creerRapport('Intégration — fichier de monde du serveur (SPEC-SAVE-018, 026, 028)');
+const R = A.creerRapport('Intégration — fichier de monde du serveur (SPEC-SAVE-017, 018, 026, 028)');
 const { ok, eq } = R;
 const MC = chargerModules();
 
@@ -218,6 +220,47 @@ async function scenarioIdInconnu() {
   } finally { supprimerDossier(dossier); }
 }
 
+// ── SPEC-SAVE-017 : un monde serveur écrit AVANT les blocs 16 bits (v1) est repris sans perte ──
+async function scenarioMonde8Bits() {
+  const dossier = dossierTemp('mc-monde-017-');
+  const f = path.join(dossier, 'monde.json');
+  try {
+    // exactement la forme qu'écrivait le serveur d'avant 9f92f99 : v 1, overrides [x, y, z, id] (ids de bloc
+    // 8 bits seulement), cultures, aucune clé `etats` ; ni joueur ni inventaire (rien à renuméroter)
+    const B = MC.Core.B;
+    fs.writeFileSync(f, JSON.stringify({
+      v: 1, graine: 1234, heure: 321.5,
+      overrides: [[5, 120, 5, B.COBBLE], [6, 120, 5, B.PLANKS], [7, 120, 5, 0]],
+      crops: [[8, 120, 5, 4.25]], donjons: ['0,0'], pilles: [], pnjsMorts: [],
+    }));
+    const s = await demarrer(['--port', '0', '--monde', f, '--dossier-parties', dossier, '--graine', '1234'], { MC_SAUVEGARDE_MS: '600000' });
+    ok(s.logs.some(l => /monde repris/.test(l)), 'SPEC-SAVE-017 : le monde v1 (8 bits) est repris, pas refusé', s.logs.slice(-5).join(' | '));
+    eq(refuses(dossier).length, 0, 'SPEC-SAVE-017 : rien n\'est mis de côté');
+    const a = await rejoindre(s.port, 'Alice', 1);
+    ok(a.bienvenue.heure >= 321 && a.bienvenue.heure < 700, 'SPEC-SAVE-017 : l\'heure du monde v1 est reprise', 'heure = ' + a.bienvenue.heure);
+    a.client.envoyer({ t: 'overrides_demande', cx: 0, cz: 0 });
+    const oc = await a.client.attendre('overrides_chunk', 3000, m => m.cx === 0 && m.cz === 0);
+    const bloc = (x) => (oc.blocs || []).find(o => o[0] === x && o[1] === 120 && o[2] === 5);
+    ok(bloc(5) && bloc(5)[3] === B.COBBLE && bloc(6) && bloc(6)[3] === B.PLANKS,
+      'SPEC-SAVE-017 : les blocs posés avant les 16 bits sont servis aux clients avec leur id d\'origine', JSON.stringify(oc.blocs));
+    ok(!bloc(5)[4], 'SPEC-SAVE-017 : sans état particulier (état 0)', JSON.stringify(bloc(5)));
+    eq((await sauver(s)).code, 200, 'SPEC-SAVE-017 : sauvegarde forcée acceptée');
+    const data = lire(f);
+    eq(data.v, 2, 'SPEC-SAVE-017 : le fichier est réécrit dans le format actuel (v 2)');
+    ok(data.overrides.some(o => o[0] === 5 && o[1] === 120 && o[2] === 5 && o[3] === B.COBBLE) &&
+       data.overrides.some(o => o[0] === 6 && o[1] === 120 && o[2] === 5 && o[3] === B.PLANKS),
+      'SPEC-SAVE-017 : les blocs posés sont toujours dans le fichier réécrit', JSON.stringify(data.overrides).slice(0, 200));
+    ok((data.crops || []).some(c => c[0] === 8 && c[1] === 120 && c[2] === 5), 'SPEC-SAVE-017 : la culture est toujours dans le fichier réécrit');
+    ok((data.donjons || []).indexOf('0,0') >= 0, 'SPEC-SAVE-017 : le donjon déjà vaincu l\'est toujours');
+    a.client.fermer();
+    await s.arreter();
+    // et le fichier réécrit se relit au démarrage suivant
+    const s2 = await demarrer(['--port', '0', '--monde', f, '--dossier-parties', dossier, '--graine', '1234'], { MC_SAUVEGARDE_MS: '600000' });
+    ok(s2.logs.some(l => /monde repris/.test(l)), 'SPEC-SAVE-017 : le fichier réécrit est repris au démarrage suivant');
+    await s2.arreter();
+  } finally { supprimerDossier(dossier); }
+}
+
 (async () => {
   let code = 1;
   try {
@@ -229,6 +272,7 @@ async function scenarioIdInconnu() {
     await scenarioRenommageImpossible();
     await scenarioDossier();
     await scenarioIdInconnu();
+    await scenarioMonde8Bits();
   } catch (e) {
     ok(false, 'exception', e && e.stack);
   } finally {
