@@ -203,7 +203,7 @@
     { nom: 'materiaux-l24',     genre: 'bloc',  premier: 400,  dernier: 599 },   // verres teintés, bétons, laines, terres cuites, poutres, feu
     { nom: 'coffres-l25',       genre: 'bloc',  premier: 600,  dernier: 649 },   // coffres piégé et surprise
     { nom: 'mecanismes-l29',    genre: 'bloc',  premier: 650,  dernier: 849 },   // circuits et énergie
-    { nom: 'flore-marine-l35',  genre: 'bloc',  premier: 850,  dernier: 899 },   // anémones, algues, éponges, corail blanc
+    { nom: 'flore-marine-l35',  genre: 'bloc',  premier: 850,  dernier: 899 },   // anémones, algues, éponges, corail blanc, lichen luminescent (L35)
     { nom: 'interieur',         genre: 'bloc',  premier: 950,  dernier: 1099 },  // mobilier
     { nom: 'objets-origine',    genre: 'objet', premier: 4096, dernier: 4189 },  // (128-221) outils, nourriture, matières, véhicules…
     { nom: 'objets-l25',        genre: 'objet', premier: 4190, dernier: 4467 },  // (222-499) armures, armes, bijoux, cuisine
@@ -427,6 +427,8 @@
   B.ANEMONE_ROSE = 850; B.ANEMONE_VERTE = 851; B.ALGUE_ROUGE = 852; B.ALGUE_BRUNE = 853;
   B.POSIDONIE = 854; B.GORGONE_POURPRE = 855; B.EPONGE_JAUNE = 856; B.EPONGE_ORANGE = 857;
   B.LAMINAIRE = 858; B.CORAIL_BLANC = 859;
+  // L35 bioluminescence des grottes humides (SPEC-LUMIERE-007), dans la même plage
+  B.LICHEN_LUMINEUX = 860;
   planteMarine(B.ANEMONE_ROSE, 'Anémone rose', 896);
   planteMarine(B.ANEMONE_VERTE, 'Anémone verte', 897);
   planteMarine(B.ALGUE_ROUGE, 'Algue rouge', 898, { drops: [{ id: I.DYE_RED, n: 1, chance: 0.3 }] });
@@ -438,7 +440,9 @@
   planteMarine(B.LAMINAIRE, 'Laminaire', 904, { needsSupport: false, drops: [{ id: B.LAMINAIRE, n: 1 }] });
   // le squelette des récifs : corail blanc, dur, sur lequel poussent les colonies
   defBlock(B.CORAIL_BLANC, { name: 'Corail blanc', tiles: [905, 905, 905], hardness: 1.0, tool: 'pickaxe' });
-
+  // lichen luminescent : une croûte qui luit sur le sol des grottes humides (tuile 253, près des champignons lumineux)
+  defBlock(B.LICHEN_LUMINEUX, { name: 'Lichen luminescent', tiles: [253, 253, 253], hardness: 0,
+                                transparent: true, plant: true, pass: 'cutout', needsSupport: 'sol', light: 7 });
 
   // ─── minerais et structures ────────────────────────────────────────────────
   defBlock(B.GOLD_ORE, { name: "Minerai d'or", tiles: [108, 108, 108], hardness: 3.0, tool: 'pickaxe',
@@ -505,7 +509,8 @@
   defBlock(B.CRISTAL_LUMINEUX, { name: 'Cristal lumineux', tiles: [233, 233, 233], hardness: 1.2,
                                  tool: 'pickaxe', light: 11, pass: 'lumineux', sansLampe: false });
   planteMarine(B.ALGUE_LUMINEUSE, 'Algue luminescente', 234, { light: 8 });
-  planteMarine(B.PLANCTON_LUMINEUX, 'Plancton luminescent', 235, { light: 6 });
+  // état 1 : monté la nuit au-dessus d'un récif (SPEC-LUMIERE-007), il se disperse au jour
+  planteMarine(B.PLANCTON_LUMINEUX, 'Plancton luminescent', 235, { light: 6, etatMax: 1 });
   // la toile se traverse, mais on s'y englue (voir player.updateMovement)
   defBlock(B.COBWEB, { name: "Toile d'araignée", tiles: [116, 116, 116], hardness: 1.0, tool: 'sword',
                        transparent: true, plant: true, pass: 'cutout', ralentit: 0.25,

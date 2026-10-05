@@ -78,6 +78,11 @@
     var donjons = MC.Donjons.creer(N, function (x, z) {
       return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
     }, function (x, z) { return biomeAt(x, z); });
+    /* SPEC-SOUTERRAIN-003 : les structures propres à chaque biome souterrain
+       (donjons, ruines d'anciennes cités, mines abandonnées), même principe. */
+    var structuresSous = MC.Souterrain && MC.Souterrain.creerStructures ? MC.Souterrain.creerStructures(N, function (x, z) {
+      return Math.max(1, Math.min(WH - 14, heightAt(x, z)));
+    }, function (x, z) { return biomeAt(x, z); }) : null;
     /* Carte de densité humaine (L38, SPEC-DENSITE-001/002) : un seul point
        d'extension, exposé pour les zones de jeu et branché dans habitats.js
        (repartitionOk) pour que les lieux en naissent. */
@@ -502,6 +507,11 @@
           }
         }
 
+        // les structures souterraines (SPEC-SOUTERRAIN-003), sous les donjons qui les écrasent s'ils se croisent
+        if (structuresSous) structuresSous.appliquer(cx, cz, function (bx, by, bz, id) {
+          if (by <= 0 || by >= WH) return;                  // le socle reste intact
+          blocks[idx(bx - cx * CX, by, bz - cz * CZ)] = id;
+        });
         // les donjons écrasent tout : leurs murs referment les grottes qu'ils croisent
         donjons.appliquer(cx, cz, CX, CZ, function (bx, by, bz, id) {
           if (by <= 0 || by >= WH) return;                  // le socle reste intact
@@ -1169,11 +1179,14 @@
       }
     }
 
-    /* ─── les eaux de saison ──────────────────────────────────────
+    /* ─── les eaux de saison et de la nuit ──────────────────────────────────
        SPEC-SAISON-005 : en hiver, dans les régions froides, la surface des eaux
        dormantes générées (lacs, lacs de cratère, rivières calmes — MC.Eau.eauDormante)
        se prend en glace ; elle dégèle hors de l'hiver, donc dès le printemps.
-       Ce que la saison pose porte l'état ETAT_SAISON (1) — sauvegardé
+       SPEC-LUMIERE-007 : la nuit, du plancton luminescent monte au-dessus des
+       récifs (le haut d'un massif de corail, sous la surface des mers chaudes) ;
+       il se disperse au jour.
+       Ce que la saison ou la nuit posent porte l'état ETAT_SAISON (1) — sauvegardé
        avec les modifications du monde (SPEC-SAVE-024), relu après un redémarrage :
        on ne défait jamais que cela. La banquise générée et la glace du joueur
        (état 0) ne fondent jamais ; une eau posée par le joueur hors d'une colonne
@@ -1187,6 +1200,9 @@
        roulement sur les chunks chargés ; un pas toutes les EAUX_PAS secondes. */
     var EAUX_PAS = 0.25, EAUX_COLONNES = 128, EAUX_CHANGEMENTS = 24, ETAT_SAISON = 1;
     var GEL_CLIMAT_SEUIL = 0.38;           // plus froid que ça : les eaux dormantes y gèlent en hiver
+    var PLANCTON_CLIMAT_MIN = 0.6, PLANCTON_PROF_MAX = 8, PLANCTON_PART = 0.35;
+    var RECIF = {};
+    [B.CORAL_RED, B.CORAL_YELLOW, B.CORAL_BLUE, B.CORAIL_BLANC].forEach(function (id) { if (id) RECIF[id] = true; });
     var eauxT = 0, eauxChunk = 0, eauxCol = 0;
     function eauxSaisonColonne(c, col, hiver, nuit, surBloc) {
       var nat = c.eau.nature[col];
@@ -1211,7 +1227,23 @@
         if (surBloc) surBloc(wx, y, wz, B.ICE, ETAT_SAISON);
         return 1;
       }
-      return 0;
+      // plancton : au-dessus d'un récif, dans une mer chaude, la nuit
+      if (nat !== T.mer && nat !== T.ocean) return 0;
+      var yb = y;
+      while (yb > 0 && y - yb <= PLANCTON_PROF_MAX && bl[idx(lx, yb, lz)] === B.WATER) yb--;
+      var dessous = bl[idx(lx, yb, lz)];
+      if (dessous === B.PLANCTON_LUMINEUX) {
+        if (nuit || getEtat(wx, yb, wz) !== ETAT_SAISON) return 0;
+        setBlock(wx, yb, wz, B.WATER);
+        if (surBloc) surBloc(wx, yb, wz, B.WATER, 0);
+        return 1;
+      }
+      if (!nuit || !RECIF[dessous] || yb + 1 >= y || N.hash2(wx * 61 + 11, wz * 53 - 7) >= PLANCTON_PART) return 0;
+      if (Bio.climat(wx, wz).t < PLANCTON_CLIMAT_MIN) return 0;
+      setBlock(wx, yb + 1, wz, B.PLANCTON_LUMINEUX);
+      setEtat(wx, yb + 1, wz, ETAT_SAISON);
+      if (surBloc) surBloc(wx, yb + 1, wz, B.PLANCTON_LUMINEUX, ETAT_SAISON);
+      return 1;
     }
     /* Un pas des eaux de saison à l'heure `temps` ; rend le nombre de blocs changés. */
     function tickEauxSaison(temps, surBloc) {
@@ -1369,7 +1401,7 @@
       if (MC.DayCycle && temps !== undefined) {
         gelT += dt;
         if (gelT >= 1) { gelT = 0; tickSaisonSurface(MC.DayCycle.saison(temps).nom === 'hiver'); }
-        // SPEC-SAISON-005 : le serveur seul en décide (les postes passent eauxSaison: false)
+        // SPEC-SAISON-005 / SPEC-LUMIERE-007 : le serveur seul en décide (les postes passent eauxSaison: false)
         if (!(opts && opts.eauxSaison === false)) {
           eauxT += dt;
           if (eauxT >= EAUX_PAS) { eauxT = 0; tickEauxSaison(temps, surBloc); }
@@ -1536,10 +1568,10 @@
       definirIndexOverrides: definirIndexOverrides,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
-      // SPEC-SAISON-005 : gel des eaux dormantes
+      // SPEC-SAISON-005 / SPEC-LUMIERE-007 : gel des eaux dormantes, plancton de nuit
       tickEauxSaison: tickEauxSaison,
       EAUX_SAISON: { PAS: EAUX_PAS, COLONNES: EAUX_COLONNES, CHANGEMENTS: EAUX_CHANGEMENTS, ETAT: ETAT_SAISON,
-                     GEL_CLIMAT_SEUIL: GEL_CLIMAT_SEUIL },
+                     GEL_CLIMAT_SEUIL: GEL_CLIMAT_SEUIL, PLANCTON_CLIMAT_MIN: PLANCTON_CLIMAT_MIN },
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,
       voisinsCharges: voisinsCharges, marquerVoisins: marquerVoisins, estCharge: estCharge,
       chunkDe: function (cx, cz) { return chunks.get(key(cx, cz)) || null; },
@@ -1547,7 +1579,7 @@
       coffresPilles: coffresPilles, exploration: exploration, reperes: reperes, reputation: reputation,
       salleDonjon: salleDonjon, pieceDonjon: pieceDonjon, butinCoffre: butinCoffre,
       meteo: meteo, bio: Bio, echantillonLointain: echantillonLointain, habitats: habitats, routes: routes,
-      densite: densite, pnjsMorts: pnjsMorts,
+      densite: densite, pnjsMorts: pnjsMorts, structuresSouterraines: structuresSous,
       get zones() { return zones; }, zonesEtat: zonesEtat, zoneEn: zoneEn, reglesZoneEn: reglesZoneEn,
       accorderPolitiqueZone: accorderPolitiqueZone, definirFactionsPolitiques: definirFactionsPolitiques,
       coulerEau: coulerEau, get eauEnAttente() { return eauFile.size; },

@@ -5024,7 +5024,7 @@
   });
 
   // ══════════════════════════════════════════════════════════════════════════
-  // Saisons — glace des lacs et des rivières calmes (SPEC-SAISON-005)
+  // Saisons et profondeurs (SPEC-SAISON-005, SPEC-LUMIERE-007, SPEC-SOUTERRAIN-003)
   // ══════════════════════════════════════════════════════════════════════════
   /* Le premier point d'une spirale (pas de 24 blocs) autour de (x0, z0) où
      `pred(colonne, x, z)` est vrai — une prospection pure, sans générer. */
@@ -5131,6 +5131,145 @@
       key('KeyW', 'keyup');
       balayerEaux(g, printemps, function () { return false; }, 600);    // tout ce que l'hiver a gelé redevient liquide
       g.time = temps0; s.flying = false;
+      g.render.setDistance(dist0);
+      await reset(g);
+    }
+  });
+
+  e2e('SPEC-LUMIERE-007 : dans une grotte humide, champignons et lichens luminescents éclairent la roche ; la nuit, le plancton éclaire le récif', {
+        "teste": "qu'un lichen luminescent généré dans une grotte luxuriante (sous les plaines et forêts) éclaire les cases voisines dans l'éclairage calculé au maillage, sans aucune lumière du ciel, et que la nuit le balayage des eaux fait monter du plancton luminescent au-dessus d'un récif, qui éclaire à son tour l'eau autour",
+        "pourquoi": "l'audit avait trouvé le plancton jamais généré, et aucune vérification de la lumière réellement émise par les organismes",
+        "attendu": "lumière de bloc ≥ 6/15 à côté du lichen, ciel à 0 ; plancton (état 1) posé sur un corail la nuit, lumière de bloc > 0 au-dessus de lui ; captures de la grotte et du récif"
+  }, async function (g) {
+    var s = await reset(g), w = g.world, C2 = MC.Core, B = C2.B, temps0 = g.time, DL = MC.DayCycle.DAY_LENGTH;
+    var dist0 = g.render.RENDER_DIST;
+    g.render.setDistance(4);
+    try {
+      // un lichen dans les grottes humides, le plus près possible du départ
+      var lichen = null, cx0 = Math.floor(s.pos.x / 16), cz0 = Math.floor(s.pos.z / 16);
+      for (var r = 0; r <= 12 && !lichen; r++) for (var a = -r; a <= r && !lichen; a++) for (var b = -r; b <= r && !lichen; b++) {
+        if (Math.max(Math.abs(a), Math.abs(b)) !== r) continue;
+        var ch = w.getChunk(cx0 + a, cz0 + b, true), bl = ch.blocks;
+        for (var i = 0; i < bl.length && !lichen; i++) {
+          if (bl[i] !== B.LICHEN_LUMINEUX) continue;
+          var lx = i % 16, lz = ((i / 16) | 0) % 16, ly = (i / 256) | 0;
+          lichen = { x: ch.cx * 16 + lx, y: ly, z: ch.cz * 16 + lz };
+        }
+      }
+      A.ok(lichen, 'un lichen luminescent dans une grotte proche');
+      chargerAutour(g, lichen.x, lichen.z, 1);
+      // une case libre à côté, au sol, où se tenir face au lichen
+      var place = null;
+      for (var d = 2; d <= 4 && !place; d++) [[d, 0], [-d, 0], [0, d], [0, -d]].forEach(function (q) {
+        if (place) return;
+        var x = lichen.x + q[0], z = lichen.z + q[1], y = lichen.y;
+        if (w.getBlock(x, y, z) === 0 && w.getBlock(x, y + 1, z) === 0 && C2.isSolid(w.getBlock(x, y - 1, z))) place = { x: x, y: y, z: z, dx: -q[0], dz: -q[1] };
+      });
+      A.ok(place, 'de quoi se tenir près du lichen');
+      g.time = heureDans(0, true);
+      s.flying = true; s.vel.x = s.vel.y = s.vel.z = 0;
+      s.pos.x = place.x + 0.5; s.pos.y = place.y; s.pos.z = place.z + 0.5;
+      s.yaw = Math.atan2(-place.dx, -place.dz); s.pitch = -0.35;
+      g.streamChunks(true);
+      var c = w.getChunk(Math.floor(lichen.x / 16), Math.floor(lichen.z / 16));
+      A.ok(await sonderE2E(function () { return !!c.lumiere; }, 8000), 'l\'éclairage du chunk est calculé');
+      var chunkDe = function (a2, b2) { return w.chunks.get(w.key(a2, b2)) || null; };
+      var autour = MC.Lumiere.lumiereEn(chunkDe, lichen.x + 0.5, lichen.y + 1.5, lichen.z + 0.5);
+      A.ok(autour.bloc >= 6 / 15, 'le lichen éclaire la case au-dessus de lui (lumière ' + (autour.bloc * 15).toFixed(0) + '/15)');
+      A.equal(MC.Lumiere.lumiereEn(chunkDe, lichen.x + 0.5, lichen.y + 1.5, lichen.z + 0.5).ciel, 0, 'sans le moindre jour : c\'est une grotte');
+      for (var f = 0; f < 20; f++) await frames(1);
+      capture('grotte-humide-lichen');
+
+      // la nuit, le plancton sur un récif des mers chaudes
+      var recifPt = null;
+      for (var rr = 0; rr <= 9000 && !recifPt; rr += 32) {
+        var nn = Math.max(1, Math.round(rr * 2 * Math.PI / 32));
+        for (var kk = 0; kk < nn && !recifPt; kk++) {
+          var xx = Math.round(Math.cos(kk / nn * 2 * Math.PI) * rr), zz = Math.round(Math.sin(kk / nn * 2 * Math.PI) * rr);
+          if (w.biomeAt(xx, zz).id === 'ocean_chaud') recifPt = { x: xx, z: zz };
+        }
+      }
+      A.ok(recifPt, 'un récif corallien dans ce monde');
+      chargerAutour(g, recifPt.x, recifPt.z, 2);
+      var nuit = heureDans(MC.DayCycle.YEAR_LENGTH * 0.3, true);
+      g.time = nuit;
+      var plancton = null;
+      balayerEaux(g, nuit, function () {
+        if (plancton) return true;
+        for (var a3 = -24; a3 <= 24 && !plancton; a3++) for (var b3 = -24; b3 <= 24 && !plancton; b3++) {
+          var x3 = recifPt.x + a3, z3 = recifPt.z + b3, y3 = surfaceDe(w, x3, z3);
+          for (var y4 = y3; y4 > y3 - 10; y4--) if (w.getBlock(x3, y4, z3) === B.PLANCTON_LUMINEUX) { plancton = { x: x3, y: y4, z: z3 }; break; }
+        }
+        return !!plancton;
+      }, 3000);
+      A.ok(plancton, 'la nuit, du plancton luminescent est monté au-dessus du récif');
+      balayerEaux(g, nuit, function () { return false; }, 400);       // tout le récif alentour
+      A.equal(w.getEtat(plancton.x, plancton.y, plancton.z), 1, 'posé par la nuit (état 1)');
+      // vu d'au-dessus de la mer, à quelques blocs, penché vers le récif
+      s.pos.x = plancton.x + 2.5; s.pos.y = surfaceDe(w, plancton.x, plancton.z) + 2; s.pos.z = plancton.z + 0.5; s.yaw = Math.PI / 2; s.pitch = -1.2;
+      A.ok(MC.DayCycle.isNight(g.time), 'il fait nuit (soleil ' + MC.DayCycle.sunIntensity(g.time).toFixed(2) + ')');
+      g.streamChunks(true);
+      var cp = w.getChunk(Math.floor(plancton.x / 16), Math.floor(plancton.z / 16));
+      A.ok(await sonderE2E(function () { return !!cp.lumiere && MC.Lumiere.lumiereEn(chunkDe, plancton.x + 0.5, plancton.y + 1.5, plancton.z + 0.5).bloc > 0; }, 8000),
+           'le plancton éclaire l\'eau au-dessus de lui');
+      for (var f2 = 0; f2 < 20; f2++) await frames(1);
+      capture('recif-plancton-la-nuit');
+      // au jour, il se disperse
+      var jour = heureDans(MC.DayCycle.YEAR_LENGTH * 0.3, false);
+      A.ok(balayerEaux(g, jour, function () { return w.getBlock(plancton.x, plancton.y, plancton.z) === B.WATER; }), 'au jour, le plancton se disperse');
+    } finally {
+      g.time = temps0; s.flying = false;
+      g.render.setDistance(dist0);
+      await reset(g);
+    }
+  });
+
+  e2e('SPEC-SOUTERRAIN-003 : une mine abandonnée sous terre — ses galeries, ses rails et ses étais, dans les matériaux de son biome', {
+        "teste": "qu'une mine abandonnée des structures souterraines (MC.Souterrain.creerStructures) est bien posée dans les chunks générés près du départ : le joueur, placé dans une galerie, a un rail sous les pieds, des étais (poteaux de bois et poutre de planches) le long de la galerie et des lumières",
+        "pourquoi": "l'audit avait trouvé aucune structure propre aux biomes souterrains ; seuls les donjons de surface existaient",
+        "attendu": "un rail à la case du joueur, au moins deux étais dans les dix blocs devant lui, une lumière à moins de huit blocs ; captures de la galerie et de la chambre"
+  }, async function (g) {
+    var s = await reset(g), w = g.world, B = MC.Core.B;
+    var dist0 = g.render.RENDER_DIST;
+    g.render.setDistance(4);
+    try {
+      var S = w.structuresSouterraines;
+      A.ok(S, 'le monde porte ses structures souterraines');
+      var mines = S.dansZone(s.pos.x - 1500, s.pos.z - 1500, s.pos.x + 1500, s.pos.z + 1500)
+        .filter(function (m) { return m.genre === 'mine' && !m.noye; })
+        .sort(function (a, b) { return Math.hypot(a.x - s.pos.x, a.z - s.pos.z) - Math.hypot(b.x - s.pos.x, b.z - s.pos.z); });
+      A.gt(mines.length, 0, 'une mine abandonnée à moins de 1500 blocs');
+      var mine = null;
+      for (var i = 0; i < mines.length && !mine; i++) {
+        var m = mines[i];
+        chargerAutour(g, m.x + 12, m.z, 1);
+        if (w.getBlock(m.x + 12, m.y + 1, m.z) === B.RAIL && w.getBlock(m.x + 12, m.y + 2, m.z) === 0) mine = m;
+      }
+      A.ok(mine, 'une mine dont la galerie est intacte (aucun donjon de surface ne l\'a écrasée)');
+      // dans la galerie est, tourné vers la chambre (yaw π/2 : vers -x)
+      s.flying = true; s.vel.x = s.vel.y = s.vel.z = 0;
+      s.pos.x = mine.x + 14.5; s.pos.y = mine.y + 1; s.pos.z = mine.z + 0.5; s.yaw = Math.PI / 2; s.pitch = -0.1;
+      g.streamChunks(true);
+      A.equal(w.getBlock(Math.floor(s.pos.x), mine.y + 1, Math.floor(s.pos.z)), B.RAIL, 'un rail sous les pieds');
+      var etais = 0, lumieres = 0;
+      for (var d = 0; d <= 10; d++) {
+        var x = Math.floor(s.pos.x) - d;
+        if (w.getBlock(x, mine.y + 1, mine.z + 1) === B.LOG && w.getBlock(x, mine.y + 1, mine.z - 1) === B.LOG &&
+            w.getBlock(x, mine.y + 3, mine.z) === B.PLANKS) etais++;
+      }
+      for (var dx = -8; dx <= 8; dx++) for (var dz = -2; dz <= 2; dz++) for (var dy = 0; dy <= 4; dy++) {
+        if (MC.Core.lampeDe(w.getBlock(Math.floor(s.pos.x) + dx, mine.y + dy, mine.z + dz)) > 0) lumieres++;
+      }
+      A.ok(etais >= 2, 'des étais le long de la galerie (' + etais + ')');
+      A.gt(lumieres, 0, 'une lumière dans la galerie');
+      A.ok(mine.nom && mine.biome, 'mine propre à son biome : ' + mine.nom + ' (' + mine.biome + ')');
+      for (var f = 0; f < 25; f++) await frames(1);
+      capture('mine-galerie-rails-etais');
+      s.pos.x = mine.x + 3.5; s.yaw = Math.PI / 2 + 0.6;
+      for (var f2 = 0; f2 < 15; f2++) await frames(1);
+      capture('mine-chambre');
+    } finally {
+      s.flying = false;
       g.render.setDistance(dist0);
       await reset(g);
     }

@@ -32,12 +32,19 @@
      436e31c), avec les modules de ce banc (tests/sources-node.js, MC.Eau compris) :
      [cx, cz, empreinte, lumières enregistrées]. Le dernier chunk de
      chaque graine est celui du premier lieu habité à moins de 600 blocs du point
-     d'apparition (lieux, routes, états de bloc). */
+     d'apparition (lieux, routes, états de bloc).
+     Relevé de nouveau, d'un bloc (getChunk) ET par tranches, à l'arrivée des
+     structures souterraines (SPEC-SOUTERRAIN-003), des lichens des grottes
+     humides et des algues des abysses (SPEC-LUMIERE-007) : changent 7 (0,0),
+     (37,-12), (10,-22) ; 4242 (0,0), (-2,0) ; 99991 (0,0), (37,-12), (-17,25) ;
+     20260921 (0,0), (37,-12), (150,150) — et seulement aux cases nouvelles
+     (preuve masquée : tests/spec-souterrain.js, EMPREINTES_L35). Les lumières
+     enregistrées augmentent d'autant (algues et lichens luisent). */
   var REFERENCE = {
-    7: [[0, 0, '8b45d14b', 4], [-1, -12, '77386bce', 5], [37, -12, '8237b9b8', 23], [-80, 45, 'c2035fe3', 23], [150, 150, '451de95e', 23], [10, -22, '5bca1605', 63]],
-    4242: [[0, 0, '7a71105d', 25], [-2, 0, '8346ecc', 50], [37, -12, 'a859145c', 57], [-80, 45, '1560c1d2', 57], [150, 150, 'aaa6f2d0', 57], [-12, 15, '3bf96d8a', 60]],
-    99991: [[0, 0, '60a3ee07', 2], [-1, 10, 'e2f9b02a', 3], [37, -12, '2f1e63f0', 11], [-80, 45, '1a5e9649', 14], [150, 150, '63b50a80', 14], [-17, 25, 'a6fc27c9', 40]],
-    20260921: [[0, 0, 'b4092a2c', 17], [0, 3, 'c0e165a3', 17], [37, -12, '985b85a0', 44], [-80, 45, '4140b2c2', 44], [150, 150, '3a0d097a', 45], [-16, 14, '54e49b8b', 49]],
+    7: [[0, 0, '1f260416', 13], [-1, -12, '77386bce', 14], [37, -12, '617673f5', 32], [-80, 45, 'c2035fe3', 32], [150, 150, '451de95e', 32], [10, -22, 'b0df4830', 72]],
+    4242: [[0, 0, '32d4602d', 25], [-2, 0, '6f99f929', 50], [37, -12, 'a859145c', 57], [-80, 45, '1560c1d2', 57], [150, 150, 'aaa6f2d0', 57], [-12, 15, '3bf96d8a', 60]],
+    99991: [[0, 0, '9cd9a29a', 7], [-1, 10, 'e2f9b02a', 8], [37, -12, '375389d9', 16], [-80, 45, '1a5e9649', 19], [150, 150, '63b50a80', 19], [-17, 25, '917b1571', 45]],
+    20260921: [[0, 0, '961e68e9', 18], [0, 3, 'c0e165a3', 18], [37, -12, 'f92dd2c1', 45], [-80, 45, '4140b2c2', 45], [150, 150, '310ae2cf', 46], [-16, 14, '54e49b8b', 50]],
   };
 
   describe('Travaux du serveur sous budget par tic — génération, lieux, sauvegarde, attente du sol', {

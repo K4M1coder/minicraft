@@ -156,7 +156,7 @@
       var R = registre();
       function plage(nom) { return C.PLAGES_IDS.filter(function (p) { return p.nom === nom; })[0]; }
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('formes-l24')), C.B.ESCALIER_POUTRE_JUNGLE + 1, 'formes : juste après le dernier escalier de matériau (SPEC-CONSTR-001)');
-      A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('flore-marine-l35')), C.B.CORAIL_BLANC + 1, 'flore marine : après le corail blanc');
+      A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('flore-marine-l35')), C.B.LICHEN_LUMINEUX + 1, 'flore marine : après le lichen luminescent (le dernier venu)');
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('interieur')), C.B.SOCLE + 1, 'intérieur : après le socle');
       A.equal(prochainLibre(R.objets, R.retires.objets, plage('objets-l24')), C.I.BRIQUET + 1, 'objets L24 : après le briquet');
       A.equal(prochainLibre(R.blocs, R.retires.blocs, plage('blocs-origine')), null, 'plage d\'origine pleine (127 ids)');
@@ -291,6 +291,7 @@
       a.TRAPPE_FERMEE = 1; a.TRAPPE_OUVERTE = 1;        // dernier signal vu (SPEC-MECA-006)
       a.FEU = 29;                                       // âge < MC.Feu.AGE_MAX (30)
       a.ICE = 1;                                        // glace de saison (SPEC-SAISON-005)
+      a.PLANCTON_LUMINEUX = 1;                          // plancton monté la nuit (SPEC-LUMIERE-007)
       var circuits = {
         FIL_SIGNAL: 14, CABLE_ENERGIE: 14, LEVIER_CIRCUIT: 1, BOUTON_CIRCUIT: 1, PLAQUE_PRESSION: 1,
         REPETEUR_CIRCUIT: 3,                            // 1 | (délai 1 << 1)
@@ -472,8 +473,8 @@
       });
     });
 
-    /* Le gel des eaux dormantes (world.tickEauxSaison) : un lac froid en hiver,
-       dans un vrai monde généré ; on
+    /* Le gel des eaux dormantes et le plancton de nuit (world.tickEauxSaison) : un
+       lac froid en hiver, un récif chaud la nuit, dans un vrai monde généré ; on
        relève chaque bloc posé et l'état qui l'accompagne (signalé à surBloc). */
     var balayerEauxSaison = une('eaux', function (r) {
       var w = MC.createWorld(20260921), DC = MC.DayCycle;
@@ -488,7 +489,8 @@
         return null;
       }
       var lac = spirale(function (x, z) { var c = w.bio.colonne(x, z); return c.climat.lac && c.climat.t < 0.38 && c.climat.t >= 0.26 && c.eau > c.h; });
-      [lac].forEach(function (p) {
+      var recif = spirale(function (x, z) { return w.biomeAt(x, z).id === 'ocean_chaud'; });
+      [lac, recif].forEach(function (p) {
         if (!p) return;
         for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) w.getChunk(Math.floor(p[0] / 16) + a, Math.floor(p[1] / 16) + b, true);
       });

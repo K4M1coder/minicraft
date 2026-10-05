@@ -963,6 +963,17 @@
       for (var i = 0; i < 3; i++) px(o[0], o[1], 5 + i * 3, 3, '#2a9a7a');
       for (var y = 3; y < 15; y++) for (var i2 = 0; i2 < 3; i2++) px(o[0], o[1], 5 + i2 * 3, y, y % 3 ? '#2a9a7a' : '#8affe0');
     })();
+    (function () {                                                    // 253 lichen luminescent (SPEC-LUMIERE-007)
+      var o = clear(253);
+      // une croûte basse, en taches arrondies, d'un vert d'eau qui luit
+      for (var k = 0; k < 7; k++) {
+        var cx = 2 + ((rnd() * 12) | 0), cy = 9 + ((rnd() * 5) | 0), r = 1 + ((rnd() * 2) | 0);
+        g.fillStyle = k % 3 ? '#5fd8a0' : '#a8ffd8';
+        g.beginPath(); g.ellipse(o[0] + cx, o[1] + cy, r + 1, r, 0, 0, 7); g.fill();
+      }
+      g.fillStyle = '#e8fff4';
+      for (var k2 = 0; k2 < 5; k2++) g.fillRect(o[0] + 2 + ((rnd() * 12) | 0), o[1] + 10 + ((rnd() * 4) | 0), 1, 1);
+    })();
     (function () {                                                    // 235 plancton luminescent
       var o = clear(235);
       for (var k = 0; k < 10; k++) {
