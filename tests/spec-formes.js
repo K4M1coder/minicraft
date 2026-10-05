@@ -1,4 +1,4 @@
-/* spec-formes.js — tests de L24 (SPEC-CONSTR-001 à 004) : escaliers, dalles,
+/* spec-formes.js — tests de L24 (SPEC-CONSTR-001 à 004 ; arêtiers et noues de SPEC-CONSTR-003) : escaliers, dalles,
    clôtures/murets/vitres/rambardes. Un bloc d'orientation, la géométrie qui en
    découle, les angles automatiques, la fusion des dalles, les raccords aux
    voisins, la montée sans sauter, et le fil de bout en bout (pose/casse via
@@ -135,20 +135,108 @@
 
     it('SPEC-CONSTR-001 : formeDepuisVoisins tourne l\'angle vers l\'extérieur ou l\'intérieur', function () {
       // orientation 0 (contremarche au nord, ouverture au sud) : le voisin
-      // "avant" est au sud (dir 2), le voisin "arrière" au nord (dir 0).
+      // "avant" (en bas de la marche) est au sud, le voisin "arrière" (en haut) au nord.
+      // Un voisin perpendiculaire en haut fait un angle extérieur, en bas un angle intérieur.
       A.equal(F.formeDepuisVoisins(0, false, null, null), F.DROIT, 'sans voisin : droit');
-      A.equal(F.formeDepuisVoisins(0, false, { orientation: 1, inverse: false }, null), F.EXT_G,
-              'voisin avant perpendiculaire (est) : coin extérieur gauche');
-      A.equal(F.formeDepuisVoisins(0, false, { orientation: 3, inverse: false }, null), F.EXT_D,
-              'voisin avant perpendiculaire (ouest) : coin extérieur droit');
-      A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 1, inverse: false }), F.INT_G,
-              'voisin arrière perpendiculaire (est) : coin intérieur gauche');
-      A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 3, inverse: false }), F.INT_D,
-              'voisin arrière perpendiculaire (ouest) : coin intérieur droit');
+      A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 1, inverse: false }), F.EXT_D,
+              'voisin arrière perpendiculaire (montant vers l\'est) : coin extérieur, quart haut au nord-est');
+      A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 3, inverse: false }), F.EXT_G,
+              'voisin arrière perpendiculaire (montant vers l\'ouest) : coin extérieur, quart haut au nord-ouest');
+      A.equal(F.formeDepuisVoisins(0, false, { orientation: 1, inverse: false }, null), F.INT_D,
+              'voisin avant perpendiculaire (montant vers l\'est) : coin intérieur, quart ajouté au sud-est');
+      A.equal(F.formeDepuisVoisins(0, false, { orientation: 3, inverse: false }, null), F.INT_G,
+              'voisin avant perpendiculaire (montant vers l\'ouest) : coin intérieur, quart ajouté au sud-ouest');
       A.equal(F.formeDepuisVoisins(0, false, { orientation: 2, inverse: false }, null), F.DROIT,
               'voisin avant de même axe (parallèle) : reste droit');
       A.equal(F.formeDepuisVoisins(0, false, { orientation: 3, inverse: true }, null), F.DROIT,
               'voisin d\'une autre moitié (inversé) ignoré');
+      // une rangée droite qui continue du côté où l'angle tournerait l'en empêche
+      A.equal(F.formeDepuisVoisins(0, false, null, { orientation: 1, inverse: false },
+              function (dir) { return dir === 3 ? { orientation: 0, inverse: false } : null; }), F.DROIT,
+              'l\'escalier voisin de même orientation à l\'ouest garde la rangée droite');
+    });
+
+    /* ── SPEC-CONSTR-003 : arêtiers et noues ─────────────────────────────────
+       Un toit se raccorde sans marche ni trou quand, entre deux escaliers
+       voisins à la même hauteur, la partie HAUTE de l'un touche la face
+       commune exactement sur le même segment que celle de l'autre. */
+    function profilHaut(etat, dir) {
+      // segments (le long de la face) occupés par les boîtes hautes sur la face `dir`
+      var segs = [];
+      F.boitesEscalier(etat).forEach(function (b) {
+        if (b.y0 < 0.5) return;
+        if (dir === 0 && b.z0 === 0) segs.push([b.x0, b.x1]);
+        if (dir === 2 && b.z1 === 1) segs.push([b.x0, b.x1]);
+        if (dir === 1 && b.x1 === 1) segs.push([b.z0, b.z1]);
+        if (dir === 3 && b.x0 === 0) segs.push([b.z0, b.z1]);
+      });
+      // fusion des segments contigus
+      segs.sort(function (a, b) { return a[0] - b[0]; });
+      var out = [];
+      segs.forEach(function (s) {
+        var d = out[out.length - 1];
+        if (d && s[0] <= d[1]) d[1] = Math.max(d[1], s[1]); else out.push([s[0], s[1]]);
+      });
+      return JSON.stringify(out);
+    }
+    function mondeEscaliers(cases) {
+      var w = flatWorld(-1, 0);
+      cases.forEach(function (c) { w.setBlock(c[0], 10, c[1], B.ESCALIER_TUILES); w.setEtat(c[0], 10, c[1], F.packEscalier(c[2], false, F.DROIT)); });
+      cases.forEach(function (c) { F.actualiserZoneEscalier(w, c[0], 10, c[1]); });
+      return w;
+    }
+    function raccordsRates(w, cases) {
+      var rates = [];
+      cases.forEach(function (c) {
+        for (var dir = 0; dir < 4; dir++) {
+          var nx = c[0] + F.DIRS[dir][0], nz = c[1] + F.DIRS[dir][1];
+          if (!F.lireEscalier(w, nx, 10, nz)) continue;
+          var a = profilHaut(w.getEtat(c[0], 10, c[1]), dir), b = profilHaut(w.getEtat(nx, 10, nz), (dir + 2) & 3);
+          if (a !== b) rates.push(c[0] + ',' + c[1] + ' → ' + nx + ',' + nz + ' : ' + a + ' / ' + b);
+        }
+      });
+      return rates;
+    }
+
+    it('SPEC-CONSTR-003 : un anneau d\'escaliers (toit en croupe) forme de lui-même ses quatre arêtiers, sans marche entre deux pans', function () {
+      // anneau 4 × 4 autour de (1..2, 1..2), chaque côté montant vers l'intérieur
+      var cases = [];
+      for (var x = 0; x <= 3; x++) { cases.push([x, 0, 2]); cases.push([x, 3, 0]); }   // pans nord (z = 0, montent vers +z) et sud (z = 3, vers -z)
+      for (var z = 1; z <= 2; z++) { cases.push([0, z, 1]); cases.push([3, z, 3]); }   // pans ouest et est
+      var w = mondeEscaliers(cases);
+      [[0, 0], [3, 0], [0, 3], [3, 3]].forEach(function (c) {
+        var f = F.unpackEscalier(w.getEtat(c[0], 10, c[1])).forme;
+        A.ok(f === F.EXT_G || f === F.EXT_D, 'arêtier en ' + c + ' : coin extérieur (forme ' + f + ')');
+        A.equal(F.boitesEscalier(w.getEtat(c[0], 10, c[1])).length, 2, 'arêtier : une marche et un quart');
+      });
+      // le quart haut de l'arêtier sud-ouest regarde le centre du toit (nord-est de la case… ici +x,+z)
+      var q = F.boitesEscalier(w.getEtat(0, 10, 0))[1];
+      A.ok(q.x0 === 0.5 && q.z0 === 0.5, 'le quart haut de l\'arêtier tourné vers le faîtage : ' + JSON.stringify(q));
+      A.deep(raccordsRates(w, cases), [], 'les pans se raccordent sur chaque arête');
+      [[1, 0], [2, 0], [0, 1], [0, 2]].forEach(function (c) {
+        A.equal(F.unpackEscalier(w.getEtat(c[0], 10, c[1])).forme, F.DROIT, 'pan courant droit en ' + c);
+      });
+    });
+
+    it('SPEC-CONSTR-003 : deux pans qui se rencontrent en angle rentrant forment une noue (coin intérieur), sans trou', function () {
+      // un L : un pan montant vers le sud le long de z = 3 (x de 0 à 3), un pan montant vers l'est le long de x = 3 (z de 0 à 2)
+      // — le creux est au nord-ouest : la case (3, 3), au pied des deux pans, est l'angle rentrant (la noue)
+      var cases = [];
+      for (var x = 0; x <= 3; x++) cases.push([x, 3, 2]);
+      for (var z = 0; z <= 2; z++) cases.push([3, z, 1]);
+      var w = mondeEscaliers(cases);
+      var f = F.unpackEscalier(w.getEtat(3, 10, 3)).forme;
+      A.ok(f === F.INT_G || f === F.INT_D, 'noue en (3,3) : coin intérieur (forme ' + f + ')');
+      A.equal(F.boitesEscalier(w.getEtat(3, 10, 3)).length, 3, 'noue : marche, demi-marche haute et quart ajouté');
+      A.deep(raccordsRates(w, cases), [], 'les deux pans se raccordent dans la noue');
+    });
+
+    it('SPEC-CONSTR-003 : poser ou casser un arêtier réajuste ses voisins (angles automatiques en jeu)', function () {
+      var cases = [[0, 0, 2], [1, 0, 2], [0, 1, 1]];
+      var w = mondeEscaliers(cases);
+      A.ok([F.EXT_G, F.EXT_D].indexOf(F.unpackEscalier(w.getEtat(0, 10, 0)).forme) >= 0, 'coin formé');
+      w.setBlock(0, 10, 1, 0); F.actualiserZoneEscalier(w, 0, 10, 1);
+      A.equal(F.unpackEscalier(w.getEtat(0, 10, 0)).forme, F.DROIT, 'le pan voisin cassé : l\'arêtier redevient droit');
     });
 
     it('SPEC-CONSTR-001 : posé, un escalier s\'oriente selon le regard, dans les quatre directions', function () {

@@ -85,19 +85,34 @@
     return [bas, haut, extra];
   }
 
-  /* Forme d'angle depuis les voisins avant (côté ouvert, où l'on grimpe) et
-     arrière (côté contremarche), chacun {orientation, inverse} d'un escalier
-     voisin ou null. Un voisin perpendiculaire devant tourne le coin vers
-     l'extérieur ; derrière, il le referme vers l'intérieur — l'algorithme
-     classique des escaliers de blocs voxel. */
-  function formeDepuisVoisins(orientation, inverse, avant, arriere) {
-    var facing = opp(orientation);
-    function perp(o) { return axeEW(o) !== axeEW(facing); }
-    if (avant && avant.inverse === inverse && perp(avant.orientation)) {
-      return avant.orientation === ccw(facing) ? EXT_G : EXT_D;
+  /* Forme d'angle depuis les voisins avant (côté ouvert, en bas de la
+     marche) et arrière (côté contremarche, en haut), chacun {orientation,
+     inverse} d'un escalier voisin ou null — l'algorithme classique des
+     escaliers de blocs voxel (SPEC-CONSTR-001/003) :
+     - un voisin perpendiculaire DERRIÈRE (en haut) fait un angle EXTÉRIEUR :
+       la marche haute se réduit au quart tourné vers lui — l'arêtier d'un
+       toit en croupe, l'angle saillant d'un perron ;
+     - un voisin perpendiculaire DEVANT (en bas) fait un angle INTÉRIEUR : la
+       marche haute gagne le quart tourné vers lui — la noue où deux pans se
+       rejoignent, l'angle rentrant d'un gradin.
+     `lateral(dir)` (facultatif) lit l'escalier voisin dans la direction
+     `dir` : un angle ne se forme pas si, du côté où il tournerait, un
+     escalier de même orientation continue la rangée droite (sinon une
+     rangée longeant un coin se déformerait sur toute sa longueur).
+     Correctif de L24 : avant ce lot, les deux cas étaient inversés (le
+     voisin du haut fermait un angle intérieur) et les arêtiers d'un toit en
+     croupe ne se raccordaient pas. */
+  function formeDepuisVoisins(orientation, inverse, avant, arriere, lateral) {
+    function perp(o) { return axeEW(o) !== axeEW(orientation); }
+    function rangeeDroite(dir) {
+      var l = lateral ? lateral(dir) : null;
+      return !!l && l.orientation === orientation && l.inverse === inverse;
     }
-    if (arriere && arriere.inverse === inverse && perp(arriere.orientation)) {
-      return arriere.orientation === ccw(facing) ? INT_G : INT_D;
+    if (arriere && arriere.inverse === inverse && perp(arriere.orientation) && !rangeeDroite(opp(arriere.orientation))) {
+      return arriere.orientation === cw(orientation) ? EXT_D : EXT_G;
+    }
+    if (avant && avant.inverse === inverse && perp(avant.orientation) && !rangeeDroite(avant.orientation)) {
+      return avant.orientation === cw(orientation) ? INT_D : INT_G;
     }
     return DROIT;
   }
@@ -117,7 +132,9 @@
     var pa = DIRS[facing], pr = DIRS[e.orientation];
     var avant = lireEscalier(world, x + pa[0], y, z + pa[1]);
     var arriere = lireEscalier(world, x + pr[0], y, z + pr[1]);
-    var forme = formeDepuisVoisins(e.orientation, e.inverse, avant, arriere);
+    var forme = formeDepuisVoisins(e.orientation, e.inverse, avant, arriere, function (dir) {
+      return lireEscalier(world, x + DIRS[dir][0], y, z + DIRS[dir][1]);
+    });
     if (forme === e.forme) return false;
     world.setEtat(x, y, z, packEscalier(e.orientation, e.inverse, forme));
     return true;

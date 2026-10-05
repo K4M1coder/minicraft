@@ -306,28 +306,183 @@
       A.equal(H.stylePour('pics_glaces').forme, 'dome', 'dôme des igloos');
     });
 
-    it('SPEC-INTERIEUR-001 : tout bâtiment généré est meublé selon sa fonction, et aucun n est creux', function () {
-      var w = monde(), B = C.B, MEUBLES = [B.LIT, B.TABLE, B.CHAISE, B.ARMOIRE, B.ETAGERE, B.BIBLIOTHEQUE, B.TAPIS, B.LAMPE, B.VASE, B.PRESENTOIR, B.SOCLE, B.FOYER];
-      var vus = {}, parType = {};
-      lieux(w, 'ville', 6000).concat(lieux(w, 'village', 3000)).slice(0, 12).forEach(function (l) {
-        var acc = accesseurLieu(l);
-        l.batiments.forEach(function (bat) {
-          if (['place', 'marche', 'ferme', 'loisirs', 'port'].indexOf(bat.type) >= 0) return;   // à ciel ouvert : pas d intérieur
-          var n = 0, sortes = {};
-          for (var x = bat.x0 + 1; x < bat.x1; x++) for (var z = bat.z0 + 1; z < bat.z1; z++) for (var y = bat.y0; y < bat.y1; y++) {
-            var id = acc.getBlock(x, y, z);
-            if (MEUBLES.indexOf(id) >= 0) { n++; sortes[id] = 1; }
-          }
-          A.gt(n, 1, bat.type + ' (' + (bat.plan || '') + ') n est pas creux : ' + n + ' meubles');
-          (parType[bat.type] = parType[bat.type] || {});
-          Object.keys(sortes).forEach(function (k) { parType[bat.type][k] = 1; vus[k] = 1; });
+    /* ── SPEC-CONSTR-003 : toitures de chaque style, raccords, couverture ── */
+    function profilHaut(etat, dir) {
+      var segs = [];
+      Fo.boitesEscalier(etat).forEach(function (b) {
+        if (b.y0 < 0.5) return;
+        if (dir === 0 && b.z0 === 0) segs.push([b.x0, b.x1]);
+        if (dir === 2 && b.z1 === 1) segs.push([b.x0, b.x1]);
+        if (dir === 1 && b.x1 === 1) segs.push([b.z0, b.z1]);
+        if (dir === 3 && b.x0 === 0) segs.push([b.z0, b.z1]);
+      });
+      segs.sort(function (a, b) { return a[0] - b[0]; });
+      var out = [];
+      segs.forEach(function (s) { var d = out[out.length - 1]; if (d && s[0] <= d[1]) d[1] = Math.max(d[1], s[1]); else out.push([s[0], s[1]]); });
+      return JSON.stringify(out);
+    }
+    /* Les escaliers de toiture d'un lieu : chaque paire de voisins à la même
+       hauteur se raccorde (la partie haute de l'un touche la face commune sur
+       le même segment que celle de l'autre), et la règle d'angle du jeu
+       (Formes.actualiserEscalier, celle d'une pose à la main) ne changerait
+       rien : les angles générés sont ceux qu'on obtient en jeu. */
+    function controlerToiture(l) {
+      var st = H.stylePour(l.biome, l.kind === 'ville' || l.kind === 'megapole');
+      var acc = accesseurLieu(l), cases = [], formes = {}, rates = [], reajustes = 0;
+      var copie = { getBlock: acc.getBlock, getEtat: acc.getEtat, setEtat: function () { reajustes++; } };
+      l.blocs.forEach(function (a) {
+        for (var i = 0; i < a.length; i += 5) {
+          var df = C.BLOCKS[a[i + 3]];
+          if (df && df.forme === 'escalier' && df.mat === st.toit) cases.push([a[i], a[i + 1], a[i + 2]]);
+        }
+      });
+      cases.forEach(function (c) {
+        var e = acc.getEtat(c[0], c[1], c[2]);
+        var f = Fo.unpackEscalier(e).forme; formes[f] = (formes[f] || 0) + 1;
+        Fo.actualiserEscalier(copie, c[0], c[1], c[2]);
+        for (var dir = 0; dir < 4; dir++) {
+          var nx = c[0] + Fo.DIRS[dir][0], nz = c[2] + Fo.DIRS[dir][1];
+          var dn = C.BLOCKS[acc.getBlock(nx, c[1], nz)];
+          if (!dn || dn.forme !== 'escalier') continue;
+          var a = profilHaut(e, dir), b = profilHaut(acc.getEtat(nx, c[1], nz), (dir + 2) & 3);
+          if (a !== b) rates.push(c.join(',') + ' → ' + nx + ',' + nz + ' ' + a + '/' + b);
+        }
+      });
+      return { st: st, n: cases.length, formes: formes, rates: rates, reajustes: reajustes, acc: acc };
+    }
+    // les volumes couverts : chaque colonne d'un bâtiment fermé a un toit au-dessus de ses murs
+    function colonnesDecouvertes(acc, bat) {
+      var haut = bat.type === 'ferme' ? bat.y0 + 3 : bat.y0 + 4 * (bat.etages || 1), trous = [];
+      var x0 = bat.type === 'ferme' ? bat.grange.x0 : bat.x0, x1 = bat.type === 'ferme' ? bat.grange.x1 : bat.x1;
+      var z0 = bat.type === 'ferme' ? bat.grange.z0 : bat.z0, z1 = bat.type === 'ferme' ? bat.grange.z1 : bat.z1;
+      for (var x = x0; x <= x1; x++) for (var z = z0; z <= z1; z++) {
+        var couvert = false;
+        for (var y = haut; y <= bat.y1 + 2 && !couvert; y++) if (acc.getBlock(x, y, z)) couvert = true;
+        if (!couvert) trous.push(x + ',' + z);
+      }
+      return trous;
+    }
+    var STYLES_PENTE = ['plaines', 'foret', 'taiga', 'savane', 'jungle', 'marais', 'montagnes'];
+
+    it('SPEC-CONSTR-003 : chaque style en pente couvre ses bâtiments de pans d\'escaliers, faîtages, arêtiers (croupe) et noues (plan en L), tous raccordés', function () {
+      var bilan = {};
+      STYLES_PENTE.forEach(function (sc) {
+        [false, true].forEach(function (urbain) {
+          var l = urbain ? monde().habitats.batirPourEssai('ville', sc, true, 3, 2) : monde().habitats.batirPourEssai('village', sc, false, 5, 7);
+          l.biome = sc;
+          var r = controlerToiture(l);
+          var cle = sc + (urbain ? '/ville' : '/village');
+          bilan[cle] = r.formes;
+          A.gt(r.n, 20, cle + ' : des escaliers de toiture (' + r.n + ')');
+          A.deep(r.rates.slice(0, 5), [], cle + ' : pans raccordés sans marche (' + r.rates.length + ' ratés)');
+          A.equal(r.reajustes, 0, cle + ' : les angles générés sont ceux de la règle du jeu');
+          if (r.st.croupe) A.gt((r.formes[Fo.EXT_G] || 0) + (r.formes[Fo.EXT_D] || 0), 7, cle + ' (croupe) : des arêtiers ' + JSON.stringify(r.formes));
+          // faîtage : dalle haute ou bloc plein du matériau, au sommet
+          var faite = 0;
+          l.blocs.forEach(function (a) { for (var i = 0; i < a.length; i += 5) { var df = C.BLOCKS[a[i + 3]]; if (a[i + 3] === r.st.toit || (df && df.forme === 'dalle' && df.mat === r.st.toit)) faite++; } });
+          A.gt(faite, 3, cle + ' : un faîtage (' + faite + ')');
+          // chaque bâtiment fermé est couvert
+          l.batiments.forEach(function (bat) {
+            if (!bat.dedans && bat.type !== 'ferme') return;
+            var trous = colonnesDecouvertes(r.acc, bat);
+            A.equal(trous.length, 0, cle + ' / ' + bat.type + ' : couvert (' + trous.slice(0, 4).join(' ') + ')');
+          });
         });
       });
-      A.ok(parType.maison && parType.maison[B.LIT] && parType.maison[B.TABLE] && parType.maison[B.CHAISE], 'une maison : lit, table, chaises');
-      A.ok(parType.maison[B.ARMOIRE] || parType.maison[B.FOYER], 'et armoire ou cheminée');
-      if (parType.point_info) A.ok(parType.point_info[B.BIBLIOTHEQUE], 'le point d information a sa bibliothèque');
-      if (parType.magasin) A.ok(parType.magasin[B.ETAGERE], 'la boutique ses étagères');
-      A.gt(Object.keys(vus).length, 6, 'un mobilier varié d un bâtiment à l autre');
+      // pignon (deux pans) et croupe (quatre) : les deux familles existent selon le style
+      A.ok(!H.stylePour('plaines').croupe && H.stylePour('savane').croupe && H.stylePour('plaines', true).croupe,
+           'colombages en pignon, cases d\'acacia et ville de brique en croupe');
+    });
+
+    it('SPEC-CONSTR-003 : la maison en L joint son aile au corps par une noue, sous un seul toit', function () {
+      var vue = 0;
+      for (var rx = 0; rx < 40 && vue < 3; rx++) {
+        var l = monde().habitats.batirBatimentPourEssai('maison', 'plaines', false, rx % 4, null, 1000 + rx * 7, 2000 + rx * 3, 9);
+        var b = l.batiments[0];
+        if (b.plan !== 'L') continue;
+        vue++;
+        l.biome = 'plaines'; l.kind = 'maison';
+        var r = controlerToiture(l);
+        A.gt((r.formes[Fo.INT_G] || 0) + (r.formes[Fo.INT_D] || 0), 1, 'des noues (coins intérieurs) : ' + JSON.stringify(r.formes));
+        A.deep(r.rates, [], 'raccordées sans marche (orientation ' + (rx % 4) + ')');
+        A.equal(r.reajustes, 0, 'angles conformes à la règle du jeu');
+        // le corps et l'aile restent dans la parcelle, quelle que soit l'orientation
+        l.blocs.forEach(function (a) { for (var i = 0; i < a.length; i += 5) {
+          A.ok(a[i] >= 1000 + rx * 7 - 1 && a[i] <= 1000 + rx * 7 + 9 && a[i + 2] >= 2000 + rx * 3 - 1 && a[i + 2] <= 2000 + rx * 3 + 9,
+               'dans la parcelle (débord du toit compris) : ' + a[i] + ',' + a[i + 2]);
+        } });
+      }
+      A.equal(vue, 3, 'trois maisons en L contrôlées');
+    });
+
+    it('SPEC-INTERIEUR-001 : tout bâtiment généré est meublé selon sa fonction, et aucun n est creux', function () {
+      var w = monde(), B = C.B, MEUBLES = [B.LIT, B.TABLE, B.CHAISE, B.ARMOIRE, B.ETAGERE, B.BIBLIOTHEQUE, B.TAPIS, B.LAMPE, B.VASE, B.PRESENTOIR, B.SOCLE, B.FOYER];
+      // à ciel ouvert, sans intérieur : la place, le marché (étals), les loisirs (parc, fontaine, théâtre), le quai
+      var OUVERTS = ['place', 'marche', 'loisirs', 'port'];
+      // ce que chaque fonction exige (au moins un de chaque groupe)
+      var EXIGE = {
+        maison: [[B.LIT], [B.TABLE], [B.CHAISE], [B.ARMOIRE, B.FOYER]],
+        point_info: [[B.BIBLIOTHEQUE]], magasin: [[B.ETAGERE]], salon: [[B.LIT], [B.CHAISE]],
+        banque: [[B.SOCLE], [B.COFFRE_FORT]], ferme: [[B.ETAGERE], [B.TONNEAU], [B.HAY]],
+        forgeron: [[B.ENCLUME], [B.FURNACE]], menuisier: [[B.CRAFTING_TABLE]], tisserand: [[B.WOOL_RED, B.WOOL_BLUE]],
+        tour: [[B.LIT], [B.TABLE]], immeuble: [[B.LIT], [B.TABLE]],
+      };
+      var vus = {}, parType = {}, creux = [], manques = [], controles = 0, typesVus = {};
+      function sweep(l) {
+        var acc = accesseurLieu(l);
+        l.batiments.forEach(function (bat) {
+          if (OUVERTS.indexOf(bat.type) >= 0) return;
+          controles++; typesVus[bat.type] = 1;
+          var zone = bat.grange || bat, sortes = {};
+          // étage par étage (une grange, une maison : un seul) : jamais un niveau vide
+          var etages = bat.etages || 1;
+          for (var e = 0; e < etages; e++) {
+            var n = 0, yb = bat.y0 + e * 4;
+            for (var x = zone.x0 + 1; x < zone.x1; x++) for (var z = zone.z0 + 1; z < zone.z1; z++) for (var y = yb; y < yb + 2; y++) {
+              var id = acc.getBlock(x, y, z);
+              if (MEUBLES.indexOf(id) >= 0) n++;
+              if (id) sortes[id] = 1;
+            }
+            if (n < 2) creux.push(l.style + ' / ' + bat.type + (bat.plan ? ':' + bat.plan : '') + ' niveau ' + e + ' : ' + n + ' meuble(s)');
+          }
+          var exige = EXIGE[bat.type === 'artisan' ? bat.metier : bat.type] || [];
+          exige.forEach(function (groupe) {
+            if (!groupe.some(function (id) { return sortes[id]; })) manques.push(l.style + ' / ' + bat.type + ' (' + (bat.metier || bat.plan || '') + ') sans ' + groupe.map(C.nameOf).join(' ni '));
+          });
+          (parType[bat.type] = parType[bat.type] || {});
+          Object.keys(sortes).forEach(function (k) { parType[bat.type][k] = 1; if (MEUBLES.indexOf(+k) >= 0) vus[k] = 1; });
+        });
+      }
+      // plusieurs graines, tous les lieux réels proches…
+      [20260921, 12345, 777].forEach(function (g) {
+        var wg = monde(g);
+        lieux(wg, 'ville', 6000).slice(0, 2).concat(lieux(wg, 'village', 3000).slice(0, 8)).concat(lieux(wg, 'maison', 900).slice(0, 6)).forEach(sweep);
+      });
+      // … et chaque style, rural et urbain, bâti exprès (même ceux qu'aucune graine ne place près de l'origine)
+      Object.keys(H.STYLES).forEach(function (sc) {
+        sweep(monde().habitats.batirPourEssai('village', sc, false, 2, 3));
+        if (H.URBAIN[sc]) sweep(monde().habitats.batirPourEssai('ville', sc, true, 1, 1));
+      });
+      sweep(monde().habitats.batirPourEssai('megapole', 'plaines', true, 0, 0));
+      A.gt(controles, 200, 'assez de bâtiments contrôlés : ' + controles);
+      ['maison', 'point_info', 'banque', 'salon', 'magasin', 'artisan', 'ferme', 'tour', 'immeuble'].forEach(function (t) {
+        A.ok(typesVus[t], 'le balayage couvre ' + t);
+      });
+      A.deep(creux.slice(0, 10), [], creux.length + ' intérieur(s) creux');
+      A.deep(manques.slice(0, 10), [], manques.length + ' bâtiment(s) sans le mobilier de leur fonction');
+      A.gt(Object.keys(vus).length, 8, 'un mobilier varié d un bâtiment à l autre');
+      // le style module le mobilier : pas de cheminée sous un climat chaud, une cheminée et des tapis au froid
+      function mobilierMaisons(sc) {
+        var l = monde().habitats.batirPourEssai('village', sc, false, 2, 3), acc = accesseurLieu(l), ids = {};
+        l.batiments.filter(function (b) { return b.type === 'maison'; }).forEach(function (b) {
+          for (var x = b.x0; x <= b.x1; x++) for (var z = b.z0; z <= b.z1; z++) for (var y = b.y0; y < b.y0 + 4 * (b.etages || 1); y++) ids[acc.getBlock(x, y, z)] = 1;
+        });
+        return ids;
+      }
+      var desert = mobilierMaisons('desert'), taiga = mobilierMaisons('taiga'), plaine = mobilierMaisons('plaines');
+      A.ok(!desert[B.FOYER] && desert[B.VASE], 'maison de grès : une jarre, pas de cheminée');
+      A.ok(taiga[B.FOYER] && taiga[B.TAPIS] && !taiga[B.VASE], 'isba : cheminée et tapis de fourrure, pas de vase');
+      A.ok(plaine[B.FOYER] && plaine[B.VASE], 'colombages : cheminée et vase');
       // un lit de maison occupe deux cases : pied et tête, orientés pareil
       var l0 = lieux(w, 'village', 3000)[0], acc0 = accesseurLieu(l0), lit = null;
       l0.blocs.forEach(function (arr) { for (var i = 0; i < arr.length && !lit; i += 5) if (arr[i + 3] === B.LIT && !MC.Formes.unpackMeuble(arr[i + 4]).variante) lit = [arr[i], arr[i + 1], arr[i + 2]]; });

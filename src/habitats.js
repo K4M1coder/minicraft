@@ -21,7 +21,10 @@
 
   // ─── styles ──────────────────────────────────────────────────────────────
   /* mur, coin (poteaux d'angle), sol, soubassement, toit, fenetre, route,
-     place ; toit : pignon | raide | plat | dome | chapeau ; pilotis : hauteur. */
+     place ; toit : pignon | raide | plat | dome | chapeau ; pilotis : hauteur ;
+     croupe : les pans en pente descendent sur les quatre côtés, en arêtiers
+     (SPEC-CONSTR-003) ; climat : chaud | froid, module le mobilier
+     (SPEC-INTERIEUR-001). */
   var STYLES = {
     plaines:     { nom: 'Colombages', mur: B.PLANKS, coin: B.LOG, sol: B.PLANKS, soubassement: B.COBBLE,
                    toit: B.TUILES, forme: 'pignon', fenetre: B.GLASS, route: B.GRAVEL, place: B.STONE_BRICK },
@@ -30,27 +33,27 @@
                    place: B.COBBLE },
     taiga:       { nom: 'Isbas', mur: B.PLANCHES_SAPIN, coin: B.SPRUCE_LOG, sol: B.PLANCHES_SAPIN,
                    soubassement: B.COBBLE, toit: B.PLANCHES_SAPIN, forme: 'raide', fenetre: B.GLASS,
-                   route: B.GRAVEL, place: B.COBBLE },
+                   route: B.GRAVEL, place: B.COBBLE, climat: 'froid' },
     desert:      { nom: 'Maisons de grès', mur: B.SANDSTONE_BRICK, coin: B.SANDSTONE, sol: B.SANDSTONE,
                    soubassement: B.SANDSTONE, toit: B.SANDSTONE, forme: 'plat', fenetre: 0, route: B.SANDSTONE,
-                   place: B.SANDSTONE_BRICK },
+                   place: B.SANDSTONE_BRICK, climat: 'chaud' },
     savane:      { nom: "Cases d'acacia", mur: B.PLANCHES_ACACIA, coin: B.ACACIA_LOG, sol: B.PLANCHES_ACACIA,
-                   soubassement: B.TERRACOTTA, toit: B.HAY, forme: 'pignon', fenetre: 0, route: B.GRAVEL,
-                   place: B.TERRACOTTA },
+                   soubassement: B.TERRACOTTA, toit: B.HAY, forme: 'pignon', croupe: true, fenetre: 0, route: B.GRAVEL,
+                   place: B.TERRACOTTA, climat: 'chaud' },
     jungle:      { nom: 'Maisons sur pilotis', mur: B.PLANCHES_JUNGLE, coin: B.JUNGLE_LOG, sol: B.PLANCHES_JUNGLE,
-                   soubassement: B.JUNGLE_LOG, toit: B.JUNGLE_LEAVES, forme: 'pignon', fenetre: 0, pilotis: 3,
-                   route: B.PLANCHES_JUNGLE, place: B.MOSSY_COBBLE },
+                   soubassement: B.JUNGLE_LOG, toit: B.JUNGLE_LEAVES, forme: 'pignon', croupe: true, fenetre: 0, pilotis: 3,
+                   route: B.PLANCHES_JUNGLE, place: B.MOSSY_COBBLE, climat: 'chaud' },
     marais:      { nom: 'Cabanes sur pilotis', mur: B.PLANKS, coin: B.LOG, sol: B.PLANKS, soubassement: B.LOG,
                    toit: B.PLANCHES_SAPIN, forme: 'pignon', fenetre: B.GLASS, pilotis: 2, route: B.PLANKS,
                    place: B.MOSSY_COBBLE },
     badlands:    { nom: 'Adobes', mur: B.TERRACOTTA, coin: B.TERRACOTTA_RED, sol: B.TERRACOTTA,
                    soubassement: B.TERRACOTTA_RED, toit: B.TERRACOTTA_YELLOW, forme: 'plat', fenetre: 0,
-                   route: B.RED_SAND, place: B.TERRACOTTA_RED },
+                   route: B.RED_SAND, place: B.TERRACOTTA_RED, climat: 'chaud' },
     montagnes:   { nom: 'Chalets de pierre', mur: B.STONE_BRICK, coin: B.SPRUCE_LOG, sol: B.PLANCHES_SAPIN,
                    soubassement: B.COBBLE, toit: B.ARDOISE, forme: 'raide', fenetre: B.GLASS, route: B.COBBLE,
-                   place: B.STONE_BRICK },
+                   place: B.STONE_BRICK, climat: 'froid' },
     pics_glaces: { nom: 'Igloos', mur: B.ICE_BRICK, coin: B.PACKED_ICE, sol: B.PACKED_ICE, soubassement: B.PACKED_ICE,
-                   toit: B.SNOW, forme: 'dome', fenetre: B.ICE, route: B.PACKED_ICE, place: B.ICE_BRICK },
+                   toit: B.SNOW, forme: 'dome', fenetre: B.ICE, route: B.PACKED_ICE, place: B.ICE_BRICK, climat: 'froid' },
     champignons: { nom: 'Maisons-champignons', mur: B.MUSHROOM_STEM, coin: B.MUSHROOM_STEM, sol: B.PLANKS,
                    soubassement: B.MUSHROOM_STEM, toit: B.MUSHROOM_CAP, forme: 'chapeau', fenetre: B.GLASS,
                    route: B.GRAVEL, place: B.MYCELIUM },
@@ -58,7 +61,7 @@
   STYLES.glacier = STYLES.pics_glaces;
   // variante urbaine : pierre, brique et enduits, rues pavées
   var URBAIN = {
-    plaines:  { nom: 'Ville de brique', mur: B.BRICK, coin: B.STONE_BRICK, toit: B.TUILES, route: B.PAVE, place: B.STONE_BRICK },
+    plaines:  { nom: 'Ville de brique', mur: B.BRICK, coin: B.STONE_BRICK, toit: B.TUILES, croupe: true, route: B.PAVE, place: B.STONE_BRICK },
     foret:    { nom: 'Ville à pans de bois', mur: B.CHAUX, coin: B.BIRCH_LOG, toit: B.ARDOISE, route: B.PAVE, place: B.STONE_BRICK },
     taiga:    { nom: 'Ville de granit', mur: B.STONE_BRICK, coin: B.SPRUCE_LOG, toit: B.ARDOISE, route: B.PAVE, place: B.COBBLE },
     desert:   { nom: 'Médina blanche', mur: B.CHAUX, coin: B.SANDSTONE_BRICK, toit: B.SANDSTONE_BRICK, route: B.SANDSTONE_BRICK, place: B.SANDSTONE },
@@ -454,28 +457,48 @@
        rangs), l'échelle (u=1, v=d-2) ni la lanterne (u=w-2, v=d-2). Les
        meubles regardent l'intérieur : leur orientation suit celle du bâtiment.
        Les bâtisseurs posent ensuite leurs pièces propres (comptoirs, coffres) :
-       posées après, elles l'emportent sur un meuble de la même case. */
+       posées après, elles l'emportent sur un meuble de la même case — les
+       listes évitent donc leurs rangées (comptoir, coffres, tonneaux). */
     var MOBILIER = {
-      // [u, v, bloc, décalage d'orientation] — u, v : 'g' gauche, 'd' droite, 'c' centre, 'f' fond
-      maison:     [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c+2', 'm', 'CHAISE', 1], ['c', 'm', 'CHAISE', 3],
+      // [u, v, bloc, décalage d'orientation] — u : 'g' gauche, 'd' droite, 'c' centre (± k) ;
+      // v : un rang, 'm' milieu, 'f' fond (± k). [[[u, v], …], bloc, décalage] : le premier emplacement libre.
+      maison:     [['d', 1, 'LIT'], [[['c+1', 'm'], ['c-1', 'm'], ['c+1', 'm+1']], 'TABLE'],
+                   [[['c+2', 'm'], ['c-1', 1]], 'CHAISE', 1], [[['c', 'm'], ['c-1', 'm']], 'CHAISE', 3],
                    ['g', 'f', 'ARMOIRE', 2], ['c', 'f', 'FOYER', 2], ['g', 1, 'VASE'], ['c+1', 'm+1', 'TAPIS']],
       etage:      [['d', 1, 'LIT'], ['g', 'f-1', 'ARMOIRE', 2], ['c+1', 'm', 'TAPIS'], ['g', 1, 'LAMPE']],
-      magasin:    [['g', 'f', 'ETAGERE', 2], ['c+2', 'f', 'ETAGERE', 2], ['d', 1, 'PRESENTOIR'], ['g', 1, 'VASE']],
-      banque:     [['c', 'f', 'SOCLE'], ['g', 1, 'VASE'], ['d', 1, 'VASE'], ['c+1', 'm', 'TAPIS']],
-      salon:      [['g', 'f', 'ETAGERE', 2], ['d', 'f-1', 'FOYER', 2], ['c', 'm+1', 'TAPIS'], ['g', 1, 'LAMPE']],
+      // la boutique : étagères de part et d'autre de l'entrée et derrière le comptoir, entre les coffres
+      magasin:    [['g', 2, 'ETAGERE', 1], ['d', 2, 'ETAGERE', 3], ['d-1', 'f', 'ETAGERE', 2], ['d', 1, 'PRESENTOIR'], ['g', 1, 'VASE']],
+      banque:     [['c', 'f-1', 'SOCLE'], ['g', 1, 'VASE'], ['d', 1, 'VASE'], ['c+1', 'm', 'TAPIS']],
+      // l'auberge : un lit pour le voyageur, des chaises autour des tables, la cheminée
+      salon:      [['d', 1, 'LIT'], ['g+2', 2, 'CHAISE', 3], ['d-2', 2, 'CHAISE', 1], ['g+2', 4, 'CHAISE', 3], ['d-2', 4, 'CHAISE', 1],
+                   ['d', 'f-2', 'FOYER', 3], ['g', 3, 'ETAGERE', 1], ['c', 'm+1', 'TAPIS'], ['g', 1, 'LAMPE']],
       artisan:    [['g', 'f-1', 'ARMOIRE', 2], ['d', 1, 'ETAGERE'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1]],
-      point_info: [['g', 'f', 'BIBLIOTHEQUE', 2], ['c+2', 'f', 'BIBLIOTHEQUE', 2], ['c+1', 'm', 'PRESENTOIR'], ['d', 1, 'LAMPE'],
+      point_info: [['g', 'f', 'BIBLIOTHEQUE', 2], ['c+2', 'f', 'BIBLIOTHEQUE', 2], ['c+1', 'm', 'PRESENTOIR'], ['d', 2, 'LAMPE'],
                    ['c', 'm+1', 'TAPIS']],
       tour:       [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1], ['g', 'f-1', 'ARMOIRE', 2], ['g', 1, 'LAMPE']],
       immeuble:   [['d', 1, 'LIT'], ['c+1', 'm', 'TABLE'], ['c', 'm', 'CHAISE', 1], ['g', 'f-1', 'ARMOIRE', 2], ['g', 1, 'LAMPE']],
     };
-    function meubler(o, p, w, d, y0, etages, type, rot, aEtages) {
+    /* Le style module le mobilier (SPEC-INTERIEUR-001 « selon sa fonction et
+       son style ») : sous un climat chaud (`st.climat`), pas de cheminée —
+       une jarre à sa place ; sous un climat froid, des tapis de fourrure
+       plutôt que des vases, et une cheminée à l'étage plutôt qu'une lampe ;
+       chez les maisons-champignons, des lampes plutôt que des vases. */
+    function meubleSelonStyle(nom, st, et) {
+      var climat = st && st.climat;
+      if (climat === 'chaud' && nom === 'FOYER') return 'VASE';
+      if (climat === 'froid' && nom === 'VASE') return 'TAPIS';
+      if (climat === 'froid' && et > 0 && nom === 'LAMPE') return 'FOYER';
+      if (st && st.forme === 'chapeau' && nom === 'VASE') return 'LAMPE';
+      return nom;
+    }
+    function meubler(o, p, w, d, y0, etages, type, rot, aEtages, st) {
       if (!B.LIT) return;                                       // mobilier absent (anciens tests)
       var pu = Math.floor(w / 2), m = Math.max(2, Math.floor(d / 2));
       function col(c) {
-        if (c === 'g') return 1;
-        if (c === 'd') return w - 2;
+        if (typeof c === 'number') return c;
         var k = parseInt(c.slice(1) || '0', 10) || 0;
+        if (c[0] === 'g') return 1 + k;
+        if (c[0] === 'd') return w - 2 + k;
         return pu + k;
       }
       function rang(r) {
@@ -485,29 +508,78 @@
       }
       for (var et = 0; et < etages; et++) {
         var liste = MOBILIER[et === 0 ? type : (MOBILIER[type] && (type === 'tour' || type === 'immeuble') ? type : 'etage')] || [];
-        var y = y0 + et * 4;
+        var y = y0 + et * 4, prises = {};
+        // une case ne reçoit qu'un meuble, le premier de la liste : un petit
+        // plan ne pose plus une table sur la tête du lit
+        var interdite = function (u, v) {
+          return u < 1 || u > w - 2 || v < 1 || v > d - 2 ||
+                 (u === pu && v <= 2) ||                                    // l'allée de la porte
+                 (u === w - 2 && v === d - 2) ||                            // la lanterne
+                 (aEtages && u === 1 && v === d - 2) ||                     // l'échelle
+                 !!prises[u + ',' + v];
+        };
         liste.forEach(function (mb) {
-          var u = col(mb[0]), v = rang(mb[1]), id = B[mb[2]];
-          if (!id || u < 1 || u > w - 2 || v < 1 || v > d - 2) return;
-          if (u === pu && v <= 2) return;                                   // l'allée de la porte
-          if (u === w - 2 && v === d - 2) return;                           // la lanterne
-          if (aEtages && u === 1 && v === d - 2) return;                    // l'échelle
-          var q = p(u, v), orient = (rot + (mb[3] || 0)) & 3;
+          // [u, v, meuble, décalage] ou [[[u, v], [u, v]…], meuble, décalage] :
+          // plusieurs emplacements, le premier libre l'emporte
+          var cands = Array.isArray(mb[0]) ? mb[0] : [[mb[0], mb[1]]];
+          var k0 = Array.isArray(mb[0]) ? 1 : 2;
+          var nom = meubleSelonStyle(mb[k0], st, et), id = B[nom];
+          var lit = nom === 'LIT', u = 0, v = 0, trouve = false;
+          for (var ci = 0; ci < cands.length && !trouve; ci++) {
+            u = col(cands[ci][0]); v = rang(cands[ci][1]);
+            // le lit occupe deux cases (le pied, la tête derrière) : entier ou pas du tout
+            trouve = !interdite(u, v) && !(lit && interdite(u, v + 1));
+          }
+          if (!id || !trouve) return;
+          var q = p(u, v), orient = (rot + (mb[k0 + 1] || 0)) & 3;
           var etat = MC.Formes && MC.Formes.packMeuble && C.BLOCKS[id] && C.BLOCKS[id].forme === 'meuble' ? MC.Formes.packMeuble(orient, false) : 0;
           o.pose(q[0], y, q[1], id, etat);
-          // le lit occupe deux cases : la tête, derrière le pied
-          if (mb[2] === 'LIT' && v + 1 <= d - 2) {
+          prises[u + ',' + v] = 1;
+          if (lit) {
             var t = p(u, v + 1);
             o.pose(t[0], y, t[1], id, MC.Formes.packMeuble(orient, true));
+            prises[u + ',' + (v + 1)] = 1;
           }
         });
       }
     }
 
-    function corps(l, st, o, p, w, d, y0, etages, type, nom, rot) {
+    /* `aile` (facultatif, plan en L d'une maison — SPEC-HABITAT-010) :
+       { u0, w, d } — un volume de w × d accolé au mur du fond (v = d…), sur
+       les colonnes u0…u0+w-1 du corps, dans le même repère : un passage le
+       relie au corps, et un seul toit couvre les deux volumes, leurs pans se
+       rejoignant en noue (SPEC-CONSTR-003). */
+    function corps(l, st, o, p, w, d, y0, etages, type, nom, rot, aile) {
       var H = 4;
       var brut = corpsBrut(l, st, o, p, w, d, y0, etages);
       y0 = brut.y0; var haut = brut.haut;
+      var optsToit = null;
+      if (aile) {
+        var pA = function (u, v) { return p(u + aile.u0, v + d); };
+        var stA = st, pil = st.pilotis || 0;
+        if (pil) {
+          // sur pilotis, l'aile a ses quatre poteaux mais pas d'échelle propre
+          stA = {}; for (var kA in st) stA[kA] = st[kA];
+          stA.pilotis = 0;
+          [[0, 0], [aile.w - 1, 0], [0, aile.d - 1], [aile.w - 1, aile.d - 1]].forEach(function (c) {
+            var qa = pA(c[0], c[1]);
+            for (var ya = y0 - pil; ya < y0 - 1; ya++) o.pose(qa[0], ya, qa[1], st.soubassement);
+          });
+        }
+        corpsBrut(l, stA, o, pA, aile.w, aile.d, y0, 1);
+        // le passage : le mur du fond du corps et le mur avant de l'aile s'ouvrent
+        var uP = aile.u0 + Math.floor(aile.w / 2);
+        [[uP, d - 1], [uP, d]].forEach(function (c) {
+          var qp = p(c[0], c[1]); o.pose(qp[0], y0, qp[1], 0); o.pose(qp[0], y0 + 1, qp[1], 0);
+        });
+        optsToit = {
+          volumes: [{ u0: aile.u0, u1: aile.u0 + aile.w - 1, v0: d, v1: d + aile.d - 1 }],
+          // l'aile a son faîtage perpendiculaire à celui du corps : il court
+          // jusqu'au faîtage du corps, que ses pans rejoignent en noue
+          pans: [{ u0: aile.u0 - 1, u1: aile.u0 + aile.w, v0: Math.floor(d / 2), v1: d + aile.d,
+                   pentes: st.croupe ? ['u0', 'u1', 'v1'] : ['u0', 'u1'] }],
+        };
+      }
       var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       // porte : fermée, orientée vers l'extérieur (la rue) — SPEC-PORTE-001
       var pu = Math.floor(w / 2);
@@ -521,12 +593,13 @@
         o.pose(fx(w - 2, d - 2), y0 + et * H + 1, fz(w - 2, d - 2), B.LANTERN);
       }
       // un intérieur meublé selon la fonction du bâtiment (SPEC-INTERIEUR-001)
-      meubler(o, p, w, d, y0, etages, type, rot || 0, etages > 1);
-      toit(st, o, p, w, d, haut);
+      meubler(o, p, w, d, y0, etages, type, rot || 0, etages > 1, st);
+      toit(st, o, p, w, d, haut, optsToit);
       var c0 = p(0, 0), c1 = p(w - 1, d - 1);
       var bat = { type: type, nom: nom || BATIMENTS[type].nom, lieu: l.id,
                   x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]), x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]),
-                  y0: y0, y1: haut + Math.ceil(d / 2) + 1, porte: { x: fx(pu, 0), z: fz(pu, 0) },
+                  y0: y0, y1: haut + (st.forme === 'raide' ? 2 : 1) * Math.ceil(d / 2) + 1, etages: etages,
+                  porte: { x: fx(pu, 0), z: fz(pu, 0) },
                   dedans: { x: fx(pu, 2) + 0.5, y: y0, z: fz(pu, 2) + 0.5 } };
       l.batiments.push(bat);
       return bat;
@@ -535,13 +608,13 @@
     /* SPEC-CONSTR-003 : toit en pente fait d'escaliers orientés, faîtage en
        dalle haute (ou en bloc plein si le matériau n'a pas de dalle — tous
        les matériaux de toiture des styles pignon/raide ont leur escalier,
-       voir core.js L24, mais pas tous leur dalle). Les formes plates et
-       dômes/chapeaux, elles, restent en blocs pleins : le style l'exige
-       (désert, igloos, champignons…). Un bâtiment composé (plan en L) pose
-       simplement un toit par volume : là où deux pans se recoupent, le
-       second recouvre le premier — une noue approximative plutôt qu'un
-       raccord parfaitement mitré, mais jamais de trou. */
-    function toit(st, o, p, w, d, y) {
+       voir core.js L24, mais pas tous leur dalle) ; en croupe (`st.croupe`)
+       les quatre côtés descendent et se rejoignent en arêtiers. Les formes
+       plates et dômes/chapeaux, elles, restent en blocs pleins : le style
+       l'exige (désert, igloos, champignons…). `opts` : { volumes, pans }
+       supplémentaires (l'aile d'un plan en L), couverts par le même toit —
+       voir toitEnPente. */
+    function toit(st, o, p, w, d, y, opts) {
       var fx = function (u, v) { return p(u, v)[0]; }, fz = function (u, v) { return p(u, v)[1]; };
       var forme = st.forme;
       if (forme === 'plat') {
@@ -563,46 +636,95 @@
         }
         return;
       }
-      // pignon/raide : deux pans le long de w, montant en escaliers vers le
-      // faîtage (raide : une marche pleine puis l'escalier, deux fois plus
-      // raide qu'un pignon simple) ; pignons (u=0 et u=w-1) pleins sous le toit.
+      toitEnPente(st, o, p, y, [{ u0: 0, u1: w - 1, v0: 0, v1: d - 1 }].concat((opts && opts.volumes) || []),
+                  [{ u0: -1, u1: w, v0: -1, v1: d, pentes: st.croupe ? 'uv' : 'v' }].concat((opts && opts.pans) || []));
+    }
+
+    /* Pignon/raide (SPEC-CONSTR-003) : les pans d'un toit se calculent comme
+       un relief. Chaque PAN est un rectangle (débord compris) dont certains
+       côtés descendent (`pentes` : 'v' = les deux côtés v, en pignon ; 'uv' =
+       les quatre, en croupe ; ou une liste de côtés 'u0','u1','v0','v1') ; le
+       niveau d'une colonne est sa distance au plus proche côté en pente, et
+       celui du toit le plus haut des pans qui la couvrent. Deux pans qui se
+       recoupent (le corps et l'aile d'une maison en L) se rejoignent ainsi
+       d'eux-mêmes en NOUE, quatre pentes se rejoignent en ARÊTIER, et le
+       FAÎTAGE est la crête que rien ne domine (dalle haute, ou bloc plein si
+       le matériau n'a pas de dalle). Chaque colonne en pente reçoit un
+       escalier tourné vers son voisin plus haut ; ses angles sont ensuite
+       ajustés par la règle même du jeu (MC.Formes.actualiserEscalier, celle
+       qu'appliquerait un joueur qui poserait ces escaliers à la main), si
+       bien qu'arêtiers et noues générés sont exactement ceux qu'on obtient en
+       jeu. Raide : une marche pleine sous chaque escalier, deux fois plus
+       raide. Sous le toit, chaque mur du pourtour (`volumes`) remonte
+       jusqu'au pan qui le couvre : pignons pleins, combles fermés. */
+    function toitEnPente(st, o, p, y, volumes, pans) {
       var Fo = MC.Formes, matDef = C.BLOCKS[st.toit];
       var escId = matDef && matDef.escalier, dalleId = matDef && matDef.dalle;
-      var raide = forme === 'raide', pasY = raide ? 2 : 1, moitie = Math.ceil(d / 2);
-      // direction du monde vers laquelle "v" croît à cette rotation, dérivée
-      // de p() elle-même (donc juste quel que soit rot) : le pan côté v<0
-      // grimpe vers +v (le faîtage), le pan côté v>=d grimpe vers -v.
-      var d0 = p(0, 0), d1 = p(0, 1);
-      var orAvant = C.orientDeRegard({ x: d1[0] - d0[0], z: d1[1] - d0[1] });
-      var orArriere = (orAvant + 2) & 3;
-      for (var k = 0; k <= moitie; k++) {
-        var faite = k >= moitie, yy0 = y + k * pasY;
-        [[k - 1, orAvant], [d - k, orArriere]].forEach(function (pair) {
-          var vv = pair[0], orient = pair[1];
-          if (vv < -1 || vv > d) return;
-          for (var u3 = -1; u3 <= w; u3++) {
-            var x = fx(u3, vv), z = fz(u3, vv);
-            if (faite) {
-              if (dalleId) o.pose(x, yy0, z, dalleId, Fo.packDalle(true));
-              else o.pose(x, yy0, z, st.toit);
-            } else if (raide) {
-              o.pose(x, yy0, z, st.toit);
-              if (escId) o.pose(x, yy0 + 1, z, escId, Fo.packEscalier(orient, false, Fo.DROIT));
-              else o.pose(x, yy0 + 1, z, st.toit);
-            } else if (escId) {
-              o.pose(x, yy0, z, escId, Fo.packEscalier(orient, false, Fo.DROIT));
-            } else {
-              o.pose(x, yy0, z, st.toit);
-            }
-          }
-        });
-        // pignons : le mur remonte sous le toit, sur toute sa hauteur locale
-        var yTop = (!faite && raide) ? yy0 + 1 : yy0;
-        for (var v3 = k; v3 < d - k; v3++) for (var yw = yy0; yw <= yTop; yw++) {
-          o.pose(fx(0, v3), yw, fz(0, v3), st.mur);
-          o.pose(fx(w - 1, v3), yw, fz(w - 1, v3), st.mur);
-        }
+      var raide = st.forme === 'raide', pasY = raide ? 2 : 1;
+      var u0 = Infinity, u1 = -Infinity, v0 = Infinity, v1 = -Infinity;
+      pans.forEach(function (pn) { u0 = Math.min(u0, pn.u0); u1 = Math.max(u1, pn.u1); v0 = Math.min(v0, pn.v0); v1 = Math.max(v1, pn.v1); });
+      var W = u1 - u0 + 1, D = v1 - v0 + 1, niv = new Int16Array(W * D).fill(-1);
+      function cotes(pn) {
+        var s = pn.pentes;
+        return s === 'v' ? ['v0', 'v1'] : s === 'uv' ? ['u0', 'u1', 'v0', 'v1'] : s;
       }
+      pans.forEach(function (pn) {
+        var cs = cotes(pn);
+        for (var u = pn.u0; u <= pn.u1; u++) for (var v = pn.v0; v <= pn.v1; v++) {
+          var n = Infinity;
+          cs.forEach(function (c) {
+            var dd = c === 'u0' ? u - pn.u0 : c === 'u1' ? pn.u1 - u : c === 'v0' ? v - pn.v0 : pn.v1 - v;
+            if (dd < n) n = dd;
+          });
+          var i = (u - u0) * D + (v - v0);
+          if (n !== Infinity && n > niv[i]) niv[i] = n;
+        }
+      });
+      function nv(u, v) { return (u < u0 || u > u1 || v < v0 || v > v1) ? -1 : niv[(u - u0) * D + (v - v0)]; }
+      // orientation du monde d'un pas (du, dv) du repère local : juste quel que soit rot
+      function orientVers(u, v, du, dv) {
+        var a = p(u, v), b = p(u + du, v + dv);
+        return C.orientDeRegard({ x: b[0] - a[0], z: b[1] - a[1] });
+      }
+      var PAS4 = [[0, 1], [1, 0], [0, -1], [-1, 0]], PAS8 = PAS4.concat([[1, 1], [1, -1], [-1, 1], [-1, -1]]);
+      // escaliers posés (clé x,y,z) : la petite carte où leurs angles s'ajustent
+      var escaliers = new Map();
+      var carte = {
+        getBlock: function (x, yy, z) { return escaliers.has(x + ',' + yy + ',' + z) ? escId : 0; },
+        getEtat: function (x, yy, z) { var e = escaliers.get(x + ',' + yy + ',' + z); return e ? e.etat : 0; },
+        setEtat: function (x, yy, z, etat) { var e = escaliers.get(x + ',' + yy + ',' + z); if (e) e.etat = etat; },
+      };
+      for (var u = u0; u <= u1; u++) for (var v = v0; v <= v1; v++) {
+        var k = nv(u, v);
+        if (k < 0) continue;
+        var q = p(u, v), yy0 = y + k * pasY;
+        // vers où monte-t-on ? un voisin direct plus haut, sinon (coin d'arêtier) le diagonal
+        var pas = null;
+        for (var a = 0; a < 4 && !pas; a++) if (nv(u + PAS4[a][0], v + PAS4[a][1]) > k) pas = PAS4[a];
+        for (var b = 4; b < 8 && !pas; b++) if (nv(u + PAS8[b][0], v + PAS8[b][1]) > k) pas = [0, PAS8[b][1]];
+        if (!pas) {                                            // le faîtage
+          if (dalleId) o.pose(q[0], yy0, q[1], dalleId, Fo.packDalle(true));
+          else o.pose(q[0], yy0, q[1], st.toit);
+          continue;
+        }
+        var yEsc = raide ? yy0 + 1 : yy0;
+        if (raide) o.pose(q[0], yy0, q[1], st.toit);
+        if (!escId) { o.pose(q[0], yEsc, q[1], st.toit); continue; }
+        escaliers.set(q[0] + ',' + yEsc + ',' + q[1], { x: q[0], y: yEsc, z: q[1], etat: Fo.packEscalier(orientVers(u, v, pas[0], pas[1]), false, Fo.DROIT) });
+      }
+      escaliers.forEach(function (e) { Fo.actualiserEscalier(carte, e.x, e.y, e.z); });
+      // l'état vient de Fo.packEscalier, ajusté par Fo.actualiserEscalier (lui-même par packEscalier)
+      escaliers.forEach(function (e) { var etat = e.etat; o.pose(e.x, e.y, e.z, escId, etat); });
+      // les murs du pourtour remontent jusque sous leur pan
+      volumes.forEach(function (vo) {
+        for (var u2 = vo.u0; u2 <= vo.u1; u2++) for (var v2 = vo.v0; v2 <= vo.v1; v2++) {
+          if (u2 !== vo.u0 && u2 !== vo.u1 && v2 !== vo.v0 && v2 !== vo.v1) continue;
+          var k2 = nv(u2, v2);
+          if (k2 <= 0) continue;
+          var q2 = p(u2, v2);
+          for (var yw = y; yw < y + k2 * pasY; yw++) o.pose(q2[0], yw, q2[1], st.mur);
+        }
+      });
     }
 
     function pnj(l, role, x, y, z, bat) {
@@ -642,24 +764,23 @@
           if (plan === 'carree') { w = 7 + Math.floor(o.hash(ox, 1, oz) * 2); d = w - 1; }
           else if (plan === 'longere') { w = Math.min(L - 2, 10 + Math.floor(o.hash(ox, 1, oz) * 3)); d = 5; }
           else { w = 6; d = 5; }
-          p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d, rot);
-          b = corps(l, st, o, p, w, d, y0, etages, 'maison', null, rot);
-          if (plan === 'L') {
-            // aile secondaire, accolée au mur du fond (aucun recouvrement
-            // avec le corps principal, toujours dans la parcelle — HABITAT-011)
-            var w2 = 3, d2 = 3;
-            var offU = Math.floor((w - w2) / 2);
-            var p2 = o.repere(ox + Math.floor((L - w) / 2) + offU, oz + 1 + d, w2, d2, rot);
-            var brut2 = corpsBrut(l, st, o, p2, w2, d2, y0, 1);
-            toit(st, o, p2, w2, d2, brut2.haut);
-          }
+          /* L : l'aile secondaire (3 × 3) s'accole au mur du fond, dans le
+             même repère que le corps — le repère couvre les deux volumes
+             (profondeur d + 3), donc l'ensemble reste dans la parcelle quelle
+             que soit l'orientation (HABITAT-011) ; un passage les relie et un
+             seul toit les couvre, en noue (SPEC-CONSTR-003). */
+          var aile = plan === 'L' ? { u0: Math.floor((w - 3) / 2), w: 3, d: 3 } : null;
+          p = o.repere(ox + Math.floor((L - w) / 2), oz + 1, w, d + (aile ? aile.d : 0), rot);
+          b = corps(l, st, o, p, w, d, y0, etages, 'maison', null, rot, aile);
         }
         b.plan = plan;
         // le mobilier vient de meubler() ; restent l'établi et le coffre de la maisonnée
         var q = function (u, v) { return p(u, v); };
         if (!B.LIT) { var c = q(w - 2, 1); o.pose(c[0], b.y0, c[1], B.WOOL_RED); }
         var t = q(1, 1); if (B.LIT) t = q(1, 2); o.pose(t[0], b.y0, t[1], B.CRAFTING_TABLE);
-        var ch = q(2, d - 2); o.pose(ch[0], b.y0, ch[1], B.CHEST);
+        // le coffre de la maisonnée : dans l'aile (la réserve) d'un plan en L
+        var ch = plan === 'L' ? q(Math.floor((w - 3) / 2) + 1, d + 1) : q(2, d - 2);
+        o.pose(ch[0], b.y0, ch[1], B.CHEST);
         pnj(l, 'habitant', b.dedans.x, b.y0, b.dedans.z, b);
       },
       point_info: function (l, st, o, ox, oz, L, rot, y0) {
@@ -766,7 +887,7 @@
          mégapole, voir programmeMegapole). */
       ferme: function (l, st, o, ox, oz, L, rot, y0) {
         var grange = o.hash(ox, 36, oz) < 0.5;
-        var gw = grange ? Math.min(L - 2, 7) : 5, gd = grange ? 4 : 3;
+        var gw = grange ? Math.min(L - 2, 7) : 5, gd = grange ? 5 : 4;
         var champDebut = gd + 1;
         var p = o.repere(ox, oz, L, L, rot);
         for (var u = 0; u < L; u++) for (var v = 0; v < L - champDebut; v++) {
@@ -775,19 +896,49 @@
           o.pose(q[0], y0 - 1, q[1], B.FARMLAND);
           o.pose(q[0], y0, q[1], (u + v) % 3 === 0 ? B.WHEAT2 : B.WHEAT3);
         }
-        for (var gu = 0; gu < gw; gu++) for (var gv = 0; gv < gd; gv++) for (var y = y0; y < y0 + 3; y++) {
+        /* La grange (SPEC-INTERIEUR-001 : aucun bâtiment creux) : trois rangs
+           de murs, un plancher, le toit du style (SPEC-CONSTR-003) et, dedans,
+           le matériel de la ferme — bottes de foin, tonneau, coffre, étagère
+           d'outils et lampe —, l'allée de la porte toujours dégagée. */
+        var HG = 3;
+        for (var gu = 0; gu < gw; gu++) for (var gv = 0; gv < gd; gv++) {
           var r = p(gu, gv);
-          var bord = gu === 0 || gu === gw - 1 || gv === 0 || gv === gd - 1 || y === y0 + 2;
-          o.pose(r[0], y, r[1], bord ? (y === y0 + 2 ? B.HAY : st.mur) : (y === y0 ? B.HAY : 0));
+          var bord = gu === 0 || gu === gw - 1 || gv === 0 || gv === gd - 1;
+          var coinG = (gu === 0 || gu === gw - 1) && (gv === 0 || gv === gd - 1);
+          o.pose(r[0], y0 - 1, r[1], bord ? st.soubassement : st.sol);
+          for (var y = y0; y < y0 + HG; y++) o.pose(r[0], y, r[1], coinG ? st.coin : bord ? st.mur : 0);
         }
-        var porte = p(Math.min(2, gw - 1), 0), idPorteFerme = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
+        var uPorte = Math.min(2, gw - 1);
+        var porte = p(uPorte, 0), idPorteFerme = C.PORTE_FERMEE_LIST[(rot || 0) & 3];
         o.pose(porte[0], y0, porte[1], idPorteFerme); o.pose(porte[0], y0 + 1, porte[1], idPorteFerme);
+        var meubleG = function (u, v, id, dec) {
+          var q = p(u, v), df = C.BLOCKS[id];
+          var etat = df && df.forme === 'meuble' && MC.Formes ? MC.Formes.packMeuble(((rot || 0) + (dec || 0)) & 3, false) : 0;
+          o.pose(q[0], y0, q[1], id, etat);
+        };
+        if (B.LIT) {
+          var fondG = gd - 2, droiteG = gw - 2;
+          // foin en meules de deux contre le mur du fond, à gauche
+          // (une seule meule dans la petite grange, la lampe prend l'autre coin)
+          var meules = fondG - 1 > 1 ? [[1, fondG], [1, fondG - 1]] : [[1, fondG]];
+          meules.forEach(function (c) {
+            var q = p(c[0], c[1]); o.pose(q[0], y0, q[1], B.HAY); o.pose(q[0], y0 + 1, q[1], B.HAY);
+          });
+          meubleG(uPorte, fondG, B.ETAGERE, 2);                 // les outils, face à la porte
+          meubleG(droiteG, fondG, B.TONNEAU);
+          meubleG(droiteG, 1, B.CHEST);
+          if (meules.length > 1) meubleG(droiteG, 2, B.LAMPE); else meubleG(1, 1, B.LAMPE);
+        }
+        toit(st, o, p, gw, gd, y0 + HG);
         var lan = p(gw + 1, 1); o.pose(lan[0], y0, lan[1], B.LANTERN);
         var c0 = p(0, 0), c1 = p(L - 1, L - 1);
         var bat = { type: 'ferme', nom: 'Ferme', plan: grange ? 'grange' : 'champ', lieu: l.id,
                     x0: Math.min(c0[0], c1[0]), z0: Math.min(c0[1], c1[1]),
-                    x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0, y1: y0 + 3,
+                    x1: Math.max(c0[0], c1[0]), z1: Math.max(c0[1], c1[1]), y0: y0,
+                    y1: y0 + HG + (st.forme === 'raide' ? 2 : 1) * Math.ceil(gd / 2) + 1,
                     porte: { x: porte[0], z: porte[1] } };
+        var g0 = p(0, 0), g1 = p(gw - 1, gd - 1);
+        bat.grange = { x0: Math.min(g0[0], g1[0]), z0: Math.min(g0[1], g1[1]), x1: Math.max(g0[0], g1[0]), z1: Math.max(g0[1], g1[1]) };
         l.batiments.push(bat);
         var f = p(gw, 2);
         pnj(l, 'fermier', f[0] + 0.5, y0, f[1] + 0.5, bat);
