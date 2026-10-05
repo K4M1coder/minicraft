@@ -123,6 +123,104 @@ async function attendrePret(port) {
     echecs++; details.push(`  ${C.r}✗ preparerSEA a levé : ${e.message}${C.x}`);
   }
 
+  // ── SPEC-PACK-001 : l'exécutable embarque le moteur ET les fichiers du jeu ─
+  const tmp3 = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-sea-'));
+  const cwdAvant = process.cwd(), argvAvant = process.argv;
+  try {
+    const SEAE = require(path.join(RACINE, 'tools', 'sea-entree.js'));
+    // conteneur : aller-retour exact, y compris octets binaires et accents
+    const brut = [{ nom: 'a.txt', contenu: Buffer.from('é€') }, { nom: 'src/b.bin', contenu: Buffer.from([0, 255, 1]) }];
+    const relu = SEAE.desassembler(SEAE.assembler(brut));
+    ok(relu.length === 2 && relu[0].nom === 'a.txt' && relu[0].contenu.toString() === 'é€' && relu[1].contenu.equals(Buffer.from([0, 255, 1])),
+       'SPEC-PACK-001 : le conteneur des fichiers du jeu embarqué se relit à l\'identique');
+    let refuse = 0;
+    ['../x', '/etc/passwd', 'C:\\x', 'a/../../b'].forEach(n => { try { SEAE.nomSur(n); } catch (e) { refuse++; } });
+    ok(refuse === 4, 'SPEC-PACK-001 : un nom hors du dossier de dépliage est refusé', String(refuse));
+    // dépliage : les parties du joueur ne sont jamais écrasées, rien n'est redéplié si rien n'a changé
+    const d = path.join(tmp3, 'jeu');
+    const lot = [{ nom: 'server.js', contenu: Buffer.from('1') }, { nom: 'parties/LISEZMOI.txt', contenu: Buffer.from('neuf') }];
+    ok(SEAE.deplier(lot, d).deplie === true, 'SPEC-PACK-001 : premier lancement, les fichiers sont dépliés');
+    fs.writeFileSync(path.join(d, 'parties', 'LISEZMOI.txt'), 'mien');
+    ok(SEAE.deplier(lot, d).deplie === false, 'SPEC-PACK-001 : relancé à l\'identique, rien n\'est redéplié');
+    lot[0] = { nom: 'server.js', contenu: Buffer.from('2') };
+    SEAE.deplier(lot, d);
+    ok(fs.readFileSync(path.join(d, 'server.js'), 'utf8') === '2' && fs.readFileSync(path.join(d, 'parties', 'LISEZMOI.txt'), 'utf8') === 'mien',
+       'SPEC-PACK-001 : une nouvelle version remplace le jeu mais n\'écrase jamais les parties');
+    // lancement : server.js voit exactement « node server.js [args] », et sans paramètre argv.slice(2) est vide
+    const dl = path.join(tmp3, 'exe');
+    fs.mkdirSync(dl);
+    const faux = { getRawAsset: () => SEAE.assembler([{ nom: 'server.js', contenu: Buffer.from('global.__MC_ARGV = process.argv.slice(); global.__MC_CWD = process.cwd();') }]) };
+    const exeFaux = path.join(dl, 'minicraft.exe');
+    const r1 = SEAE.lancer(faux, exeFaux, []);
+    const serveurAttendu = path.join(dl, 'minicraft-jeu', 'server.js');
+    ok(r1.serveur === serveurAttendu && global.__MC_ARGV.length === 2 && global.__MC_ARGV[1] === serveurAttendu,
+       'SPEC-PACK-001 : lancé sans paramètre, le serveur reçoit un argv sans argument (il ouvre donc le navigateur)', JSON.stringify(global.__MC_ARGV));
+    ok(path.resolve(global.__MC_CWD) === path.resolve(path.dirname(serveurAttendu)), 'SPEC-PACK-001 : le dossier de travail est celui du jeu déplié');
+    process.chdir(cwdAvant);
+    delete require.cache[serveurAttendu];
+    SEAE.lancer(faux, exeFaux, [serveurAttendu, '--partie', 'p1', '--port', '9']);
+    ok(global.__MC_ARGV.slice(2).join(' ') === '--partie p1 --port 9',
+       'SPEC-PACK-001 : la relance du serveur sur une autre partie ne double pas le chemin de server.js');
+    process.chdir(cwdAvant);
+
+    // préparation réelle : le blob existe et contient bien les fichiers du jeu
+    const d2 = path.join(tmp3, 'pk');
+    const c = paquet.construire(d2, {});
+    if (c.sea.ok) {
+      const jeu = SEAE.desassembler(fs.readFileSync(path.join(d2, 'sea', 'jeu.bin')));
+      ok(['index.html', 'server.js', 'src/core.js', 'parties/LISEZMOI.txt'].every(n => jeu.some(e => e.nom === n)),
+         'SPEC-PACK-001 : le blob de l\'exécutable embarque les fichiers du jeu');
+      ok(!jeu.some(e => /^(tests|tools)\//.test(e.nom)), 'SPEC-PACK-001 : le blob n\'embarque ni les tests ni les outils');
+      ok(fs.statSync(path.join(d2, 'sea', 'prep.blob')).size > fs.statSync(path.join(d2, 'sea', 'jeu.bin')).size,
+         'SPEC-PACK-001 : prep.blob contient le point d\'entrée et le jeu');
+      if (process.platform === 'win32') {
+        // exécutable réel : injection puis lancement, la page est servie par l'exécutable seul
+        const f = paquet.finaliserSEA(d2, c.sea);
+        ok(f.ok, 'SPEC-PACK-001 : l\'exécutable Windows est terminé (injection du blob)', f.motif);
+        if (f.ok) {
+          const alone = path.join(tmp3, 'seul');                        // l'exécutable SEUL, sans server.js ni src/ autour
+          fs.mkdirSync(alone);
+          fs.copyFileSync(path.join(d2, c.sea.executable), path.join(alone, 'minicraft.exe'));
+          const ex = spawn(path.join(alone, 'minicraft.exe'), ['--port', '0', '--serveur', '--admin', 'secret-de-test-long'],
+            { cwd: alone, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true });
+          let sortie = '';
+          ex.stdout.on('data', x => { sortie += String(x); });
+          ex.stderr.on('data', x => { sortie += String(x); });
+          try {
+            let port = 0;
+            for (let i = 0; i < 100 && !port; i++) {                    // sondage borné : 10 s
+              await dodo(100);
+              const m = /MC_PORT=(\d+)/.exec(sortie);
+              if (m) port = parseInt(m[1], 10);
+            }
+            ok(port > 0, 'SPEC-PACK-001 : l\'exécutable seul démarre et annonce son port', sortie.slice(-400));
+            if (port) {
+              const i1 = await requete(port, '/index.html');
+              const i2 = await requete(port, '/src/core.js');
+              const i3 = await requete(port, '/admin.html');
+              ok(i1.code === 200 && i2.code === 200 && i3.code === 200,
+                 'SPEC-PACK-001 : l\'exécutable seul sert la page, les modules et la console d\'administration', [i1.code, i2.code, i3.code].join('/'));
+              ok(fs.existsSync(path.join(alone, 'minicraft-jeu', 'server.js')) && fs.existsSync(path.join(alone, 'minicraft-jeu', 'parties')),
+                 'SPEC-PACK-001 : le jeu embarqué est déplié à côté de l\'exécutable, avec son dossier de parties');
+            }
+          } finally {
+            try { ex.kill(); } catch (e) {}
+            await dodo(300);
+          }
+        }
+      } else {
+        details.push(`  ${C.d}- IGNORÉ (${process.platform}) : injection et lancement de l'exécutable réel, vérifiés seulement sous Windows${C.x}`);
+      }
+    } else {
+      details.push(`  ${C.d}- IGNORÉ : préparation SEA impossible ici (${c.sea.motif})${C.x}`);
+    }
+  } catch (e) {
+    echecs++; details.push(`  ${C.r}✗ exécutable embarqué a levé : ${e.message}${C.x}\n${e.stack}`);
+  } finally {
+    try { process.chdir(cwdAvant); process.argv = argvAvant; } catch (e) {}
+    try { fs.rmSync(tmp3, { recursive: true, force: true }); } catch (e) {}
+  }
+
   try { fs.rmSync(tmp, { recursive: true, force: true }); } catch (e) {}
 
   // ── SPEC-PACK-004 : un paquet .zip nommé par version, à chaque publication ─

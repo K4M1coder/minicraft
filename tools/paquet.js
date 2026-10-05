@@ -35,6 +35,7 @@ const fs = require('fs');
 const path = require('path');
 const { execFileSync } = require('child_process');
 const ZIP = require('./zip.js');
+const SEA = require('./sea-entree.js');
 
 const RACINE = path.join(__dirname, '..');
 
@@ -111,19 +112,94 @@ function commandePostject(destDir, exe) {
          `--sentinel-fuse ${FUSE}${macho}`;
 }
 
-/* Prépare ce que Node fournit NATIVEMENT (config + blob), copie le binaire
-   `node` courant, et rend compte de ce qu'il reste à faire. Ne lève jamais :
-   un échec ici n'empêche pas l'archive portable d'être livrée. */
+/* Fichiers du jeu embarqués dans l'exécutable : ceux de l'archive portable,
+   hors lanceurs (l'exécutable les remplace). */
+const LISEZMOI_PARTIES =
+  'Vos parties MiniCraft sont rangées ici : un index (index.json) et un fichier de monde par partie.\n' +
+  'Copiez ce dossier pour sauvegarder ou déplacer vos parties ; ne le modifiez pas pendant que le jeu tourne.\n';
+function entreesJeu() {
+  const e = [];
+  FICHIERS_RACINE.forEach(f => {
+    const src = path.join(RACINE, f);
+    if (fs.existsSync(src)) e.push({ nom: f, contenu: fs.readFileSync(src) });
+  });
+  listerSrc().forEach(f => e.push({ nom: 'src/' + f, contenu: fs.readFileSync(path.join(RACINE, 'src', f)) }));
+  e.push({ nom: 'parties/LISEZMOI.txt', contenu: Buffer.from(LISEZMOI_PARTIES, 'utf8') });
+  return e;
+}
+
+/* Injection du blob sous Windows SANS postject (qui échoue sur le `node.exe`
+   signé : « Multiple occurences of sentinel ») ni réseau : c'est exactement ce
+   que fait postject sur un PE, à savoir (1) ajouter la ressource RT_RCDATA
+   « NODE_SEA_BLOB » — ici par l'API système UpdateResource, via PowerShell —
+   et (2) passer le fusible `NODE_SEA_FUSE_…:0` à `:1` dans le binaire. */
+function injecterWindows(exe, blob, nom) {
+  const script = path.join(path.dirname(exe), 'sea', 'injecter.ps1');
+  fs.writeFileSync(script, [
+    "param([string]$exe, [string]$blob)",
+    "$ErrorActionPreference = 'Stop'",
+    "Add-Type -TypeDefinition @'",
+    "using System; using System.Runtime.InteropServices;",
+    "public static class MCRes {",
+    "  [DllImport(\"kernel32.dll\", SetLastError=true, CharSet=CharSet.Unicode)] public static extern IntPtr BeginUpdateResource(string f, bool del);",
+    "  [DllImport(\"kernel32.dll\", SetLastError=true, CharSet=CharSet.Unicode)] public static extern bool UpdateResource(IntPtr h, IntPtr type, string name, ushort lang, byte[] data, uint cb);",
+    "  [DllImport(\"kernel32.dll\", SetLastError=true)] public static extern bool EndUpdateResource(IntPtr h, bool discard);",
+    "}",
+    "'@",
+    "$data = [System.IO.File]::ReadAllBytes($blob)",
+    "$h = [MCRes]::BeginUpdateResource($exe, $false)",
+    "if ($h -eq [IntPtr]::Zero) { throw 'BeginUpdateResource a échoué' }",
+    "if (-not [MCRes]::UpdateResource($h, [IntPtr]10, 'NODE_SEA_BLOB', 1033, $data, [uint32]$data.Length)) { [MCRes]::EndUpdateResource($h, $true) | Out-Null; throw 'UpdateResource a échoué' }",
+    "if (-not [MCRes]::EndUpdateResource($h, $false)) { throw 'EndUpdateResource a échoué' }",
+  ].join('\r\n') + '\r\n');
+  try {
+    execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File', script, '-exe', exe, '-blob', blob],
+      { stdio: 'pipe', timeout: 120000, windowsHide: true });
+    const bin = fs.readFileSync(exe);
+    const fusible = Buffer.from(FUSE + ':0');
+    const pos = bin.indexOf(fusible);
+    if (pos < 0 || bin.indexOf(fusible, pos + 1) >= 0) return { ok: false, motif: 'fusible SEA introuvable ou ambigu dans le binaire' };
+    bin[pos + fusible.length - 1] = 0x31;
+    fs.writeFileSync(exe, bin);
+    return { ok: true, executable: nom };
+  } catch (e) {
+    return { ok: false, motif: String((e.stderr && e.stderr.toString()) || e.message).slice(0, 400) };
+  }
+}
+
+/* Dernière étape : injecte le blob dans le binaire copié. Windows : voir
+   `injecterWindows` (aucun réseau). Ailleurs : `postject` (paquet npm
+   téléchargé par `npx`, SEULE étape qui demande le réseau, non vérifiée sur
+   macOS ni Linux depuis une machine Windows). Fonction à part, appelée
+   seulement avec `opts.finaliser`. Rend { ok, executable } ou { ok: false,
+   motif } ; ne lève jamais. */
+function finaliserSEA(destDir, sea) {
+  try {
+    if (!sea || !sea.ok) return { ok: false, motif: 'préparation SEA absente ou en échec' };
+    if (process.platform === 'win32') return injecterWindows(path.join(destDir, sea.executable), path.join(destDir, sea.blob), sea.executable);
+    const args = ['--yes', 'postject', path.join(destDir, sea.executable), 'NODE_SEA_BLOB',
+                  path.join(destDir, sea.blob), '--sentinel-fuse', FUSE];
+    if (process.platform === 'darwin') args.push('--macho-segment-name', 'NODE_SEA');
+    execFileSync('npx', args, { stdio: 'pipe', timeout: 180000 });
+    return { ok: true, executable: sea.executable };
+  } catch (e) {
+    return { ok: false, motif: String(e.stderr || e.message).slice(0, 400) };
+  }
+}
+
+/* Prépare ce que Node fournit NATIVEMENT (config + blob : point d'entrée
+   `tools/sea-entree.js` et fichiers du jeu en élément `jeu.bin`), copie le
+   binaire `node` courant, et rend compte de ce qu'il reste à faire (injecter le
+   blob : `finaliserSEA`). Ne lève jamais : un échec ici n'empêche pas
+   l'archive portable d'être livrée. */
 function preparerSEA(destDir) {
   const seaDir = path.join(destDir, 'sea');
   try {
     fs.mkdirSync(seaDir, { recursive: true });
-    const entree = path.join(seaDir, 'entree.js');
-    // le point d'entrée SEA se contente de démarrer le vrai serveur : la
-    // logique ne vit qu'à un seul endroit (server.js), jamais dupliquée.
-    fs.writeFileSync(entree,
-      "'use strict';\nrequire(" + JSON.stringify(path.relative(seaDir, path.join(destDir, 'server.js')).split(path.sep).join('/')) + ");\n");
-    const config = { main: 'entree.js', output: 'prep.blob', disableExperimentalSEAWarning: true };
+    fs.copyFileSync(path.join(__dirname, 'sea-entree.js'), path.join(seaDir, 'entree.js'));
+    fs.writeFileSync(path.join(seaDir, 'jeu.bin'), SEA.assembler(entreesJeu()));
+    const config = { main: 'entree.js', output: 'prep.blob', disableExperimentalSEAWarning: true,
+                     assets: { 'jeu.bin': 'jeu.bin' } };
     fs.writeFileSync(path.join(seaDir, 'sea-config.json'), JSON.stringify(config, null, 2));
     execFileSync(process.execPath, ['--experimental-sea-config', 'sea-config.json'],
       { cwd: seaDir, stdio: 'pipe' });
@@ -149,6 +225,7 @@ function construire(destDir, opts) {
   const copies = copierArbre(destDir);
   const lanceurs = ecrireLanceurs(destDir);
   const sea = opts.sansSEA ? { ok: false, motif: 'désactivé (--sans-sea)' } : preparerSEA(destDir);
+  if (opts.finaliser && sea.ok) sea.finalisation = finaliserSEA(destDir, sea);
   return { dossier: destDir, fichiers: copies, lanceurs: lanceurs, sea: sea };
 }
 
@@ -200,7 +277,7 @@ function construireZipRelease(version, dossierReleases) {
   return r;
 }
 
-module.exports = { construire, listerSrc, copierArbre, ecrireLanceurs, preparerSEA, commandePostject, nomExecutable, construireZip, construireZipRelease };
+module.exports = { construire, listerSrc, copierArbre, ecrireLanceurs, preparerSEA, finaliserSEA, entreesJeu, commandePostject, nomExecutable, construireZip, construireZipRelease };
 
 if (require.main === module) {
   const version = process.argv.includes('--zip-release')
@@ -212,13 +289,18 @@ if (require.main === module) {
   } else {
     const dest = path.resolve(RACINE, process.argv[2] || 'dist');
     const sansSEA = process.argv.includes('--sans-sea');
+    const finaliser = process.argv.includes('--finaliser');   // injecte le blob (Windows : sans réseau ; ailleurs : npx postject)
     console.log(`Construction de l'archive portable dans ${dest}…`);
-    const r = construire(dest, { sansSEA });
+    const r = construire(dest, { sansSEA, finaliser });
     console.log(`  ${r.fichiers.length} fichiers copiés, lanceurs : ${r.lanceurs.join(', ')}`);
     if (r.sea.ok) {
       console.log(`  binaire Node copié : ${r.sea.executable}`);
-      console.log('  pour finir l\'exécutable autonome (nécessite le paquet npm "postject", non installé ici) :');
-      console.log('    ' + r.sea.commande);
+      if (r.sea.finalisation && r.sea.finalisation.ok) console.log(`  exécutable autonome terminé : ${r.sea.executable} (lancé sans paramètre, il ouvre le jeu dans le navigateur)`);
+      else if (r.sea.finalisation) console.log(`  injection échouée : ${r.sea.finalisation.motif}`);
+      if (!(r.sea.finalisation && r.sea.finalisation.ok)) {
+        console.log('  pour finir l\'exécutable autonome, relancer avec --finaliser (Windows : aucun réseau ; macOS/Linux : npx postject) ou à la main :');
+        console.log('    ' + r.sea.commande);
+      }
     } else {
       console.log(`  exécutable autonome non préparé : ${r.sea.motif}`);
     }

@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Ajouté
+- SPEC-PACK-001 (partielle : Windows prouvé, macOS et Linux non vérifiés) — **exécutable autonome qui embarque le moteur et les fichiers du jeu** : `tools/paquet.js` met les fichiers du jeu dans le blob SEA (`tools/sea-entree.js` les déplie à côté de l'exécutable sans jamais écraser `parties/`, puis lance `server.js` avec le même `process.argv` que `node server.js` : sans paramètre il ouvre le navigateur) et `--finaliser` achève l'exécutable : sous Windows par `UpdateResource` et passage du fusible, sans réseau ni `postject` (qui échoue sur le `node.exe` signé) ; ailleurs par `npx postject`. Tests : `tests/integration-paquet.js` (exécutable réel lancé seul, page, modules et console servis ; conteneur, dépliage, argv).
 
 ## [0.8.0] - 2026-10-05
 ### Ajouté

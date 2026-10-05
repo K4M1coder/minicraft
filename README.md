@@ -141,14 +141,28 @@ Produit toujours une **archive portable** : `dist/` contenant `index.html`,
 `node server.js` sans paramètre (serveur local fermé au réseau, ouvre le navigateur),
 et un dossier `parties/` vide qui accueillera vos parties.
 
-Tente en plus de préparer un **exécutable autonome** pour l'OS courant via
-Node SEA (`node --experimental-sea-config`, disponible nativement depuis
-Node 20 — aucune dépendance ajoutée). La dernière étape officielle de SEA
-(injecter le blob dans le binaire `node`) demande l'outil `postject`, un
-paquet npm **jamais installé ici** (aucun téléchargement externe) : le script
-prépare tout ce qu'il peut sans lui (config, blob, copie du binaire `node`
-sous `dist/minicraft(.exe)`) et affiche la commande exacte à lancer pour
-finir, propre à chaque système :
+Prépare en plus un **exécutable autonome** pour l'OS courant via Node SEA
+(`node --experimental-sea-config`, natif depuis Node 20, aucune dépendance) :
+le blob embarque le point d'entrée (`tools/sea-entree.js`) **et les fichiers du
+jeu** (`index.html`, `admin.html`, `server.js`, `src/*`, `parties/`). Le binaire
+`node` copié sous `dist/minicraft(.exe)` reste inachevé tant que le blob n'y est
+pas injecté ; avec `--finaliser` le script s'en charge :
+
+```bash
+node tools/paquet.js dist --finaliser
+```
+
+- **Windows** : injection par l'API système (`UpdateResource` via PowerShell) puis
+  passage du fusible SEA, sans réseau ni `postject` (qui échoue sur le `node.exe`
+  signé). Vérifié : l'exécutable seul, copié dans un dossier vide, sert le jeu.
+- **macOS et Linux** : `npx postject` (paquet npm, réseau nécessaire). **Non vérifié**
+  depuis Windows : à tester sur chaque système.
+
+Au premier lancement, l'exécutable déplie le jeu à côté de lui, dans
+`minicraft-jeu/` (à défaut, dans `~/.minicraft/jeu`), puis démarre le serveur comme
+`node server.js` : sans paramètre il ouvre le navigateur. Les parties
+(`minicraft-jeu/parties/`) ne sont jamais écrasées par une mise à jour. Sans
+`--finaliser`, le script affiche la commande manuelle de finition :
 
 ```bash
 # Windows
