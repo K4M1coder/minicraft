@@ -148,6 +148,41 @@
       .slice(0, max);
   }
 
+  // ─── sons décidés par le serveur (SPEC-AUDIO-002, 005) ────────────────────
+  /* Ce que seul le serveur sait : une créature blessée, tuée, qui frappe ou
+     tire (journal de entities.js), un gardien qui s'éveille. Il en fait des
+     évènements sonores courts { k, e (espèce), x, y, z } — positions au
+     dixième — envoyés dans un message SONS à chaque client dont un joueur
+     est à moins de PORTEE_SONS, au plus MAX_SONS par envoi (les plus
+     proches d'abord). Le client choisit le son exact (MC.Ambiance). */
+  var PORTEE_SONS = 48, MAX_SONS = 24;
+  var GENRES_SONS = { blesse: 1, mort: 1, attaque: 1, gardien: 1 };
+  function dixieme(v) { return Math.round((+v || 0) * 10) / 10; }
+  function sonsDepuisEvenements(evts) {
+    var out = [];
+    (evts || []).forEach(function (e) {
+      if (!e || !GENRES_SONS[e.type] || !e.pos) return;
+      var espece = e.victime || e.espece;
+      if (typeof espece !== 'string') return;
+      out.push({ k: e.type, e: espece, x: dixieme(e.pos.x), y: dixieme(e.pos.y), z: dixieme(e.pos.z) });
+    });
+    return out;
+  }
+  function sonsPour(sons, positionsRef, portee, max) {
+    if (!sons || !sons.length || !positionsRef || !positionsRef.length) return [];
+    return selectionnerMobsProches(sons.map(function (s) { return { pos: s, s: s }; }), positionsRef,
+                                   portee || PORTEE_SONS, max || MAX_SONS).map(function (o) { return o.s; });
+  }
+  /* Côté client : un message SONS reçu, réduit à des évènements bien formés
+     (jamais d'exception sur un message abîmé). */
+  function validerSons(m) {
+    if (!m || !Array.isArray(m.l)) return [];
+    return m.l.slice(0, MAX_SONS).filter(function (s) {
+      return s && GENRES_SONS[s.k] && typeof s.e === 'string' && s.e.length <= 40 &&
+             estFini(s.x) && estFini(s.y) && estFini(s.z);
+    });
+  }
+
   /* Comme selectionnerMobsProches, avec HYSTÉRÉSIS : une entité déjà envoyée au relevé précédent
      (`precedents`, un Set d'eid) compte pour 20 % plus proche qu'elle ne l'est, de sorte que deux
      véhicules presque à égale distance de la frontière du plafond ne s'évincent pas à tour de
@@ -348,6 +383,10 @@
     // administrateur, annoncée sans délai aux clients dont un joueur s'y tient
     // — sans attendre qu'ils se reconnectent. Jamais accepté d'un client.
     ZONE_MAJ: 'zone_maj',
+    // SPEC-AUDIO-002/005 (s→c) : évènements sonores que seul le serveur
+    // connaît (créature blessée, tuée, qui attaque ; gardien qui s'éveille),
+    // { l: [{ k, e, x, y, z }] } — voir sonsDepuisEvenements. Jamais accepté d'un client.
+    SONS: 'sons',
   };
   // vague 2 (B1, étape 1) : fusion des nouveaux types de MC.ContratsV2.MSG dans NP.MSG
   if (MC.ContratsV2) Object.keys(MC.ContratsV2.MSG).forEach(function (k) { MSG[k] = MC.ContratsV2.MSG[k]; });
@@ -508,6 +547,8 @@
     CSP_STATIQUE: CSP_STATIQUE, entetesSecuriteStatiques: entetesSecuriteStatiques,
     MAX_MOBS_DIFFUSES: MAX_MOBS_DIFFUSES, MAX_ITEMS_DIFFUSES: MAX_ITEMS_DIFFUSES, MAX_VEHICULES_DIFFUSES: MAX_VEHICULES_DIFFUSES, PORTEE_MOBS_DIFFUSES: PORTEE_MOBS_DIFFUSES,
     selectionnerMobsProches: selectionnerMobsProches, selectionnerAvecHysteresis: selectionnerAvecHysteresis,
+    PORTEE_SONS: PORTEE_SONS, MAX_SONS: MAX_SONS,
+    sonsDepuisEvenements: sonsDepuisEvenements, sonsPour: sonsPour, validerSons: validerSons,
     ETAT_HZ_MIN: ETAT_HZ_MIN, SEUIL_FILE_OCTETS: SEUIL_FILE_OCTETS,
     PALIERS_ETAT_HZ: PALIERS_ETAT_HZ, calculerEtatHz: calculerEtatHz,
     encoder: encoder, decoder: decoder,

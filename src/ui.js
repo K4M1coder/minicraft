@@ -864,6 +864,12 @@
     // ══════════════════════════════════════════════════════════════════════
     var overlay = el('div', 'overlay');
     root.appendChild(overlay);
+    /* SPEC-AUDIO-004 : chaque bouton des menus et des écrans répond d'un petit
+       son d'interface (un seul écouteur délégué, pas un par bouton). */
+    overlay.addEventListener('click', function (ev) {
+      var b = ev.target && ev.target.closest ? ev.target.closest('button') : null;
+      if (b && !b.disabled && hooks.onSound) hooks.onSound('clic');
+    });
 
     function showScreen(html) {
       overlay.innerHTML = html;

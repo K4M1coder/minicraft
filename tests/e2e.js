@@ -4636,6 +4636,131 @@
     A.notOk(c.dirty, 'le chunk finit par être remaillé proprement après la modification');
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // Audio — sons synthétisés dans le vrai AudioContext (SPEC-AUDIO-001 à 006)
+  // ══════════════════════════════════════════════════════════════════════════
+  /* Un navigateur sans fenêtre peut laisser le contexte suspendu faute de
+     geste utilisateur : ces tests vérifient que les nœuds WebAudio sont créés
+     et reliés (le jeu les règle même suspendu), jamais qu'on entend — la
+     qualité d'un son n'est pas vérifiable par un test. */
+  function sonsDepuis(g, n0, prefixe) {
+    return g.sons.derniers.slice(n0).filter(function (s) { return s.nom && s.nom.indexOf(prefixe) === 0; });
+  }
+  function avecAudio(g) {
+    g.audio.resume();
+    var ctx = g.audio.context;
+    A.ok(ctx && typeof ctx.createGain === 'function' && ctx.destination, 'un vrai AudioContext (état : ' + (ctx && ctx.state) + ')');
+    return ctx;
+  }
+
+  e2e('SPEC-AUDIO-001 : une cascade posée près du joueur s\'entend — la sonde du lieu la trouve et sa nappe monte', {
+        "teste": "qu'une chute d'eau (eau courante dont un flanc donne sur le vide) posée à quatre blocs du joueur est trouvée par la sonde du lieu (quatre fois par seconde) et fait monter la nappe « cascade » du vrai AudioContext",
+        "pourquoi": "l'audit avait trouvé la rivière et la cascade jamais transmises aux nappes : le code pur les décidait, le jeu ne les lui donnait pas",
+        "attendu": "g.sons.sonde.cascade > 0 puis le gain de la nappe cascade > 0 ; une fois l'eau retirée, la cascade se tait"
+  }, async function (g) {
+    var s = await reset(g);
+    avecAudio(g);
+    var x = Math.floor(s.pos.x) + 3, z = Math.floor(s.pos.z), y0 = Math.floor(s.pos.y);
+    var poses = [];
+    try {
+      for (var y = y0; y <= y0 + 4; y++) for (var dx = 0; dx <= 1; dx++) {
+        poses.push([x + dx, y, z, g.world.getBlock(x + dx, y, z)]);
+        g.world.setBlock(x + dx, y, z, C.B.EAU_7);
+      }
+      A.ok(await sonderE2E(function () { return g.sons.sonde && g.sons.sonde.cascade > 0; }, 4000), 'la sonde entend la cascade (' + JSON.stringify(g.sons.sonde) + ')');
+      await frames(2);
+      A.gt(g.audio.gainsNappes.cascade, 0, 'la nappe « cascade » monte dans le vrai contexte');
+    } finally {
+      poses.forEach(function (p) { g.world.setBlock(p[0], p[1], p[2], p[3]); });
+    }
+    A.ok(await sonderE2E(function () { return g.sons.sonde && g.sons.sonde.cascade === 0; }, 4000), 'l\'eau retirée, la cascade se tait');
+  });
+
+  e2e('SPEC-AUDIO-003 : marcher fait des pas selon le sol, synthétisés dans le vrai AudioContext', {
+        "teste": "qu'avancer deux secondes au sol joue des pas de la matière du bloc sous les pieds (MC.Ambiance.creerSuiviPas, matiereBloc), et que chacun crée réellement des nœuds WebAudio",
+        "pourquoi": "l'audit avait trouvé sonAction jamais appelé : ni pas, ni nage, ni chute, ni tir ne s'entendaient",
+        "attendu": "au moins deux sons « action_pas_<matière> » joués, la matière étant celle du sol, et le compteur de sons joués de audio.js qui avance"
+  }, async function (g) {
+    var s = await reset(g);
+    avecAudio(g);
+    A.ok(await sonderE2E(function () { return s.onGround; }, 4000), 'le joueur est posé au sol');
+    /* une allée de pierre dégagée devant lui (yaw 0 : vers -z), pour que la
+       marche ne bute ni ne tombe à l'eau selon le relief du point d'apparition */
+    var bx = Math.floor(s.pos.x), by = Math.floor(s.pos.y), bz = Math.floor(s.pos.z), sauves = [];
+    for (var dz = -14; dz <= 1; dz++) for (var dx = -1; dx <= 1; dx++) for (var dy = -1; dy <= 3; dy++) {
+      sauves.push([bx + dx, by + dy, bz + dz, g.world.getBlock(bx + dx, by + dy, bz + dz)]);
+      g.world.setBlock(bx + dx, by + dy, bz + dz, dy === -1 ? C.B.STONE : 0);
+    }
+    s.yaw = 0;
+    try {
+    var n0 = g.sons.derniers.length, joues0 = g.audio.stats.joues, x0 = s.pos.x, z0 = s.pos.z, sol0 = 0, nf = 0;
+    key('KeyW');
+    var fin = Date.now() + 2000;                       // deux secondes de marche, quel que soit le nombre d'images
+    while (Date.now() < fin) { await frames(1); nf++; if (s.onGround) sol0++; }
+    key('KeyW', 'keyup');
+    await frames(2);
+    var pas = sonsDepuis(g, n0, 'action_pas_');
+    A.ok(pas.length >= 2, 'des pas en marchant (' + pas.length + ' ; parcouru ' + Math.hypot(s.pos.x - x0, s.pos.z - z0).toFixed(1) +
+         ' blocs, au sol ' + sol0 + '/' + nf + ' images, nage ' + s.swimming + ', vol ' + s.flying + ', sons ' + JSON.stringify(g.sons.derniers.slice(n0).slice(-5)) + ')');
+    A.ok(pas.every(function (p) { return p.joue; }), 'chacun réellement synthétisé');
+    A.ok(pas.some(function (p) { return p.nom === 'action_pas_pierre'; }), 'des pas de pierre, la matière de l allée');
+    A.gt(g.audio.stats.joues, joues0, 'audio.js a créé des voix');
+    A.ok(g.audio.voixActives <= g.audio.maxVoix, 'le budget de voix tient');
+    } finally {
+      key('KeyW', 'keyup');
+      for (var k = sauves.length - 1; k >= 0; k--) g.world.setBlock(sauves[k][0], sauves[k][1], sauves[k][2], sauves[k][3]);
+    }
+  });
+
+  e2e('SPEC-AUDIO-002 / SPEC-AUDIO-005 : les sons relayés par le serveur (créature blessée, réveil d\'un gardien) sont joués là où ils se produisent', {
+        "teste": "que les évènements du message SONS (blessure d'un loup, réveil d'un gardien) passent par MC.Ambiance (son de l'espèce) puis audio.js (spatialisé, étouffé par la roche), et qu'une créature au-delà de la portée n'est pas jouée",
+        "pourquoi": "les créatures ne vivent plus que dans le serveur : sans ce relais, blessures, morts, attaques et réveils restaient muets",
+        "attendu": "« blesse » (loup) et « gardien » joués ; un cri de créature à 200 blocs ne crée aucune voix"
+  }, async function (g) {
+    var s = await reset(g);
+    avecAudio(g);
+    var p = s.pos, n0 = g.sons.derniers.length;
+    g.sonsServeur([{ k: 'blesse', e: 'wolf', x: p.x + 3, y: p.y, z: p.z },
+                   { k: 'gardien', e: 'boss_zombie', x: p.x - 6, y: p.y, z: p.z }]);
+    var l = g.sons.derniers.slice(n0);
+    A.ok(l.some(function (x) { return x.nom === MC.Ambiance.sonCreature('wolf', 'blesse') && x.joue; }), 'la blessure du loup');
+    A.ok(l.some(function (x) { return x.nom === MC.Ambiance.sonEvenement('gardien') && x.joue; }), 'le réveil du gardien');
+    var n1 = g.sons.derniers.length;
+    g.sonsServeur([{ k: 'mort', e: 'sheep', x: p.x + 200, y: p.y, z: p.z }]);
+    A.ok(g.sons.derniers.slice(n1).every(function (x) { return !x.joue; }), 'à 200 blocs, rien ne se joue');
+  });
+
+  e2e('SPEC-AUDIO-006 : chaque catégorie de sons a son volume dans les options, appliqué aussitôt', {
+        "teste": "que l'écran des options propose un curseur par catégorie (ambiance, créatures, actions, interactions, interface, événements) et que le régler change aussitôt le volume de la catégorie dans audio.js",
+        "pourquoi": "l'audit avait trouvé un volume général seulement : impossible de baisser les créatures sans couper le reste",
+        "attendu": "six curseurs ; créatures à 0 : volumeCategorie('creature') vaut 0 et un cri n'est plus joué ; les défauts reviennent ensuite"
+  }, async function (g) {
+    var avant = JSON.parse(JSON.stringify(g.options));
+    try {
+      var s = await reset(g);
+      avecAudio(g);
+      key('Escape'); await frames(3);
+      document.querySelector('#btn-options').click(); await frames(2);
+      MC.Ambiance.CATEGORIES.forEach(function (c) {
+        A.ok(document.querySelector('input[data-opt="' + MC.Ambiance.OPTIONS_VOLUME[c] + '"]'), 'un curseur pour « ' + c + ' »');
+      });
+      var i = document.querySelector('input[data-opt="volumeCreatures"]');
+      i.value = 0; i.dispatchEvent(new Event('input'));
+      A.equal(g.audio.volumeCategorie('creature'), 0, 'créatures à 0, aussitôt');
+      A.equal(g.audio.jouer('cri_monstre', { categorie: 'creature', x: s.pos.x + 1, y: s.pos.y, z: s.pos.z }), false, 'un cri de créature ne joue plus');
+      A.ok(g.audio.jouer('succes', { categorie: 'evenement' }), 'les autres catégories jouent');
+      var e = document.querySelector('input[data-opt="volumeEvenements"]');
+      e.value = 0.3; e.dispatchEvent(new Event('input'));
+      A.close(g.audio.volumeCategorie('evenement'), 0.3, 1e-9, 'événements à 0,3');
+      document.querySelector('#btn-opt-defaut').click(); await frames(2);
+      A.close(g.audio.volumeCategorie('creature'), MC.Ambiance.VOLUMES_DEFAUT.creature, 1e-9, 'les défauts reviennent');
+      document.querySelector('#btn-retour').click(); await frames(2);
+    } finally {
+      g.options = avant; MC.Options.sauver(localStorage, avant);
+      key('Escape'); fakeLock(g, true); await frames(3);
+    }
+  });
+
   // ─── nettoyage ─────────────────────────────────────────────────────────────
   /* SPEC-BANC-016 : fin de test et fin de campagne referment tout ce qu'un
      test peut avoir laissé ouvert (dialogue d'histoire, journal, écrans de

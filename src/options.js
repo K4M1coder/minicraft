@@ -12,6 +12,13 @@
   var REGLAGES = {
     sensibilite: { defaut: 1, min: 0.2, max: 3, pas: 0.1, nom: 'Sensibilité de la souris' },
     volume:      { defaut: 0.8, min: 0, max: 1, pas: 0.05, nom: 'Volume du son' },
+    // SPEC-AUDIO-006 : un volume par catégorie de sons (défauts = mixage de MC.Ambiance.VOLUMES_DEFAUT)
+    volumeAmbiance:     { defaut: 0.5, min: 0, max: 1, pas: 0.05, nom: 'Volume : ambiance (vent, pluie, eau, faune)' },
+    volumeCreatures:    { defaut: 0.7, min: 0, max: 1, pas: 0.05, nom: 'Volume : créatures' },
+    volumeActions:      { defaut: 0.8, min: 0, max: 1, pas: 0.05, nom: 'Volume : actions (pas, minage, combat)' },
+    volumeInteractions: { defaut: 0.6, min: 0, max: 1, pas: 0.05, nom: 'Volume : interactions (portes, coffres, échanges)' },
+    volumeInterface:    { defaut: 0.5, min: 0, max: 1, pas: 0.05, nom: 'Volume : interface' },
+    volumeEvenements:   { defaut: 0.9, min: 0, max: 1, pas: 0.05, nom: 'Volume : événements (tonnerre, succès, histoire)' },
     champ:       { defaut: 72, min: 50, max: 110, pas: 1, nom: 'Champ de vision' },
     vueMax:      { defaut: 18, min: 4, max: 18, pas: 1, nom: 'Distance de vue maximale (chunks)' },
     realiste:    { defaut: true, nom: 'Rendu réaliste lointain' },

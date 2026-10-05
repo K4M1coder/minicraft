@@ -29,6 +29,22 @@
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
     Object.assign(S, { statsMesures, majChunksVoulus, solChargeEn });
 
+    /* SPEC-AUDIO-002/005 : les sons que seul le serveur connaît — créatures
+       blessées, tuées, qui frappent ou tirent (journal d'entites.js), gardien
+       qui s'éveille (S.sonsEnAttente, rempli par surveillerDonjonsServeur) —
+       partent dans un message SONS vers chaque client dont un joueur est à
+       portée (décision pure : NP.sonsDepuisEvenements, NP.sonsPour). */
+    function diffuserSons(evts) {
+      let sons = NP.sonsDepuisEvenements(evts);
+      if (S.sonsEnAttente && S.sonsEnAttente.length) { sons = sons.concat(S.sonsEnAttente); S.sonsEnAttente.length = 0; }
+      if (!sons.length) return;
+      clients.forEach(c => {
+        if (!c.rejoint || !c.joueurs || !c.joueurs.length) return;
+        const l = NP.sonsPour(sons, c.joueurs.map(x => x.joueur.state.pos), NP.PORTEE_SONS, NP.MAX_SONS);
+        if (l.length) envoyer(c, { t: NP.MSG.SONS, l });
+      });
+    }
+
     let meteoT = null;
     let accEau = 0;
     let accCircuits = 0;      // L29 mécanismes (SPEC-MECA-008) : même cadence que l'eau
@@ -471,7 +487,9 @@
       // vaincu (pré-existant : jamais fait par le serveur avant ce lot, seulement
       // au chargement d'une sauvegarde) ET profite à la faction dont le
       // territoire couvre ce donjon, s'il y en a une.
-      entites.evenements().forEach(evt => {
+      const evtsTic = entites.evenements();
+      diffuserSons(evtsTic);
+      evtsTic.forEach(evt => {
         // ARCHI-041 : le récit du joueur qui a tué la créature (ou vaincu le gardien) l'apprend
         if (regles.histoire && (evt.type === 'mort' || evt.type === 'boss_vaincu')) {
           if (evt.type === 'mort' && evt.auteurJoueur && evt.auteur) {

@@ -401,7 +401,11 @@
       },
       /* L45, SPEC-SYNC-023 : offres à jour d'un PNJ (réponse à 'consulter' ou
          'echanger') — ne redessine que si c'est CE PNJ qui est ouvert. */
+      // SPEC-AUDIO-002/005 : sons que seul le serveur connaît (créatures, gardiens)
+      onSons: function (l) { sonsServeur(l); },
       onTroc: function (m) {
+        // SPEC-AUDIO-004 : la réponse à un échange demandé il y a peu, c'est qu'il est conclu (un refus ne renvoie pas d'offres)
+        if (trocDemandeT >= 0 && performance.now() - trocDemandeT < 3000) { trocDemandeT = -1; sonInterface('echange', 'interaction'); }
         if (!ui.container || ui.container.kind !== 'trade' || ui.container.pos !== m.eid) return;
         var pnj = ui.container.pnj;
         if (!pnj) return;
@@ -631,6 +635,8 @@
       onQuit: toMenu,
       onRespawn: respawn,
       onSound: function (n) { audio.play(n); },
+      // SPEC-AUDIO-004 : un échange conclu avec un villageois ordinaire (sans économie)
+      onEchange: function () { sonInterface('echange', 'interaction'); },
       onNouvelle: function () { ui.menuNouvelle(); },
       onMulti: function () { ui.menuMulti({ pseudo: g.nomJoueur }); },
       onRetourMenu: function () { afficherMenu(); },
@@ -743,6 +749,8 @@
       input.setSensibilite(o.sensibilite);
       input.setTouches(o.touches);
       audio.setVolume(o.volume);
+      // SPEC-AUDIO-006 : un volume par catégorie (ambiance, créatures, actions, interactions, interface, événements)
+      MC.Ambiance.CATEGORIES.forEach(function (c) { var k = MC.Ambiance.OPTIONS_VOLUME[c]; if (o[k] !== undefined) audio.volumeCategorie(c, o[k]); });
       render.setChamp(o.champ);
       render.setOmbres(o.ombres);
       render.reglerRealiste(o.realiste);
@@ -1399,6 +1407,10 @@
         vent: et.vent.force * (dehors ? 1 : 0.4) * (sousLeau ? 0.1 : 1),
         neige: prec.forme === 'neige' ? prec.intensite : 0,
         villeProche: villeProche, volcanProche: volcanProche,
+        // la sonde du lieu (sonsImage, 4 fois par seconde) : eau vive, cascade, rivage, arbres
+        riviereProche: sondeLieu ? sondeLieu.riviere : 0, cascadeProche: sondeLieu ? sondeLieu.cascade : 0,
+        merProche: sondeLieu ? sondeLieu.mer : 0, feuillageProche: sondeLieu ? sondeLieu.feuillage : 0,
+        eauProche: sondeLieu ? sondeLieu.eau : 0,
       });
       // éclairs tombés depuis la dernière image (après un saut d'heure, on ne rattrape pas)
       if (meteoT === null || g.time < meteoT || g.time - meteoT > 5) meteoT = g.time;
@@ -1410,7 +1422,7 @@
         var ySol = world.estCharge(lieu.x, lieu.z) ? world.groundAt(lieu.x, lieu.z) : world.heightAt(lieu.x, lieu.z);
         render.eclair(lieu.x, ySol + 1, lieu.z, e.force);
         g.eclairs = (g.eclairs || 0) + 1;
-        audio.tonnerre(Math.hypot(lieu.x - pc.x, lieu.z - pc.z), e.force);
+        audio.tonnerre(Math.hypot(lieu.x - pc.x, lieu.z - pc.z), e.force, { x: lieu.x, z: lieu.z });
         /* SPEC-ARCHI-022 : la foudre blesse qui se tient à découvert tout près,
            allume ce qu'elle touche et blesse les créatures — le SERVEUR seul en
            décide (PV, blocs, succès) et prévient le joueur touché par FOUDROYE
@@ -1497,6 +1509,7 @@
         },
         onTrade: economique ? function (indice) {
           g.seqTroc = (g.seqTroc || 0) + 1;
+          trocDemandeT = performance.now();
           net.troc('echanger', ent.eid, { j: 0, seq: g.seqTroc, offre: indice, fois: 1 });
           return { ok: true, attente: true };   // la confirmation arrive par onTroc/onToi
         } : null,
@@ -2108,7 +2121,7 @@
       if (DC && !DC.isNight(g.time)) { ui.toast('On ne dort que la nuit', 'warn'); return; }
       var idx = j ? j.index : equipe[0].index;
       g.spawnPoint = { x: target.x + 0.5, y: target.y + 0.05, z: target.z + 0.5 };
-      audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target));
+      sonInteractionBloc('porte', target);
       if (!net.dormir(idx, true)) ui.toast('Réapparition fixée ici — le serveur n\'est pas joignable.', 'warn');
     }
     g.dormir = dormir;
@@ -2255,14 +2268,14 @@
       if (m) {
         st.attackCd = cadence;
         net.attaquer(m.eid, (d && d.damage) || 1, j.index, st.selected);
-        audio.play('frapper');
+        sonJoueur('combat', AMB.matiereArme(h ? h.id : 0), j);       // SPEC-AUDIO-003 : le coup, selon l'arme
         return true;
       }
       var dj = joueurDistantVise(pl);
       if (!dj) return false;
       st.attackCd = cadence;
       net.attaquerJoueur(dj.id, (d && d.damage) || 1, j.index, st.selected);
-      audio.play('frapper');
+      sonJoueur('combat', AMB.matiereArme(h ? h.id : 0), j);
       return true;
     }
     function tirEnLigne(j) {
@@ -2298,7 +2311,7 @@
       if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
         var tir = tirEnLigne(equipe[0]);
         if (tir) {
-          audio.play('frapper');
+          sonJoueur('tir', 'bois', equipe[0]);                   // SPEC-AUDIO-003 : la corde, la flèche qui siffle
           if (tir.toolBroke) ui.toast("Votre arc s'est brisé", 'warn');
         } else ui.toast('Plus de munitions', 'warn');
         return;
@@ -2334,7 +2347,7 @@
         var CONTENEURS_POSES = { furnace: 1, chest: 1, armoire: 1, etagere: 1, bibliotheque: 1, distributeur: 1, banque: 1 };
         if (CONTENEURS_POSES[kind]) {
           net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
-          audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
+          sonInteractionBloc(kind === 'furnace' ? 'fourneau' : 'coffre', target);
           // L'écran s'affiche vraiment à la réponse du serveur (onConteneurEtat,
           // CONTENEUR_ETAT) — un refus (portée, etc.) laisse l'écran vide,
           // Échap referme normalement (closeUI/forceCloseContainer tolèrent
@@ -2345,7 +2358,7 @@
           var ri = rendreService('info', null);
           ui.toast(ri.message);
           if (chat) chat.systeme(ri.message);
-          audio.jouer(MC.Ambiance.sonInteraction('interface'), { categorie: 'interaction' });
+          sonInterface('interface');
           return;
         } else if (kind === 'coffre_piege' || kind === 'coffre_surprise') {
           ouvrirCoffreSuspect(kind, target, k);
@@ -2355,7 +2368,7 @@
           return;
         } else {
           ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
-          audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
+          sonInteractionBloc('etabli', target);
         }
         input.setState('ui');
         return;
@@ -2363,14 +2376,14 @@
       if (res === 'dormir') { dormir(target); return; }
       if (res === 'exposer' || res === 'retirer') { interagirExposition(res, target); return; }
       if (res === 'livre') { ouvrirLivreEnMain(); return; }
-      if (res === 'place' || res === 'place-ici') annoncerPose(equipe[0], res, target, mange);
-      if (res === 'place' || res === 'place-ici') audio.play('poser');
+      // SPEC-AUDIO-003 : la pose sonne selon la matière du bloc posé, là où il est posé
+      if (res === 'place' || res === 'place-ici') { var pose = annoncerPose(equipe[0], res, target, mange); sonBloc('poser', pose.id, pose); }
       else if (res === 'eat') audio.play('manger');
-      else if (res === 'till') { audio.play('poser'); ui.toast('Terre labourée'); }
-      else if (res === 'plant') { audio.play('poser'); ui.toast('Graines plantées'); }
-      else if (res === 'grow') { audio.play('poser'); ui.toast('Ça pousse !'); }
+      else if (res === 'till') { sonBloc('poser', B.FARMLAND, target); ui.toast('Terre labourée'); }
+      else if (res === 'plant') { sonBloc('poser', B.FARMLAND, target); ui.toast('Graines plantées'); }
+      else if (res === 'grow') { sonBloc('poser', B.LEAVES, target); ui.toast('Ça pousse !'); }
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') { annoncerBascule(equipe[0], avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
+      else if (res === 'bascule') { annoncerBascule(equipe[0], avantBascule); sonInteractionBloc(AMB.interactionBloc(world.getBlock(target.x, target.y, target.z)), target); }
     }
 
     /* Une porte se compose de deux blocs et se bascule des deux à la fois : on
@@ -2401,14 +2414,9 @@
       if (res === 'place-ici') { bx = target.x; by = target.y; bz = target.z; }
       else { bx = target.x + target.nx; by = target.y + target.ny; bz = target.z + target.nz; }
       net.poserBloc(bx, by, bz, world.getBlock(bx, by, bz), 0, j.index, world.getEtat(bx, by, bz), j.player.state.selected);
+      return { x: bx, y: by, z: bz, id: world.getBlock(bx, by, bz) };
     }
 
-    /* Position d'une interaction (coffre, fourneau, établi, porte…) pour la
-       spatialiser (SPEC-AUDIO-006) ; `target` est le bloc visé, toujours
-       présent dans ces branches. */
-    function interactionOpts(target) {
-      return { categorie: 'interaction', x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 };
-    }
 
     /* Coffres piégés et surprises (SPEC-OBJET-005). Le kit de désamorçage en
        main tente de neutraliser le piège avant qu'il ne se déclenche ; sans
@@ -2786,11 +2794,16 @@
           // le serveur calcule le butin et nous le donne (DONNE) : pas de double compte
           entities.list.splice(nAvant);
           net.poserBloc(pos.x, pos.y, pos.z, 0, outil, j.index);
-          audio.play(res.toolBroke ? 'brise' : 'casser');
+          // SPEC-AUDIO-003 : la casse sonne selon la matière du bloc (et l'outil qui se brise par-dessus)
+          sonBloc('casser', res.id, pos);
+          if (res.toolBroke) audio.play('brise');
           if (res.drops.length === 0 && C.BLOCKS[res.id] && C.BLOCKS[res.id].needsTool)
             ui.toast('Il faut un outil adapte pour recuperer ce bloc', 'warn');
         }
       } else if (!casse) pl.cancelMining();
+      // SPEC-AUDIO-003 : un coup de minage régulier tant qu'on creuse, selon la matière visée
+      j.rythmeMinage = j.rythmeMinage || MC.Ambiance.creerRythme(0.26);
+      if (j.rythmeMinage.avancer(dt, !!(casse && cible && !mob && !res))) sonBloc('miner', world.getBlock(cible.x, cible.y, cible.z), cible);
 
       // au clavier, la frappe passe par l'evenement de clic ; a la manette
       // on echantillonne, avec le temps de recharge du joueur pour cadence
@@ -2821,7 +2834,7 @@
       var enMain = pl.held();
       if (enMain && C.def(enMain.id) && C.def(enMain.id).ranged) {
         var tir = tirEnLigne(j);
-        if (tir) audio.play('frapper');
+        if (tir) sonJoueur('tir', 'bois', j);
         return;
       }
       var vis = mobDistantVise(pl);
@@ -2842,13 +2855,13 @@
         return;
       }
       if (res === 'place' || res === 'place-ici') {
-        annoncerPose(j, res, target, idMain);
-        audio.play('poser');
+        var pose = annoncerPose(j, res, target, idMain);
+        sonBloc('poser', pose.id, pose);
       }
       else if (res === 'eat') audio.play('manger');
-      else if (res === 'till' || res === 'plant') audio.play('poser');
+      else if (res === 'till' || res === 'plant') sonBloc('poser', B.FARMLAND, target);
       // SPEC-AUDIO-004 : une porte ou une trappe qui bascule, où qu'elle soit
-      else if (res === 'bascule') { annoncerBascule(j, avantBascule); audio.jouer(MC.Ambiance.sonInteraction('porte'), interactionOpts(target)); }
+      else if (res === 'bascule') { annoncerBascule(j, avantBascule); sonInteractionBloc(AMB.interactionBloc(world.getBlock(target.x, target.y, target.z)), target); }
     }
 
     /* SPEC-MECA-007 : petite interface (une invite texte suffit — pas besoin
@@ -2877,10 +2890,10 @@
       var CONTENEURS_POSES = { furnace: 1, chest: 1, armoire: 1, etagere: 1, bibliotheque: 1, distributeur: 1, banque: 1 };
       if (CONTENEURS_POSES[kind]) {
         net.ouvrirConteneur({ x: target.x, y: target.y, z: target.z }, 0);
-        audio.jouer(MC.Ambiance.sonInteraction(kind === 'furnace' ? 'fourneau' : 'coffre'), interactionOpts(target));
+        sonInteractionBloc(kind === 'furnace' ? 'fourneau' : 'coffre', target);
       } else {
         ui.openContainer('craft', player.state.inv, null, undefined, player.state.grille);
-        audio.jouer(MC.Ambiance.sonInteraction('etabli'), interactionOpts(target));
+        sonInteractionBloc('etabli', target);
       }
       input.setState('ui');
     }
@@ -2888,6 +2901,129 @@
     // conteneur (posé) au même chemin que le clic droit dessus, en ligne
     // comme hors ligne — évite d'avoir à simuler visée + clic en e2e.
     g.ouvrirConteneur = ouvrirConteneur;
+
+    // ─── sons du monde (SPEC-AUDIO-001 à 006) ────────────────────────────────
+    /* Toutes les décisions viennent de MC.Ambiance (pur, testé sous Node) ; ici
+       on ne fait que lui donner ce qu'il faut lire (blocs, positions,
+       météo) et transmettre ses choix à audio.js. */
+    var AMB = MC.Ambiance;
+    var suiviCreatures = AMB.creerSuiviCreatures(), suiviMeteo = AMB.creerSuiviMeteo();
+    var sondeLieu = null, sondeT = 0, mobsSons = [], trocDemandeT = -1;
+    g.sons = { sonde: null, derniers: [] };
+    function auditeursJeu() {
+      var l = [];
+      for (var i = 0; i < equipe.length; i++) {
+        var s = equipe[i].player.state;
+        l.push({ x: s.pos.x, y: s.pos.y + player.EYE, z: s.pos.z, yaw: s.yaw });
+      }
+      return l;
+    }
+    function noterSon(nom, joue) {
+      var d = g.sons.derniers;
+      d.push({ nom: nom, joue: !!joue });
+      if (d.length > 40) d.shift();
+      return joue;
+    }
+    /* Un son placé dans le monde : spatialisé sur l'auditeur le plus proche,
+       étouffé par la roche (occlusion échantillonnée) et par l'eau qu'il
+       traverse quand l'auditeur, lui, est à l'air libre. `extra.roche === 0`
+       saute l'occlusion (le joueur s'entend lui-même). */
+    function sonMonde(nom, pos, categorie, extra) {
+      if (!nom || !pos) return false;
+      var o = { categorie: categorie, x: pos.x, y: pos.y, z: pos.z };
+      if (extra) for (var k in extra) o[k] = extra[k];
+      if (o.roche === undefined) {
+        var aud = auditeursJeu(), a = aud[AMB.choisirAuditeur(aud, pos)];
+        if (a) {
+          var occ = AMB.occlusion(world.getBlock, a, pos);
+          o.roche = occ.roche;
+          if (occ.eau > 0 && !audio.sousEau) o.sousEau = true;
+        }
+      }
+      return noterSon(nom, audio.jouer(nom, o));
+    }
+    // geste sur un bloc (pas, minage, casse, pose) : le son de sa matière, là où il est
+    function sonBloc(action, id, b, extra) {
+      return sonMonde(AMB.sonAction(action, AMB.matiereBloc(id) || 'pierre'),
+                      { x: b.x + 0.5, y: b.y + 0.5, z: b.z + 0.5 }, 'action', extra);
+    }
+    function sonJoueur(action, matiere, j, force) {
+      var s = (j || equipe[0]).player.state;
+      return sonMonde(AMB.sonAction(action, matiere), { x: s.pos.x, y: s.pos.y + 0.1, z: s.pos.z }, 'action',
+                      { roche: 0, volume: force === undefined ? 1 : 0.5 + force * 0.5 });
+    }
+    function sonInteractionBloc(type, target) {
+      return sonMonde(AMB.sonInteraction(type), { x: target.x + 0.5, y: target.y + 0.5, z: target.z + 0.5 }, 'interaction');
+    }
+    function sonInterface(type, categorie) {
+      return noterSon(type, audio.jouer(AMB.sonInteraction(type || 'interface'), { categorie: categorie || 'interface' }));
+    }
+    g.sonMonde = sonMonde;
+    /* Évènements sonores décidés par le serveur (message SONS) : créatures
+       blessées, tuées, qui frappent ; gardien qui s'éveille. */
+    function sonsServeur(l) {
+      for (var i = 0; i < l.length; i++) {
+        var s = l[i], v = AMB.voixCreature(s.e);
+        if (s.k === 'gardien') {
+          sonMonde(AMB.sonEvenement('gardien'), { x: s.x, y: s.y + 1, z: s.z }, 'evenement', { portee: 64, hauteur: v.hauteur });
+          continue;
+        }
+        sonMonde(AMB.sonCreature(s.e, s.k), { x: s.x, y: s.y + 0.6, z: s.z }, 'creature', { hauteur: v.hauteur });
+      }
+    }
+    g.sonsServeur = sonsServeur;
+    /* Une fois par image : auditeurs (un par vue), étouffement sous l'eau,
+       pas et brasses des joueurs locaux, pas et cris des créatures visibles,
+       cyclone et tornades ; la sonde du lieu (rivière, cascade, mer,
+       feuillage), plus coûteuse, quatre fois par seconde seulement. */
+    function sonsImage(dt) {
+      var aud = auditeursJeu();
+      audio.auditeursVues(aud);
+      var p1 = player.state;
+      audio.setSousEau(P.headInWater(world, p1.pos, player.EYE));
+      for (var i = 0; i < equipe.length; i++) {
+        var j = equipe[i], st = j.player.state;
+        if (st.dead) continue;
+        j.suiviPas = j.suiviPas || AMB.creerSuiviPas();
+        // les pieds dans l'eau peu profonde : on patauge (pas « eau ») ; sinon la matière du sol
+        var fx = Math.floor(st.pos.x), fz = Math.floor(st.pos.z);
+        var pieds = world.getBlock(fx, Math.floor(st.pos.y + 0.1), fz);
+        var sous = C.isWater(pieds) ? pieds : world.getBlock(fx, Math.floor(st.pos.y - 0.2), fz);
+        var evts = j.suiviPas.avancer({ x: st.pos.x, y: st.pos.y, z: st.pos.z, auSol: st.onGround, nage: st.swimming,
+                                        vole: st.flying, monte: !!st.monture, vy: st.vel ? st.vel.y : 0,
+                                        matiere: AMB.matiereBloc(sous) || 'pierre' });
+        for (var e = 0; e < evts.length; e++) sonJoueur(evts[e].action, evts[e].matiere, j, evts[e].force);
+      }
+      mobsSons.length = 0;
+      net.mobsDistants.forEach(function (m) { if (!m.vehicule && m.type !== 'item') mobsSons.push(m); });
+      var sc = suiviCreatures.avancer(mobsSons, aud, dt);
+      for (var c = 0; c < sc.length; c++) {
+        sonMonde(sc[c].nom, { x: sc[c].x, y: sc[c].y + 0.6, z: sc[c].z }, 'creature', { hauteur: sc[c].hauteur });
+      }
+      var me = world.meteo;
+      if (me) {
+        var cy = me.influenceCyclone ? me.influenceCyclone(p1.pos.x, p1.pos.z, g.time) : null;
+        var ev = suiviMeteo.avancer({ temps: g.time, cyclone: cy ? cy.spirale : 0, tornades: me.tornades ? me.tornades(g.time) : [] },
+                                    { x: p1.pos.x, z: p1.pos.z });
+        for (var k = 0; k < ev.length; k++) {
+          if (ev[k].x === undefined) noterSon(ev[k].nom, audio.jouer(ev[k].nom, { categorie: 'evenement', force: ev[k].force }));
+          else sonMonde(ev[k].nom, { x: ev[k].x, y: p1.pos.y + 8, z: ev[k].z }, 'evenement', { portee: ev[k].portee, force: ev[k].force, roche: 0 });
+        }
+      }
+      sondeT -= dt;
+      if (sondeT <= 0) {
+        sondeT = 0.25;
+        sondeLieu = AMB.sonderEnvironnement(world.getBlock, p1.pos.x, p1.pos.y + 1, p1.pos.z, { nature: natureEauEn });
+        g.sons.sonde = sondeLieu;
+      }
+    }
+    // nature de l'eau générée d'une colonne (MC.Eau.TYPES), 0 si son chunk n'est pas là
+    function natureEauEn(x, z) {
+      var cx = Math.floor(x / C.CHUNK_X), cz = Math.floor(z / C.CHUNK_Z);
+      var ch = world.chunkDe ? world.chunkDe(cx, cz) : null;
+      if (!ch || !ch.eau || !ch.eau.nature) return 0;
+      return ch.eau.nature[(z - cz * C.CHUNK_Z) * C.CHUNK_X + (x - cx * C.CHUNK_X)] || 0;
+    }
 
     // ─── boucle ──────────────────────────────────────────────────────────────
     var last = performance.now(), acc = 0, frames = 0;
@@ -3036,7 +3172,7 @@
         render.majSilhouettes(world.habitats.lieuxProches(s2.pos.x, s2.pos.z, 1000));
       }
       majMeteo(dt);
-      if (st === 'playing' || st === 'ui') { ajusterVue(dt); annoncerLieu(); annoncerZone(); majHistoire(dt); }
+      if (st === 'playing' || st === 'ui') { ajusterVue(dt); annoncerLieu(); annoncerZone(); majHistoire(dt); sonsImage(dt); }
       var submerged = P.headInWater(world, s2.pos, player.EYE);
       render.updateAmbience(g.time, submerged);
       render.updateTorches(world);

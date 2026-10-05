@@ -36,6 +36,8 @@
       onAdminRep: opts.onAdminRep || function () {},
       // L45 : offres d'un PNJ (réponse à 'consulter' ou 'echanger', SPEC-SYNC-023)
       onTroc: opts.onTroc || function () {},
+      // SPEC-AUDIO-002/005 : évènements sonores décidés par le serveur (créatures, gardiens)
+      onSons: opts.onSons || function () {},
       // B1 (SPEC-SYNC-008) : réconciliation inventaire/équipement/grille —
       // seule source de vérité en ligne (docs/vague-2/B1.md § 6)
       onInvMaj: opts.onInvMaj || function () {},
@@ -225,6 +227,11 @@
         // L45, SPEC-SYNC-023 : réponse du serveur à 'consulter'/'echanger'
         case NP.MSG.TROC:
           hooks.onTroc(m);
+          break;
+
+        // SPEC-AUDIO-002/005 : créature blessée, tuée, qui attaque ; gardien qui s'éveille
+        case NP.MSG.SONS:
+          hooks.onSons(NP.validerSons(m));
           break;
 
         case NP.MSG.ARRIVE:

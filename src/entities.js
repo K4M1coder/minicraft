@@ -996,6 +996,8 @@
         else e.vise = null;
         if (act && act.attack) {
           e.coupA = e.age;
+          // le bruit du coup, là où il part (SPEC-AUDIO-002) : le serveur le relaie aux joueurs proches
+          journal.push({ type: 'attaque', espece: e.type, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
           // le coup va à la cible : le joueur, ou la créature combattue
           if (choix.joueur) {
             // SPEC-ZONE-002 : une zone sûre ou PvE-hostile-restreinte protège
@@ -1019,6 +1021,7 @@
           }
         }
         if (act && act.tir) {
+          journal.push({ type: 'attaque', espece: e.type, pos: { x: e.pos.x, y: e.pos.y, z: e.pos.z } });
           for (var t = 0; t < act.tir.directions.length; t++) {
             tirer(act.tir.origine, act.tir.directions[t], ARROW_SPEED, act.tir.degats, e, act.tir.genre);
           }

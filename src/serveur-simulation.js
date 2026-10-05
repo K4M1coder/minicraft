@@ -271,6 +271,9 @@
         if (!d || monde.donjonsVaincus.has(d.id)) return;
         const b = entites.invoquerGardien(d);
         if (b) {
+          // SPEC-AUDIO-005 : le réveil s'entend, là où le gardien se dresse (diffusé par serveur-tic, message SONS)
+          (S.sonsEnAttente || (S.sonsEnAttente = [])).push({ k: 'gardien', e: b.type, x: Math.round(b.pos.x * 10) / 10,
+                                                            y: Math.round(b.pos.y * 10) / 10, z: Math.round(b.pos.z * 10) / 10 });
           const m = chat.systeme(entites.SPECS[b.type].nom + " s'éveille !");
           if (m) S.diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
         }
