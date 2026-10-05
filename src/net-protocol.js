@@ -158,13 +158,22 @@
   var PORTEE_SONS = 48, MAX_SONS = 24;
   var GENRES_SONS = { blesse: 1, mort: 1, attaque: 1, gardien: 1 };
   function dixieme(v) { return Math.round((+v || 0) * 10) / 10; }
+  function genreSon(k) { return Object.prototype.hasOwnProperty.call(GENRES_SONS, k); }
+  /* Ni objet au sol, ni flèche, ni véhicule (v_*) : un bateau abîmé ne crie
+     pas. Le coup fatal ne joue que la mort : sa blessure (même créature,
+     même endroit, même tic) n'est pas envoyée en plus. */
   function sonsDepuisEvenements(evts) {
-    var out = [];
+    var out = [], morts = {};
     (evts || []).forEach(function (e) {
-      if (!e || !GENRES_SONS[e.type] || !e.pos) return;
+      if (e && e.type === 'mort' && e.pos) morts[e.victime + '@' + dixieme(e.pos.x) + ',' + dixieme(e.pos.y) + ',' + dixieme(e.pos.z)] = 1;
+    });
+    (evts || []).forEach(function (e) {
+      if (!e || !genreSon(e.type) || !e.pos) return;
       var espece = e.victime || e.espece;
-      if (typeof espece !== 'string') return;
-      out.push({ k: e.type, e: espece, x: dixieme(e.pos.x), y: dixieme(e.pos.y), z: dixieme(e.pos.z) });
+      if (typeof espece !== 'string' || espece === 'item' || espece === 'arrow' || espece.indexOf('v_') === 0) return;
+      var x = dixieme(e.pos.x), y = dixieme(e.pos.y), z = dixieme(e.pos.z);
+      if (e.type === 'blesse' && morts[espece + '@' + x + ',' + y + ',' + z]) return;
+      out.push({ k: e.type, e: espece, x: x, y: y, z: z });
     });
     return out;
   }
@@ -178,7 +187,7 @@
   function validerSons(m) {
     if (!m || !Array.isArray(m.l)) return [];
     return m.l.slice(0, MAX_SONS).filter(function (s) {
-      return s && GENRES_SONS[s.k] && typeof s.e === 'string' && s.e.length <= 40 &&
+      return s && genreSon(s.k) && typeof s.e === 'string' && s.e.length <= 40 &&
              estFini(s.x) && estFini(s.y) && estFini(s.z);
     });
   }

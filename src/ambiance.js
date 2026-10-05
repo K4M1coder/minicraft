@@ -468,7 +468,7 @@
 
   // ─── SPEC-AUDIO-006 : spatialisation, étouffement, volumes ───────────────
   var PORTEE_DEFAUT = 24;
-  /* `auditeur` : {x,y,z, yaw (radians, 0 = +z)}. `source` : {x,y,z}.
+  /* `auditeur` : {x,y,z, yaw (radians, convention de player.js : 0 = regard vers -z)}. `source` : {x,y,z}.
      `opts` : { portee, sousEau (le son vient de/traverse l'eau), roche
      (occlusion par de la roche pleine entre les deux : booléen ou nombre de
      blocs traversés, voir `occlusion`) }.
@@ -485,8 +485,10 @@
     var gain = clamp01(1 - dist / portee);
     gain = gain * gain; // atténuation perçue plus proche de l'oreille que du linéaire
 
+    // le regard du joueur à yaw est (-sin yaw, -cos yaw) (player.js lookDir) :
+    // sa droite est (cos yaw, -sin yaw) — yaw 0 regarde vers -z, la droite est +x
     var yaw = auditeur.yaw || 0;
-    var droite = dx * Math.cos(-yaw) - dz * Math.sin(-yaw);
+    var droite = dx * Math.cos(yaw) - dz * Math.sin(yaw);
     var pan = dist > 0.001 ? clamp(droite / Math.max(1, dist), -1, 1) : 0;
 
     var etouffement = 1;

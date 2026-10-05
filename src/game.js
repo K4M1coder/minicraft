@@ -2968,6 +2968,7 @@
           sonMonde(AMB.sonEvenement('gardien'), { x: s.x, y: s.y + 1, z: s.z }, 'evenement', { portee: 64, hauteur: v.hauteur });
           continue;
         }
+        if (!AMB.estCreature(s.e)) continue;           // un véhicule abîmé ne crie pas
         sonMonde(AMB.sonCreature(s.e, s.k), { x: s.x, y: s.y + 0.6, z: s.z }, 'creature', { hauteur: v.hauteur });
       }
     }

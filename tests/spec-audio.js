@@ -284,9 +284,15 @@
       var j2 = ents.evenements();
       var sons = NP.sonsDepuisEvenements(journal.concat(j2).concat([{ type: 'naissance', espece: 'sheep' }]));
       A.ok(sons.some(function (s) { return s.k === 'attaque' && s.e === 'zombie'; }), 'attaque → son');
-      A.ok(sons.some(function (s) { return s.k === 'blesse' && s.e === 'sheep'; }), 'blessure → son');
+      var survivant = ents.spawn('sheep', 6.5, 11, 0.5);
+      ents.damage(survivant, 1, null, null);
+      A.ok(NP.sonsDepuisEvenements(ents.evenements()).some(function (s) { return s.k === 'blesse' && s.e === 'sheep'; }), 'blessure → son');
       A.ok(sons.some(function (s) { return s.k === 'mort' && s.e === 'sheep'; }), 'mort → son');
       A.ok(sons.every(function (s) { return s.k !== 'naissance'; }), 'une naissance ne fait pas de bruit');
+      A.equal(sons.filter(function (s) { return s.k === 'blesse' && s.e === 'sheep'; }).length, 0, 'le coup fatal ne joue que la mort, pas la blessure en plus');
+      A.equal(NP.sonsDepuisEvenements([{ type: 'blesse', victime: 'v_bateau', pos: { x: 0, y: 0, z: 0 } },
+                                       { type: 'mort', victime: 'v_bateau', pos: { x: 0, y: 0, z: 0 } }]).length, 0, 'un véhicule abîmé ou détruit ne crie pas');
+      A.equal(NP.sonsDepuisEvenements([{ type: 'constructor', victime: 'sheep', pos: { x: 0, y: 0, z: 0 } }]).length, 0, 'ni un genre hérité de Object');
       sons.forEach(function (s) { A.ok(isFinite(s.x) && isFinite(s.y) && isFinite(s.z), 'chaque son a sa position'); });
       // relayés aux joueurs proches seulement, au plus MAX_SONS
       var proche = NP.sonsPour(sons, [{ x: 0, z: 0 }]);
@@ -481,6 +487,12 @@
       A.lt(gauche.pan, 0, 'une source à gauche panoramique à gauche');
       // le joueur se retourne : la même source passe à gauche
       A.lt(Amb.spatialiser({ x: 0, y: 0, z: 0, yaw: Math.PI }, { x: 10, y: 0, z: 0 }, {}).pan, 0, 'retourné, la source passe à gauche');
+      /* convention de player.js : à yaw, le regard est (-sin yaw, -cos yaw) ;
+         tourné d'un quart (yaw = π/2, regard vers -x), la droite est -z */
+      var quart = { x: 0, y: 0, z: 0, yaw: Math.PI / 2 };
+      A.gt(Amb.spatialiser(quart, { x: 0, y: 0, z: -10 }, {}).pan, 0.9, 'regard vers -x : une source en -z est à droite');
+      A.lt(Amb.spatialiser(quart, { x: 0, y: 0, z: 10 }, {}).pan, -0.9, 'et une source en +z à gauche');
+      A.close(Amb.spatialiser(quart, { x: -10, y: 0, z: 0 }, {}).pan, 0, 1e-9, 'une source droit devant : au centre');
 
       // étouffement : sous l'eau et derrière la roche
       var normal = Amb.spatialiser(auditeur, { x: 5, y: 0, z: 0 }, {});
