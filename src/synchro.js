@@ -250,12 +250,27 @@
      vide) mais le temps réel écoulé lui est crédité, borné par la durée des
      entrées qui attendent — à la reprise il rattrape exactement ce retard,
      sans pouvoir en gagner davantage (même plafond que `avancerEntrees`). */
-  function patienterEntrees(file, budget, dtReel) {
+  /* Le crédit n'est volontairement PAS ramené sous la réserve (`borner`) pendant
+     l'attente : ce serait retirer au joueur le temps d'entrées DÉJÀ arrivées, qu'il
+     ne rattraperait jamais (le recul de SPEC-SYNC-004) ; il reste borné par leur
+     durée (au plus MAX_EN_ATTENTE entrées). `mort` : un joueur mort pendant
+     l'attente perd ses entrées et rien ne s'accumule, comme dans avancerEntrees. */
+  function patienterEntrees(file, budget, dtReel, mort) {
+    if (mort) {
+      file.length = 0;
+      budget.crediter(dtReel, 0);
+      return budget.borner();
+    }
     var attente = 0;
     for (var i = 0; i < file.length; i++) if (dureeValide(file[i].dt)) attente += file[i].dt;
     return budget.crediter(dtReel, attente);
   }
-  function avancerEntrees(joueur, file, budget, dtReel, dernier) {
+  /* `solOk(st)` (facultatif, serveur) : vrai tant que le terrain autour de la position
+     courante existe. Un rattrapage d'entrées (après une attente du sol, un tic long)
+     peut emmener le joueur — ou son véhicule — loin d'un coup : dès qu'il sort du
+     terrain généré, le rejeu s'arrête là et le reste attend, crédit conservé (comme
+     patienterEntrees) ; sans cela il tombait dans le vide au milieu du rattrapage. */
+  function avancerEntrees(joueur, file, budget, dtReel, dernier, solOk) {
     var st = joueur.state, avance = 0, n = 0;
     /* Un joueur qui ne peut rien rejouer (mort) : ses entrées sont jetées et son
        crédit ne dépasse pas la réserve — rien ne s'accumule pour plus tard. */
@@ -272,7 +287,9 @@
       if (n >= MAX_REJEUX_PAR_TIC) break;
       n++;
       while (file.length && !dureeValide(file[0].dt)) file.shift();
-      if (!file.length || st.dead || !budget.consommer(file[0].dt)) break;
+      if (!file.length || st.dead) break;
+      if (solOk && !solOk(st)) return { dernier: dernier, avance: avance, attente: true };
+      if (!budget.consommer(file[0].dt)) break;
       var e = file.shift();
       rejouer(joueur, [e]);
       dernier = e.s;

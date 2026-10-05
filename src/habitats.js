@@ -205,6 +205,13 @@
       return l;
     }
 
+    /* Le lieu d'une région s'il est déjà en cache (null : région sans lieu),
+       undefined sinon — sans jamais construire : le serveur s'en sert pour garder
+       l'identité des lieux du cache (endommagés, repeuplés) dans ses propres préparations. */
+    function lieuEnCache(kind, rx, rz) {
+      var cache = caches[kind];
+      return cache ? cache.get(rx + ',' + rz) : undefined;
+    }
     var PORTEE = { megapole: 140, ville: 70, village: 26, maison: 10 };
     /* SPEC-HABITAT-012 : la taille d'une ville varie — petite (3×3 parcelles),
        moyenne (5×5, la taille d'origine) ou grande cité (7×7) — tirée une
@@ -1054,14 +1061,18 @@
       });
       return res;
     }
-    function lieuxDansZone(x0, z0, x1, z1) {
+    /* `lire(genre, rx, rz)` (facultatif) remplace lieuDeRegion : le serveur y passe
+       ses lieux déjà préparés par étapes (MC.TravauxServeur.creerCycleLieux), pour
+       que l'entretien du monde ne reconstruise rien d'un coup. Même résultat. */
+    function lieuxDansZone(x0, z0, x1, z1, lire) {
       var res = [];
+      var lireRegion = lire || lieuDeRegion;
       ORDRE_LIEUX.forEach(function (kind) {
         var R = LIEUX[kind].region, P = PORTEE[kind] + 12;
         var rx0 = Math.floor((x0 - P) / R), rx1 = Math.floor((x1 + P) / R);
         var rz0 = Math.floor((z0 - P) / R), rz1 = Math.floor((z1 + P) / R);
         for (var rx = rx0; rx <= rx1; rx++) for (var rz = rz0; rz <= rz1; rz++) {
-          var l = lieuDeRegion(kind, rx, rz);
+          var l = lireRegion(kind, rx, rz);
           if (!l) continue;
           if (l.x + l.demi < x0 || l.x - l.demi > x1 || l.z + l.demi < z0 || l.z - l.demi > z1) continue;
           res.push(l);
@@ -1125,8 +1136,8 @@
       return null;
     }
     /* Les lieux dans un rayon, du plus proche au plus lointain. */
-    function lieuxProches(x, z, rayon) {
-      return lieuxDansZone(x - rayon, z - rayon, x + rayon, z + rayon)
+    function lieuxProches(x, z, rayon, lire) {
+      return lieuxDansZone(x - rayon, z - rayon, x + rayon, z + rayon, lire)
         .map(function (l) { return { lieu: l, d: Math.hypot(l.x - x, l.z - z) }; })
         .filter(function (e2) { return e2.d <= rayon; })
         .sort(function (a, b) { return a.d - b.d; })
@@ -1158,7 +1169,7 @@
       return l;
     }
 
-    return { lieuDeRegion: lieuDeRegion, lieuxDansZone: lieuxDansZone, regionsDansZone: regionsDansZone, appliquer: appliquer, lieuA: lieuA,
+    return { lieuDeRegion: lieuDeRegion, lieuEnCache: lieuEnCache, lieuxDansZone: lieuxDansZone, regionsDansZone: regionsDansZone, appliquer: appliquer, lieuA: lieuA,
              batimentA: batimentA, lieuxProches: lieuxProches, surfaceEn: surfaceEn,
              batirPourEssai: batirPourEssai, batirBatimentPourEssai: batirBatimentPourEssai };
   }

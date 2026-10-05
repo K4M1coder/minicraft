@@ -216,5 +216,120 @@
       A.equal(r.dernier, 128, 'au retour du sol, toutes les entrées en attente sont rejouées d\'un coup');
       A.equal(file.length, 0);
     });
+
+    it('SPEC-SYNC-004 : un joueur mort pendant l\'attente de son sol perd ses entrées, et rien ne s\'accumule (comme avancerEntrees)', function () {
+      var file = [], budget = MC.Synchro.creerBudget();
+      for (var i = 1; i <= 300; i++) MC.Synchro.empilerEntree(file, { s: i, dt: 1 / 64, k: 1, yaw: 0, pitch: 0, v: 0 });
+      for (var t = 0; t < 600; t++) MC.Synchro.patienterEntrees(file, budget, 1 / 64, true);
+      A.equal(file.length, 0, 'entrées jetées');
+      A.ok(budget.credit <= MC.Synchro.RESERVE * 2 + 1e-9, 'crédit borné à la réserve (' + budget.credit + ')');
+    });
+
+    it('SPEC-PERF-004 : génération entrelacée dans un ordre mélangé (tâches avancées à tour de rôle, une colonne à la fois) = génération séquentielle, chunk par chunk', function () {
+      var liste = [];
+      for (var cx = -3; cx <= 2; cx++) for (var cz = -1; cz <= 0; cz++) liste.push([cx * 3 + 1, cz * 5 + 2]);
+      var a = MC.createWorld(99991), b = MC.createWorld(99991);
+      var attendus = liste.map(function (c) { return empreinte(a.getChunk(c[0], c[1], true)); });
+      // ordre mélangé, déterministe
+      var ordre = liste.map(function (c, i) { return { c: c, i: i, k: (i * 7919) % 13 }; }).sort(function (x, y) { return x.k - y.k; });
+      var taches = ordre.map(function (o) { return { o: o, t: b.tacheGenerationBrute(o.c[0], o.c[1]), fini: false }; });
+      var restants = taches.length, tours = 0;
+      while (restants > 0) {
+        tours++;
+        taches.forEach(function (x) {
+          if (x.fini) return;
+          if (x.t.avancer(0, function () { return 1; })) {
+            x.fini = true; restants--;
+            b.integrerChunk(x.o.c[0], x.o.c[1], x.t.resultat());
+          }
+        });
+      }
+      A.ok(tours > 200, 'les générations se sont vraiment entrelacées (' + tours + ' tours)');
+      liste.forEach(function (c, i) { A.equal(empreinte(b.chunkDe(c[0], c[1])), attendus[i], 'chunk (' + c[0] + ',' + c[1] + ') identique'); });
+      A.equal(b.lights.size, a.lights.size, 'mêmes lumières enregistrées');
+    });
+
+    /* Un faux habitats.js : une région de maison tous les 72 blocs, un lieu une région
+       sur cinq, chaque construction « coûte » coutMs sur l'horloge factice — et AUCUN
+       cache (le pire cas : celui de habitats.js déborde quand les joueurs sont dispersés). */
+    function habitatsFactices(h, coutMs, compte) {
+      return {
+        regionsDansZone: function (x0, z0, x1, z1) {
+          var out = [];
+          for (var rx = Math.floor(x0 / 72); rx <= Math.floor(x1 / 72); rx++) for (var rz = Math.floor(z0 / 72); rz <= Math.floor(z1 / 72); rz++) out.push(['maison', rx, rz]);
+          return out;
+        },
+        lieuDeRegion: function (k, rx, rz) {
+          h.avancer(coutMs); compte.n++;
+          return ((rx * 7 + rz * 3) % 5 + 5) % 5 === 0 ? { id: 'm' + rx + ',' + rz, kind: 'maison', x: rx * 72 + 36, z: rz * 72 + 36, demi: 5 } : null;
+        },
+      };
+    }
+    /* La logique d'entretien du serveur (entretienDuMonde + travauxDuTic), jouée sur
+       `cadences` secondes à 60 tics, avec une génération de chunks qui prend TOUT son
+       budget à chaque tic (un joueur qui vole sans arrêt sur du terrain neuf). */
+    function simulerEntretien(nJoueurs, cadences) {
+      var h = horlogeFactice(), compte = { n: 0 };
+      var cyc = TS.creerCycleLieux(habitatsFactices(h, 0.3, compte));
+      var fileAffamante = { manquants: function () { return 0; }, travailler: function (u, e, hor) { while (hor() < e) h.avancer(0.5); return 1; } };
+      var joueurs = [];
+      for (var i = 0; i < nJoueurs; i++) joueurs.push({ x: (i % 4) * 5000, z: Math.floor(i / 4) * 5000 });
+      var executions = [];
+      for (var c = 0; c < cadences; c++) {
+        if (cyc.pret) { cyc.consommer(); executions.push(c); }
+        if (!cyc.actif && !cyc.pret) { cyc.demarrer(joueurs, 1500, null); cyc.avancer(h() + TS.BUDGETS.PREPARATION_MIN_MS, h); }
+        for (var t = 0; t < 60; t++) {
+          TS.travaillerTic(fileAffamante, [], [cyc], h, TS.BUDGETS);
+          joueurs.forEach(function (p) { p.x += 8 / 60; });      // course : 8 blocs par seconde
+        }
+      }
+      return { executions: executions, constructions: compte.n };
+    }
+
+    it('SPEC-PERF-005 : vivacité de l\'entretien du monde — 1, 3, 8 et 16 joueurs dispersés, génération de chunks affamante : politique, caravanes et catastrophes s\'exécutent à une cadence bornée', function () {
+      [1, 3, 8, 16].forEach(function (n) {
+        // première préparation : n × ~1764 régions × 0,3 ms, au moins PREPARATION_MIN_MS par tic
+        var premiere = Math.ceil(n * 1764 * 0.3 / (60 * TS.BUDGETS.PREPARATION_MIN_MS)) + 3;
+        var r = simulerEntretien(n, premiere + 30);
+        A.ok(r.executions.length > 0 && r.executions[0] <= premiere, n + ' joueur(s) : premier entretien à la cadence ' + r.executions[0] + ' (borne ' + premiere + ')');
+        var ensuite = r.executions.filter(function (c) { return c > premiere; });
+        A.ok(ensuite.length >= 14, n + ' joueur(s) : ensuite au moins une fois toutes les deux cadences (' + ensuite.length + ' en 30)');
+        // régime établi (les régions neuves de la course seulement) : jamais plus de 2 cadences d'écart
+        var etabli = r.executions.filter(function (c) { return c > premiere + 10; });
+        for (var k = 1; k < etabli.length; k++) A.ok(etabli[k] - etabli[k - 1] <= 2, n + ' joueur(s) : en régime établi, au plus 2 cadences entre deux entretiens (' + etabli.join(',') + ')');
+      });
+    });
+
+    it('SPEC-PERF-005 : une préparation active garde sa réserve (PREPARATION_MIN_MS) même quand la génération de chunks a pris tout le budget du tic', function () {
+      var h = horlogeFactice(), recu = [];
+      var file = { manquants: function () { return 1; }, travailler: function (u, e, hor) { while (hor() < e) h.avancer(1); return 0; } };
+      var prep = { actif: true, avancer: function (e, hor) { recu.push(e - hor()); return false; } };
+      var inactif = { actif: false, avancer: function () { throw new Error('une préparation inactive ne travaille pas'); } };
+      var r = TS.travaillerTic(file, [[0, 0]], [prep, inactif, null], h, TS.BUDGETS);
+      A.ok(r.urgence, 'sol manquant : budget urgent');
+      A.ok(h() >= TS.BUDGETS.URGENT_MS, 'la génération a pris tout son budget (' + h() + ' ms)');
+      A.equal(recu.length, 1);
+      A.ok(recu[0] >= TS.BUDGETS.PREPARATION_MIN_MS - 1e-9, 'la préparation reçoit encore ' + recu[0] + ' ms');
+    });
+
+    it('SPEC-PERF-004 : les lieux préparés par un cycle (lire) donnent exactement les lieuxProches d\'un appel direct, sans rien reconstruire ensuite', function () {
+      var w = MC.createWorld(20260921);
+      var sp = w.findSpawnColumn();
+      var cyc = TS.creerCycleLieux(w.habitats);
+      cyc.demarrer([{ x: sp[0], z: sp[1] }], 700, function (lire, positions) { return [function () { A.equal(positions.length, 1); }]; });
+      var n = 0;
+      while (!cyc.avancer(Date.now() + 1, function () { return Date.now(); })) n++;
+      A.ok(cyc.pret && !cyc.actif, 'cycle prêt');
+      A.ok(cyc.taille > 50, 'régions gardées (' + cyc.taille + ')');
+      var directs = w.habitats.lieuxProches(sp[0], sp[1], 700).map(function (l) { return l.id; });
+      var lus = w.habitats.lieuxProches(sp[0], sp[1], 700, cyc.lire).map(function (l) { return l.id; });
+      A.deep(lus, directs, 'mêmes lieux, même ordre');
+      var pos = cyc.consommer();
+      A.ok(!cyc.pret && pos && pos[0].x === sp[0], 'consommer rend les positions du cycle et revient au repos');
+      A.equal(cyc.cycles, 1);
+      // un second cycle aux mêmes positions n'a plus rien à construire
+      cyc.demarrer([{ x: sp[0], z: sp[1] }], 700, null);
+      A.equal(cyc.restantes, 0, 'rien à reconstruire au cycle suivant');
+    });
   });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

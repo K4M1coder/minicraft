@@ -41,7 +41,16 @@ function lancerCharge(n) {
   return { arreter() { procs.forEach(p => { try { p.kill(); } catch (e) { /* déjà */ } }); } };
 }
 
-function lireProfil(f) { try { return JSON.parse(fs.readFileSync(f, 'utf8')); } catch (e) { return null; } }
+/* Le serveur réécrit le profil toutes les 500 ms (écriture atomique : fichier
+   temporaire puis renommage) ; un renommage concurrent d'une lecture peut encore
+   échouer sous Windows : on réessaie, borné. */
+async function lireProfil(f) {
+  for (let k = 0; k < 20; k++) {
+    try { const p = JSON.parse(fs.readFileSync(f, 'utf8')); if (p && Array.isArray(p.tics)) return p; } catch (e) { /* en cours d'écriture */ }
+    await A.dodo(50);
+  }
+  return null;
+}
 
 /* Résumé d'une fenêtre [debut, fin] (Date.now()) du profil. */
 function fenetre(profil, debut, fin, nom) {
@@ -150,7 +159,7 @@ async function mesurer(o) {
     j.vol = !!o.vol;
     const spawn = j.bienvenue.toi[0];
     await A.dodo(1500);
-    res.scenarios.arrivee = Object.assign({ arrivee: j.arrivee }, fenetre(lireProfil(fProfil), d0, Date.now(), 'arrivée'));
+    res.scenarios.arrivee = Object.assign({ arrivee: j.arrivee }, fenetre(await lireProfil(fProfil), d0, Date.now(), 'arrivée'));
 
     // 2. course en ligne droite sur du terrain neuf (et sauvegardes périodiques, si cadence)
     const p0 = j.position();
@@ -167,7 +176,7 @@ async function mesurer(o) {
     await A.dodo(600);
     res.scenarios.course = Object.assign({ distance: p0 && p1 ? +Math.hypot(p1.x - p0.x, p1.z - p0.z).toFixed(1) : null,
       depart: p0 && { x: +p0.x.toFixed(1), y: +p0.y.toFixed(1), z: +p0.z.toFixed(1) }, arrivee: p1 && { x: +p1.x.toFixed(1), y: +p1.y.toFixed(1), z: +p1.z.toFixed(1) } },
-      fenetre(lireProfil(fProfil), d0, d1, 'course'));
+      fenetre(await lireProfil(fProfil), d0, d1, 'course'));
     // sauvegardes écrites pendant la course, et la plus longue part synchrone annoncée par le journal
     const sauv = s.heureLog.filter(x => x[0] >= d0 && x[0] <= d1 + 1000 && /sauvegarde du monde \(cadence\) — sérialisation/.test(x[1]));
     res.scenarios.course.sauvegardes = sauv.length;
@@ -179,7 +188,7 @@ async function mesurer(o) {
     await A.dodo(1500);
     j.client.envoyer({ t: NP.MSG.PAUSE, actif: false });
     await A.dodo(1500);
-    res.scenarios.pause = fenetre(lireProfil(fProfil), d0, Date.now(), 'pause/reprise');
+    res.scenarios.pause = fenetre(await lireProfil(fProfil), d0, Date.now(), 'pause/reprise');
 
     // 4. reprise de la partie : arrêt, relance sur le même monde, reconnexion loin du point d'apparition
     j.fermer(); j = null;
@@ -188,15 +197,60 @@ async function mesurer(o) {
     d0 = Date.now();
     j = await joueur(s.port, 'Coureur');
     const pr = j.position();
+    // comme un vrai client : des entrées à 60 Hz dès l'arrivée, même immobile (la gravité s'applique à chaque entrée rejouée)
+    j.demarrer();
+    j.courir(0, 0);
+    const nEtats = j.client.messages.length;
     await A.dodo(2500);
+    const ys = j.client.messages.slice(nEtats).filter(m => m.t === NP.MSG.ETAT && m.toi && m.toi[0]).map(m => m.toi[0].y);
     res.scenarios.reprise = Object.assign({ arrivee: j.arrivee, loinDuSpawn: pr ? +Math.hypot(pr.x - spawn.x, pr.z - spawn.z).toFixed(1) : null,
       position: pr ? { x: +pr.x.toFixed(1), y: +pr.y.toFixed(1), z: +pr.z.toFixed(1) } : null },
-    fenetre(lireProfil(fProfil), d0, Date.now(), 'reprise'));
+    fenetre(await lireProfil(fProfil), d0, Date.now(), 'reprise'));
     // le joueur repris ne tombe pas : son altitude reste celle qu'il avait
     const pf = j.position();
-    res.scenarios.reprise.chute = pr && pf ? +(pr.y - pf.y).toFixed(2) : null;
-    const prof = lireProfil(fProfil);
+    // la plus grande descente observée depuis la position de retour (un joueur qui tombe dans le vide descend sans fin)
+    res.scenarios.reprise.chute = pr && pf && ys.length ? +(pr.y - Math.min(pf.y, ...ys)).toFixed(2) : null;
+    res.scenarios.reprise.etatsReprise = ys.length;
+    const prof = await lireProfil(fProfil);
     res.boucle = prof && prof.boucle;
+
+    /* 5. (--sol-lent) retour avec une génération de chunks bridée à une colonne par
+       tic (MC_TEST_BUDGET_CHUNKS_MS=0) : le sol du joueur met des secondes à exister
+       côté serveur. Le client envoie ses entrées dès l'arrivée ; s'il n'attendait pas
+       son sol, le serveur le ferait tomber dans le vide. */
+    if (o.solLent) {
+      j.fermer(); j = null;
+      await s.arreter();
+      /* Le joueur est déplacé, dans le fichier de monde, à 400 blocs de là, debout sur
+         la terre ferme (sol calculé avec les modules du jeu) : son terrain n'existe pas
+         encore côté serveur à la relance. */
+      const fichier = JSON.parse(fs.readFileSync(fMonde, 'utf8'));
+      const entree = (fichier.joueurs || []).find(e => /Coureur/i.test(e[0]));
+      if (!entree || !entree[1].etat) throw new Error('joueur Coureur absent du fichier de monde');
+      const MCl = A.chargerModules(), wl = MCl.createWorld(o.graine);
+      let cible = null;
+      for (let dx = 400; dx < 1400 && !cible; dx += 37) {
+        const x = Math.floor(entree[1].etat.x) + dx, z = Math.floor(entree[1].etat.z);
+        wl.getChunk(Math.floor(x / 16), Math.floor(z / 16), true);
+        const y = wl.groundAt(x, z, true);
+        if (y > 0 && MCl.Core.isSolid(wl.getBlock(x, y, z)) && wl.getBlock(x, y + 1, z) === 0 && wl.getBlock(x, y + 2, z) === 0) cible = { x: x + 0.5, y: y + 1, z: z + 0.5 };
+      }
+      if (!cible) throw new Error('aucune terre ferme trouvée pour le scénario --sol-lent');
+      Object.assign(entree[1].etat, cible);
+      fs.writeFileSync(fMonde, JSON.stringify(fichier));
+      env.MC_TEST_BUDGET_CHUNKS_MS = '0';
+      s = await lancerServeur();
+      delete env.MC_TEST_BUDGET_CHUNKS_MS;
+      j = await joueur(s.port, 'Coureur');
+      const p5 = j.position();
+      j.demarrer(); j.courir(0, 0);
+      const n5 = j.client.messages.length;
+      await A.dodo(3000);
+      const y5 = j.client.messages.slice(n5).filter(m => m.t === NP.MSG.ETAT && m.toi && m.toi[0]).map(m => m.toi[0].y);
+      const att = s.heureLog.some(x => /sol d un joueur généré d un coup/.test(x[1]));
+      res.scenarios.solLent = { position: p5 && { x: +p5.x.toFixed(1), y: +p5.y.toFixed(1), z: +p5.z.toFixed(1) }, etats: y5.length,
+        chute: p5 && y5.length ? +(p5.y - Math.min(...y5)).toFixed(2) : null, solForce: att };
+    }
   } finally {
     if (j) j.fermer();
     if (s) await s.arreter();
@@ -206,7 +260,7 @@ async function mesurer(o) {
   return res;
 }
 
-module.exports = { mesurer, fenetre, centile };
+module.exports = { mesurer, fenetre, centile, capAuSec };
 
 if (require.main === module) {
   const a = process.argv.slice(2), o = {};
@@ -220,6 +274,7 @@ if (require.main === module) {
     else if (a[i] === '--json') o.json = true;
     else if (a[i] === '--yaw') o.yaw = +a[++i];
     else if (a[i] === '--vol') o.vol = true;
+    else if (a[i] === '--sol-lent') o.solLent = true;
   }
   mesurer(o).then((r) => {
     console.log(o.json ? JSON.stringify(r) : JSON.stringify(r, null, 1));

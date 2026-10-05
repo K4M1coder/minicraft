@@ -347,7 +347,7 @@ if (process.env.MC_TEST_CATASTROPHE && monde.meteo && monde.habitats) {
     batiments: [],
   };
   const lieuxProchesOrig = monde.habitats.lieuxProches.bind(monde.habitats);
-  monde.habitats.lieuxProches = (x, z, rayon) => lieuxProchesOrig(x, z, rayon).concat([MC_TEST_LIEU_CATASTROPHE]);
+  monde.habitats.lieuxProches = (x, z, rayon, lire) => lieuxProchesOrig(x, z, rayon, lire).concat([MC_TEST_LIEU_CATASTROPHE]);
   const tornadesOrig = monde.meteo.tornades.bind(monde.meteo);
   monde.meteo.tornades = (t) => tornadesOrig(t).concat([{ id: 'test-tornade', x: 0, z: 0, rayon: 60, force: 1, vie: 10, sens: 1 }]);
 }
@@ -745,6 +745,10 @@ let dureeJeu = 0;                      // secondes de jeu réellement écoulées
    lieu, voir crochetModification) et il est identique, octet pour octet, à
    JSON.stringify(etatMonde()) — la sauvegarde synchrone de l'arrêt, inchangée. */
 let serialisationEnCours = null;
+/* Incrémenté par chaque sauvegarde SYNCHRONE (arrêt, exception non rattrapée) : une
+   sauvegarde asynchrone commencée avant elle porte un instantané plus ancien et ne
+   doit jamais la remplacer — elle s'abandonne (sérialisation ou renommage). */
+let generationSauvegarde = 0;
 function sauvegarderMondeAsync(raison, evenement) {
   if (!CONF.mondeFichier || sauvegardeArretee || ecritureMondeInterdite) return;
   /* La cible est figée ICI : `/api/parties/supprimer` peut mettre CONF.mondeFichier
@@ -767,6 +771,8 @@ function sauvegarderMondeAsync(raison, evenement) {
   } catch (e) { journal('échec de la sauvegarde du monde (sérialisation) : ' + e.message); return; }
   let msMax = ecoule(), msTotal = msMax, tranches = 1;
   const heureEcrite = heure;
+  const generation = generationSauvegarde;
+  const perimee = () => generation !== generationSauvegarde;
   sauvegardeEnCours = true;
   let finAttente;
   sauvegardeEnCoursAttente = new Promise((resolve) => { finAttente = resolve; });
@@ -801,6 +807,11 @@ function sauvegarderMondeAsync(raison, evenement) {
     });
     flux.on('finish', () => {
       if (echoue) return;
+      if (perimee()) {
+        try { fs.unlinkSync(tmp); } catch (e) { /* rien */ }
+        journal('sauvegarde (' + raison + ') abandonnée : une sauvegarde synchrone plus récente a été écrite');
+        fin(false); return;
+      }
       fs.rename(tmp, cible, (err2) => {
         if (err2) { journal('échec de la sauvegarde du monde (renommage) : ' + err2.message); try { fs.unlinkSync(tmp); } catch (e) { /* rien */ } fin(false); return; }
         fin(true);
@@ -811,7 +822,7 @@ function sauvegarderMondeAsync(raison, evenement) {
   };
   const tranche = () => {
     // arrêt du processus (sauvegarde synchrone finale) ou partie vidée : cette sauvegarde n'écrit rien
-    if (sauvegardeArretee || ser.abandonnee) { fin(false); return; }
+    if (sauvegardeArretee || ser.abandonnee || perimee()) { fin(false); return; }
     const t1 = process.hrtime.bigint();
     let fini;
     try { fini = ser.avancer(performance.now() + MC.TravauxServeur.BUDGETS.TRANCHE_SAUVEGARDE_MS, horlogeSauvegarde); }
@@ -849,6 +860,7 @@ const horlogeSauvegarde = () => performance.now();
    tour de boucle d'évènements pour attendre une écriture asynchrone. */
 function sauvegarderMondeSync() {
   if (!CONF.mondeFichier || ecritureMondeInterdite) return false;
+  generationSauvegarde++;                 // toute sauvegarde asynchrone en cours devient périmée
   try {
     fs.mkdirSync(path.dirname(CONF.mondeFichier), { recursive: true });
     fs.writeFileSync(FICHIER_TMP_SYNC(), JSON.stringify(etatMonde()));
@@ -998,12 +1010,19 @@ function peuplerLieux() {
    sans public — toujours de façon déterministe (graine + jour). Chaque
    naissance et chaque événement notable (raid, alliance, guerre…) s'annonce
    dans le chat, comme un message système. */
-function avancerPolitique() {
+/* `lieux` : contexte de l'entretien — { positions, proches(x, z, rayon) } préparé par
+   le cycle des lieux (cycleLieux) ; par défaut, les positions actuelles et
+   habitats.lieuxProches direct. */
+function lieuxEntretien(lieux) {
+  if (lieux) return lieux;
+  return { positions: tousLesJoueurs().map(({ js }) => js.joueur.state.pos), proches: (x, z, r) => monde.habitats.lieuxProches(x, z, r) };
+}
+function avancerPolitique(lieux) {
   if (monde.habitats) {
     const sites = [];
-    tousLesJoueurs().forEach(({ js }) => {
-      const p = js.joueur.state.pos;
-      monde.habitats.lieuxProches(p.x, p.z, 300).forEach(l => {
+    const L = lieuxEntretien(lieux);
+    L.positions.forEach(p => {
+      L.proches(p.x, p.z, 300).forEach(l => {
         if ((l.kind === 'ville' || l.kind === 'megapole') && !sites.some(s => s.id === l.id)) {
           sites.push({ id: l.id, kind: l.kind, x: l.x, z: l.z, nom: l.nom });
         }
@@ -1083,12 +1102,12 @@ let quetesCatastrophe = [];
    est câblée côté client, dans `src/game.js:convois`, seul vrai système de
    caravane actif du jeu — voir `MC.Routes.trajetsAffectesParEruption`,
    consultée là, pas ici). */
-function avancerCatastrophes() {
+function avancerCatastrophes(lieuxCtx) {
   if (!monde.habitats || !monde.meteo) return;
   const lieux = [];
-  tousLesJoueurs().forEach(({ js }) => {
-    const p = js.joueur.state.pos;
-    monde.habitats.lieuxProches(p.x, p.z, 1500).forEach(l => { if (lieux.indexOf(l) < 0) lieux.push(l); });
+  const L = lieuxEntretien(lieuxCtx);
+  L.positions.forEach(p => {
+    L.proches(p.x, p.z, 1500).forEach(l => { if (lieux.indexOf(l) < 0) lieux.push(l); });
   });
   if (!lieux.length) return;
   const evenements = (monde.meteo.tornades ? monde.meteo.tornades(heure) : [])
@@ -1102,7 +1121,12 @@ function avancerCatastrophes() {
       if (catastrophesAppliquees.has(cle)) return;
       catastrophesAppliquees.add(cle);
       if (catastrophesAppliquees.size > 5000) catastrophesAppliquees.clear();
-      catastrophesEnAttente.push({ l, evt });
+      // SPEC : appliquée plus tard (voisin cherché par étapes), mais à l'heure de sa DÉTECTION
+      catastrophesEnAttente.push({ l, evt, heure });
+      if (catastrophesEnAttente.length > TS.BUDGETS.ATTENTE_CATASTROPHES_MAX) {
+        const oubliee = catastrophesEnAttente.shift();
+        journal('catastrophe en attente abandonnée (file pleine) : ' + oubliee.l.id + ' / ' + oubliee.evt.id);
+      }
     });
   });
   quetesCatastrophe = quetesCatastrophe.filter(q => MC.Habitats.queteActive(q, heure));
@@ -1116,7 +1140,7 @@ function avancerCatastrophes() {
    mêmes effets, appliqués quelques tics plus tard. */
 const RAYON_MIGRATION = 3000;
 const catastrophesEnAttente = [];
-function etapesCatastrophe(l, evt) {
+function etapesCatastrophe(l, evt, heureDetection) {
   const x0 = l.x - RAYON_MIGRATION, z0 = l.z - RAYON_MIGRATION, x1 = l.x + RAYON_MIGRATION, z1 = l.z + RAYON_MIGRATION;
   let voisin = null, dVoisin = Infinity;
   const etapes = monde.habitats.regionsDansZone(x0, z0, x1, z1).map(r => () => {
@@ -1128,7 +1152,7 @@ function etapesCatastrophe(l, evt) {
   });
   etapes.push(() => {
     const entry = MC.Habitats.endommagerLieu(l, [{ x: evt.x, z: evt.z, rayon: evt.rayon, force: evt.force }],
-                                              CONF.graine, heure, evt.genre);
+                                              CONF.graine, heureDetection, evt.genre);
     if (!entry || !entry.blocs) return;
     if (voisin) MC.Habitats.migrerPopulation(l, voisin, entry.ampleur, CONF.graine);
     const q = MC.Habitats.queteCatastrophe(l, entry);
@@ -1237,12 +1261,12 @@ function avancerEconomie() {
    (SPEC-FACTION-014), donc un seul test ('pvp'/'pvp_pve') couvre les deux
    conditions de la fiche (territoire en guerre OU zone pvp). */
 const arriveesCaravanesTraitees = new Map();   // trajet.id -> dernier index d'arrivée traité
-function avancerCaravanes() {
+function avancerCaravanes(lieux) {
   if (!monde.habitats || !monde.routes || !MC.Caravanes || !monde.zoneEn) return;
   const villes = [];
-  tousLesJoueurs().forEach(({ js }) => {
-    const p = js.joueur.state.pos;
-    monde.habitats.lieuxProches(p.x, p.z, 900).forEach(l => {
+  const L = lieuxEntretien(lieux);
+  L.positions.forEach(p => {
+    L.proches(p.x, p.z, 900).forEach(l => {
       if ((l.kind === 'ville' || l.kind === 'megapole') && !villes.some(v => v.id === l.id)) villes.push(l);
     });
   });
@@ -1554,7 +1578,11 @@ const profilTics = (function () {
   monde.getChunk = function (cx, cz, create) { if (create && !monde.chunkDe(cx, cz)) p.chunks++; return getChunkOrig.apply(this, arguments); };
   const ecrire = () => {
     const boucle = { p50: h.percentile(50) / 1e6, p99: h.percentile(99) / 1e6, max: h.max / 1e6 };
-    try { fs.writeFileSync(fichier, JSON.stringify({ pid: process.pid, tics: p.tics, longs: p.longs, taches: p.taches, boucle, chunksGeneres: p.chunks })); } catch (e) { /* tant pis */ }
+    // atomique (temporaire puis renommage) : le banc ne lit jamais un fichier à moitié écrit
+    try {
+      fs.writeFileSync(fichier + '.tmp', JSON.stringify({ pid: process.pid, tics: p.tics, longs: p.longs, taches: p.taches, boucle, chunksGeneres: p.chunks }));
+      fs.renameSync(fichier + '.tmp', fichier);
+    } catch (e) { /* lecture concurrente (Windows) : la prochaine écriture passera */ }
   };
   const t = setInterval(ecrire, 500);
   if (t.unref) t.unref();
@@ -3314,6 +3342,17 @@ function traiter(c, m) {
          arbitrairement loin — seul un BLOC autorisé, donc proche d'un joueur
          déjà présent, déclenche `getChunk(cx, cz, true)` plus bas. */
       const js = c.joueurs && c.joueurs[m.j];
+      /* Chunk pas encore généré côté serveur (terrain en file) : getBlock y rend 0 et
+         la casse ou la pose s'appuierait sur un faux « air ». Tout près du joueur (à
+         portée de bloc, donc SPEC-SECU-007 respectée), il est généré d'abord ; plus
+         loin, le contrôle de portée ci-dessous refuse comme avant. */
+      if (!monde.chunkDe(Math.floor(m.x / 16), Math.floor(m.z / 16))) {
+        const st0 = js && js.joueur.state;
+        if (st0 && Number.isFinite(m.x) && Number.isFinite(m.z) &&
+            Math.hypot(m.x + 0.5 - st0.pos.x, m.z + 0.5 - st0.pos.z) <= PORTEE_BLOC + 1) {
+          monde.getChunk(Math.floor(m.x / 16), Math.floor(m.z / 16), true);
+        }
+      }
       const avant = monde.getBlock(m.x, m.y, m.z);
       /* Bascule d'une porte ou d'une trappe (ouvrir/fermer) : un changement d'état
          d'un bloc DÉJÀ posé, sans objet ; on n'accepte que la vraie bascule
@@ -4474,6 +4513,10 @@ function entretenirMonture(js, dt, avance) {
   if (st.dead) { const pc = MC.PlayerConst; V.descendre(st, monde, pc.PW, pc.PH); return; }
   if (avance > 0) { js.vehInactif = 0; return; }
   js.vehInactif = (js.vehInactif || 0) + dt;
+  /* Hors terrain généré côté serveur (son conducteur attend son sol), le véhicule est
+     GELÉ comme toute entité hors zone chargée : rouler sur son élan au-dessus de
+     chunks absents (getBlock = 0) le ferait tomber, passager compris. */
+  if (!solChargeEn(mt.pos.x, mt.pos.z)) return;
   if (js.vehInactif > 0.5) { V.conduire(mt, dt, monde, null); V.caler(st); }
 }
 /* La soute d'un véhicule (clé « v<eid> ») s'il existe et si `st` en est assez proche. */
@@ -4856,7 +4899,17 @@ let accChunks = 1;         // premier passage immédiat
 const TS = MC.TravauxServeur;
 const horlogeTic = () => performance.now();
 const fileChunks = TS.creerFileChunks(monde);
-const prepLieux = TS.creerPreparateur();
+const cycleLieux = monde.habitats && monde.habitats.regionsDansZone ? TS.creerCycleLieux(monde.habitats) : null;
+/* MC_TEST_BUDGET_CHUNKS_MS=<ms> : budget de génération de chunks par tic imposé (0 : une
+   colonne par tic, une génération très lente), réservé aux suites d'intégration qui
+   doivent voir un joueur dépasser son terrain (sol absent, véhicule gelé), jamais en
+   exploitation. Les préparations gardent leur réserve garantie. */
+const BUDGETS_TIC = (function () {
+  const ms = parseFloat(process.env.MC_TEST_BUDGET_CHUNKS_MS);
+  if (!(ms >= 0)) return TS.BUDGETS;
+  setImmediate(() => journal('ATTENTION : MC_TEST_BUDGET_CHUNKS_MS actif — génération de chunks bridée à ' + ms + ' ms par tic (réglage de test, jamais en exploitation)'));
+  return Object.assign({}, TS.BUDGETS, { FOND_MS: ms, URGENT_MS: ms });
+})();
 const prepCatastrophes = TS.creerPreparateur();
 const RAYON_CHUNKS_JOUEUR = 3, RAYON_DECHARGE = 5;
 const RAYON_LIEUX = 1500;                // le plus grand rayon que consulte l'entretien du monde (avancerCatastrophes)
@@ -4869,34 +4922,22 @@ function centresChunks() {
   return centres;
 }
 function majChunksVoulus() { fileChunks.vouloir(monde.chunksVoulus(centresChunks(), RAYON_CHUNKS_JOUEUR)); }
-/* Les étapes qui mettent en cache tout ce que l'entretien du monde va lire : une
-   région de lieux à la fois (même ordre que habitats.lieuxDansZone), puis, une
-   route à la fois, les trajets des villes que les caravanes consultent. Les lieux
-   et les routes obtenus sont ceux qu'un appel direct aurait construits. */
-function etapesEntretien() {
-  const vues = new Set(), etapes = [];
-  /* Les naissances de cyclones d'une fenêtre de temps (150 ms d'un coup : le relief
-     de 225 cellules) — celles que l'entretien consulte, et la suivante, d'avance. */
+/* Après les lieux : les naissances de cyclones (150 ms d'un coup : le relief de 225
+   cellules), celles que l'entretien consulte et la suivante, d'avance ; puis, une
+   route à la fois, les trajets des villes que les caravanes consultent. Les routes
+   obtenues sont celles qu'un appel direct aurait tracées (caches de routes.js). */
+function etapesSuiteEntretien(lire, positions) {
+  const etapes = [];
   if (monde.meteo && monde.meteo.preparerGenesesCyclones) {
     monde.meteo.epoquesCyclones(heure).forEach(e => {
       const etape = () => (monde.meteo.preparerGenesesCyclones(e, horlogeTic() + 2, horlogeTic) ? null : [etape]);
       etapes.push(etape);
     });
   }
-  if (!monde.habitats || !monde.habitats.regionsDansZone) return etapes;
-  const positions = tousLesJoueurs().map(({ js }) => js.joueur.state.pos);
-  positions.forEach(p => {
-    monde.habitats.regionsDansZone(p.x - RAYON_LIEUX, p.z - RAYON_LIEUX, p.x + RAYON_LIEUX, p.z + RAYON_LIEUX).forEach(r => {
-      const k = r.join(',');
-      if (vues.has(k)) return;
-      vues.add(k);
-      etapes.push(() => { monde.habitats.lieuDeRegion(r[0], r[1], r[2]); });
-    });
-  });
   if (monde.routes && monde.routes.connexionsDe && monde.routes.cheminEntre) {
     etapes.push(() => {
       const villes = [];
-      positions.forEach(p => monde.habitats.lieuxProches(p.x, p.z, RAYON_VILLES_CARAVANES).forEach(l => {
+      positions.forEach(p => monde.habitats.lieuxProches(p.x, p.z, RAYON_VILLES_CARAVANES, lire).forEach(l => {
         if ((l.kind === 'ville' || l.kind === 'megapole') && villes.indexOf(l) < 0) villes.push(l);
       }));
       return villes.map(v => () => monde.routes.connexionsDe(v).map(c2 => () => { monde.routes.cheminEntre(v, c2); }));
@@ -4904,31 +4945,42 @@ function etapesEntretien() {
   }
   return etapes;
 }
-/* Une fois par cadence d'entretien : relance la préparation pour les positions du
-   moment ; vrai si tout est déjà prêt (le cas courant : tout est en cache), et
-   alors seulement l'entretien qui en dépend s'exécute à cette cadence. Sinon la
-   préparation continue dans le budget des tics suivants. */
-function entretienPret() {
-  if (prepLieux.actif) return false;
-  prepLieux.lancer(etapesEntretien());
-  return prepLieux.avancer(performance.now() + TS.BUDGETS.FOND_MS, horlogeTic);
+/* Une fois par cadence d'entretien (1 s). Un cycle de lieux PRÊT (préparé tic après
+   tic, aussi longtemps qu'il le faut) est consommé : politique, caravanes et
+   catastrophes s'exécutent sur ses positions et ses lieux, sans rien construire
+   d'un coup ; puis un nouveau cycle démarre pour les positions du moment. Vivacité :
+   l'entretien a lieu dès que la préparation finit, jamais « si elle tient en un appel ». */
+let entretiensFaits = 0;
+function entretienDuMonde() {
+  if (cycleLieux && cycleLieux.pret) {
+    const positions = cycleLieux.consommer();
+    const ctx = { positions, proches: (x, z, r) => monde.habitats.lieuxProches(x, z, r, cycleLieux.lire) };
+    avancerPolitique(ctx);
+    diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
+    avancerCaravanes(ctx);
+    avancerCatastrophes(ctx);
+    entretiensFaits++;
+  } else if (!cycleLieux) {
+    avancerPolitique(); diffuserPolitiqueSiChangee(); avancerCaravanes(); avancerCatastrophes();
+    entretiensFaits++;
+  }
+  if (cycleLieux && !cycleLieux.actif && !cycleLieux.pret) {
+    cycleLieux.demarrer(tousLesJoueurs().map(({ js }) => js.joueur.state.pos), RAYON_LIEUX, etapesSuiteEntretien);
+    cycleLieux.avancer(performance.now() + TS.BUDGETS.PREPARATION_MIN_MS, horlogeTic);
+  }
 }
 /* Le sol sous un joueur : ses 3×3 chunks existent côté serveur. */
-function solPret(js) {
-  return fileChunks.manquants(TS.chunksDuSol(js.joueur.state.pos.x, js.joueur.state.pos.z)) === 0;
-}
+function solChargeEn(x, z) { return fileChunks.manquants(TS.chunksDuSol(x, z)) === 0; }
+// pendant un rejeu d'entrées : le joueur (ou son véhicule, qu'il occupe) est-il encore sur du terrain généré ?
+function solJoueurOk(st) { return solChargeEn(st.pos.x, st.pos.z); }
+function solPret(js) { return solChargeEn(js.joueur.state.pos.x, js.joueur.state.pos.z); }
 function travauxDuTic(joueurs) {
   const urgents = [];
   joueurs.forEach(({ js }) => TS.chunksDuSol(js.joueur.state.pos.x, js.joueur.state.pos.z).forEach(c => urgents.push(c)));
-  const urgence = fileChunks.manquants(urgents) > 0;
-  const echeance = performance.now() + (urgence ? TS.BUDGETS.URGENT_MS : TS.BUDGETS.FOND_MS);
-  fileChunks.travailler(urgents, echeance, horlogeTic);
-  if (profilTics) profilTics.section('chunks: generation');
-  if (prepLieux.actif && performance.now() < echeance) prepLieux.avancer(echeance, horlogeTic);
-  if (profilTics) profilTics.section('lieux: preparation');
-  if (!prepCatastrophes.actif && catastrophesEnAttente.length) { const c = catastrophesEnAttente.shift(); prepCatastrophes.lancer(etapesCatastrophe(c.l, c.evt)); }
-  if (prepCatastrophes.actif && performance.now() < echeance) prepCatastrophes.avancer(echeance, horlogeTic);
-  if (profilTics) profilTics.section('catastrophes: voisins');
+  if (!prepCatastrophes.actif && catastrophesEnAttente.length) { const c = catastrophesEnAttente.shift(); prepCatastrophes.lancer(etapesCatastrophe(c.l, c.evt, c.heure)); }
+  // chunks (urgents d'abord) sous budget, puis chaque préparation avec sa réserve garantie
+  TS.travaillerTic(fileChunks, urgents, [cycleLieux, prepCatastrophes], horlogeTic, BUDGETS_TIC);
+  if (profilTics) profilTics.section('chunks et preparations');
 }
 
 // SPEC-DONJON-017 : « pillé depuis » observé à la première détection d'un
@@ -5017,17 +5069,9 @@ setInterval(() => {
     if (profilTics) profilTics.section('chunks: dechargement');
     peuplerLieux();
     if (profilTics) profilTics.section('peuplerLieux');
-    const lieuxPrets = entretienPret();
-    if (profilTics) profilTics.section('lieux: preparation');
-    if (lieuxPrets) {
-      avancerPolitique();
-      diffuserPolitiqueSiChangee();         // SPEC-SYNC-024 : les clients connectés suivent l'état politique
-    }
-    if (profilTics) profilTics.section('politique');
+    entretienDuMonde();
+    if (profilTics) profilTics.section('entretien du monde');
     avancerEconomie();
-    if (lieuxPrets) avancerCaravanes();
-    if (profilTics) profilTics.section('economie+caravanes');
-    if (lieuxPrets) avancerCatastrophes();
     verifierSommeil();
     if (profilTics) profilTics.section('catastrophes+sommeil');
     // B4 : propositions de duel caduques (silencieuses) et duels terminés
@@ -5142,9 +5186,9 @@ setInterval(() => {
     if (solPret(js)) {
       js.attenteSol = 0;
       // SPEC-SYNC-004 : temps réel crédité, entrées invalides écartées (MC.Synchro.avancerEntrees)
-      pas = SY.avancerEntrees(js.joueur, js.entrees, js.budget, dtReel, js.dernier);
+      pas = SY.avancerEntrees(js.joueur, js.entrees, js.budget, dtReel, js.dernier, solJoueurOk);
     } else {
-      SY.patienterEntrees(js.entrees, js.budget, dtReel);
+      SY.patienterEntrees(js.entrees, js.budget, dtReel, st.dead);
       pas = { dernier: js.dernier, avance: 0 };
     }
     js.dernier = pas.dernier;
@@ -5661,7 +5705,8 @@ process.on('unhandledRejection', (raison) => {
    plus haut) : provoquent une exception ASYNCHRONE, hors de tout handler de
    message, pour vérifier que les gestionnaires ci-dessus tiennent le coup. */
 if (process.env.MC_TEST_PANNE_ASYNC === '1') {
-  setTimeout(() => { throw new Error('panne asynchrone de test SPEC-SECU-002'); }, 200);
+  // MC_TEST_PANNE_ASYNC_MS : l'instant de la panne (défaut 200 ms), pour la placer pendant une sauvegarde asynchrone
+  setTimeout(() => { throw new Error('panne asynchrone de test SPEC-SECU-002'); }, parseInt(process.env.MC_TEST_PANNE_ASYNC_MS, 10) || 200);
 }
 if (process.env.MC_TEST_PANNE_REJET === '1') {
   setTimeout(() => { Promise.reject(new Error('rejet de test SPEC-SECU-002')); }, 200);

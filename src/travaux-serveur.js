@@ -23,6 +23,9 @@
     URGENT_MS: 20,            // idem quand le sol d'un joueur manque (il attend : on s'y consacre)
     TRANCHE_SAUVEGARDE_MS: 4, // une tranche de sérialisation de sauvegarde
     ATTENTE_SOL_MAX_S: 5,     // au-delà, le sol d'un joueur est généré d'un coup (attente bornée)
+    PREPARATION_MIN_MS: 2,    // réserve GARANTIE à chaque préparation active (lieux, voisins d'une catastrophe),
+                              // même quand la génération de chunks a déjà pris tout le budget du tic
+    ATTENTE_CATASTROPHES_MAX: 64, // catastrophes en attente d'application au plus (les plus anciennes cèdent)
   };
 
   function cle(cx, cz) { return cx + ',' + cz; }
@@ -117,6 +120,96 @@
     };
   }
 
+  /* Cycle de préparation des lieux de l'entretien du monde (politique, caravanes,
+     catastrophes). `demarrer(positions, rayon, suite)` : toutes les régions de lieux
+     à `rayon` de chaque position (habitats.regionsDansZone, dédoublonnées) ; seules
+     celles qu'il ne connaît pas encore sont construites (habitats.lieuDeRegion),
+     une par pas, sous budget — il garde les siennes d'un cycle à l'autre (et
+     oublie celles qui ne sont plus voulues) : contrairement aux caches de
+     habitats.js, plafonnés, il ne déborde pas quand les joueurs sont dispersés.
+     Puis les étapes de `suite(lire, positions)` (routes des caravanes…). Une fois
+     tout fait, le cycle est PRÊT et le reste jusqu'à `consommer()` : l'entretien
+     n'a jamais à tenir dans un seul appel (vivacité garantie, quel que soit le
+     nombre de joueurs). `lire(genre, rx, rz)` se passe à habitats.lieuxProches. */
+  function creerCycleLieux(habitats) {
+    var memo = new Map();
+    var etat = 'repos', manquantes = [], i = 0, positions = null, suite = null, prep = creerPreparateur();
+    var cycles = 0;
+    function cleR(kind, rx, rz) { return kind + ',' + rx + ',' + rz; }
+    function lire(kind, rx, rz) {
+      var k = cleR(kind, rx, rz);
+      // le cache de habitats.js fait foi quand il a la région : même objet que la génération
+      var c = habitats.lieuEnCache ? habitats.lieuEnCache(kind, rx, rz) : undefined;
+      if (c !== undefined) { memo.set(k, c); return c; }
+      if (memo.has(k)) return memo.get(k);
+      var l = habitats.lieuDeRegion(kind, rx, rz);
+      memo.set(k, l);
+      return l;
+    }
+    return {
+      lire: lire,
+      demarrer: function (pos, rayon, etapesSuite) {
+        var voulues = new Set(), liste = [];
+        positions = (pos || []).map(function (p) { return { x: p.x, z: p.z }; });
+        positions.forEach(function (p) {
+          habitats.regionsDansZone(p.x - rayon, p.z - rayon, p.x + rayon, p.z + rayon).forEach(function (r) {
+            var k = cleR(r[0], r[1], r[2]);
+            if (voulues.has(k)) return;
+            voulues.add(k);
+            if (!memo.has(k)) liste.push(r);
+          });
+        });
+        memo.forEach(function (v, k) { if (!voulues.has(k)) memo.delete(k); });
+        manquantes = liste; i = 0; suite = etapesSuite || null; etat = 'lieux';
+      },
+      avancer: function (echeance, horloge) {
+        while (etat === 'lieux' && i < manquantes.length) {
+          var r = manquantes[i++];
+          lire(r[0], r[1], r[2]);
+          if (horloge() >= echeance && i < manquantes.length) return false;
+        }
+        if (etat === 'lieux') {
+          etat = 'suite';
+          prep.lancer(suite ? suite(lire, positions) : []);
+          if (horloge() >= echeance) return false;
+        }
+        if (etat === 'suite') {
+          if (!prep.avancer(echeance, horloge)) return false;
+          etat = 'pret';
+        }
+        return etat === 'pret';
+      },
+      get actif() { return etat === 'lieux' || etat === 'suite'; },
+      get pret() { return etat === 'pret'; },
+      // rend les positions du cycle (celles dont les lieux sont prêts) et revient au repos
+      consommer: function () {
+        if (etat !== 'pret') return null;
+        etat = 'repos'; cycles++;
+        return positions;
+      },
+      get cycles() { return cycles; },
+      get taille() { return memo.size; },
+      get restantes() { return etat === 'lieux' ? manquantes.length - i : (etat === 'suite' ? prep.restantes : 0); },
+    };
+  }
+
+  /* Le travail de fond d'un tic : génération des chunks (urgents d'abord) sous le
+     budget FOND_MS (URGENT_MS si le sol d'un joueur manque), puis chaque
+     préparation active (cycle de lieux, voisins d'une catastrophe…) jusqu'à la
+     même échéance — mais jamais moins de PREPARATION_MIN_MS chacune : un joueur
+     qui vole sans arrêt sur du terrain neuf ne peut pas affamer l'entretien. */
+  function travaillerTic(fileChunks, urgents, preparations, horloge, budgets) {
+    var b = budgets || BUDGETS;
+    var urgence = fileChunks.manquants(urgents) > 0;
+    var echeance = horloge() + (urgence ? b.URGENT_MS : b.FOND_MS);
+    var chunks = fileChunks.travailler(urgents, echeance, horloge);
+    (preparations || []).forEach(function (p) {
+      if (!p || !p.actif) return;
+      p.avancer(Math.max(echeance, horloge() + b.PREPARATION_MIN_MS), horloge);
+    });
+    return { urgence: urgence, chunks: chunks };
+  }
+
   /* ── sérialisation par tranches ──────────────────────────────────────────── */
   /* JSON d'une entrée [x, y, z, valeur] dont la clé est « x,y,z » : exactement
      ce que JSON.stringify([+x, +y, +z, valeur]) écrirait. */
@@ -195,5 +288,6 @@
     BUDGETS: BUDGETS, MARQUE: MARQUE,
     creerFileChunks: creerFileChunks, chunksDuSol: chunksDuSol,
     creerPreparateur: creerPreparateur, creerSerialiseur: creerSerialiseur, entreeJSON: entreeJSON,
+    creerCycleLieux: creerCycleLieux, travaillerTic: travaillerTic,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
