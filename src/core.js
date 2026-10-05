@@ -558,10 +558,15 @@
   defBlock(B.DETECTEUR_EAU, Object.assign({ name: "Détecteur de niveau d'eau", tiles: [793, 793, 793], circuit: { type: 'eau', source: true } }, TC));
   defBlock(B.EOLIENNE, Object.assign({ name: 'Éolienne', tiles: [794, 794, 794], circuit: { type: 'eolienne', generateur: true } }, TC));
   defBlock(B.ROUE_HYDRAULIQUE, Object.assign({ name: 'Roue hydraulique', tiles: [795, 795, 795], circuit: { type: 'hydraulique', generateur: true } }, TC));
-  defBlock(B.GENERATEUR_THERMIQUE, Object.assign({ name: 'Générateur thermique', tiles: [796, 796, 796], circuit: { type: 'thermique', generateur: true } }, TC));
+  /* Son combustible (SPEC-MECA-002) se range dans un conteneur posé à 9 cases
+     — le type générique « distributeur » du contrat (SPEC-SYNC-015), sans
+     nouveau type : le serveur y prend ce qui brûle (fuelValue). */
+  defBlock(B.GENERATEUR_THERMIQUE, Object.assign({ name: 'Générateur thermique', tiles: [796, 796, 796], circuit: { type: 'thermique', generateur: true },
+                                                  interactive: 'distributeur' }, TC));
   defBlock(B.CABLE_ENERGIE, { name: 'Câble', tiles: [797, 797, 797], hardness: 0.3, transparent: true,
                               plant: true, pass: 'cutout', circuit: { type: 'cable', energie: true } });
-  defBlock(B.BATTERIE, Object.assign({ name: 'Batterie', tiles: [798, 798, 798], circuit: { type: 'batterie', energie: true } }, TC));
+  // une batterie par pile : chacune garde SON niveau (data.niveau, SPEC-MECA-003)
+  defBlock(B.BATTERIE, Object.assign({ name: 'Batterie', tiles: [798, 798, 798], circuit: { type: 'batterie', energie: true }, maxStack: 1 }, TC));
   defBlock(B.DISTRIBUTEUR, Object.assign({ name: 'Distributeur', tiles: [799, 799, 799], circuit: { type: 'distributeur' }, interactive: 'distributeur' }, TC));
   defBlock(B.PISTON, Object.assign({ name: 'Piston', tiles: [800, 800, 800], circuit: { type: 'piston' } }, TC));
   defBlock(B.PISTON_COLLANT, Object.assign({ name: 'Piston collant', tiles: [801, 801, 801], circuit: { type: 'piston', collant: true } }, TC));
@@ -1314,9 +1319,11 @@
     bascule: 3,                      // mémoire 1 bit | set précédent 1 bit
     compteur: 31,                    // valeur 4 bits | entrée précédente 1 bit
     lampe: 0,                        // allumée ou non : c'est l'id (LAMPE_ALLUMEE)
-    tapis: 1, ascenseur: 1, alarme: 1,
+    tapis: 7,                        // en marche 1 bit | orientation 2 bits (circuits.js : effetMecanique)
+    ascenseur: 1, alarme: 1,
     presence: 1, lumiere: 1, journuit: 1, meteo: 1, horloge: 1, eau: 1,
-    eolienne: 15, hydraulique: 15, thermique: 15, batterie: 15,   // puissance / niveau 0..15
+    eolienne: 15, hydraulique: 15, thermique: 15,   // puissance 0..15
+    batterie: 255,                   // niveau 0..MC.Circuits.CAPACITE_BATTERIE (SPEC-MECA-003)
     distributeur: 1, commande: 1,    // dernier signal vu (front montant)
     piston: 15,                      // orientation 3 bits | sorti 1 bit
     'tete-piston': 0,

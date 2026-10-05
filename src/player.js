@@ -152,6 +152,13 @@
       }
       if (englue) pl.vel.y = Math.max(pl.vel.y * 0.5, -1.2);
 
+      /* Tapis roulant et ascenseur en marche (SPEC-MECA-006) : même règle chez
+         le serveur et chez le client (MC.Circuits.effetMecanique). Le tapis
+         ajoute sa vitesse au pas de ce tic, l'ascenseur porte vers le haut. */
+      var meca = (!pl.flying && MC.Circuits && world.getEtat) ? MC.Circuits.effetMecanique(world.getBlock, world.getEtat, pl.pos) : null;
+      if (meca && meca.y > 0) { pl.vel.y = Math.max(pl.vel.y, meca.y); pl.fallFrom = null; }
+      var porteX = meca ? meca.x : 0, porteZ = meca ? meca.z : 0;
+
       // suivi de chute, pour les dégâts à l'atterrissage
       if (!pl.flying && !swimming && !prise) {
         if (pl.vel.y > 0 || pl.onGround) pl.fallFrom = pl.pos.y;
@@ -162,7 +169,11 @@
       // 0,5 bloc franchissable en marchant (SPEC-CONSTR-001) : une marche
       // d'escalier ou une dalle, jamais un bloc plein entier.
       var PAS_AUTO = (!pl.flying && pl.onGround) ? 0.55 : 0;
+      pl.vel.x += porteX; pl.vel.z += porteZ;
       var hit = P.move(world, pl, dt, PW, PH, PAS_AUTO);
+      // la vitesse propre du joueur reste la sienne (un axe buté est déjà à 0)
+      if (!hit.x) pl.vel.x -= porteX;
+      if (!hit.z) pl.vel.z -= porteZ;
       /* Se hisser hors de l'eau. La poussée de nage cesse dès que la poitrine
          émerge : trop tôt pour franchir un rebord, si bien qu'on restait
          prisonnier de la mer, même face à une plage au ras de l'eau. Nageant
@@ -354,7 +365,7 @@
       var id = target.block;
       // SPEC-MECA-003 : une batterie cassée garde son niveau d'énergie —
       // il faut le lire avant de vider le bloc, l'état ne survit pas seul.
-      var niveauBatterie = (id === B.BATTERIE) ? (world.getEtat(target.x, target.y, target.z) & 15) : null;
+      var niveauBatterie = (id === B.BATTERIE) ? (world.getEtat(target.x, target.y, target.z) & 255) : null;
       var drops;
       /* Casser une moitié de porte casse l'autre (même id, cherché juste
          au-dessus ou en dessous) et rend une seule porte, jamais deux. */
@@ -471,6 +482,14 @@
          en main. Les deux moitiés d'une porte partagent le même id : on
          retrouve l'autre moitié en cherchant ce même id juste au-dessus ou
          en dessous, et on la bascule avec. */
+      /* Levier et bouton (SPEC-MECA-005) : un clic droit les actionne, quel
+         que soit ce qu'on tient en main. Rien n'est prédit ici : le serveur,
+         qui fait foi, valide la demande (message ACTIONNER) et diffuse le
+         nouvel état — game.js envoie la demande. */
+      if (tdef && tdef.circuit && MC.Circuits && MC.Circuits.actionner(tb, world.getEtat(target.x, target.y, target.z)) !== null) {
+        return 'actionner';
+      }
+
       if (tdef && (tdef.porte || tdef.trappe)) {
         var nouvId = C.bascule(tb);
         world.setBlock(target.x, target.y, target.z, nouvId);
@@ -709,6 +728,11 @@
         // abîmée ne pose jamais un état hors de la disposition de la batterie
         var niveauPose = Math.floor(Number(stPose && stPose.data && stPose.data.niveau)) || 0;
         world.setEtat(bx, by, bz, Math.max(0, Math.min(C.etatMaxDe(id), niveauPose)));
+      }
+      /* Tapis roulant (SPEC-MECA-006) : il emporte dans la direction du regard
+         au moment de la pose (orientation dans les bits 1-2, effetMecanique). */
+      if (bdef && bdef.circuit && bdef.circuit.type === 'tapis') {
+        world.setEtat(bx, by, bz, C.orientDeRegard(lookDir()) << 1);
       }
       if (!R.blocsIllimites) consommerCase(pl.selected, 1);
       return 'place';

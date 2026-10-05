@@ -1184,12 +1184,44 @@
       if (!positions.length) return [];
       var api = { getBlock: getBlock, getEtat: getEtat, setEtat: setEtat, setBlock: setBlock };
       ctx = ctx || {};
+      lumiereCircuit.temps = ctx.temps;
       // SPEC-MECA-002 / SPEC-VENT-001 : l'éolienne lit le vent du climat de CE
       // monde (déterministe), sauf si l'appelant en impose un autre.
       if (ctx.ventEn === undefined && ctx.vent === undefined && meteo && meteo.ventEn) {
         ctx = Object.assign({}, ctx, { ventEn: meteo.ventEn });
       }
+      /* SPEC-MECA-005 : le déclencheur de chaque détecteur. Le monde connaît
+         l'heure (jour/nuit, horloge), la pluie et le vent de chaque lieu,
+         l'eau voisine et ses sources de lumière ; les corps présents
+         (`ctx.entites`, plaques et présence) et les boutons enfoncés
+         (`ctx.boutons`) viennent de l'appelant — le serveur, qui les tient.
+         Un `ctx.detecteurs` fourni l'emporte, détecteur par détecteur. */
+      var temps = ctx.temps;
+      var src = {
+        getBlock: getBlock, entites: ctx.entites, appuyes: ctx.boutons, temps: temps,
+        ventEn: ctx.ventEn, lumiereEn: lumiereCircuit,
+      };
+      if (temps !== undefined && MC.DayCycle) {
+        src.nuit = MC.DayCycle.isNight(temps);
+        src.pluieEn = function (x, y, z) { return pluieIci(x, y, z, temps); };
+      }
+      var detecteurs = MC.Circuits.capteurs(positions, src);
+      if (ctx.detecteurs) Object.keys(ctx.detecteurs).forEach(function (k) { detecteurs[k] = ctx.detecteurs[k]; });
+      ctx = Object.assign({}, ctx, { detecteurs: detecteurs });
       return MC.Circuits.tick(positions, api, ctx);
+    }
+    /* Lumière d'une case pour un capteur de lumière (0..15), sans dépendre du
+       maillage (le serveur n'en a pas) : le ciel s'il est ouvert au-dessus,
+       pondéré par le soleil à cette heure, et les sources du registre
+       `lights`, atténuées d'un niveau par bloc (distance de Manhattan). */
+    function lumiereCircuit(x, y, z) {
+      var n = 0;
+      if (cielOuvert(x, y, z)) n = MC.DayCycle && lumiereCircuit.temps !== undefined ? Math.round(15 * MC.DayCycle.sunIntensity(lumiereCircuit.temps)) : 15;
+      lights.forEach(function (l) {
+        var v = l.level - (Math.abs(l.x - x) + Math.abs(l.y - y) + Math.abs(l.z - z));
+        if (v > n) n = v;
+      });
+      return Math.max(0, Math.min(15, n));
     }
 
     // croissance du blé : chaque culture avance d'un stade après `stageTime`
@@ -1252,7 +1284,9 @@
           var p = k.split(',');
           lights.set(k, { x: +p[0], y: +p[1], z: +p[2], level: C.lampeDe(id) });
         }
-        if (C.BLOCKS[id] && C.BLOCKS[id].circuit) {
+        // mêmes blocs que le registre tenu par setBlock : mécanismes, portes et
+        // trappes (un signal peut les ouvrir — SPEC-MECA-008)
+        if (C.BLOCKS[id] && (C.BLOCKS[id].circuit || C.estPorte(id) || C.estTrappe(id))) {
           var p2 = k.split(',');
           circuits.set(k, [+p2[0], +p2[1], +p2[2], id]);
         }
@@ -1301,6 +1335,7 @@
       commandesBloc.clear();
       crops.clear();
       lights.clear();
+      circuits.clear();
       donjonsVaincus.clear();
       coffresPilles.clear();
       if (exploration) exploration.charger([]);

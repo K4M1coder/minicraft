@@ -113,8 +113,8 @@ async function scenarioEtatBorne() {
     const pEsc2 = caseLibre(bienvenue, 4);
     const repE2 = await poser(cl, pEsc2, B.ESCALIER_STONE, C.etatMaxDe(B.ESCALIER_STONE) + 1);
     eq(repE2 && repE2.etat, 0, 'SPEC-SAVE-023 : un escalier annoncé au-delà de etatMaxDe (' + (C.etatMaxDe(B.ESCALIER_STONE) + 1) + ') est posé à l\'état 0');
-    const repB = await poser(cl, pBat, B.BATTERIE, 200);
-    eq(repB && repB.etat, 0, 'SPEC-SAVE-023 : une batterie annoncée au-delà de 15 est ramenée à 0');
+    const repB = await poser(cl, pBat, B.PISTON, 200);
+    eq(repB && repB.etat, 0, 'SPEC-SAVE-023 : un piston annoncé au-delà de sa borne (15) est ramené à 0');
     const pBat2 = caseLibre(bienvenue, -4);
     const repB2 = await poser(cl, pBat2, B.BATTERIE, C.etatMaxDe(B.BATTERIE));
     eq(repB2 && repB2.etat, C.etatMaxDe(B.BATTERIE), 'SPEC-SAVE-023 : une batterie à sa borne (' + C.etatMaxDe(B.BATTERIE) + ') la garde');

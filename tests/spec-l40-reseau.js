@@ -42,8 +42,8 @@
       A.equal(borne(B.ESCALIER_STONE, maxEsc), maxEsc, 'escalier : la borne elle-même est conservée');
       A.equal(borne(B.ESCALIER_STONE, maxEsc + 1), 0, 'escalier : au-delà → 0');
       A.equal(borne(B.STONE, 200), 0, 'pierre (sans état) : 200 → 0');
-      A.equal(borne(B.BATTERIE, 15), 15, 'batterie : 15 conservé');
-      A.equal(borne(B.BATTERIE, 16), 0, 'batterie : 16 → 0');
+      A.equal(borne(B.BATTERIE, 255), 255, 'batterie : 255 (sa capacité, SPEC-MECA-003) conservé');
+      A.equal(borne(B.LEVIER_CIRCUIT, 2), 0, 'levier : 2 → 0');
       A.equal(borne(0, 5), 0, 'casse (air) : état 0');
     });
 

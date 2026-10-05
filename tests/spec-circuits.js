@@ -240,6 +240,7 @@
       w.setBlock(5, 40, 5, B.LEVIER_CIRCUIT);
       w.setEtat(5, 40, 5, 0);
       w.setBlock(6, 40, 5, B.LAMPE_ETEINTE);
+      w.setBlock(7, 40, 5, B.BATTERIE); w.setEtat(7, 40, 5, 200);   // son énergie (sans elle, la lampe ne s'allume pas)
       var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
       var pos = [[5, 40, 5, B.LEVIER_CIRCUIT], [6, 40, 5, B.LAMPE_ETEINTE]];
       K.tick(pos, api, {});
@@ -450,6 +451,280 @@
     });
   });
 
+  // ─── L29, suite : générateurs, batteries, détecteurs, appareils, autorité ──
+  function monde(graine) {
+    var w = MC.createWorld(graine);
+    w.getChunk(0, 0, true); w.getChunk(-1, 0, true); w.getChunk(0, -1, true); w.getChunk(-1, -1, true); w.getChunk(1, 0, true);
+    var api = { getBlock: w.getBlock, getEtat: w.getEtat, setEtat: w.setEtat, setBlock: w.setBlock };
+    // un tic sur TOUT le registre des mécanismes chargés (comme world.tickCircuits)
+    function tic(ctx) { var pos = []; w.circuits.forEach(function (p) { pos.push(p); }); return K.tick(pos, api, ctx || {}); }
+    return { w: w, api: api, tic: tic };
+  }
+
+  describe('SPEC-MECA-002 : générateurs dans un réseau (combustible, transport, pertes)', function () {
+    it('SPEC-MECA-002 : le générateur thermique brûle son combustible (rappel ctx.bruler) ou tourne près de la lave', function () {
+      var m = monde(9101), w = m.w;
+      w.setBlock(2, 40, 2, B.GENERATEUR_THERMIQUE);
+      var appels = [], stock = 2;
+      var ctx = { bruler: function (x, y, z) { appels.push([x, y, z]); if (stock <= 0) return false; stock--; return true; } };
+      m.tic(ctx);
+      A.equal(w.getEtat(2, 40, 2), 10, 'du combustible brûle : régime du combustible');
+      A.deep(appels[0], [2, 40, 2], 'le rappel désigne le générateur qui brûle');
+      m.tic(ctx);
+      A.equal(w.getEtat(2, 40, 2), 10, 'tant qu’il en reste');
+      m.tic(ctx);
+      A.equal(w.getEtat(2, 40, 2), 0, 'plus de combustible : plus de production');
+      A.equal(appels.length, 3, 'un appel par tic et par générateur, pas plus');
+      m.tic({});
+      A.equal(w.getEtat(2, 40, 2), 0, 'sans rappel ni combustible, rien');
+      w.setBlock(3, 40, 2, B.LAVA);
+      var n0 = appels.length;
+      m.tic(ctx);
+      A.equal(w.getEtat(2, 40, 2), 15, 'la lave voisine suffit : plein régime');
+      A.equal(appels.length, n0, 'près de la lave, aucun combustible n’est brûlé');
+    });
+
+    it('SPEC-MECA-002 : un générateur alimente un appareil par câble, et un réseau trop long perd trop', function () {
+      var m = monde(9102), w = m.w;
+      // roue hydraulique : 2 unités au courant 2 ; un tapis en demande 2
+      w.setBlock(0, 40, 0, B.ROUE_HYDRAULIQUE);
+      w.setBlock(1, 40, 0, B.TAPIS_ROULANT);
+      w.setBlock(1, 41, 0, B.LEVIER_CIRCUIT); w.setEtat(1, 41, 0, 1);
+      m.tic({ niveauEau: 2 }); m.tic({ niveauEau: 2 });
+      A.equal(w.getEtat(1, 40, 0) & 1, 1, 'générateur collé à l’appareil : il tourne');
+      // le même tapis, nourri au bout de 30 câbles : la perte de ligne le prive
+      w.setBlock(1, 40, 0, 0);
+      for (var x = 1; x <= 30; x++) w.setBlock(x, 40, 0, B.CABLE_ENERGIE);
+      w.setBlock(31, 40, 0, B.TAPIS_ROULANT);
+      w.setBlock(31, 41, 0, B.LEVIER_CIRCUIT); w.setEtat(31, 41, 0, 1);
+      for (var t = 0; t < 4; t++) m.tic({ niveauEau: 2 });
+      A.equal(w.getEtat(31, 40, 0) & 1, 0, '30 câbles : 2 unités produites, moins de 2 arrivent — le tapis reste arrêté');
+      A.equal(K.transporterEnergie(2, 30, K.PERTE_CABLE), 1, 'la perte de ligne est celle de transporterEnergie');
+      for (var t2 = 0; t2 < 4; t2++) m.tic({ niveauEau: 7 });
+      A.equal(w.getEtat(31, 40, 0) & 1, 1, 'courant plus fort (7 unités) : assez arrive au bout de la ligne');
+    });
+  });
+
+  describe('SPEC-MECA-003 : batteries dans un réseau', function () {
+    it('SPEC-MECA-003 : la batterie se charge du surplus d’un générateur, à débit borné, jusqu’à sa capacité', function () {
+      var m = monde(9103), w = m.w;
+      A.equal(C.etatMaxDe(B.BATTERIE), K.CAPACITE_BATTERIE, 'le niveau tient dans l’état du bloc');
+      A.equal(K.CAPACITE_BATTERIE, 255);
+      w.setBlock(0, 40, 0, B.GENERATEUR_THERMIQUE);
+      w.setBlock(1, 40, 0, B.CABLE_ENERGIE);
+      w.setBlock(2, 40, 0, B.BATTERIE);
+      w.setBlock(-1, 40, 0, B.LAVA);
+      var vus = [];
+      for (var t = 0; t < 6; t++) { m.tic({}); vus.push(w.getEtat(2, 40, 0)); }
+      for (var i = 1; i < vus.length; i++) A.ok(vus[i] - vus[i - 1] <= K.DEBIT_BATTERIE, 'charge bornée par le débit : ' + vus.join(','));
+      A.gt(vus[5], 0, 'elle se charge');
+      w.setEtat(2, 40, 0, 253);
+      m.tic({}); m.tic({});
+      A.equal(w.getEtat(2, 40, 0), 255, 'et s’arrête à sa capacité');
+    });
+
+    it('SPEC-MECA-003 : sans générateur, la batterie se décharge dans l’appareil qu’elle fait tourner, puis il s’arrête', function () {
+      var m = monde(9104), w = m.w;
+      w.setBlock(0, 40, 0, B.BATTERIE); w.setEtat(0, 40, 0, 3);
+      w.setBlock(1, 40, 0, B.LAMPE_ETEINTE);
+      w.setBlock(2, 40, 0, B.LEVIER_CIRCUIT); w.setEtat(2, 40, 0, 1);
+      m.tic({});
+      A.equal(w.getBlock(1, 40, 0), B.LAMPE_ALLUMEE, 'la batterie allume la lampe commandée');
+      A.equal(w.getEtat(0, 40, 0), 3 - K.CONSOMMATION.lampe, 'et paie sa consommation');
+      m.tic({}); m.tic({});
+      A.equal(w.getEtat(0, 40, 0), 0, 'vidée');
+      m.tic({});
+      A.equal(w.getBlock(1, 40, 0), B.LAMPE_ETEINTE, 'batterie vide : la lampe s’éteint');
+      A.equal(w.getEtat(0, 40, 0), 0, 'jamais en dessous de zéro');
+      // le levier relâché : plus de demande, la batterie ne bouge plus
+      w.setEtat(0, 40, 0, 50); w.setEtat(2, 40, 0, 0);
+      m.tic({}); m.tic({});
+      A.equal(w.getEtat(0, 40, 0), 50, 'appareil au repos : rien n’est consommé');
+    });
+
+    it('SPEC-MECA-003 : le niveau s’affiche en pour cent et une batterie ne s’empile pas avec une autre', function () {
+      A.equal(K.texteNiveau(255), '100 %');
+      A.equal(K.texteNiveau(0), '0 %');
+      A.equal(K.texteNiveau(128), '50 %');
+      A.equal(K.texteNiveau(undefined), '0 %');
+      A.equal(C.maxStack(B.BATTERIE), 1, 'chaque batterie garde son propre niveau sur sa pile');
+    });
+  });
+
+  describe('SPEC-MECA-005 : détecteurs et commandes branchés sur le monde', function () {
+    it('SPEC-MECA-005 : un levier bascule, un bouton s’enfonce ; rien d’autre ne s’actionne à la main', function () {
+      A.equal(K.actionner(B.LEVIER_CIRCUIT, 0), 1);
+      A.equal(K.actionner(B.LEVIER_CIRCUIT, 1), 0);
+      A.equal(K.actionner(B.BOUTON_CIRCUIT, 0), 1);
+      A.equal(K.actionner(B.BOUTON_CIRCUIT, 1), 1, 'un bouton déjà enfoncé le reste');
+      A.equal(K.actionner(B.PLAQUE_PRESSION, 0), null, 'une plaque se presse en marchant dessus, pas à la main');
+      A.equal(K.actionner(B.LAMPE_ETEINTE, 0), null);
+      A.equal(K.actionner(B.STONE, 0), null);
+    });
+
+    it('SPEC-MECA-005 : capteurs() calcule le déclencheur de chaque détecteur, et le tic en fait un signal', function () {
+      var m = monde(9105), w = m.w;
+      var P = { plaque: [0, 40, 0], presence: [4, 40, 0], lumiere: [8, 40, 0], journuit: [12, 40, 0],
+                meteo: [0, 40, 4], horloge: [4, 40, 4], eau: [8, 40, 4], bouton: [12, 40, 4] };
+      w.setBlock(0, 40, 0, B.PLAQUE_PRESSION); w.setBlock(4, 40, 0, B.DETECTEUR_PRESENCE);
+      w.setBlock(8, 40, 0, B.DETECTEUR_LUMIERE); w.setBlock(12, 40, 0, B.DETECTEUR_JOURNUIT);
+      w.setBlock(0, 40, 4, B.DETECTEUR_METEO); w.setBlock(4, 40, 4, B.HORLOGE_CIRCUIT);
+      w.setBlock(8, 40, 4, B.DETECTEUR_EAU); w.setBlock(12, 40, 4, B.BOUTON_CIRCUIT);
+      var pos = []; w.circuits.forEach(function (p) { pos.push(p); });
+      function cle(n) { return P[n].join(','); }
+      var src = {
+        getBlock: w.getBlock, temps: 0, nuit: true,
+        entites: [{ x: 0.5, y: 40, z: 0.5, joueur: true }, { x: 6.5, y: 40, z: 0.5 }],
+        lumiereEn: function (x) { return x === 8 ? 12 : 0; },
+        pluieEn: function () { return false; }, ventEn: function () { return { x: 0, z: 0 }; },
+        appuyes: {},
+      };
+      src.appuyes[cle('bouton')] = true;
+      var d = K.capteurs(pos, src);
+      A.equal(d[cle('plaque')].presents, 1, 'un joueur debout sur la plaque');
+      A.equal(d[cle('presence')].proches, 1, 'une créature à deux blocs du détecteur de présence');
+      A.equal(d[cle('lumiere')].niveau, 12);
+      A.equal(d[cle('journuit')].nuit, true);
+      A.equal(d[cle('bouton')].appuye, true);
+      A.equal(d[cle('eau')].niveauEau, 0, 'pas d’eau à côté');
+      m.tic({ detecteurs: d });
+      ['plaque', 'presence', 'lumiere', 'journuit', 'horloge', 'bouton'].forEach(function (n) {
+        A.equal(w.getEtat(P[n][0], P[n][1], P[n][2]), 1, n + ' : signal haut');
+      });
+      A.equal(w.getEtat(0, 40, 4), 0, 'ni pluie ni vent : détecteur météo bas');
+      A.equal(w.getEtat(8, 40, 4), 0, 'détecteur d’eau bas');
+      // tout retombe : personne, nuit finie, beau temps mais grand vent, eau posée, bouton relâché
+      w.setBlock(9, 40, 4, B.WATER);
+      src.entites = []; src.nuit = false; src.temps = 1.5; src.appuyes = {};
+      src.ventEn = function () { return { x: 3, z: 0 }; };
+      m.tic({ detecteurs: K.capteurs(pos, src) });
+      ['plaque', 'presence', 'journuit', 'horloge', 'bouton'].forEach(function (n) {
+        A.equal(w.getEtat(P[n][0], P[n][1], P[n][2]), 0, n + ' : signal retombé');
+      });
+      A.equal(w.getEtat(0, 40, 4), 1, 'grand vent : détecteur météo haut');
+      A.equal(w.getEtat(8, 40, 4), 1, 'eau voisine : détecteur d’eau haut');
+      // la plaque ne compte que ce qui est SUR elle
+      var d2 = K.capteurs(pos, { entites: [{ x: 0.5, y: 43, z: 0.5 }, { x: 1.5, y: 40, z: 0.5 }] });
+      A.equal(d2[cle('plaque')].presents, 0, 'au-dessus ou à côté de la plaque : pas pressée');
+    });
+
+    it('SPEC-MECA-005 : world.tickCircuits fournit lui-même jour/nuit, horloge, eau et lumière ; les entités et boutons viennent de l’appelant', function () {
+      var m = monde(9106), w = m.w;
+      w.setBlock(2, 40, 2, B.DETECTEUR_JOURNUIT);
+      w.setBlock(4, 40, 2, B.PLAQUE_PRESSION);
+      w.setBlock(6, 40, 2, B.BOUTON_CIRCUIT);
+      var NUIT = MC.DayCycle.DAY_LENGTH * 0.75, JOUR = MC.DayCycle.DAY_LENGTH * 0.25;
+      A.ok(MC.DayCycle.isNight(NUIT) && !MC.DayCycle.isNight(JOUR), 'préparation : instants de nuit et de jour');
+      w.tickCircuits({ temps: NUIT, entites: [{ x: 4.5, y: 40, z: 2.5 }], boutons: { '6,40,2': true } });
+      A.equal(w.getEtat(2, 40, 2), 1, 'la nuit, le détecteur jour/nuit émet');
+      A.equal(w.getEtat(4, 40, 2), 1, 'quelqu’un sur la plaque');
+      A.equal(w.getEtat(6, 40, 2), 1, 'bouton enfoncé');
+      w.tickCircuits({ temps: JOUR, entites: [], boutons: {} });
+      A.equal(w.getEtat(2, 40, 2), 0, 'le jour, il se tait');
+      A.equal(w.getEtat(4, 40, 2), 0, 'plaque libérée');
+      A.equal(w.getEtat(6, 40, 2), 0, 'bouton relâché');
+    });
+  });
+
+  describe('SPEC-MECA-006 : appareils alimentés en énergie', function () {
+    it('SPEC-MECA-006 : une lampe commandée mais sans énergie reste éteinte ; alimentée, elle s’allume', function () {
+      var m = monde(9107), w = m.w;
+      w.setBlock(5, 40, 5, B.LEVIER_CIRCUIT); w.setEtat(5, 40, 5, 1);
+      w.setBlock(6, 40, 5, B.LAMPE_ETEINTE);
+      m.tic({});
+      A.equal(w.getBlock(6, 40, 5), B.LAMPE_ETEINTE, 'signal sans énergie : éteinte');
+      w.setBlock(6, 41, 5, B.BATTERIE); w.setEtat(6, 41, 5, 100);
+      m.tic({});
+      A.equal(w.getBlock(6, 40, 5), B.LAMPE_ALLUMEE, 'énergie et signal : allumée');
+      A.ok(w.getEtat(6, 41, 5) < 100, 'l’énergie est consommée');
+      w.setBlock(6, 41, 5, 0);
+      m.tic({});
+      A.equal(w.getBlock(6, 40, 5), B.LAMPE_ETEINTE, 'source retirée : elle s’arrête');
+    });
+
+    it('SPEC-MECA-006 : l’énergie seule ne signale rien (un générateur ou une batterie n’allume pas une lampe sans commande)', function () {
+      var m = monde(9108), w = m.w;
+      w.setBlock(0, 40, 0, B.BATTERIE); w.setEtat(0, 40, 0, 201);   // niveau impair : l’ancien bit 0 faisait signal
+      w.setBlock(1, 40, 0, B.LAMPE_ETEINTE);
+      m.tic({}); m.tic({});
+      A.equal(w.getBlock(1, 40, 0), B.LAMPE_ETEINTE, 'pas de commande, pas de lumière');
+      A.equal(K.forceDe(m.api, 0, 40, 0), 0, 'une batterie n’est pas un signal');
+      A.equal(w.getEtat(0, 40, 0), 201, 'et rien n’est consommé');
+    });
+
+    it('SPEC-MECA-006 : tapis roulant et ascenseur tournent alimentés et commandés, et déplacent le joueur ; l’alarme sonne', function () {
+      var m = monde(9109), w = m.w;
+      // de l'air au-dessus des appareils (le monde généré est plein à cette hauteur)
+      for (var cx = -1; cx <= 9; cx++) for (var cz = -2; cz <= 2; cz++) for (var cy = 41; cy <= 62; cy++) w.setBlock(cx, cy, cz, 0);
+      // tapis orienté vers l’est (orientation 1 dans les bits 1-2), alimenté et commandé
+      w.setBlock(0, 40, 0, B.TAPIS_ROULANT); w.setEtat(0, 40, 0, 1 << 1);
+      w.setBlock(0, 40, 1, B.BATTERIE); w.setEtat(0, 40, 1, 200);
+      w.setBlock(0, 40, -1, B.LEVIER_CIRCUIT); w.setEtat(0, 40, -1, 1);
+      w.setBlock(4, 40, 0, B.ASCENSEUR);
+      w.setBlock(4, 40, 1, B.BATTERIE); w.setEtat(4, 40, 1, 200);
+      w.setBlock(4, 40, -1, B.LEVIER_CIRCUIT); w.setEtat(4, 40, -1, 1);
+      w.setBlock(8, 40, 0, B.ALARME);
+      w.setBlock(8, 40, 1, B.LEVIER_CIRCUIT); w.setEtat(8, 40, 1, 1);
+      m.tic({});
+      A.equal(w.getEtat(0, 40, 0), 3, 'tapis en marche (bit 0), orientation gardée');
+      A.equal(w.getEtat(4, 40, 0), 1, 'ascenseur en marche');
+      A.equal(w.getEtat(8, 40, 0), 0, 'alarme commandée mais sans énergie : muette');
+      w.setBlock(8, 40, -1, B.BATTERIE); w.setEtat(8, 40, -1, 200);
+      m.tic({});
+      A.equal(w.getEtat(8, 40, 0), 1, 'alimentée : elle sonne');
+      var surTapis = K.effetMecanique(w.getBlock, w.getEtat, { x: 0.5, y: 41, z: 0.5 });
+      A.gt(surTapis.x, 0, 'le tapis pousse vers l’est'); A.equal(surTapis.z, 0);
+      var dansColonne = K.effetMecanique(w.getBlock, w.getEtat, { x: 4.5, y: 45, z: 0.5 });
+      A.gt(dansColonne.y, 0, 'au-dessus d’un ascenseur en marche, on monte');
+      A.equal(K.effetMecanique(w.getBlock, w.getEtat, { x: 4.5, y: 60, z: 0.5 }).y, 0, 'trop haut : plus d’effet');
+      // le joueur réel est porté par le tapis, sans toucher une touche
+      var pl = MC.createPlayer(w, MC.createEntities(w));
+      pl.state.pos = { x: 0.5, y: 41, z: 0.5 }; pl.state.onGround = true; pl.state.vel = { x: 0, y: 0, z: 0 };
+      for (var i = 0; i < 10; i++) pl.updateMovement(0.05, {});
+      A.gt(pl.state.pos.x, 0.7, 'emporté vers l’est : x = ' + pl.state.pos.x.toFixed(3));
+      // arrêté (levier relâché), le tapis ne porte plus
+      w.setEtat(0, 40, -1, 0); m.tic({});
+      A.equal(w.getEtat(0, 40, 0), 2, 'tapis arrêté, orientation gardée');
+      A.equal(K.effetMecanique(w.getBlock, w.getEtat, { x: 0.5, y: 41, z: 0.5 }).x, 0, 'tapis arrêté : aucun effet');
+      // le joueur au-dessus de l’ascenseur monte
+      var p2 = MC.createPlayer(w, MC.createEntities(w));
+      p2.state.pos = { x: 4.5, y: 41, z: 0.5 }; p2.state.onGround = true; p2.state.vel = { x: 0, y: 0, z: 0 };
+      for (var k = 0; k < 10; k++) p2.updateMovement(0.05, {});
+      A.gt(p2.state.pos.y, 41.5, 'l’ascenseur soulève le joueur : y = ' + p2.state.pos.y.toFixed(3));
+    });
+  });
+
+  describe('SPEC-MECA-008 : registres, rechargement et état de pose décidé par le serveur', function () {
+    it('SPEC-MECA-008 : rebuildRegistries (après un chargement) et reset gardent les portes et trappes dans le registre', function () {
+      var w = MC.createWorld(9110);
+      w.getChunk(0, 0, true);
+      // comme un chargement de sauvegarde : overrides remplis sans passer par setBlock
+      w.overrides.set('3,40,3', B.PORTE_FERMEE_N);
+      w.overrides.set('5,40,3', B.TRAPPE_FERMEE);
+      w.overrides.set('7,40,3', B.LEVIER_CIRCUIT);
+      w.rebuildRegistries();
+      A.ok(w.circuits.has('7,40,3'), 'un mécanisme rechargé est simulé');
+      A.ok(w.circuits.has('3,40,3'), 'une porte rechargée aussi (un signal peut l’ouvrir)');
+      A.ok(w.circuits.has('5,40,3'), 'une trappe rechargée aussi');
+      w.reset();
+      A.equal(w.circuits.size, 0, 'remise à zéro du monde : plus aucun mécanisme de l’ancienne partie');
+    });
+
+    it('SPEC-MECA-008 : l’état d’un mécanisme posé est décidé par le serveur, jamais repris tel quel du client', function () {
+      A.equal(K.etatDePose(B.LEVIER_CIRCUIT, 1), 0, 'un levier se pose relâché');
+      A.equal(K.etatDePose(B.LAMPE_ETEINTE, 1), 0);
+      A.equal(K.etatDePose(B.EOLIENNE, 15), 0, 'un générateur ne se pose pas déjà lancé');
+      A.equal(K.etatDePose(B.COMPTEUR_CIRCUIT, 9), 0);
+      A.equal(K.etatDePose(B.PISTON, 3 | 8), 3, 'piston : orientation gardée, jamais déjà sorti');
+      A.equal(K.etatDePose(B.PISTON, 7), 0, 'orientation hors des six directions : 0');
+      A.equal(K.etatDePose(B.TAPIS_ROULANT, 7), 6, 'tapis : orientation gardée, jamais déjà en marche');
+      A.equal(K.etatDePose(B.BATTERIE, 9, 120), 120, 'batterie : le niveau de la PILE du serveur');
+      A.equal(K.etatDePose(B.BATTERIE, 9, 999), 255, 'borné à la capacité');
+      A.equal(K.etatDePose(B.BATTERIE, 9, 'x'), 0, 'pile sans niveau : vide');
+      A.equal(K.etatDePose(B.STONE, 4), null, 'pas un mécanisme : rien à dire');
+    });
+  });
+
   describe('SPEC-MECA-008 : persistance et autorité du serveur', function () {
     it('SPEC-MECA-008 : l’état d’un mécanisme se sauvegarde (SPEC-SAVE-017) et ne se simule que dans les chunks chargés', function () {
       var w = MC.createWorld(82);
@@ -472,6 +747,7 @@
       w2.getChunk(0, 0, true);
       w2.setBlock(1, 40, 1, B.BOUTON_CIRCUIT); w2.setEtat(1, 40, 1, 1);
       w2.setBlock(2, 40, 1, B.LAMPE_ETEINTE);
+      w2.setBlock(3, 40, 1, B.BATTERIE); w2.setEtat(3, 40, 1, 200);   // l'énergie de la lampe
       for (var i = 0; i < 3; i++) w2.tick(0.25, 14, null, { circuits: false });
       A.equal(w2.getBlock(2, 40, 1), B.LAMPE_ETEINTE, 'circuits: false — rien ne bouge localement');
       for (var j = 0; j < 3; j++) w2.tick(0.25, 14, null, {});

@@ -175,6 +175,107 @@
     var v = (puissance || 0) * Math.pow(1 - p, Math.max(0, longueur || 0));
     return Math.max(0, Math.round(v));
   }
+
+  /* ─── réseau d'énergie (SPEC-MECA-002, 003, 006) ─────────────────────────
+     Un RÉSEAU est un ensemble connexe (six voisins) de câbles, générateurs et
+     batteries. À chaque tic :
+       - il produit la somme des puissances de ses générateurs (leur état au
+         tic précédent : tout se lit avant tout se réécrire), diminuée de la
+         perte de ligne de ses câbles (transporterEnergie, PERTE_CABLE par
+         câble du réseau) ;
+       - chaque appareil électrique COMMANDÉ (un signal le touche) qui touche
+         le réseau demande sa CONSOMMATION, servi dans l'ordre déterministe
+         des positions : d'abord sur la production, puis sur les batteries
+         (chacune à DEBIT_BATTERIE au plus) ; s'il ne peut être servi en
+         entier, il s'arrête et ne prend rien ;
+       - le surplus de production recharge les batteries qui n'ont pas
+         débité ce tic-ci (débit borné, capacité CAPACITE_BATTERIE).
+     L'énergie n'est PAS un signal : un générateur, un câble ou une batterie
+     n'allume rien sans commande (forceDe les ignore). */
+  var CAPACITE_BATTERIE = 255;   // le niveau EST l'état du bloc (un octet)
+  var DEBIT_BATTERIE = 4;        // unités par tic (5 tics/s), en charge comme en décharge
+  var PERTE_CABLE = 0.02;        // perte relative par câble du réseau
+  var RESEAU_MAX = 512;          // blocs d'énergie explorés au plus par réseau (borne de coût)
+  var CONSOMMATION = { lampe: 1, alarme: 1, tapis: 2, ascenseur: 3 };   // unités par tic en marche
+  function estNoeudEnergie(id) {
+    var d = C.BLOCKS[id];
+    return !!(d && d.circuit && (d.circuit.type === 'cable' || d.circuit.generateur || d.circuit.type === 'batterie'));
+  }
+  function cle3(x, y, z) { return x + ',' + y + ',' + z; }
+  /* Bilan d'énergie du tic. `appareils` : [{x,y,z,t,commande}] dans l'ordre
+     des positions ; `batteries` : batteries du registre (même si aucun
+     appareil ne les touche : elles se chargent). Rend { alimentes:{cle:bool},
+     niveaux:{cle:nouveauNiveau} }. Lecture seule de l'api. */
+  function bilanEnergie(appareils, batteries, api) {
+    var reseauDe = {};          // clé d'un bloc d'énergie → réseau
+    var reseaux = [];
+    function explorer(x, y, z) {
+      var k0 = cle3(x, y, z);
+      if (reseauDe[k0]) return reseauDe[k0];
+      var r = { production: 0, cables: 0, batteries: [], vu: 0 };
+      reseaux.push(r);
+      var file = [[x, y, z]];
+      reseauDe[k0] = r;
+      while (file.length && r.vu < RESEAU_MAX) {
+        var p = file.shift();
+        r.vu++;
+        var id = api.getBlock(p[0], p[1], p[2]), d = C.BLOCKS[id];
+        var e = api.getEtat(p[0], p[1], p[2]) || 0;
+        if (d.circuit.type === 'cable') r.cables++;
+        else if (d.circuit.generateur) r.production += e & 15;
+        else r.batteries.push({ x: p[0], y: p[1], z: p[2], cle: cle3(p[0], p[1], p[2]), niveau: Math.min(CAPACITE_BATTERIE, e), debite: 0 });
+        VOISINS6.forEach(function (v) {
+          var nx = p[0] + v[0], ny = p[1] + v[1], nz = p[2] + v[2], k = cle3(nx, ny, nz);
+          if (reseauDe[k] || !estNoeudEnergie(api.getBlock(nx, ny, nz))) return;
+          reseauDe[k] = r;
+          file.push([nx, ny, nz]);
+        });
+      }
+      r.reste = transporterEnergie(r.production, r.cables, PERTE_CABLE);
+      return r;
+    }
+    var alimentes = {};
+    appareils.forEach(function (a) {
+      var r = null;
+      for (var i = 0; i < VOISINS6.length && !r; i++) {
+        var v = VOISINS6[i];
+        if (estNoeudEnergie(api.getBlock(a.x + v[0], a.y + v[1], a.z + v[2]))) r = explorer(a.x + v[0], a.y + v[1], a.z + v[2]);
+      }
+      var k = cle3(a.x, a.y, a.z);
+      alimentes[k] = false;
+      if (!r || !a.commande) return;
+      var besoin = CONSOMMATION[a.t] || 1;
+      var dispo = r.reste;
+      r.batteries.forEach(function (b) { dispo += Math.min(DEBIT_BATTERIE - b.debite, b.niveau); });
+      if (dispo < besoin) return;               // pas assez : l'appareil s'arrête, ne prend rien
+      alimentes[k] = true;
+      var duReseau = Math.min(r.reste, besoin);
+      r.reste -= duReseau;
+      var manque = besoin - duReseau;
+      r.batteries.forEach(function (b) {
+        if (manque <= 0) return;
+        var pris = Math.min(manque, DEBIT_BATTERIE - b.debite, b.niveau);
+        b.niveau -= pris; b.debite += pris; manque -= pris;
+      });
+    });
+    batteries.forEach(function (b) { explorer(b[0], b[1], b[2]); });
+    var niveaux = {};
+    reseaux.forEach(function (r) {
+      r.batteries.forEach(function (b) {
+        if (!b.debite && r.reste > 0) {
+          var charge = Math.min(DEBIT_BATTERIE, CAPACITE_BATTERIE - b.niveau, r.reste);
+          b.niveau += charge; r.reste -= charge;
+        }
+        niveaux[b.cle] = b.niveau;
+      });
+    });
+    return { alimentes: alimentes, niveaux: niveaux };
+  }
+  // niveau d'une batterie tel qu'on l'affiche (SPEC-MECA-003)
+  function texteNiveau(niveau) {
+    var n = Math.max(0, Math.min(CAPACITE_BATTERIE, Number(niveau) || 0));
+    return Math.round(n / CAPACITE_BATTERIE * 100) + ' %';
+  }
   /* Batterie : charge/décharge bornées par tic (débit maximal), niveau
      borné à [0, capacite]. `demande` > 0 tire de l'énergie (déchargement),
      `apport` > 0 en fournit (chargement) — l'un exclut l'autre par appel. */
@@ -216,10 +317,126 @@
     }
   }
 
+  /* Déclencheur de chaque détecteur du registre (SPEC-MECA-005), calculé à
+     partir de grandeurs que l'appelant connaît — ce module ne lit ni joueurs
+     ni créatures. `src` (tout est facultatif ; ce qui manque laisse le
+     détecteur concerné tel quel, sans contexte) :
+       entites   [{x,y,z}] pieds des joueurs et des créatures (plaque, présence)
+       appuyes   {cle: true} boutons enfoncés (le serveur tient leur durée)
+       temps, nuit, lumiereEn(x,y,z) → 0..15, pluieEn(x,y,z) → bool,
+       ventEn(temps, y) → {x,z}, getBlock (eau voisine).
+     Rend {cle: ctx} pour `detecteur` (et donc pour tick, ctx.detecteurs). */
+  var RAYON_PRESENCE = 4;
+  var PERIODE_HORLOGE = 1;     // secondes de jeu par demi-période
+  function capteurs(positions, src) {
+    src = src || {};
+    var out = {};
+    (positions || []).forEach(function (p) {
+      var d = C.BLOCKS[p[3]];
+      if (!d || !d.circuit || !d.circuit.source) return;
+      var x = p[0], y = p[1], z = p[2], k = cle3(x, y, z), t = d.circuit.type;
+      var ent = src.entites;
+      switch (t) {
+        case 'bouton':
+          if (src.appuyes) out[k] = { appuye: !!src.appuyes[k] };
+          break;
+        case 'plaque':
+          if (ent) out[k] = { presents: ent.filter(function (e) {
+            return Math.floor(e.x) === x && Math.floor(e.z) === z && e.y >= y - 0.05 && e.y < y + 0.5;
+          }).length };
+          break;
+        case 'presence':
+          if (ent) out[k] = { proches: ent.filter(function (e) {
+            return Math.hypot(e.x - (x + 0.5), e.y - (y + 0.5), e.z - (z + 0.5)) <= RAYON_PRESENCE;
+          }).length };
+          break;
+        case 'lumiere':
+          if (src.lumiereEn) out[k] = { niveau: src.lumiereEn(x, y, z), seuil: 8 };
+          break;
+        case 'journuit':
+          if (src.nuit !== undefined) out[k] = { nuit: !!src.nuit };
+          break;
+        case 'meteo':
+          if (src.pluieEn || src.ventEn) {
+            var v = null;
+            try { v = src.ventEn ? src.ventEn(src.temps || 0, y) : null; } catch (e) { v = null; }
+            out[k] = { pluie: !!(src.pluieEn && src.pluieEn(x, y, z)), ventVitesse: v ? Math.hypot(v.x || 0, v.z || 0) : 0, seuilVent: 1 };
+          }
+          break;
+        case 'horloge':
+          if (src.temps !== undefined) out[k] = { temps: src.temps, periode: PERIODE_HORLOGE };
+          break;
+        case 'eau':
+          if (src.getBlock && MC.Eau) {
+            var n = 0;
+            VOISINS6.forEach(function (vv) { n = Math.max(n, MC.Eau.niveauDe(src.getBlock(x + vv[0], y + vv[1], z + vv[2]))); });
+            out[k] = { niveauEau: n };
+          }
+          break;
+      }
+    });
+    return out;
+  }
+  /* Une commande actionnée À LA MAIN (clic droit, message réseau validé par
+     le serveur) : nouvel état du bloc, ou null si ce bloc ne s'actionne pas
+     ainsi. Le levier bascule ; le bouton s'enfonce (il se relâche seul, le
+     serveur tient sa durée) ; une plaque se presse en marchant dessus. */
+  function actionner(id, etat) {
+    var d = C.BLOCKS[id];
+    if (!d || !d.circuit) return null;
+    if (d.circuit.type === 'levier') return (etat & 1) ? 0 : 1;
+    if (d.circuit.type === 'bouton') return 1;
+    return null;
+  }
+
   // ─── appareils (SPEC-MECA-006) ─────────────────────────────────────────────
   // Un appareil s'arrête toujours sans énergie, quel que soit le signal.
   function appareil(alimente, signal) {
     return !!(alimente && signal);
+  }
+  /* Ce qu'un tapis roulant ou un ascenseur EN MARCHE fait à un corps dont les
+     pieds sont en `pos` : vitesse d'entraînement {x,y,z} (blocs/s). Même code
+     chez le serveur, qui fait foi, et chez le client, qui prédit (player.js).
+     Tapis : le bloc sous les pieds, orientation dans les bits 1-2 de l'état
+     (0 nord −z, 1 est +x, 2 sud +z, 3 ouest −x, comme C.orientDeRegard).
+     Ascenseur : le premier bloc plein sous les pieds, à ASCENSEUR_PORTEE
+     blocs au plus, à travers l'air et les plantes. */
+  var VITESSE_TAPIS = 2.5, VITESSE_ASCENSEUR = 4, ASCENSEUR_PORTEE = 12;
+  var DIRS_TAPIS = [{ x: 0, z: -1 }, { x: 1, z: 0 }, { x: 0, z: 1 }, { x: -1, z: 0 }];
+  function effetMecanique(getBlock, getEtat, pos) {
+    var r = { x: 0, y: 0, z: 0 };
+    if (!pos) return r;
+    var bx = Math.floor(pos.x), bz = Math.floor(pos.z), by = Math.floor(pos.y - 0.05);
+    if (getBlock(bx, by, bz) === B.TAPIS_ROULANT) {
+      var e = getEtat(bx, by, bz) || 0;
+      if (e & 1) { var dt = DIRS_TAPIS[(e >> 1) & 3]; r.x = dt.x * VITESSE_TAPIS; r.z = dt.z * VITESSE_TAPIS; }
+    }
+    for (var k = 0; k <= ASCENSEUR_PORTEE; k++) {
+      var id = getBlock(bx, by - k, bz);
+      if (id === B.ASCENSEUR) { if ((getEtat(bx, by - k, bz) || 0) & 1) r.y = VITESSE_ASCENSEUR; break; }
+      if (!C.isReplaceable(id)) break;
+    }
+    return r;
+  }
+
+  /* SPEC-MECA-008 : l'état avec lequel un mécanisme se POSE est décidé par le
+     serveur, jamais repris tel quel du message du client. Seule l'orientation
+     choisie par le joueur passe (piston, tapis) ; une batterie reprend le
+     niveau de la pile de l'inventaire du SERVEUR (`niveauPile`). Rend null
+     pour un bloc qui n'est pas un mécanisme (rien à dire). */
+  function etatDePose(id, etat, niveauPile) {
+    var d = C.BLOCKS[id];
+    if (!d || !d.circuit) return null;
+    etat = etat | 0;
+    switch (d.circuit.type) {
+      case 'piston': { var o = etat & 7; return o <= 5 ? o : 0; }
+      case 'tapis': return etat & 6;
+      case 'batterie': {
+        var n = Math.floor(Number(niveauPile));
+        return isFinite(n) ? Math.max(0, Math.min(CAPACITE_BATTERIE, n)) : 0;
+      }
+      default: return 0;
+    }
   }
 
   // ─── distributeurs et pistons (SPEC-MECA-001) ──────────────────────────────
@@ -288,12 +505,23 @@
   // Force qu'une case transmet à un voisin direct, AVANT le tic (lecture
   // seule de l'état déjà en place) : 15 pour une source/sortie haute, la
   // force propre décrémentée pour un fil (comme un câble redstone), 0 sinon.
+  /* Seuls les blocs dont la SORTIE est un signal en émettent un : fils,
+     commandes, détecteurs, portes logiques et éléments à mémoire. Les blocs
+     d'énergie (câble, générateur, batterie : leur état est une puissance ou
+     un niveau) et les blocs commandés (lampe, appareils, piston, distributeur,
+     bloc de commande : leur état mémorise ce qu'ils font) ne signalent rien —
+     un niveau de batterie impair ou un piston orienté vers −x faisaient
+     autrefois signal par leur bit 0. */
+  var EMETTEURS = { levier: 1, bouton: 1, plaque: 1, presence: 1, lumiere: 1, journuit: 1, meteo: 1,
+                    horloge: 1, eau: 1, repeteur: 1, oui: 1, non: 1, et: 1, ou: 1, xor: 1, nand: 1,
+                    nor: 1, xnor: 1, bascule: 1, compteur: 1, comparateur: 1 };
   function forceDe(api, x, y, z) {
     var id = api.getBlock(x, y, z);
     var d = C.BLOCKS[id];
     if (!d || !d.circuit) return 0;
     var e = api.getEtat(x, y, z) || 0;
     if (d.circuit.type === 'fil') return e & 15;
+    if (!EMETTEURS[d.circuit.type]) return 0;
     return (e & 1) ? 15 : 0;
   }
   function forceEnergieDe(api, x, y, z) {
@@ -302,7 +530,9 @@
     if (!d || !d.circuit) return 0;
     var e = api.getEtat(x, y, z) || 0;
     if (d.circuit.type === 'cable') return e & 15;
-    if (d.circuit.generateur || d.circuit.type === 'batterie') return e & 15;
+    if (d.circuit.generateur) return e & 15;
+    // une batterie chargée alimente la ligne à plein (son niveau va jusqu'à 255)
+    if (d.circuit.type === 'batterie') return e > 0 ? 15 : 0;
     return 0;
   }
   /* Un tic de la simulation posée sur le monde. `positions` : liste [x,y,z,id]
@@ -317,6 +547,27 @@
       return { x: p[0], y: p[1], z: p[2], id: p[3], etat: api.getEtat(p[0], p[1], p[2]) || 0 };
     });
     var ecrits = [];
+    /* Énergie (SPEC-MECA-002/003/006) : un bilan par réseau, sur l'état
+       d'AVANT le tic. `ctx.energieDisponible` (booléen) impose l'alimentation
+       de tous les appareils — pour rejouer une situation précise en test,
+       comme `ctx.vent` pour l'éolienne. */
+    var appareilsElec = [], batteriesTic = [];
+    avant.forEach(function (b) {
+      var d = C.BLOCKS[b.id];
+      if (!d || !d.circuit) return;
+      var t = d.circuit.type;
+      if (CONSOMMATION[t] !== undefined) {
+        var commande = VOISINS6.some(function (v) { return forceDe(api, b.x + v[0], b.y + v[1], b.z + v[2]) > 0; });
+        appareilsElec.push({ x: b.x, y: b.y, z: b.z, t: t, commande: commande });
+      } else if (t === 'batterie') batteriesTic.push([b.x, b.y, b.z]);
+    });
+    var bilan = (appareilsElec.length || batteriesTic.length)
+      ? bilanEnergie(typeof ctx.energieDisponible === 'boolean' ? [] : appareilsElec, batteriesTic, api)
+      : { alimentes: {}, niveaux: {} };
+    function alimente(b) {
+      if (typeof ctx.energieDisponible === 'boolean') return ctx.energieDisponible;
+      return !!bilan.alimentes[cle3(b.x, b.y, b.z)];
+    }
     avant.forEach(function (b) {
       var d = C.BLOCKS[b.id];
       var estPorte = C.estPorte(b.id), estTrappe = C.estTrappe(b.id);
@@ -365,10 +616,12 @@
       } else if (t === 'comparateur') {
         nouvelEtat = pasComparateur(entrees[0], entrees[1], d.circuit.mode) ? 1 : 0;
       } else if (t === 'lampe') {
-        var estAlim = (ctx.energieDisponible === undefined) || ctx.energieDisponible;
-        allume = appareil(estAlim, bruts.some(Boolean));
-      } else if (t === 'tapis' || t === 'ascenseur' || t === 'alarme') {
-        nouvelEtat = appareil(ctx.energieDisponible !== false, bruts.some(Boolean)) ? 1 : 0;
+        allume = appareil(alimente(b), bruts.some(Boolean));
+      } else if (t === 'tapis') {
+        // bit 0 : en marche ; bits 1-2 : orientation choisie à la pose, gardée
+        nouvelEtat = (b.etat & 6) | (appareil(alimente(b), bruts.some(Boolean)) ? 1 : 0);
+      } else if (t === 'ascenseur' || t === 'alarme') {
+        nouvelEtat = appareil(alimente(b), bruts.some(Boolean)) ? 1 : 0;
       } else if (t === 'eolienne') {
         // le vent DE SON ALTITUDE (SPEC-VENT-001) : `ctx.vent` permet de rejouer
         // une situation précise en test ; sinon `ctx.ventEn(temps, y)` (la
@@ -395,7 +648,14 @@
         if (laveProche === undefined) {
           laveProche = VOISINS6.some(function (v) { return api.getBlock(b.x + v[0], b.y + v[1], b.z + v[2]) === B.LAVA; });
         }
-        nouvelEtat = puissanceThermique(laveProche, ctx.combustible || 0);
+        /* Combustible (SPEC-MECA-002) : `ctx.bruler(x,y,z)` est le rappel de
+           l'appelant (le serveur le branche sur le conteneur du générateur) —
+           appelé une fois par tic, seulement loin de la lave : vrai si du
+           combustible a brûlé pendant ce tic. `ctx.combustible` (un nombre)
+           reste pour rejouer une situation en test. */
+        var combustible = ctx.combustible || 0;
+        if (!laveProche && !combustible && typeof ctx.bruler === 'function') combustible = ctx.bruler(b.x, b.y, b.z) ? 1 : 0;
+        nouvelEtat = puissanceThermique(laveProche, combustible);
       } else if (t === 'distributeur') {
         // SPEC-MECA-001 : sur front montant, éjecte un objet — quoi et
         // comment (objet au sol ou projectile) dépend du CONTENU du
@@ -414,12 +674,20 @@
         if (commandeDeclenche(sigCmd, precCmd) && ctx.onCommande) ctx.onCommande(b.x, b.y, b.z);
         nouvelEtat = sigCmd ? 1 : 0;
       } else if (t === 'batterie') {
-        var apport = Math.max.apply(null, entrees.concat([0]));
-        var res = tickBatterie(b.etat, 15, apport, ctx.demandeBatterie || 0, d.circuit.taux || 4);
-        nouvelEtat = res.niveau;
-      } else if (['presence', 'lumiere', 'journuit', 'meteo', 'horloge', 'eau'].indexOf(t) >= 0) {
-        var nom = t === 'meteo' ? 'pluie-vent' : t;
-        nouvelEtat = detecteur(nom, ctx.detecteurs && ctx.detecteurs[b.x + ',' + b.y + ',' + b.z]) ? 1 : 0;
+        // chargée ou déchargée par le bilan de son réseau (bilanEnergie)
+        var nv = bilan.niveaux[cle3(b.x, b.y, b.z)];
+        if (nv !== undefined) nouvelEtat = nv;
+      } else if (d.circuit.source) {
+        /* Commandes et détecteurs (SPEC-MECA-005) : leur déclencheur arrive
+           par `ctx.detecteurs[cle]` (capteurs(), calculé par world.tickCircuits
+           et par le serveur). Sans contexte, l'état reste ce qu'il est — c'est
+           ainsi qu'un levier garde la position où la main l'a mis. */
+        var dctx = ctx.detecteurs && ctx.detecteurs[cle3(b.x, b.y, b.z)];
+        if (dctx) {
+          var nom = t === 'meteo' ? 'pluie-vent' : t;
+          if (t === 'levier' && dctx.actionne === undefined) { /* position tenue */ }
+          else nouvelEtat = detecteur(nom, dctx) ? 1 : 0;
+        }
       } else if (t === 'piston') {
         var orient = b.etat & 7, etendu = !!((b.etat >> 3) & 1);
         var dir = DIRS_PISTON[orient] || DIRS_PISTON[0];
@@ -468,7 +736,10 @@
     creerReseau: creerReseau, fixerEntree: fixerEntree, tickReseau: tickReseau, validerReseau: validerReseau,
     puissanceEolienne: puissanceEolienne, puissanceHydraulique: puissanceHydraulique, puissanceThermique: puissanceThermique,
     transporterEnergie: transporterEnergie, tickBatterie: tickBatterie,
-    detecteur: detecteur, appareil: appareil,
+    CAPACITE_BATTERIE: CAPACITE_BATTERIE, DEBIT_BATTERIE: DEBIT_BATTERIE, PERTE_CABLE: PERTE_CABLE,
+    CONSOMMATION: CONSOMMATION, texteNiveau: texteNiveau,
+    detecteur: detecteur, capteurs: capteurs, actionner: actionner, appareil: appareil,
+    effetMecanique: effetMecanique, etatDePose: etatDePose,
     distributeurChoix: distributeurChoix, poussee: poussee, traction: traction,
     commandeAutorisee: commandeAutorisee, commandeDeclenche: commandeDeclenche,
     estCircuit: estCircuit, forceDe: forceDe, forceEnergieDe: forceEnergieDe, tick: tick,

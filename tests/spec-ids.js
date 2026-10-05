@@ -295,18 +295,20 @@
         REPETEUR_CIRCUIT: 3,                            // 1 | (délai 1 << 1)
         PORTE_NON: 1, PORTE_ET: 1, PORTE_OU: 1, PORTE_XOR: 1, PORTE_NAND: 1, PORTE_NOR: 1, PORTE_XNOR: 1,
         BASCULE_CIRCUIT: 3, COMPTEUR_CIRCUIT: 31, COMPARATEUR_CIRCUIT: 1,
-        LAMPE_ETEINTE: 0, LAMPE_ALLUMEE: 0, TAPIS_ROULANT: 1, ASCENSEUR: 1, ALARME: 1,
+        LAMPE_ETEINTE: 0, LAMPE_ALLUMEE: 0, ASCENSEUR: 1, ALARME: 1,
+        TAPIS_ROULANT: 7,                               // en marche 1 bit | orientation 2 bits (SPEC-MECA-006)
         DETECTEUR_PRESENCE: 1, DETECTEUR_LUMIERE: 1, DETECTEUR_JOURNUIT: 1, DETECTEUR_METEO: 1,
         HORLOGE_CIRCUIT: 1, DETECTEUR_EAU: 1,
-        EOLIENNE: 15, ROUE_HYDRAULIQUE: 15, GENERATEUR_THERMIQUE: 15, BATTERIE: 15,
+        EOLIENNE: 15, ROUE_HYDRAULIQUE: 15, GENERATEUR_THERMIQUE: 15,
+        BATTERIE: 255,                                  // niveau 0..255 (SPEC-MECA-003)
         DISTRIBUTEUR: 1, PISTON: 15, PISTON_COLLANT: 15, TETE_PISTON: 0, BLOC_COMMANDE: 1,
       };
       Object.keys(circuits).forEach(function (n) { a[n] = circuits[n]; });
       return a;
     }
-    // blocs dont l'état est LU mais qu'aucun producteur n'écrit encore (SPEC-MECA-005 ⏳ :
-    // levier, bouton et plaque ne sont pas actionnables) — forceDe lit leur bit 0
-    var LUS_NON_PRODUITS = { LEVIER_CIRCUIT: true, BOUTON_CIRCUIT: true, PLAQUE_PRESSION: true };
+    // blocs dont l'état est LU mais qu'aucun producteur n'écrit encore — plus aucun depuis
+    // SPEC-MECA-005 (levier, bouton et plaque prennent leur état de ctx.detecteurs)
+    var LUS_NON_PRODUITS = {};
 
     // ── producteurs ──────────────────────────────────────────────────────────
     var balayerFormes = une('formes', function (r) {
@@ -340,8 +342,8 @@
                  { niveauEau: 0 }, { niveauEau: 7 }, { niveauEau: 99 }, { laveProche: true }, { laveProche: false, combustible: 3 },
                  { demandeBatterie: 3 }, { demandeBatterie: 99 }, { detecteurs: detect }, { onDistribuer: rien, onCommande: rien }];
       // voisinage : chaque voisin allumé (masque) est un levier (force 15), un fil faible (force 1) ou moyen (7),
-      // ou une batterie pleine (énergie 15, pour les câbles)
-      var VARIANTES = [[B.LEVIER_CIRCUIT, 1], [B.FIL_SIGNAL, 1], [B.FIL_SIGNAL, 7], [B.BATTERIE, 15]];
+      // une batterie chargée (énergie, pour les câbles), ou une éolienne lancée (production, qui recharge une batterie)
+      var VARIANTES = [[B.LEVIER_CIRCUIT, 1], [B.FIL_SIGNAL, 1], [B.FIL_SIGNAL, 7], [B.BATTERIE, 15], [B.EOLIENNE, 15]];
       r.ticks = 0;
       function jouer(id, etat, masque, variante, ctx) {
         var blocs = new Map(), etats = new Map();
@@ -458,7 +460,7 @@
     });
 
     var balayerPoseBatterie = une('pose', function (r) {
-      [0, 9, 15, 16, 200, -3, 'x', 7.6, undefined].forEach(function (niveau) {
+      [0, 9, 255, 256, 900, -3, 'x', 7.6, undefined].forEach(function (niveau) {
         var w = G.flatWorld(9, B.STONE), ents = MC.createEntities(w), pl = MC.createPlayer(w, ents);
         pl.state.pos = { x: 3.5, y: 20, z: 3.5 }; pl.state.onGround = true;
         pl.state.inv.setAt(0, { id: B.BATTERIE, n: 1, data: niveau === undefined ? undefined : { niveau: niveau } });
@@ -546,7 +548,7 @@
       A.gt(r.ticks, 5000, 'balayage effectif (' + r.ticks + ' tics)');
       A.equal(r.depassements.length, 0, r.depassements.join(' ; '));
       A.equal(r.max[B.COMPTEUR_CIRCUIT], 31, 'compteur : 4 bits de valeur + 1 bit d\'entrée précédente');
-      A.equal(r.max[B.BATTERIE], 15, 'batterie : niveau 0..15');
+      A.equal(r.max[B.BATTERIE], 255, 'batterie : niveau 0..255 (MC.Circuits.CAPACITE_BATTERIE, SPEC-MECA-003)');
       A.equal(r.max[B.PISTON], 15, 'piston : orientation 3 bits (6 et 7 laissées passer par tick) + sorti 1 bit');
       A.equal(r.max[B.REPETEUR_CIRCUIT], 3, 'répéteur : 1 | (délai 1 << 1)');
       A.ok(r.max[B.PORTE_FERMEE_N] === 1 || r.max[B.PORTE_OUVERTE_N] === 1, 'porte : le bit 0 mémorise le dernier signal');
@@ -597,9 +599,9 @@
       var parNiveau = {};
       r.poses.forEach(function (p) { A.equal(p[1], 'place', 'posée (niveau ' + p[0] + ')'); A.equal(p[2], B.BATTERIE, 'c\'est une batterie'); parNiveau[String(p[0])] = p[3]; });
       A.equal(parNiveau['9'], 9, 'niveau 9 conservé');
-      A.equal(parNiveau['15'], 15, 'niveau plein conservé');
-      A.equal(parNiveau['16'], 15, 'niveau 16 ramené à 15');
-      A.equal(parNiveau['200'], 15, 'niveau 200 ramené à 15 (et non tronqué à l\'octet)');
+      A.equal(parNiveau['255'], 255, 'niveau plein (capacité, SPEC-MECA-003) conservé');
+      A.equal(parNiveau['256'], 255, 'niveau 256 ramené à 255');
+      A.equal(parNiveau['900'], 255, 'niveau 900 ramené à 255 (et non tronqué à l\'octet)');
       A.equal(parNiveau['-3'], 0, 'niveau négatif ramené à 0');
       A.equal(parNiveau.x, 0, 'niveau illisible : 0');
       A.equal(parNiveau['7.6'], 7, 'niveau non entier : partie entière');
