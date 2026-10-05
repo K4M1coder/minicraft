@@ -121,6 +121,7 @@
     }
     const guildes = MC.Guildes.creerEtat();
     S.guildes = guildes;
+    MC.Guildes.lierPolitique(guildes, politique);   // SPEC-FACTION-017 : dissoudre une faction de joueurs retire ses relations envers les PNJ
     // L45 : prix dynamiques, trésors de lieux, métiers (SPEC-ECO/METIER) — même
     // module et même état joués à l'identique en solo (game.js) et ici.
     const economie = MC.Economie.creerEtat(CONF.graine);

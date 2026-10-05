@@ -225,11 +225,24 @@
           const G2 = MC.Guildes, op = args.op;
           if (op === 'lister') return { ok: true, data: G2.listerPourAdmin(S.guildes) };
           if (op !== 'renommer' && op !== 'dissoudre') return { ok: false, motif: 'op_invalide' };
-          const fid = typeof args.faction === 'string' ? G2.idDe(S.guildes, args.faction.slice(0, 64)) : null;
+          /* `mots` (forme chat « /admin faction renommer La Meute Les Loups ») : le
+             plus long début qui désigne une faction, le reste est le nouveau nom ;
+             pour dissoudre, tous les mots font le nom. `faction` (console web) :
+             identifiant ou nom entier. */
+          let cible = args.faction, nouveauNom = args.nom;
+          if (Array.isArray(args.mots) && args.mots.length >= 1 && args.mots.length <= 16 && args.mots.every(m => typeof m === 'string' && m.length <= 64)) {
+            if (op === 'dissoudre') cible = args.mots.join(' ');
+            else {
+              const sc = G2.scinderNom(S.guildes, args.mots);
+              cible = sc ? sc.id : args.mots[0];
+              nouveauNom = sc ? sc.reste.join(' ') : args.mots.slice(1).join(' ');
+            }
+          }
+          const fid = typeof cible === 'string' ? G2.idDe(S.guildes, cible.slice(0, 64 * 4)) : null;
           if (!fid) return { ok: false, motif: 'introuvable' };
           const avant = S.guildes.factions.get(fid).nom;
           const membres = G2.membresDe(S.guildes, fid);
-          const r = op === 'renommer' ? G2.renommerParAdmin(S.guildes, fid, args.nom) : G2.dissoudreParAdmin(S.guildes, fid);
+          const r = op === 'renommer' ? G2.renommerParAdmin(S.guildes, fid, nouveauNom) : G2.dissoudreParAdmin(S.guildes, fid);
           if (!r.ok) return { ok: false, motif: r.motif };
           const apres = op === 'renommer' ? S.guildes.factions.get(fid).nom : null;
           MC.Admin.journaliser(admin, { auteur: nomActeur, action: 'faction_' + op, cible: fid, details: apres ? avant + ' → ' + apres : avant, heure: EP.heure });

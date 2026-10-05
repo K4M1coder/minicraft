@@ -83,14 +83,17 @@
          plus ANNONCES_DIFFUSEES_MAX par rattrapage (les plus récentes) : un monde
          aux centaines de factions en produit trop pour le chat. */
       const avant = politique.nbAnnonces || 0;
-      MC.Politique.tourDuMonde(politique, jourCourant);
-      const nouvelles = Math.min((politique.nbAnnonces || 0) - avant, politique.annonces.length, ANNONCES_DIFFUSEES_MAX);
-      if (nouvelles > 0) politique.annonces.slice(-nouvelles).forEach(a => {
+      /* Au plus JOURS_POLITIQUE_PAR_TIC jour(s) simulé(s) par appel : un saut
+         d'horloge (/admin heure) ou une partie rechargée en retard se rattrapent
+         sur plusieurs entretiens au lieu de bloquer la boucle (≈ 20 ms par jour
+         pour ≈ 340 factions). Même état final que d'un coup. */
+      MC.Politique.rattraper(politique, jourCourant, JOURS_POLITIQUE_PAR_TIC);
+      MC.Politique.annoncesDepuis(politique, avant, ANNONCES_DIFFUSEES_MAX).forEach(a => {
         const m = chat.systeme(a.texte);
         if (m) S.diffuser({ t: NP.MSG.CHAT, auteur: null, texte: m.texte, type: 'systeme', ts: m.t });
       });
     }
-    const ANNONCES_DIFFUSEES_MAX = 12;
+    const ANNONCES_DIFFUSEES_MAX = 12, JOURS_POLITIQUE_PAR_TIC = 1;
 
     /* SPEC-FACTION-007 : les rondes décidées par la simulation (MC.Politique,
        à gros grain, partout) prennent corps près des joueurs : des gardes en
@@ -108,20 +111,17 @@
       MC.Politique.patrouillesVisibles(politique, positions, RAYON_RONDES, politique.jour).forEach(r => {
         for (let i = 0; i < r.gardes; i++) voulues.set(r.faction + '#' + r.jour + '#' + i, { r, i });
       });
-      gardesRonde.forEach((e, cle) => {
-        const vivant = entites.list.indexOf(e) >= 0 && !e.dead;
-        if (!vivant) { gardesRonde.delete(cle); if (voulues.has(cle)) gardesTombes.add(cle); return; }
-        if (!voulues.has(cle)) { entites.remove(e); gardesRonde.delete(cle); }
-      });
-      voulues.forEach(({ r, i }, cle) => {
-        if (gardesRonde.has(cle) || gardesTombes.has(cle)) return;
+      const plan = MC.Politique.planifierGardes(voulues, gardesRonde, gardesTombes,
+                                                e => entites.list.indexOf(e) >= 0 && !e.dead);
+      plan.retirer.forEach(e => entites.remove(e));
+      plan.creer.forEach(({ cle, voulu: { r, i } }) => {
         const n = r.points.length, k = (i * 2) % n, p = r.points[k];
         if (!monde.estCharge(p.x, p.z)) return;
         const e = entites.spawn('garde', p.x + 0.5, monde.groundAt(p.x, p.z, true) + 1.05, p.z + 0.5,
                                 { patrouille: { faction: r.faction, jour: r.jour, points: r.points, i: (k + 1) % n } });
         if (e) gardesRonde.set(cle, e);
       });
-      if (gardesTombes.size > 512) gardesTombes.clear();
+      MC.Politique.purgerGardesTombes(gardesTombes, politique.jour, 512);
     }
     S.gardesRonde = gardesRonde;
 

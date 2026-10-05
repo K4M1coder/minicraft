@@ -213,6 +213,8 @@
         guildes.factions = gu.factions; guildes.joueurs = gu.joueurs;
         guildes.invitations = gu.invitations; guildes.prochainId = gu.prochainId;
       }
+      // relations d'une faction de joueurs disparue (fichier d'avant le correctif) : retirées de l'état politique
+      if (data.politique || data.guildes) MC.Guildes.lierPolitique(guildes, politique);
       // SPEC-QUETE-004 : reprise du tableau de quêtes actives par joueur.
       EP.quetesJoueurs = MC.Politique.chargerQuetes(data.quetes);
       if (data.economie) {

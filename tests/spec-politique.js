@@ -291,6 +291,158 @@
       A.lt(parJour, 40, 'un jour simulé coûte moins de 40 ms (' + parJour.toFixed(1) + ' ms)');
     });
 
+    /* ── Corrections de la revue adversariale du lot « factions » ───────────────── */
+    function mondeDeVilles(graine, n, espacement) {
+      var e = P.creer(graine), sites = [], larg = Math.ceil(Math.sqrt(n));
+      for (var s = 0; s < n; s++) sites.push({ id: 'ville:' + s, kind: 'ville', x: (s % larg) * espacement, z: Math.floor(s / larg) * espacement, nom: 'V' + s });
+      P.decouvrir(e, sites);
+      return e;
+    }
+    it('SPEC-FACTION-006 : la simulation ne dégénère pas — après plus d\'un an de jeu, les objectifs restent variés et les caravanes, avant-postes et raids continuent', function () {
+      var e = mondeDeVilles(11, 100, 1500);
+      var compte = {};
+      var poussee = e.annonces.push.bind(e.annonces);
+      e.annonces.push = function (a) {
+        var m = /caravane commerciale|fonde un avant-poste|mène un raid|échoue à raider/.exec(a.texte);
+        if (m && e.jour >= 300) compte[m[0]] = (compte[m[0]] || 0) + 1;
+        return poussee(a);
+      };
+      P.tourDuMonde(e, 400);
+      var objectifs = {}, n = 0;
+      e.factions.forEach(function (f) { objectifs[f.objectif] = (objectifs[f.objectif] || 0) + 1; n++; });
+      var distincts = Object.keys(objectifs);
+      A.gt(distincts.length, 3, 'au moins quatre objectifs coexistent au jour 400 : ' + JSON.stringify(objectifs));
+      distincts.forEach(function (o) { A.lt(objectifs[o] / n, 0.75, 'aucun objectif ne domine à plus de 75 % (' + o + ' : ' + objectifs[o] + '/' + n + ')'); });
+      A.gt(compte['caravane commerciale'] || 0, 0, 'des caravanes encore après le jour 300');
+      A.gt(compte['fonde un avant-poste'] || 0, 0, 'des avant-postes encore après le jour 300');
+      A.gt((compte['mène un raid'] || 0) + (compte['échoue à raider'] || 0), 0, 'des raids encore après le jour 300');
+      // la dérive est un rappel vers l\'état naturel : une relation ne s\'en éloigne jamais de plus d\'un cran sans raid
+      var ex = 0, tot = 0;
+      e.relations.forEach(function (r) { tot++; if (r === 'guerre') ex++; });
+      A.lt(ex / tot, 0.15, 'les guerres restent minoritaires (' + ex + '/' + tot + ')');
+    });
+
+    it('SPEC-FACTION-006 : un raid subi récent oriente vers la défense — preuve sur une victime EN PAIX (sans le raid, elle s\'étend)', function () {
+      var e = P.creer(11);
+      var v = fTest('t:v', 'royaume', 'pragmatique', 'commercer', [90, 90], 150, 0, 0);
+      var voisine = fTest('t:w', 'royaume', 'pacifique', 'commercer', [30, 30], 100, 500, 0);
+      e.factions.set(v.id, v); e.factions.set(voisine.id, voisine);
+      e.relations.set(cleR(v.id, voisine.id), 'neutre');
+      A.equal(P.objectifSelon(e, v, 5), 'etendre', 'sans raid : riche et en paix, elle s\'étend');
+      v.subis = [4];
+      A.equal(P.objectifSelon(e, v, 5), 'defendre', 'raid subi la veille : elle se défend');
+      A.equal(P.objectifSelon(e, v, 4 + P.MEMOIRE_RAID_JOURS), 'defendre', 'le dernier jour de la mémoire du raid');
+      A.equal(P.objectifSelon(e, v, 4 + P.MEMOIRE_RAID_JOURS + 1), 'etendre', 'raid ancien : il ne compte plus');
+      v.subis = [9];
+      A.equal(P.objectifSelon(e, v, 5), 'etendre', 'un raid futur n\'a pas encore eu lieu');
+    });
+
+    it('SPEC-FACTION-007 : une ronde est visible DUREE_PATROUILLE jours après son jour d\'action (le jour de simulation a déjà avancé d\'un cran)', function () {
+      var e = P.creer(21);
+      var f = fTest('t:ronde', 'ordre', 'pragmatique', 'defendre', [50, 50], 150, 0, 0);
+      e.factions.set(f.id, f);
+      var d = 10;
+      P.appliquerAction(e, f, 'patrouille', d);
+      var joueur = [{ x: 20, z: 10 }];
+      A.equal(P.DUREE_PATROUILLE, 3);
+      for (var jour = d + 1; jour <= d + P.DUREE_PATROUILLE; jour++) {
+        A.equal(P.patrouillesVisibles(e, joueur, 160, jour).length, 1, 'visible au jour de simulation ' + jour);
+      }
+      A.equal(P.patrouillesVisibles(e, joueur, 160, d + P.DUREE_PATROUILLE + 1).length, 0, 'plus visible ensuite');
+    });
+
+    it('SPEC-FACTION-007 : un garde tombé ne renaît pas avant la fin de sa ronde — la mémoire n\'oublie que les rondes terminées (jamais tout d\'un coup)', function () {
+      var tombes = new Set(['a#10#0', 'a#10#1', 'b#12#0']);
+      P.purgerGardesTombes(tombes, 12, 512);
+      A.equal(tombes.size, 3, 'rondes en cours : aucun garde tombé n\'est oublié');
+      P.purgerGardesTombes(tombes, 10 + P.DUREE_PATROUILLE + 1, 512);
+      A.deep(Array.from(tombes), ['b#12#0'], 'la ronde du jour 10 est finie : seule elle est oubliée');
+      // au-delà du plafond : les plus anciens d\'abord, pas la mémoire entière
+      var beaucoup = new Set();
+      for (var i = 0; i < 600; i++) beaucoup.add('f#50#' + i);
+      P.purgerGardesTombes(beaucoup, 51, 512);
+      A.equal(beaucoup.size, 512, 'ramené au plafond, pas vidé');
+      A.ok(beaucoup.has('f#50#599') && !beaucoup.has('f#50#0'), 'les plus anciens partent les premiers');
+    });
+
+    it('SPEC-FACTION-007 : un garde tué pendant sa ronde ne renaît pas avant la ronde suivante, un garde dont la ronde finit est retiré', function () {
+      var vivants = new Set(), vivant = function (e) { return vivants.has(e); };
+      var presents = new Map(), tombes = new Set();
+      var voulues = new Map([['f#10#0', { i: 0 }], ['f#10#1', { i: 1 }]]);
+      var plan = P.planifierGardes(voulues, presents, tombes, vivant);
+      A.deep(plan.creer.map(function (c) { return c.cle; }), ['f#10#0', 'f#10#1'], 'deux gardes à faire apparaître');
+      var g0 = { n: 0 }, g1 = { n: 1 };
+      vivants.add(g0); vivants.add(g1); presents.set('f#10#0', g0); presents.set('f#10#1', g1);
+      A.equal(P.planifierGardes(voulues, presents, tombes, vivant).creer.length, 0, 'rien à faire : ils sont là');
+      vivants.delete(g0);                                   // le joueur tue le premier garde
+      plan = P.planifierGardes(voulues, presents, tombes, vivant);
+      A.equal(plan.creer.length, 0, 'le garde tombé ne renaît pas pendant la ronde');
+      A.ok(tombes.has('f#10#0') && !presents.has('f#10#0'), 'noté tombé, plus présent');
+      A.equal(P.planifierGardes(voulues, presents, tombes, vivant).creer.length, 0, 'ni à la cadence suivante');
+      // la ronde suivante (autre jour) a ses propres gardes
+      var suivante = new Map([['f#14#0', { i: 0 }], ['f#14#1', { i: 1 }]]);
+      plan = P.planifierGardes(suivante, presents, tombes, vivant);
+      A.deep(plan.retirer, [g1], 'le garde de la ronde finie est retiré');
+      A.deep(plan.creer.map(function (c) { return c.cle; }), ['f#14#0', 'f#14#1'], 'la ronde suivante a tous ses gardes');
+      // un garde mort dont la ronde n’est plus réclamée (joueur parti) n’est pas mémorisé comme tombé
+      var presents2 = new Map([['f#20#0', g0]]), tombes2 = new Set();
+      P.planifierGardes(new Map(), presents2, tombes2, vivant);
+      A.equal(tombes2.size, 0);
+    });
+
+    it('SPEC-FACTION-007 : les annonces diffusées comptent les annonces NÉES, même quand la liste bornée est pleine, et sont plafonnées', function () {
+      var e = mondeDeVilles(5, 60, 700);
+      P.tourDuMonde(e, 40);
+      A.equal(e.annonces.length, 200, 'la liste bornée est pleine');
+      var avant = e.nbAnnonces;
+      A.equal(P.annoncesDepuis(e, avant, 12).length, 0, 'rien de neuf : aucune annonce à diffuser (la longueur de la liste ne dit rien)');
+      P.tourDuMonde(e, 41);
+      var vues = P.annoncesDepuis(e, avant, 12);
+      A.gt(e.nbAnnonces - avant, 12, 'un jour produit plus de douze annonces dans ce monde');
+      A.equal(vues.length, 12, 'plafonnées à douze');
+      A.deep(vues, e.annonces.slice(-12), 'les plus récentes');
+      var peu = e.nbAnnonces;
+      e.annonces.push({ jour: 1, texte: 'x', factions: [] }); e.nbAnnonces++;
+      A.equal(P.annoncesDepuis(e, peu, 12).length, 1, 'une seule annonce née : une seule diffusée');
+    });
+
+    it('SPEC-FACTION-007 : coût d\'un jour simulé — une naissance ou une relation externe ne rebâtit pas l\'index des relations, et un saut d\'horloge se rattrape par étapes', function () {
+      var e = mondeDeVilles(5, 260, 700);
+      P.tourDuMonde(e, 3);
+      var base = P.indexReconstructions(e);
+      var ids = Array.from(e.factions.keys());
+      for (var j = 0; j < 5; j++) {
+        e.relations.set('g' + j + '~' + ids[j], 'guerre');   // une faction de joueurs déclare une relation (guildes.js:declarerRelation)
+        P.tourDuMonde(e, e.jour + 1);
+      }
+      P.decouvrir(e, [{ id: 'ville:neuve', kind: 'ville', x: 90000, z: 0, nom: 'Neuve' }]);
+      P.tourDuMonde(e, e.jour + 1);
+      A.equal(P.indexReconstructions(e), base, 'l\'index a été étendu, jamais rebâti en entier');
+      // même résultat qu\'un index rebâti chaque jour (état identique, déterminisme intact)
+      function jouer(rebatir) {
+        var x = mondeDeVilles(5, 60, 700);
+        for (var d = 1; d <= 12; d++) {
+          if (rebatir) x.relations = new Map(x.relations);
+          if (d === 4) x.relations.set('g1~' + Array.from(x.factions.keys())[0], 'alliance');
+          if (d === 7) P.decouvrir(x, [{ id: 'ville:neuve', kind: 'ville', x: 5000, z: 5000, nom: 'Neuve' }]);
+          P.tourDuMonde(x, d);
+        }
+        return JSON.stringify(P.serialiser(x));
+      }
+      A.equal(jouer(false), jouer(true), 'index étendu = index rebâti');
+      // saut d\'horloge : rattraper() n\'avance que de maxJours à la fois, et finit au même état que tourDuMonde
+      var a = mondeDeVilles(9, 30, 900), b = mondeDeVilles(9, 30, 900);
+      A.equal(P.rattraper(a, 365, 2), 2, 'deux jours simulés au plus par appel');
+      A.equal(a.jour, 2);
+      var appels = 1;
+      while (a.jour < 40) { P.rattraper(a, 40, 2); appels++; }
+      P.tourDuMonde(b, 40);
+      A.equal(a.jour, 40);
+      A.ok(appels >= 20, 'rattrapé en plusieurs étapes (' + appels + ')');
+      A.equal(JSON.stringify(P.serialiser(a)), JSON.stringify(P.serialiser(b)), 'même état final que d\'un seul tourDuMonde');
+      A.equal(P.rattraper(a, 10, 2), 0, 'jamais en arrière');
+    });
+
     it('SPEC-FACTION-008 : les relations entre factions PNJ évoluent et s\'annoncent, elles jugent joueurs et factions de joueurs par réputation, et proposent des quêtes selon leurs objectifs', function () {
       var e = P.creer(123);
       P.decouvrir(e, SITES);

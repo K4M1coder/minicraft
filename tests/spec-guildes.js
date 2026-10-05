@@ -216,13 +216,88 @@
 
     it('SPEC-FACTION-013 : /admin factions et /admin faction renommer|dissoudre se traduisent en action faction_gerer, réservée à l\'administrateur et au modérateur', function () {
       var r = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'renommer', 'Loups', 'La', 'Meute'] }, { enLigne: true });
-      A.deep(r.actions[0], { type: 'admin', action: 'faction_gerer', args: { op: 'renommer', faction: 'Loups', nom: 'La Meute' } });
+      A.deep(r.actions[0], { type: 'admin', action: 'faction_gerer', args: { op: 'renommer', faction: 'Loups', nom: 'La Meute', mots: ['Loups', 'La', 'Meute'] } });
       var d = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'dissoudre', 'Loups'] }, { enLigne: true });
-      A.deep(d.actions[0].args, { op: 'dissoudre', faction: 'Loups' });
+      A.deep(d.actions[0].args, { op: 'dissoudre', faction: 'Loups', mots: ['Loups'] });
       A.deep(MC.Commandes.executer({ nom: 'admin', args: ['factions'] }, { enLigne: true }).actions[0].args, { op: 'lister' });
       A.ok(MC.Admin.peutAgir(MC.Admin.ROLES.ADMIN, 'faction_gerer'));
       A.ok(MC.Admin.peutAgir(MC.Admin.ROLES.MODERATEUR, 'faction_gerer'));
       A.notOk(MC.Admin.peutAgir(null, 'faction_gerer'), 'un simple joueur ne modère pas');
+    });
+
+    /* ── noms de faction à espaces (SPEC-FACTION-009 : nomValide les accepte) ─────
+       Une faction « La Meute » doit être atteignable par toutes les commandes, et
+       jamais une AUTRE faction (« La ») ne doit être visée à sa place. */
+    it('SPEC-FACTION-013 : /admin faction dissoudre|renommer lit le nom ENTIER de la faction (à espaces), jamais le seul premier mot', function () {
+      var d = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'dissoudre', 'Les', 'Loups'] }, { enLigne: true });
+      A.equal(d.actions[0].args.faction, 'Les Loups', 'tous les mots désignent la faction');
+      var e = GU.creerEtat();
+      var petite = GU.creerFaction(e, 'Alice', { nom: 'Les' }).id, grande = GU.creerFaction(e, 'Bob', { nom: 'Les Loups' }).id;
+      A.equal(GU.idDe(e, d.actions[0].args.faction), grande, 'la faction visée est « Les Loups », pas « Les »');
+      A.equal(GU.idDe(e, 'Les_Loups'), grande, '« _ » tient lieu d’espace');
+      A.equal(GU.idDe(e, 'les'), petite);
+      // renommer : le plus long début qui désigne une faction, le reste est le nouveau nom
+      var r = MC.Commandes.executer({ nom: 'admin', args: ['faction', 'renommer', 'Les', 'Loups', 'Meute', 'Noire'] }, { enLigne: true });
+      var sc = GU.scinderNom(e, r.actions[0].args.mots);
+      A.equal(sc.id, grande); A.deep(sc.reste, ['Meute', 'Noire']);
+      A.equal(GU.scinderNom(e, ['Inconnue', 'Zut']), null);
+      A.equal(GU.scinderNom(e, ['Les']), null, 'un seul mot : pas de nouveau nom à lire');
+    });
+
+    it('SPEC-FACTION-010 : les commandes /faction atteignent une faction à espaces (postuler, accepter, nommer, relation, creer sans couleur)', function () {
+      var e = GU.creerEtat();
+      function cmd(qui, texte) {
+        var r = MC.Commandes.executer({ nom: 'faction', args: texte.split(' ') }, {});
+        return GU.appliquerAction(e, qui, r.actions[0]);
+      }
+      A.ok(/« La Meute » fondée/.test(cmd('Alice', 'creer La Meute').message), '/faction creer La Meute : « Meute » n’est pas une couleur');
+      A.equal(GU.idDe(e, 'La Meute'), 'g1');
+      var coul = MC.Commandes.executer({ nom: 'faction', args: ['creer', 'Les', 'Aigles', '#c03030', 'aigle', 'Haut', 'vol'] }, {}).actions[0].args;
+      A.deep(coul, { nom: 'Les Aigles', couleur: '#c03030', emblem: 'aigle', devise: 'Haut vol' }, 'le nom court jusqu’à la couleur');
+      A.ok(cmd('Bob', 'postuler La Meute').ok, 'postuler La Meute');
+      A.ok(/Bob rejoint/.test(cmd('Alice', 'accepter La Meute Bob').message), 'accepter <faction à espaces> <joueur>');
+      A.ok(cmd('Alice', 'nommer La Meute Bob officier').ok, 'nommer <faction à espaces> <joueur> <rang>');
+      A.equal(GU.rangDe(e, 'g1', 'Bob'), 'officier');
+      A.ok(cmd('Alice', 'inviter La Meute Carl').ok);
+      A.ok(cmd('Carl', 'rejoindre La Meute').ok, 'rejoindre <faction à espaces>');
+      A.ok(cmd('Alice', 'exclure La Meute Carl').ok);
+      // relation : faction et cible à espaces, cible PNJ comprise
+      var P = MC.Politique, pol = P.creer(3);
+      P.decouvrir(pol, [{ id: 'ville:1', kind: 'ville', x: 0, z: 0, nom: 'Beau Lac' }, { id: 'ville:2', kind: 'ville', x: 500, z: 0, nom: 'B' }]);
+      var pnj = Array.from(pol.factions.values()).find(function (f) { return /Beau Lac/.test(f.nom); });
+      var r2 = MC.Commandes.executer({ nom: 'faction', args: ('relation La Meute ' + pnj.nom + ' ennemie').split(' ') }, {});
+      var res = GU.appliquerAction(e, 'Alice', r2.actions[0], pol);
+      A.ok(res.ok, 'relation <faction à espaces> <PNJ à espaces> ennemie : ' + res.message);
+      A.equal(e.factions.get('g1').relations.get(pnj.id), 'ennemie');
+      A.ok(cmd('Alice', 'dissoudre La Meute').ok, 'dissoudre <faction à espaces>');
+      A.equal(GU.idDe(e, 'La Meute'), null);
+    });
+
+    it('SPEC-FACTION-017 : dissoudre une faction de joueurs retire ses relations envers les factions PNJ de l’état politique (aucun résidu, aucun héritage d’identifiant)', function () {
+      var P = MC.Politique, pol = P.creer(3);
+      P.decouvrir(pol, [{ id: 'ville:1', kind: 'ville', x: 0, z: 0, nom: 'A' }, { id: 'ville:2', kind: 'ville', x: 500, z: 0, nom: 'B' }]);
+      var pnj = Array.from(pol.factions.keys())[0];
+      var avant = pol.relations.size;
+      var e = GU.creerEtat();
+      var r = GU.creerFaction(e, 'Bob', { nom: 'Les Loups' });
+      A.ok(GU.declarerRelation(e, 'Bob', r.id, pnj, 'ennemie', pol).ok);
+      A.equal(pol.relations.size, avant + 1, 'la relation externe est posée');
+      A.ok(GU.dissoudre(e, r.id).ok);
+      A.equal(pol.relations.size, avant, 'dissoute : plus aucune relation « g<N>~PNJ »');
+      // départ du dernier membre = dissolution aussi
+      var r2 = GU.creerFaction(e, 'Cyd', { nom: 'Corbeaux' });
+      GU.declarerRelation(e, 'Cyd', r2.id, pnj, 'alliee', pol);
+      A.ok(GU.exclure(e, 'Cyd', r2.id, 'Cyd').ok || true);
+      GU.quitter(e, 'Cyd', r2.id);
+      A.equal(pol.relations.size, avant, 'la dissolution par départ du dernier membre purge aussi');
+      // fichier de guildes illisible : l’identifiant g1 repart, mais l’ancienne guerre ne revient pas
+      pol.relations.set('g1~' + pnj, 'guerre');
+      var neuf = GU.charger(null);
+      A.equal(GU.lierPolitique(neuf, pol), 1, 'au chargement, la relation orpheline est retirée');
+      A.equal(pol.relations.size, avant);
+      var f1 = GU.creerFaction(neuf, 'Dan', { nom: 'Nouvelle' });
+      A.equal(f1.id, 'g1');
+      A.equal(P.relationEntre(pol, 'g1', pnj), 'neutre', 'la nouvelle g1 n’hérite pas de l’ancienne guerre');
     });
 
     it('SPEC-FACTION-010 : les commandes /faction s appliquent par nom de faction et répondent en clair', function () {

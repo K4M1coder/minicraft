@@ -231,13 +231,19 @@
         return action('Factions…', { type: 'admin', action: 'faction_gerer', args: { op: 'lister' } });
       case 'faction': {
         var op = (reste[0] || '').toLowerCase();
+        /* Un nom de faction peut compter des espaces : `dissoudre` prend tous les mots
+           (jamais le seul premier, qui viserait une AUTRE faction) ; `renommer` envoie
+           aussi les mots, le serveur retenant le plus long début qui désigne une
+           faction (le reste est le nouveau nom). Pour lever un doute : l'identifiant (g12) ou « _ » à la place d'un espace. */
         if (op === 'renommer' && reste[1] && reste[2]) {
-          return action('Renommage de la faction…', { type: 'admin', action: 'faction_gerer', args: { op: 'renommer', faction: reste[1], nom: reste.slice(2).join(' ') } });
+          return action('Renommage de la faction…', { type: 'admin', action: 'faction_gerer',
+            args: { op: 'renommer', faction: reste[1], nom: reste.slice(2).join(' '), mots: reste.slice(1) } });
         }
         if (op === 'dissoudre' && reste[1]) {
-          return action('Dissolution de la faction…', { type: 'admin', action: 'faction_gerer', args: { op: 'dissoudre', faction: reste[1] } });
+          return action('Dissolution de la faction…', { type: 'admin', action: 'faction_gerer',
+            args: { op: 'dissoudre', faction: reste.slice(1).join(' '), mots: reste.slice(1) } });
         }
-        return msg('/admin factions | faction renommer <faction> <nouveau nom> | faction dissoudre <faction>');
+        return msg('/admin factions | faction renommer <faction> <nouveau nom> | faction dissoudre <faction> (un nom à espaces s’écrit tel quel, ou avec _)');
       }
       default:
         return msg('/admin auth <secret> | joueurs | sessions [nom] | inventaire <nom> | listes | journal | ' +
@@ -258,49 +264,76 @@
     (r.actions || []).forEach(function (a) { a.brut = args.join(' '); });
     return r;
   }
+  /* Un nom de faction peut compter des espaces (« La Meute ») : la commande se lit
+     par la FIN — les `nFin` derniers mots sont les autres arguments (joueur, rang…),
+     tout ce qui précède est le nom de la faction. Avec trop peu de mots pour cela,
+     le premier est la faction (forme à un mot). */
+  function nomEtFin(reste, nFin) {
+    if (reste.length > nFin) return { faction: reste.slice(0, reste.length - nFin).join(' '), fin: reste.slice(reste.length - nFin) };
+    return { faction: reste[0], fin: reste.slice(1) };
+  }
+  var RE_COULEUR = /^#[0-9a-fA-F]{6}$/;
   function factionSans(args) {
     var sous = (args[0] || '').toLowerCase();
-    var reste = args.slice(1);
+    var reste = args.slice(1), nf;
     switch (sous) {
-      case 'creer':
+      case 'creer': {
+        /* /faction creer <nom…> [#couleur [emblème [devise…]]] : le nom court jusqu'à la
+           couleur (#rrggbb) ; sans couleur, tous les mots sont le nom. */
+        var ic = -1;
+        for (var i = 1; i < reste.length && ic < 0; i++) if (RE_COULEUR.test(reste[i])) ic = i;
         return action('Création de la faction…', { type: 'faction', action: 'creer',
-          args: { nom: reste[0], couleur: reste[1] || null, emblem: reste[2] || null, devise: reste.slice(3).join(' ') || '' } });
+          args: { nom: ic < 0 ? reste.join(' ') : reste.slice(0, ic).join(' '), couleur: ic < 0 ? null : reste[ic],
+                  emblem: ic < 0 ? null : (reste[ic + 1] || null), devise: ic < 0 ? '' : reste.slice(ic + 2).join(' ') } });
+      }
       case 'postuler':
-        return action('Candidature envoyée…', { type: 'faction', action: 'postuler', args: { faction: reste[0] } });
+        return action('Candidature envoyée…', { type: 'faction', action: 'postuler', args: { faction: reste.join(' ') } });
       case 'accepter':
-        return action('Candidature acceptée…', { type: 'faction', action: 'accepter', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Candidature acceptée…', { type: 'faction', action: 'accepter', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'refuser':
-        return action('Candidature refusée…', { type: 'faction', action: 'refuser', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Candidature refusée…', { type: 'faction', action: 'refuser', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'inviter':
-        return action('Invitation envoyée…', { type: 'faction', action: 'inviter', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Invitation envoyée…', { type: 'faction', action: 'inviter', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'rejoindre':
-        return action('Invitation acceptée…', { type: 'faction', action: 'accepterInvitation', args: { faction: reste[0] } });
+        return action('Invitation acceptée…', { type: 'faction', action: 'accepterInvitation', args: { faction: reste.join(' ') } });
       case 'quitter':
-        return action('Vous quittez la faction…', { type: 'faction', action: 'quitter', args: { faction: reste[0] } });
+        return action('Vous quittez la faction…', { type: 'faction', action: 'quitter', args: { faction: reste.join(' ') } });
       case 'nommer':
+        nf = nomEtFin(reste, 2);
         return action('Rang modifié…', { type: 'faction', action: 'nommerRang',
-          args: { faction: reste[0], joueur: reste[1], rang: reste[2] } });
+          args: { faction: nf.faction, joueur: nf.fin[0], rang: nf.fin[1] } });
       case 'promouvoir':
-        return action('Promotion…', { type: 'faction', action: 'promouvoir', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Promotion…', { type: 'faction', action: 'promouvoir', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'retrograder':
-        return action('Rétrogradation…', { type: 'faction', action: 'retrograder', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Rétrogradation…', { type: 'faction', action: 'retrograder', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'exclure':
-        return action('Exclusion…', { type: 'faction', action: 'exclure', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Exclusion…', { type: 'faction', action: 'exclure', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'transmettre':
-        return action('Transmission du commandement…', { type: 'faction', action: 'transmettre', args: { faction: reste[0], joueur: reste[1] } });
+        nf = nomEtFin(reste, 1);
+        return action('Transmission du commandement…', { type: 'faction', action: 'transmettre', args: { faction: nf.faction, joueur: nf.fin[0] } });
       case 'dissoudre':
-        return action('Dissolution…', { type: 'faction', action: 'dissoudre', args: { faction: reste[0] } });
+        return action('Dissolution…', { type: 'faction', action: 'dissoudre', args: { faction: reste.join(' ') } });
       case 'principale':
-        return action('Faction principale…', { type: 'faction', action: 'principale', args: { faction: reste[0] } });
+        return action('Faction principale…', { type: 'faction', action: 'principale', args: { faction: reste.join(' ') } });
       case 'relation':
+        /* la faction et la cible peuvent toutes deux compter des espaces : au-delà de trois
+           mots, tous ceux qui précèdent la relation partent tels quels (`mots`) et le jeu
+           (guildes.js) cherche la coupure qui donne deux désignations connues. */
         return action('Relation déclarée…', { type: 'faction', action: 'relation',
-          args: { faction: reste[0], cible: reste[1], relation: reste[2] } });
+          args: { faction: reste[0], cible: reste[1], relation: reste.length > 3 ? reste[reste.length - 1] : reste[2],
+                  mots: reste.length > 3 ? reste.slice(0, -1) : undefined } });
       case 'dire':
         return action('', { type: 'faction', action: 'dire', args: { texte: reste.join(' ') } });
       case 'info': case '': case undefined:
         return action('Informations de faction…', { type: 'faction', action: 'info', args: {} });
       default:
-        return msg('/faction creer <nom> [couleur] [emblème] [devise…] | postuler <faction> | ' +
+        return msg('/faction creer <nom> [#couleur [emblème [devise…]]] | postuler <faction> | ' +
                    'accepter|refuser <faction> <joueur> | inviter <faction> <joueur> | rejoindre <faction> | ' +
                    'quitter <faction> | nommer <faction> <joueur> <rang> | promouvoir|retrograder|exclure <faction> <joueur> | ' +
                    'transmettre <faction> <joueur> | dissoudre <faction> | principale <faction> | ' +

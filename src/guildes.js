@@ -78,9 +78,38 @@
     return { ok: true, id: id };
   }
 
+  /* SPEC-FACTION-017 : une relation posée envers une faction PNJ vit dans l'état
+     politique (clé « g<N>~<PNJ> »), pas ici. Cet état y est lié (`lierPolitique`,
+     ou la première `declarerRelation`) pour que la dissolution d'une faction de
+     joueurs en retire ces relations : sans cela elles survivent à la sauvegarde,
+     gonflent la Map, et une nouvelle faction qui hérite du même identifiant
+     (g1 après un fichier de guildes illisible) hériterait de l'ancienne guerre.
+     Le lien n'est pas énumérable (jamais sérialisé). */
+  function lier(etat, etatPolitique) {
+    if (!etatPolitique || !etatPolitique.relations) return;
+    Object.defineProperty(etat, 'politique', { value: etatPolitique, writable: true, configurable: true, enumerable: false });
+  }
+  function lierPolitique(etat, etatPolitique) {
+    lier(etat, etatPolitique);
+    return etatPolitique && etatPolitique.relations ? purgerRelationsOrphelines(etat, etatPolitique) : 0;
+  }
+  /* Retire de l'état politique toute relation d'une faction de joueurs (« g<N> »)
+     qui n'existe plus ici (fichier ancien, faction dissoute avant ce correctif).
+     Renvoie le nombre de relations retirées. */
+  function purgerRelationsOrphelines(etat, etatPolitique) {
+    var aRetirer = [];
+    etatPolitique.relations.forEach(function (r, cle) {
+      var t = cle.indexOf('~'), a = cle.slice(0, t), b = cle.slice(t + 1);
+      if ((/^g\d+$/.test(a) && !etat.factions.has(a)) || (/^g\d+$/.test(b) && !etat.factions.has(b))) aRetirer.push(cle);
+    });
+    aRetirer.forEach(function (cle) { etatPolitique.relations.delete(cle); });
+    return aRetirer.length;
+  }
   function dissoudre(etat, factionId) {
     var f = etat.factions.get(factionId);
     if (!f) return { ok: false, motif: 'introuvable' };
+    var pol = etat.politique;
+    if (pol && pol.relations) f.relations.forEach(function (r, cible) { pol.relations.delete(cleVersPnj(factionId, cible)); });
     f.membres.forEach(function (r, id) {
       var j = etat.joueurs.get(id);
       if (j) { if (j.principale === factionId) j.principale = null; j.secondaires.delete(factionId); }
@@ -257,6 +286,7 @@
       if (!etatPolitique || !etatPolitique.factions || !etatPolitique.factions.has(cibleId)) {
         return { ok: false, motif: 'cible_introuvable' };
       }
+      lier(etat, etatPolitique);
       etatPolitique.relations.set(cleVersPnj(factionId, cibleId), RELATION_VERS_PNJ[relation]);
     }
     f.relations.set(cibleId, relation);
@@ -295,7 +325,22 @@
     if (etat.factions.has(nomOuId)) return nomOuId;
     var c = canon(nomOuId), res = null;
     etat.factions.forEach(function (f, id) { if (canon(f.nom) === c) res = id; });
+    if (res) return res;
+    // un nom à espaces se tape aussi avec « _ » à la place (comme pour une faction PNJ)
+    var c2 = canon(String(nomOuId).replace(/_/g, ' '));
+    if (c2 !== c) etat.factions.forEach(function (f, id) { if (!res && canon(f.nom) === c2) res = id; });
     return res;
+  }
+  /* Une commande tapée en mots séparés (« La Meute veut un nouveau nom ») : le plus
+     long début qui désigne une faction de joueurs, le reste étant ce qui suit
+     (nouveau nom…). Renvoie { id, reste: [mots] } ou null. */
+  function scinderNom(etat, mots) {
+    if (!Array.isArray(mots)) return null;
+    for (var k = mots.length - 1; k >= 1; k--) {
+      var id = idDe(etat, mots.slice(0, k).join(' '));
+      if (id) return { id: id, reste: mots.slice(k) };
+    }
+    return null;
   }
   /* SPEC-FACTION-012 : une faction PNJ se désigne par son identifiant, ou par son
      nom tapé en un mot (« Royaume_de_Beaulac »), sans égard à la casse. */
@@ -307,7 +352,19 @@
     return res;
   }
   function appliquerAction(etat, joueurId, a, etatPolitique) {
-    var x = a.args || {}, fid = idDe(etat, x.faction), r, nomF = x.faction;
+    var x = a.args || {}, fid, r, nomF = x.faction;
+    // « relation » tapée en mots séparés : la faction (de joueurs) puis la cible (joueurs ou PNJ), au plus court début qui donne deux désignations connues
+    if (a.action === 'relation' && Array.isArray(x.mots) && x.mots.length >= 2 && x.mots.length <= 16) {
+      for (var k = 1; k < x.mots.length; k++) {
+        var f1 = idDe(etat, x.mots.slice(0, k).join(' ')), c1 = x.mots.slice(k).join(' ');
+        if (f1 && (idDe(etat, c1) || idPnjDe(etatPolitique, c1.replace(/ /g, '_')) || idPnjDe(etatPolitique, c1))) {
+          x = { faction: x.mots.slice(0, k).join(' '), cible: c1, relation: x.relation };
+          nomF = x.faction;
+          break;
+        }
+      }
+    }
+    fid = idDe(etat, x.faction);
     function rendu(res, ok) {
       if (!res.ok) return { ok: false, message: 'Faction : ' + (MOTIFS[res.motif] || res.motif || 'refusé') };
       return { ok: true, message: ok };
@@ -432,6 +489,7 @@
     membresDe: membresDe, peutBlesser: peutBlesser,
     serialiser: serialiser, charger: charger,
     renommerParAdmin: renommerParAdmin, dissoudreParAdmin: dissoudreParAdmin, listerPourAdmin: listerPourAdmin,
+    lierPolitique: lierPolitique, scinderNom: scinderNom,
     idDe: idDe, idPnjDe: idPnjDe, nomValide: nomValide, NOM_MAX: NOM_MAX,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

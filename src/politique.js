@@ -121,6 +121,21 @@
     return h < 0.2 ? 'alliance' : 'neutre';
   }
 
+  /* SPEC-FACTION-006 : la dérive des relations est un rappel vers leur état naturel
+     (relationInitiale), pas une marche libre : sans cela, la dérive, symétrique,
+     répartit les relations à parts égales au fil des années et chaque faction a
+     toujours une guerre voisine, donc le même objectif (se défendre). Un pas qui
+     éloignerait la relation de son état naturel au-delà d'un cran (ou plus loin
+     qu'elle ne l'est déjà) est refusé ; un pas qui s'en rapproche l'est toujours.
+     Les guerres nées d'un raid se résorbent ainsi d'elles-mêmes. */
+  function deriveAutorisee(etat, ida, idb, avant, apres) {
+    var fa = etat.factions.get(ida), fb = etat.factions.get(idb);
+    if (!fa || !fb) return true;
+    var nat = indexRelation(relationInitiale(etat.seed, fa, fb));
+    var dApres = Math.abs(indexRelation(apres) - nat), dAvant = Math.abs(indexRelation(avant) - nat);
+    return dApres <= Math.max(1, dAvant);
+  }
+
   // ─── annonces (chat) ─────────────────────────────────────────────────────
   var ANNONCES_MAX = 200;
   function annoncer(etat, texte, factions) {
@@ -233,31 +248,92 @@
     });
     return ok && k === c.cles.length;
   }
+  /* Ajoute au tableau typé `t` (déjà plein jusqu'à `n`) de quoi loger `plus` entrées. */
+  function agrandir(t, n, plus) {
+    if (n + plus <= t.length) return t;
+    var u = new t.constructor(Math.max(n + plus, Math.ceil(t.length * 1.5)));
+    u.set(t.subarray(0, n));
+    return u;
+  }
+  // renseigne l'entrée k de l'index pour la clé cle (identifiants, hachage, distance, drapeau PNJ)
+  function remplirEntree(etat, c, k, cle, listes) {
+    var t = cle.indexOf('~');
+    c.cles[k] = cle;
+    c.a[k] = cle.slice(0, t); c.b[k] = cle.slice(t + 1);
+    c.base[k] = h32(cle);
+    c.indexDe.set(cle, k);
+    // une clé impliquant une faction absente de etat.factions (une faction de
+    // joueurs posée par guildes.js:declarerRelation, SPEC-FACTION-017) n'est ni
+    // dérivée, ni annoncée, ni candidate : etat.relations sert aussi de mémoire
+    // à ce genre de relation externe.
+    c.pnj[k] = c.a[k] !== c.b[k] && etat.factions.has(c.a[k]) && etat.factions.has(c.b[k]) ? 1 : 0;
+    if (!c.pnj[k]) return;
+    var fa = etat.factions.get(c.a[k]), fb = etat.factions.get(c.b[k]);
+    c.dist[k] = Math.hypot(fa.siege.x - fb.siege.x, fa.siege.z - fb.siege.z);   // les sièges ne bougent jamais
+    [c.a[k], c.b[k]].forEach(function (id) { var l = listes.get(id); if (!l) listes.set(id, l = []); l.push(k); });
+  }
+  /* SPEC-FACTION-007 (coût borné) : une naissance de faction ou une relation
+     externe ajoutée entre deux jours ne rebâtit pas les ≈ 58 000 clés : les
+     nouvelles clés sont toujours en fin de Map, l'index les ajoute à la suite
+     (tableaux agrandis, listes de voisins prolongées). Si une clé a disparu ou
+     changé de place, ou si une faction a disparu, l'appelant rebâtit. */
+  function etendreIndex(etat, c) {
+    var n = c.n;
+    if (etat.factions.size < c.nf || etat.relations.size < n) return false;
+    var k = 0, ok = true, vus = 0;
+    etat.relations.forEach(function (r, cle) {
+      if (!ok) return;
+      if (k < n) {
+        if (cle !== c.cles[k]) { ok = false; return; }
+        c.codes[k++] = codeRelation(r);
+      } else vus++;
+    });
+    if (!ok || k !== n) return false;
+    if (etat.factions.size !== c.nf) {
+      // une clé externe jusque-là ignorée dont les deux factions existent désormais devient PNJ : rebâtir
+      for (var q = 0; q < n; q++) {
+        if (c.pnj[q]) continue;
+        if (c.a[q] !== c.b[q] && etat.factions.has(c.a[q]) && etat.factions.has(c.b[q])) return false;
+      }
+    }
+    if (vus) {
+      c.base = agrandir(c.base, n, vus); c.pnj = agrandir(c.pnj, n, vus); c.codes = agrandir(c.codes, n, vus); c.dist = agrandir(c.dist, n, vus);
+      var listes = new Map(), i = 0;
+      etat.relations.forEach(function (r, cle) {
+        if (i++ < n) return;
+        var kk = i - 1;
+        remplirEntree(etat, c, kk, cle, listes);
+        c.codes[kk] = codeRelation(r);
+      });
+      c.n = n + vus;
+      listes.forEach(function (l, id) {
+        var ancien = c.adj.get(id) || new Int32Array(0), u = new Int32Array(ancien.length + l.length);
+        u.set(ancien); u.set(l, ancien.length);
+        c.adj.set(id, u);
+      });
+    }
+    c.taille = etat.relations.size; c.nf = etat.factions.size;
+    c.ids = Array.from(etat.factions.keys()).sort();
+    return true;
+  }
+  var reconstructions = typeof WeakMap !== 'undefined' ? new WeakMap() : null;
+  /* Nombre de fois que l'index des relations de `etat` a été rebâti en entier
+     (et non étendu) : un test s'en sert pour prouver qu'une naissance ou une
+     relation externe n'impose pas le rebâtissage complet. */
+  function indexReconstructions(etat) { return (reconstructions && reconstructions.get(etat.relations)) || 0; }
   function indexer(etat) {
     var c = CACHES && CACHES.get(etat.relations);
     if (c && c.taille === etat.relations.size && c.nf === etat.factions.size && rafraichirIndex(etat, c)) return c;
+    if (c && etendreIndex(etat, c)) return c;
     var cles = Array.from(etat.relations.keys()), n = cles.length, listes = new Map();
-    c = { taille: etat.relations.size, nf: etat.factions.size, cles: cles, a: new Array(n), b: new Array(n),
+    c = { taille: n, nf: etat.factions.size, n: n, cles: new Array(n), a: new Array(n), b: new Array(n),
           base: new Uint32Array(n), pnj: new Uint8Array(n), codes: new Uint8Array(n), dist: new Float32Array(n), indexDe: new Map(), adj: new Map(),
           ids: Array.from(etat.factions.keys()).sort() };
-    for (var k = 0; k < n; k++) {
-      var t = cles[k].indexOf('~');
-      c.a[k] = cles[k].slice(0, t); c.b[k] = cles[k].slice(t + 1);
-      c.base[k] = h32(cles[k]);
-      c.indexDe.set(cles[k], k);
-      // une clé impliquant une faction absente de etat.factions (une faction de
-      // joueurs posée par guildes.js:declarerRelation, SPEC-FACTION-017) n'est ni
-      // dérivée, ni annoncée, ni candidate : etat.relations sert aussi de mémoire
-      // à ce genre de relation externe.
-      c.pnj[k] = c.a[k] !== c.b[k] && etat.factions.has(c.a[k]) && etat.factions.has(c.b[k]) ? 1 : 0;
-      if (!c.pnj[k]) continue;
-      var fa = etat.factions.get(c.a[k]), fb = etat.factions.get(c.b[k]);
-      c.dist[k] = Math.hypot(fa.siege.x - fb.siege.x, fa.siege.z - fb.siege.z);   // les sièges ne bougent jamais
-      [c.a[k], c.b[k]].forEach(function (id) { var l = listes.get(id); if (!l) listes.set(id, l = []); l.push(k); });
-    }
+    for (var k = 0; k < n; k++) remplirEntree(etat, c, k, cles[k], listes);
     listes.forEach(function (l, id) { c.adj.set(id, Int32Array.from(l)); });
     rafraichirIndex(etat, c);
     if (CACHES) CACHES.set(etat.relations, c);
+    if (reconstructions) reconstructions.set(etat.relations, (reconstructions.get(etat.relations) || 0) + 1);
     return c;
   }
   /* fn(autreId, relation) pour chaque relation de `id` avec une autre faction PNJ
@@ -431,12 +507,15 @@
      passage est à `rayon` d'une position deviennent des gardes en marche (au plus
      PATROUILLES_MAX, les plus proches d'abord). Coût : factions × positions, sans
      balayage des relations ; l'appelant la consulte à sa cadence d'entretien. */
+  /* `jour` est celui de la simulation (etat.jour), déjà avancé d'un cran par le
+     jour d'action : une ronde décidée le jour d, visible dès le jour d + 1,
+     l'est DUREE_PATROUILLE jours (d + 1 à d + DUREE_PATROUILLE). */
   function patrouillesVisibles(etat, positions, rayon, jour) {
     var out = [];
     if (!positions || !positions.length) return out;
     etat.factions.forEach(function (f, id) {
       var p = f.patrouille;
-      if (!p || !p.points || jour < p.jour || jour - p.jour >= DUREE_PATROUILLE) return;
+      if (!p || !p.points || jour < p.jour || jour - p.jour > DUREE_PATROUILLE) return;
       var dmin = Infinity;
       for (var i = 0; i < positions.length; i++) {
         var q = positions[i];
@@ -451,6 +530,49 @@
     });
     out.sort(function (a, b) { return a.distance - b.distance || (a.faction < b.faction ? -1 : a.faction > b.faction ? 1 : 0); });
     return out.slice(0, PATROUILLES_MAX);
+  }
+
+  /* Les gardes tombés pendant leur ronde (clé `faction#jour#i`, cf. le serveur)
+     ne renaissent pas avant la ronde suivante : cette mémoire n'oublie donc
+     que les rondes TERMINÉES (jour d'action + DUREE_PATROUILLE dépassé) et, au
+     pire seulement, les plus anciennes au-delà de `max` — jamais tout d'un
+     coup, ce qui rendait la vie à tous les gardes tués d'une ronde en cours. */
+  function purgerGardesTombes(tombes, jour, max) {
+    tombes.forEach(function (cle) {
+      var j = parseInt(String(cle).split('#')[1], 10);
+      if (isNaN(j) || jour - j > DUREE_PATROUILLE) tombes.delete(cle);
+    });
+    var exces = tombes.size - (max || 512);
+    if (exces > 0) tombes.forEach(function (cle) { if (exces-- > 0) tombes.delete(cle); });
+  }
+  /* Le plan d'une cadence d'entretien des gardes en ronde : `voulues` (clé → ce
+     qu'il faut faire apparaître) sont les gardes que les rondes visibles réclament ;
+     `presents` (clé → entité) ceux qui existent ; `tombes` ceux tués pendant leur
+     ronde ; `vivant(entité)` dit si l'entité vit encore. Un garde mort est retiré des
+     présents et, si sa ronde court toujours, noté tombé : il ne renaît pas avant la
+     ronde suivante (clé d'un autre jour). Un garde dont la ronde n'est plus voulue
+     (finie, ou loin de tout joueur) est à retirer. Renvoie { retirer: [entités],
+     creer: [{ cle, voulu }] } ; l'appelant retire, crée, puis inscrit les créés
+     dans `presents`. */
+  function planifierGardes(voulues, presents, tombes, vivant) {
+    var retirer = [], creer = [];
+    presents.forEach(function (e, cle) {
+      if (!vivant(e)) { presents.delete(cle); if (voulues.has(cle)) tombes.add(cle); return; }
+      if (!voulues.has(cle)) { retirer.push(e); presents.delete(cle); }
+    });
+    voulues.forEach(function (voulu, cle) {
+      if (presents.has(cle) || tombes.has(cle)) return;
+      creer.push({ cle: cle, voulu: voulu });
+    });
+    return { retirer: retirer, creer: creer };
+  }
+  /* Les annonces nées depuis que le compteur monotone valait `avant` : au plus
+     `max` des plus récentes. La liste, bornée, perd les plus anciennes ; seul
+     le compteur dit combien sont nées (la longueur de la liste ne bouge plus
+     quand elle est pleine). */
+  function annoncesDepuis(etat, avant, max) {
+    var n = Math.min((etat.nbAnnonces || 0) - (avant || 0), etat.annonces.length, max);
+    return n > 0 ? etat.annonces.slice(-n) : [];
   }
 
   // ─── objectifs qui évoluent (SPEC-FACTION-006) ─────────────────────────
@@ -540,7 +662,7 @@
       var hd = melange01(ix.base[k], hj);
       if (hd >= 0.04) continue;
       var avant = ECHELLE[ix.codes[k]], apres = hd < 0.02 ? degrader(avant) : ameliorer(avant);
-      if (apres === avant) continue;
+      if (apres === avant || !deriveAutorisee(etat, ix.a[k], ix.b[k], avant, apres)) continue;
       etat.relations.set(ix.cles[k], apres);
       ix.codes[k] = codeRelation(apres);
       changees.push(k);
@@ -560,6 +682,17 @@
     var cible = Math.floor(jourCible || 0);
     while (etat.jour < cible) tourUnJour(etat);
     return etat;
+  }
+
+  /* Rattrapage borné : au plus `maxJours` jours simulés par appel (un jour de
+     ≈ 340 factions coûte ≈ 20 ms ; un saut d'horloge de 365 jours bloquerait la
+     boucle du serveur plus de 7 s s'il se rattrapait d'un coup). Le reste vient
+     aux appels suivants, dans le même ordre : l'état final est identique à celui
+     de tourDuMonde. Renvoie le nombre de jours simulés. */
+  function rattraper(etat, jourCible, maxJours) {
+    var cible = Math.floor(jourCible || 0), avant = etat.jour;
+    tourDuMonde(etat, Math.min(cible, avant + Math.max(1, maxJours || 1)));
+    return etat.jour - avant;
   }
 
   // ─── quêtes de faction (branchées sur les objectifs) ───────────────────
@@ -998,7 +1131,7 @@
     instantaneReseau: instantaneReseau, suivreReseau: suivreReseau, appliquerReseau: appliquerReseau,
     resumeRelations: resumeRelations,
     TYPES: TYPES, CARACTERES: CARACTERES, ECHELLE: ECHELLE,
-    creer: creer, decouvrir: decouvrir, tourDuMonde: tourDuMonde,
+    creer: creer, decouvrir: decouvrir, tourDuMonde: tourDuMonde, rattraper: rattraper,
     relationEntre: relationEntre, questesDe: questesDe, quetesActives: quetesActives,
     livrerQuete: livrerQuete, reussirQueteElimination: reussirQueteElimination,
     creerReputations: creerReputations, serialiser: serialiser, charger: charger,
@@ -1010,8 +1143,8 @@
     appliquerGainAvantPoste: appliquerGainAvantPoste, appliquerGainElimination: appliquerGainElimination,
     enGuerreActive: enGuerreActive,
     // SPEC-FACTION-006 : objectifs qui évoluent ; SPEC-FACTION-007 : rondes visibles près des joueurs
-    objectifSelon: objectifSelon, evoluerObjectif: evoluerObjectif,
-    patrouillesVisibles: patrouillesVisibles, PATROUILLES_MAX: PATROUILLES_MAX, DUREE_PATROUILLE: DUREE_PATROUILLE,
+    indexReconstructions: indexReconstructions, purgerGardesTombes: purgerGardesTombes, planifierGardes: planifierGardes, annoncesDepuis: annoncesDepuis, objectifSelon: objectifSelon, evoluerObjectif: evoluerObjectif,
+    patrouillesVisibles: patrouillesVisibles, PATROUILLES_MAX: PATROUILLES_MAX, DUREE_PATROUILLE: DUREE_PATROUILLE, MEMOIRE_RAID_JOURS: MEMOIRE_RAID_JOURS,
     // SPEC-FACTION-014 : influence du territoire sur la zone de jeu (zones.js)
     influenceZone: influenceZone, factionCouvrant: factionCouvrant, SEUIL_TERRITOIRE_CONSOLIDE: SEUIL_TERRITOIRE_CONSOLIDE,
     // SPEC-FACTION-015 : embargo commercial entre factions en guerre

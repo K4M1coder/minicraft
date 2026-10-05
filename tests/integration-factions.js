@@ -212,6 +212,12 @@ async function scenarioEnLigne(fichier) {
   const diss = await admin(d.client, 'faction_gerer', { op: 'dissoudre', faction: 'Ourses' });
   ok(diss && diss.ok, 'SPEC-FACTION-013 : un modérateur dissout « Ourses »', JSON.stringify(diss));
   ok(!!(await jusqua(() => { const g = guildesDe(a.client); return g && !faction(g, 'Ourses') && faction(g, 'Meute'); }, 3000)), 'SPEC-FACTION-013 : la dissolution est diffusée');
+  // SPEC-FACTION-013/010 : une faction à espaces se fonde, se désigne et se dissout par son nom ENTIER (jamais « Les » seul)
+  ok(!!(await reponse(c.client, '/faction creer Les Corbeaux', /fondée/)), 'SPEC-FACTION-010 : /faction creer Les Corbeaux fonde « Les Corbeaux » (« Corbeaux » n’est pas une couleur)');
+  ok(!!(await jusqua(() => faction(guildesDe(a.client), 'Les Corbeaux'), 3000)), 'la faction à espaces est diffusée sous son nom entier');
+  const dissMots = await admin(d.client, 'faction_gerer', { op: 'dissoudre', faction: 'Les Corbeaux', mots: ['Les', 'Corbeaux'] });
+  ok(dissMots && dissMots.ok, 'SPEC-FACTION-013 : le modérateur dissout « Les Corbeaux » par son nom entier (forme du chat)', JSON.stringify(dissMots));
+  ok(!!(await jusqua(() => { const g = guildesDe(a.client); return g && !faction(g, 'Les Corbeaux') && faction(g, 'Meute'); }, 3000)), 'SPEC-FACTION-013 : cette dissolution est diffusée');
   const journal = await admin(ad.client, 'journal', { limite: 50 });
   ok(journal && journal.ok && journal.data.some(e => e.action === 'faction_renommer' && /Loups → Meute/.test(e.details || '')) && journal.data.some(e => e.action === 'faction_dissoudre'),
      'SPEC-FACTION-013 : renommage et dissolution sont journalisés');
