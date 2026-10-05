@@ -53,7 +53,7 @@
       A.ok((attaquesAvec / avecGarde) < (attaquesSans / sansGarde), 'moins d\'attaques réussies quand un vrai garde accompagne le convoi');
 
       // ── intégration réelle : MC.Economie.passageCaravane (le point d'entrée
-      // câblé par server.js:avancerCaravanes — jamais un appel isolé à
+      // câblé par src/serveur-simulation.js:avancerCaravanes — jamais un appel isolé à
       // subitAttaque en dehors du calcul du taux ci-dessus) ──
       var etat = Eco.creerEtat(11);
       var Lo = Eco.lieuDe(etat, { id: 'orig', biome: 'plaines', x: 0, z: 0 });

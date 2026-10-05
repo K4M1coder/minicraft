@@ -569,12 +569,19 @@ function appelantsDe(carte, qual) { return carte && carte.fonctions[qual] ? cart
    lisent — documents, et les autres fichiers du registre : impact.json,
    temoins.json, README.md, qu'outillage et tests lisent) | 'test' (fichier de
    tests du catalogue) | 'src' (module src/*.js) | 'autre' (tout le reste :
-   repli). */
+   repli).
+   Les modules du serveur (src/serveur-*.js, SPEC-SERVEUR-008) comptent comme
+   server.js : 'autre', donc repli. Leur code ne passe par l'espace MC qu'au
+   travers d'`installer` (la carte n'y voit rien d'autre), il n'est exercé que
+   par de vrais processus server.js (intégrations), et les audits statiques le
+   lisent au travers de tests/source-serveur.js — que la règle « lecture » ne
+   rattache pas au fichier. */
 function classerFichier(f, fichiersDeTests) {
   if (/^tests\/registre\/(entrees|images)\//.test(f)) return 'neutre';
   if (/^tests\/registre\//.test(f)) return 'doc';
   if (fichiersDeTests.has(f)) return 'test';
   if (/\.md$/i.test(f) || /^docs\//.test(f) || f === '.gitignore' || f === '.gitattributes') return 'doc';
+  if (/^src\/serveur-[^/]+\.js$/.test(f)) return 'autre';
   if (/^src\/[^/]+\.js$/.test(f)) return 'src';
   return 'autre';
 }

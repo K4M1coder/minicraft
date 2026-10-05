@@ -49,9 +49,11 @@
     // L40-bis C (SPEC-SAVE-023, 024) : état borné par bloc, état 0 appliqué chez le client, audit de game.js
     'spec-l40-reseau',
     // travaux du serveur sous budget par tic : génération par tranches, lieux, sauvegarde, attente du sol
-    'spec-travaux-serveur'];
+    'spec-travaux-serveur',
+    // SPEC-SERVEUR-008 : server.js découpé en modules (src/serveur-*.js) — audit et tests de chaque module
+    'spec-serveur-modules'];
   // fichiers qui lisent le disque dès leur chargement (voir l'en-tête)
-  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true };
+  var NODE_SEUL = { 'spec-banc': true, 'spec-banc-headless': true, 'spec-archi-env': true, 'spec-archi-reseau': true, 'spec-crochets': true, 'spec-historique': true, 'spec-perimetre': true, 'spec-retention': true, 'spec-journal-statique': true, 'spec-jouabilite': true, 'spec-l40-reseau': true, 'spec-serveur-modules': true };
 
   G.MC_FICHIERS_TESTS = NOMS.map(function (f) { return NODE_SEUL[f] ? { f: f, node: true } : { f: f }; });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

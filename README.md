@@ -574,7 +574,14 @@ src/
   ambiance
   audio · atlas · render · ui · input · net · game                     navigateur
   ui.css                                              partagé jeu / page de tests
-server.js                    serveur Node sans dépendance (statique + WebSocket)
+  serveur-journal · serveur-parties · serveur-etat · serveur-monde     modules du serveur,
+  serveur-sauvegarde · serveur-simulation · serveur-clients            installés par server.js
+  serveur-http · serveur-banc · serveur-reseau · serveur-antiflood     dans son contexte S,
+  serveur-messages · serveur-recit · serveur-admin                     testables sous Node
+  serveur-inventaire · serveur-succes · serveur-pose
+  serveur-vehicules · serveur-joueurs · serveur-tic
+server.js                    serveur Node sans dépendance : assemblage seulement
+                             (paramètres, contexte S, modules, écoute, boucle de tic)
 admin.html                   console web d'administration
 tools/  version.js (version et journal) · paquet.js (empaquetage)
 tests/  harness · unit · functional · spec-* · e2e · integration-* · gates · run

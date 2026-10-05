@@ -25,7 +25,7 @@
   describe('Specs — L40-bis C : état borné et état 0 appliqué (SPEC-SAVE-023, 024)', function () {
 
     it('SPEC-SAVE-023 : le serveur borne l\'état reçu par MC.Core.etatMaxDe (SPEC-SAVE-021), seulement à la pose d\'un client', function () {
-      var srv = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var srv = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       var REGLE = 'if (m.etat > C.etatMaxDe(m.id)) m.etat = 0;';
       var iRegle = srv.indexOf(REGLE), iCas = srv.indexOf('case NP.MSG.BLOC: {');
       A.ok(iCas >= 0 && iRegle > iCas, 'la règle de bornage est dans le traitement de BLOC');

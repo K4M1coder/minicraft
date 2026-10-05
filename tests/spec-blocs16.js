@@ -123,7 +123,7 @@
     });
 
     it('SPEC-SAVE-017 : un monde serveur (--monde) sauvegardé en 8 bits migre aussi', function () {
-      // même principe que server.js:appliquerEtatMonde, mais sans process réel :
+      // même principe que src/serveur-monde.js:appliquerEtatMonde, mais sans process réel :
       // les overrides du monde partagé ne portent que des blocs (jamais
       // d'objet d'inventaire), donc aucune conversion d'id n'est nécessaire —
       // seule la version doit être acceptée et les états défauter à 0.

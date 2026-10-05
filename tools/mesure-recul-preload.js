@@ -23,7 +23,11 @@ const origSetInterval = global.setInterval;
 let enveloppe = false;
 global.setInterval = function (fn, ms) {
   const args = Array.prototype.slice.call(arguments, 2);
-  if (!enveloppe && typeof fn === 'function' && /dernier/.test(String(fn)) && /0\.25/.test(String(fn))) {
+  /* La boucle : depuis SPEC-SERVEUR-008, la fonction `tic` de src/serveur-tic.js
+     (server.js : setInterval(S.tic, 4)) ; avant, une fonction anonyme de
+     server.js reconnue à son corps (elle lit `dernier` et plafonne dt à 0,25 s). */
+  const estBoucle = typeof fn === 'function' && (fn.name === 'tic' || (/dernier/.test(String(fn)) && /0\.25/.test(String(fn))));
+  if (!enveloppe && estBoucle) {
     enveloppe = true;
     stats.enveloppe = true;
     let precedent = null, prochainBlocage = performance.now() + (periodeBlocage || 0);

@@ -318,6 +318,13 @@
       } finally { nettoyer(d); }
     });
 
+    it('SPEC-SERVEUR-008 : modifier un module du serveur (src/serveur-*.js) retient toute la suite, comme server.js', function () {
+      A.equal(P.classerFichier('src/serveur-pose.js', new Set()), 'autre', 'un module du serveur se classe comme server.js');
+      A.equal(P.classerFichier('src/mesher.js', new Set()), 'src', 'un module de logique reste au périmètre fin');
+      var p = perimetreJSON(['--fichiers', 'src/serveur-pose.js']);
+      A.ok(p.repli && p.repli.indexOf('src/serveur-pose.js') >= 0, 'src/serveur-pose.js → repli sur la suite complète : ' + p.repli);
+    });
+
     it('SPEC-BANC-069 : sur le vrai dépôt, server.js seul, une carte absente ou construite à plus de 50 commits font replier, avec la raison', function () {
       var p1 = perimetreJSON(['--fichiers', 'server.js']);
       A.ok(p1.repli && p1.repli.indexOf('server.js') >= 0, 'server.js → repli : ' + p1.repli);
@@ -607,7 +614,7 @@
       A.ok(/fetch\(url\)/.test(bloc) && /'\/tests\/perimetre'/.test(bloc), 'aperçu demandé au serveur');
       A.ok(/raisons/.test(bloc), 'la raison de chaque test est affichée');
       A.ok(!/lancer\(\)/.test(bloc), 'aucun lancement depuis l\'aperçu : seul « Lancer » exécute');
-      var srv = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var srv = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       var route = srv.slice(srv.indexOf('function traiterPerimetre'), srv.indexOf('let exportHistoriqueEnCours'));
       A.ok(/refuserHorsBancLocal/.test(route) && /tools', 'perimetre\.js'/.test(route) && /'--json'/.test(route), 'route GET /tests/perimetre : banc local, tools/perimetre.js --json');
       A.ok(/référence invalide/.test(route), 'la référence est validée avant usage');

@@ -103,7 +103,7 @@
 
     it('SPEC-ARCHI-042 : audit statique — le client n\'attribue plus aucun succès, le serveur le fait', function () {
       var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
-      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var serveur = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(!/signalerSucces\s*\(/.test(jeu), 'game.js n\'appelle plus signalerSucces');
       A.ok(!/tickerSucces/.test(jeu), 'game.js n\'échantillonne plus altitude, distance et nuit');
       A.ok(!/\.succes\.signaler\s*\(/.test(jeu), 'game.js n\'appelle jamais le suivi directement');
@@ -212,7 +212,7 @@
       A.deep([avant.yaw, avant.pitch], [0.5, 0.1], 'un regard non fini ne remplace rien');
       var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8');
       A.ok(/MC\.Synchro\.reprendreRetour\(jl\.player\.state, t\)/.test(jeu), 'onBienvenue l\'applique à chaque joueur local');
-      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var serveur = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(/js\.spawn = SY\.spawnValide\(etat\.spawn\)/.test(serveur), 'le serveur valide aussi la réapparition relue');
     });
 
@@ -368,12 +368,12 @@
 
     it('SPEC-ARCHI-045/046 : audit — game.js bascule le vol par MC.Synchro et n\'écrit l\'heure qu\'au travers de l\'horloge', function () {
       var jeu = fs.readFileSync(path.join(RACINE, 'src', 'game.js'), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '');
-      var serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var serveur = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(!/flying\s*=\s*!/.test(jeu), 'aucune bascule directe de flying');
       A.equal((jeu.match(/Synchro\.basculerVol\(/g) || []).length, 2, 'clavier et manette passent par basculerVol');
       A.ok(!/g\.time\s*=\s*m\.heure/.test(jeu), 'aucun relevé n\'écrase g.time directement');
       A.ok(!/g\.time\s*\+=/.test(jeu), 'g.time n\'avance que par l\'horloge');
-      A.ok(/heure:\s*\+heure\.toFixed\(3\)/.test(serveur), 'ETAT porte l\'heure au millième');
+      A.ok(/heure:\s*\+(EP\.)?heure\.toFixed\(3\)/.test(serveur), 'ETAT porte l\'heure au millième');
       A.ok(/m\.mode\s*!==\s*regles\.mode\.id/.test(jeu), 'le client adopte le mode du serveur quand il diffère (règles de vol comprises)');
     });
   });

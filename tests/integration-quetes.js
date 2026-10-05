@@ -1,5 +1,5 @@
 /* integration-quetes.js — la part réseau de SPEC-QUETE-004 : le serveur reste
-   seul arbitre du tableau de quêtes actives par joueur (server.js:traiterQuete,
+   seul arbitre du tableau de quêtes actives par joueur (src/serveur-joueurs.js:traiterQuete,
    MC.Politique.accepterQuete/remettreQuete). Vraies sockets, vrai serveur,
    comme integration-pvp.js.
 
@@ -10,7 +10,7 @@
    connue à l'avance dans un monde généré, comme le note déjà l'en-tête
    d'integration-pvp.js pour SPEC-PVP-003/006). Ce script vérifie donc
    seulement ce qu'un test pur ne peut pas : le CHEMIN RÉSEAU réel (chat →
-   server.js:traiterQuete → MC.Politique) répond bien, sans planter, et
+   src/serveur-joueurs.js:traiterQuete → MC.Politique) répond bien, sans planter, et
    qu'une remise sans quête active échoue proprement (arbitrage serveur,
    jamais un client) — la non-duplication de la récompense elle-même est
    prouvée par spec-politique.js sur les MÊMES fonctions que celles que
@@ -301,7 +301,7 @@ function totalItem(inv, id) { return (inv || []).reduce((s2, c) => s2 + (c && c[
     await dodo(200);
   }
 
-  // ── partie 3 : une VRAIE catastrophe météo (server.js:avancerCatastrophes,
+  // ── partie 3 : une VRAIE catastrophe météo (src/serveur-simulation.js:avancerCatastrophes,
   // avec MC_TEST_CATASTROPHE — un lieu et une tornade réellement branchés
   // dans monde.meteo/monde.habitats, jamais un appel isolé) endommage
   // réellement un lieu et propose réellement une quête de secours

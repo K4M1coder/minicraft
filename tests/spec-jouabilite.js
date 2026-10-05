@@ -180,7 +180,7 @@
       for (var k = 0; k < 60 && !pris.length; k++) pris = ents.update(1 / 60, pl).picked;
       A.equal(pris.length, 1, 'ramassé');
       A.equal(JSON.stringify(pris[0].data), '{"note":"x"}', 'la donnée revient au ramassage');
-      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/.test(src), 'le serveur transmet la donnée et l\'usure au jet');
     });
 
@@ -293,7 +293,7 @@
     });
 
     it('SPEC-JOUABLE-006 : tout lâcher du serveur passe par dropStack (comptage exact) ; aucune pile à état ne retombe sur dropItem(id, n) nu', function () {
-      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.equal((src.match(/entites\.dropStack\(/g) || []).length, 6, 'coffre cassé, conteneur tronqué, soute, distributeur, trop-plein aux pieds, reliquat de ramassage');
       A.equal((src.match(/entites\.dropItem\(/g) || []).length, 1, 'un seul dropItem nu : le butin d\'un bloc cassé (aucun état)');
       A.equal((src.match(/lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\), pile\.id, pile\.n, pile\.data, pile\.dmg\)/g) || []).length, 1, 'jet : usure transmise');
@@ -325,17 +325,19 @@
     });
 
     it('SPEC-JOUABLE-001 : le serveur de jeu de test n\'hérite d\'aucun réglage MC_*, valide l\'inventaire de départ et n\'écoute que la boucle locale', function () {
-      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       var i = src.indexOf('function traiterServeurJeuTest(');
-      var corps = src.slice(i, src.indexOf('function servir(', i));
+      // le corps de la fonction : jusqu'à la fonction suivante, ou la fin de son module
+      var suite = /\n\s*(?:async\s+)?function \w+\(|\n\s*MC\.\w+ = \{/.exec(src.slice(i + 1));
+      var corps = src.slice(i, suite ? i + 1 + suite.index : undefined);
       A.ok(/if \(!\/\^MC_\/\.test\(k\)\) env\[k\] = process\.env\[k\]/.test(corps), 'aucun MC_* hérité du banc');
       A.ok(/MC_TEST_BOUCLE_LOCALE: '1'/.test(corps) && corps.indexOf('MC_TEST_POSE_LIBRE') < 0, 'boucle locale, jamais de pose libre');
       A.ok(/!!C\.def\(p\[0\]\)/.test(corps) && /p\[1\] <= C\.maxStack\(p\[0\]\)/.test(corps), 'objets définis, quantités bornées');
-      A.ok(/if \(reseauOuvert && !BOUCLE_LOCALE_TEST\)/.test(src), 'ouvert, mais écoute locale en mode test');
+      A.ok(/if \((EP\.)?reseauOuvert && !BOUCLE_LOCALE_TEST\)/.test(src), 'ouvert, mais écoute locale en mode test');
     });
 
     it('SPEC-JOUABLE-006 : le serveur lance l\'objet d\'un INV_LACHER devant le joueur (lancerDevant), un trop-plein tombe toujours aux pieds', function () {
-      var src = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+      var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(/op\.k === 'lacher' \? lancerDevant : lacherAuxPieds/.test(src), 'traiterOp choisit lancerDevant pour un lâcher');
       A.ok(/function lancerDevant\(js, pile\)[\s\S]{0,200}entites\.lancerObjet\(js\.joueur\.eyePos\(\), js\.joueur\.lookDir\(\)/.test(src), 'depuis l\'œil, dans le regard du joueur');
     });

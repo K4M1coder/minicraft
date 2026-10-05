@@ -716,7 +716,7 @@ function scenarioAudit() {
   ok(!/entities\.list\.[^\n]*vehicule/.test(sansCommentaires), 'SPEC-ARCHI-021 (audit) : game.js ne cherche plus de véhicule dans ses entités locales');
   const lisezMoi = fs.readFileSync(path.join(RACINE, 'README.md'), 'utf8');
   ok(!/véhicules ne sont pas disponibles en ligne/i.test(lisezMoi), 'SPEC-ARCHI-021 : le README ne dit plus que les véhicules sont indisponibles en ligne');
-  const serveur = fs.readFileSync(path.join(RACINE, 'server.js'), 'utf8');
+  const serveur = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
   ok(/vehicules: MC\.Vehicules\.serialiser\(entites\)/.test(serveur), 'SPEC-SERVEUR-006 (audit) : etatMonde() sérialise les véhicules');
 }
 

@@ -6,4 +6,9 @@
    (`var C = MC.Core`). */
 'use strict';
 module.exports = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'recit-serveur', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'ombres', 'succes', 'mesher', 'physics', 'file-chunks', 'taches-chunks', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules', 'metiers', 'economie',
-  'entities', 'player', 'synchro', 'travaux-serveur', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'pvp-enjeux', 'livre', 'livres', 'ambiance', 'audio', 'qualite'];
+  'entities', 'player', 'synchro', 'travaux-serveur', 'daycycle', 'save', 'saves', 'parties-fichier', 'poste', 'modes', 'chat', 'commandes', 'options', 'apparence', 'split', 'hud', 'gamepad', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'pvp-enjeux', 'livre', 'livres', 'ambiance', 'audio', 'qualite',
+  // SPEC-SERVEUR-008 : les modules du serveur (server.js les installe dans son contexte S)
+  'serveur-journal', 'serveur-parties', 'serveur-etat', 'serveur-monde', 'serveur-sauvegarde', 'serveur-simulation',
+  'serveur-clients', 'serveur-http', 'serveur-banc', 'serveur-reseau', 'serveur-antiflood', 'serveur-messages',
+  'serveur-recit', 'serveur-admin', 'serveur-inventaire', 'serveur-succes', 'serveur-pose', 'serveur-vehicules',
+  'serveur-joueurs', 'serveur-tic'];
