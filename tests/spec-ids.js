@@ -290,6 +290,7 @@
       ['N', 'E', 'S', 'O'].forEach(function (m) { a['PORTE_FERMEE_' + m] = 1; a['PORTE_OUVERTE_' + m] = 1; });
       a.TRAPPE_FERMEE = 1; a.TRAPPE_OUVERTE = 1;        // dernier signal vu (SPEC-MECA-006)
       a.FEU = 29;                                       // âge < MC.Feu.AGE_MAX (30)
+      a.ICE = 1;                                        // glace de saison (SPEC-SAISON-005)
       var circuits = {
         FIL_SIGNAL: 14, CABLE_ENERGIE: 14, LEVIER_CIRCUIT: 1, BOUTON_CIRCUIT: 1, PLAQUE_PRESSION: 1,
         REPETEUR_CIRCUIT: 3,                            // 1 | (délai 1 << 1)
@@ -471,8 +472,35 @@
       });
     });
 
+    /* Le gel des eaux dormantes (world.tickEauxSaison) : un lac froid en hiver,
+       dans un vrai monde généré ; on
+       relève chaque bloc posé et l'état qui l'accompagne (signalé à surBloc). */
+    var balayerEauxSaison = une('eaux', function (r) {
+      var w = MC.createWorld(20260921), DC = MC.DayCycle;
+      function spirale(pred) {
+        for (var rr = 0; rr <= 12000; rr += 24) {
+          var n = Math.max(1, Math.round(rr * 2 * Math.PI / 24));
+          for (var k = 0; k < n; k++) {
+            var x = Math.round(Math.cos(k / n * 2 * Math.PI) * rr), z = Math.round(Math.sin(k / n * 2 * Math.PI) * rr);
+            if (pred(x, z)) return [x, z];
+          }
+        }
+        return null;
+      }
+      var lac = spirale(function (x, z) { var c = w.bio.colonne(x, z); return c.climat.lac && c.climat.t < 0.38 && c.climat.t >= 0.26 && c.eau > c.h; });
+      [lac].forEach(function (p) {
+        if (!p) return;
+        for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) w.getChunk(Math.floor(p[0] / 16) + a, Math.floor(p[1] / 16) + b, true);
+      });
+      var nuitHiver = DC.YEAR_LENGTH * 0.8;
+      while (!DC.isNight(nuitHiver)) nuitHiver += 10;
+      var noter = function (x, y, z, id, etat) { r.noter(id, etat, 'tickEauxSaison'); };
+      for (var i = 0; i < 300; i++) w.tickEauxSaison(nuitHiver, noter);   // une nuit d'hiver
+      for (var j = 0; j < 300; j++) w.tickEauxSaison(DC.YEAR_LENGTH + DC.DAY_LENGTH * 0.25, noter);   // printemps, le jour
+    });
+
     function toutBalayer() {
-      return [balayerFormes(), balayerCircuits(), balayerFeu(), balayerLieux(), balayerPoseBatterie()];
+      return [balayerFormes(), balayerCircuits(), balayerFeu(), balayerLieux(), balayerPoseBatterie(), balayerEauxSaison()];
     }
 
     // ── tests ────────────────────────────────────────────────────────────────

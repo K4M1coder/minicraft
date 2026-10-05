@@ -3091,7 +3091,8 @@
        garde dans world.tick est déterministe par l'heure (neige saisonnière) ;
        aucune créature n'apparaît côté client. */
     function optionsTickClient() {
-      return { eau: false, circuits: false, feu: false, cultures: false, temps: g.time };
+      // eauxSaison : le gel des eaux et le plancton de nuit (SPEC-SAISON-005, SPEC-LUMIERE-007) viennent du serveur
+      return { eau: false, circuits: false, feu: false, cultures: false, eauxSaison: false, temps: g.time };
     }
     function frameMonde(dt) {
       world.tick(dt, 14, null, optionsTickClient());

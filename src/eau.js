@@ -149,7 +149,43 @@
     return col.eau - col.h >= PROFONDEUR_OCEAN ? TYPES.ocean : TYPES.mer;
   }
 
+  /* SPEC-SAISON-005 : une eau dormante — celle qui gèle en surface l'hiver,
+     dans le froid. `nature` : la nature générée de la colonne (TYPES) ;
+     (x, y, z) : sa case d'eau de surface ; `lire(x, y, z)` lit le monde.
+     - un lac l'est toujours ;
+     - une « mer » perchée au-dessus du niveau de la mer aussi : c'est le lac
+       du cratère d'un volcan éteint (natureColonne ne la distingue pas) ;
+     - une rivière seulement là où elle est calme : à moins de RAYON_CALME
+       blocs, ni eau courante (un rapide), ni surface d'eau plus haute ou plus
+       basse que la sienne (une cascade : le lit décroche par paliers de trois
+       blocs, SPEC-EAU-004) ;
+     - la mer, l'océan, l'écoulement et la chute jamais (la banquise des mers
+       froides est générée, elle ne dépend pas de la saison). */
+  var RAYON_CALME = 2;
+  function surfaceGelable(id) { return id === B.WATER || id === B.ICE; }
+  function eauDormante(nature, lire, x, y, z) {
+    if (nature === TYPES.lac) return true;
+    if (nature === TYPES.mer || nature === TYPES.ocean) return y > C.SEA_LEVEL;
+    if (nature !== TYPES.riviere) return false;
+    for (var dx = -RAYON_CALME; dx <= RAYON_CALME; dx++) for (var dz = -RAYON_CALME; dz <= RAYON_CALME; dz++) {
+      if (!dx && !dz) continue;
+      var a = lire(x + dx, y, z + dz), dessus = lire(x + dx, y + 1, z + dz);
+      if (estCourante(a) || estCourante(dessus)) return false;          // un rapide, un filet qui tombe
+      if (surfaceGelable(dessus)) return false;                         // l'eau monte d'un palier : cascade en amont
+      if (a === 0 || libre(a)) {
+        // l'eau descend d'un palier : cascade en aval (on regarde quatre blocs plus bas)
+        for (var k = 1; k <= 4; k++) {
+          var b = lire(x + dx, y - k, z + dz);
+          if (surfaceGelable(b) || estCourante(b)) return false;
+          if (b !== 0 && !libre(b)) break;
+        }
+      }
+    }
+    return true;
+  }
+
   MC.Eau = { TYPES: TYPES, NOMS: NOMS, PARAMS: PARAMS, NIVEAUX: NIVEAUX, PROFONDEUR_OCEAN: PROFONDEUR_OCEAN,
              directionOnde: directionOnde, niveauDe: niveauDe, blocDeNiveau: blocDeNiveau, estCourante: estCourante,
-             ecouler: ecouler, fluxCourant: fluxCourant, natureColonne: natureColonne };
+             ecouler: ecouler, fluxCourant: fluxCourant, natureColonne: natureColonne,
+             RAYON_CALME: RAYON_CALME, eauDormante: eauDormante };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

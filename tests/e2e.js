@@ -5023,6 +5023,119 @@
     }
   });
 
+  // ══════════════════════════════════════════════════════════════════════════
+  // Saisons — glace des lacs et des rivières calmes (SPEC-SAISON-005)
+  // ══════════════════════════════════════════════════════════════════════════
+  /* Le premier point d'une spirale (pas de 24 blocs) autour de (x0, z0) où
+     `pred(colonne, x, z)` est vrai — une prospection pure, sans générer. */
+  function spiraleColonnes(w, x0, z0, pred, rayon) {
+    for (var r = 0; r <= (rayon || 12000); r += 24) {
+      var n = Math.max(1, Math.round(r * 2 * Math.PI / 24));
+      for (var k = 0; k < n; k++) {
+        var x = Math.round(x0 + Math.cos(k / n * 2 * Math.PI) * r), z = Math.round(z0 + Math.sin(k / n * 2 * Math.PI) * r);
+        if (pred(w.bio.colonne(x, z), x, z)) return { x: x, z: z };
+      }
+    }
+    return null;
+  }
+  function chargerAutour(g, x, z, n) {
+    var cx = Math.floor(x / 16), cz = Math.floor(z / 16);
+    for (var a = -n; a <= n; a++) for (var b = -n; b <= n; b++) g.world.getChunk(cx + a, cz + b, true);
+  }
+  function surfaceDe(w, x, z) { var y = MC.Core.WORLD_H - 1; while (y > 0 && w.getBlock(x, y, z) === 0) y--; return y; }
+  // une heure de jour (ou de nuit) dans la saison qui commence à `debut` (secondes du monde)
+  function heureDans(debut, nuit) {
+    for (var t = debut; t < debut + 3 * MC.DayCycle.DAY_LENGTH; t += 5) if (!!MC.DayCycle.isNight(t) === !!nuit && (nuit || MC.DayCycle.sunIntensity(t) > 0.8)) return t;
+    return debut;
+  }
+  /* Le balayage des eaux de saison (le même code que le serveur : le poste ne
+     le fait jamais tourner seul, eauxSaison: false) jusqu'à `fini()`. */
+  function balayerEaux(g, temps, fini, max, pas) {
+    pas = pas || 1;
+    for (var i = 0; i < (max || 4000); i += pas) {
+      if (fini()) return true;
+      for (var k = 0; k < pas; k++) g.world.tickEauxSaison(temps);
+    }
+    return fini();
+  }
+
+  e2e('SPEC-SAISON-005 : en hiver, un lac froid gèle — on marche sur la glace, elle fond au printemps et l\'on tombe à l\'eau', {
+        "teste": "qu'un vrai lac d'une région froide (généré, nature « lac », climat sous le seuil de gel) se prend en glace quand le balayage des eaux de saison tourne à une heure d'hiver, que le joueur posé dessus y tient debout et y marche, puis qu'au printemps la glace fond sous lui et qu'il tombe dans l'eau",
+        "pourquoi": "le gel n'était éprouvé que sur une colonne forcée, et jamais rendu ni parcouru dans le jeu",
+        "attendu": "glace (état 1) au centre du lac l'hiver, joueur au sol à la cote de la glace pendant toute la marche (≥ 2 blocs parcourus), eau au même endroit au printemps et joueur passé sous la surface ; captures du lac liquide, gelé, de la marche et du dégel"
+  }, async function (g) {
+    var s = await reset(g), w = g.world, B = MC.Core.B, temps0 = g.time, YL = MC.DayCycle.YEAR_LENGTH;
+    var p = spiraleColonnes(w, s.pos.x, s.pos.z, function (c) { return c.climat.lac && c.climat.t < 0.38 && c.climat.t >= 0.26 && c.eau > c.h; });
+    A.ok(p, 'un lac froid existe dans ce monde');
+    var l = w.bio.lacProche(p.x, p.z);
+    A.ok(l, 'son lac');
+    var lx = l.x, lz = l.z;
+    var dist0 = g.render.RENDER_DIST;
+    g.render.setDistance(4);
+    var hiver = heureDans(YL * 0.8), printemps = heureDans(YL * 1.05);
+    try {
+      chargerAutour(g, lx, lz, 2);
+      var ly = surfaceDe(w, lx, lz);
+      A.equal(w.getBlock(lx, ly, lz), B.WATER, 'le lac est liquide au départ');
+      s.flying = true; s.pos.x = lx + 0.5; s.pos.z = lz + 9.5; s.pos.y = ly + 7; s.yaw = 0; s.pitch = -0.6;
+      g.time = heureDans(YL * 0.6);
+      g.streamChunks(true);
+      for (var i = 0; i < 20; i++) await frames(1);
+      capture('lac-liquide-en-automne');
+      s.pos.x = lx + 0.5; s.pos.z = lz + 0.5; s.pos.y = ly + 22; s.pitch = -1.55;
+      for (var i1 = 0; i1 < 10; i1++) await frames(1);
+      capture('lac-liquide-vu-de-haut');
+      s.pos.x = lx + 0.5; s.pos.z = lz + 9.5; s.pos.y = ly + 7; s.pitch = -0.6;
+      g.time = hiver;
+      A.ok(balayerEaux(g, hiver, function () { return w.getBlock(lx, ly, lz) === B.ICE; }), 'l\'hiver, le centre du lac gèle');
+      var liquides = function () {
+        var n = 0;
+        for (var ax = -l.R; ax <= l.R; ax++) for (var az = -l.R; az <= l.R; az++) {
+          if (Math.hypot(ax, az) > l.R - 1) continue;
+          if (w.getBlock(lx + ax, ly, lz + az) === B.WATER && w.getBlock(lx + ax, ly + 1, lz + az) === 0) n++;
+        }
+        return n;
+      };
+      A.ok(balayerEaux(g, hiver, function () { return liquides() === 0; }, 8000, 50), 'tout le lac gèle (' + liquides() + ' colonnes encore liquides)');
+      A.equal(w.getEtat(lx, ly, lz), 1, 'glace de saison (état 1)');
+      for (var j = 0; j < 20; j++) await frames(1);
+      capture('lac-gele-en-hiver');
+      s.pos.x = lx + 0.5; s.pos.z = lz + 0.5; s.pos.y = ly + 22; s.pitch = -1.55;
+      for (var j2 = 0; j2 < 10; j2++) await frames(1);
+      capture('lac-gele-vu-de-haut');
+      // posé sur la glace, il y tient
+      s.flying = false; s.vel.x = s.vel.y = s.vel.z = 0; s.fallFrom = null;
+      s.pos.x = lx + 0.5; s.pos.z = lz + 0.5; s.pos.y = ly + 1.05; s.yaw = 0; s.pitch = -0.25;
+      A.ok(await sonderE2E(function () { return s.onGround; }, 3000), 'le joueur se pose sur la glace');
+      A.close(s.pos.y, ly + 1, 0.05, 'à la cote de la glace');
+      // il y marche (yaw 0 : vers -z), sans jamais s'enfoncer
+      var x0 = s.pos.x, z0 = s.pos.z, yMin = s.pos.y;
+      key('KeyW');
+      var fin = Date.now() + 1500;
+      while (Date.now() < fin) { await frames(1); yMin = Math.min(yMin, s.pos.y); }
+      key('KeyW', 'keyup');
+      await frames(2);
+      var parcouru = Math.hypot(s.pos.x - x0, s.pos.z - z0);
+      A.gt(parcouru, 2, 'il a marché sur la glace (' + parcouru.toFixed(1) + ' blocs)');
+      A.gt(yMin, ly + 0.95, 'sans s\'enfoncer (y min ' + yMin.toFixed(2) + ', glace en ' + ly + ')');
+      A.equal(w.getBlock(Math.floor(s.pos.x), ly, Math.floor(s.pos.z)), B.ICE, 'toujours sur la glace');
+      capture('marche-sur-la-glace');
+      // le printemps : la glace fond sous lui
+      g.time = printemps;
+      var gx = Math.floor(s.pos.x), gz = Math.floor(s.pos.z);
+      A.ok(balayerEaux(g, printemps, function () { return w.getBlock(gx, ly, gz) === B.WATER; }), 'au printemps, la glace fond sous ses pieds');
+      A.ok(await sonderE2E(function () { return s.pos.y < ly + 0.9; }, 4000), 'et il tombe dans l\'eau (y ' + s.pos.y.toFixed(2) + ')');
+      for (var k = 0; k < 10; k++) await frames(1);
+      capture('degel-dans-l-eau');
+    } finally {
+      key('KeyW', 'keyup');
+      balayerEaux(g, printemps, function () { return false; }, 600);    // tout ce que l'hiver a gelé redevient liquide
+      g.time = temps0; s.flying = false;
+      g.render.setDistance(dist0);
+      await reset(g);
+    }
+  });
+
   // ─── nettoyage ─────────────────────────────────────────────────────────────
   /* SPEC-BANC-016 : fin de test et fin de campagne referment tout ce qu'un
      test peut avoir laissé ouvert (dialogue d'histoire, journal, écrans de

@@ -48,7 +48,7 @@ if (argvBrut[0] && /^\d+$/.test(argvBrut[0])) argvBrut = ['--port', argvBrut[0],
 
 
 // ── chargement des modules de logique pure ───────────────────────────────────
-const MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
+const MODULES = ['journal', 'core', 'formes', 'noise', 'biomes', 'densite', 'zones', 'volcanisme', 'souterrain', 'recifs', 'caravanes', 'donjons', 'habitats', 'routes', 'histoire', 'recits', 'carte', 'eau', 'feu', 'meteo', 'lointain', 'world', 'circuits', 'lumiere', 'mesher', 'physics', 'faune', 'factions', 'inventory', 'conteneurs', 'vehicules',
                  'entities', 'player', 'synchro', 'travaux-serveur', 'daycycle', 'succes', 'save', 'saves', 'parties-fichier', 'modes',
                  'chat', 'commandes', 'split', 'contrats-vague2', 'contrats-archi', 'net-protocol', 'parametres', 'admin', 'politique', 'guildes', 'economie', 'metiers', 'pvp-enjeux', 'livre', 'livres', 'recit-serveur',
                  // SPEC-SERVEUR-008 : les modules du serveur, installés plus bas dans le contexte S

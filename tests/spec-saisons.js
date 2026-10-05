@@ -146,37 +146,165 @@
       A.ok(classesDe(B.STONE, 'opaque').every(function (v) { return v === 0; }), 'la pierre : aucune classe de feuillage');
     });
 
-    it('SPEC-SAISON-005 : lacs et eaux dormantes gèlent en hiver dans les régions froides, dégèlent au printemps', function () {
-      var w = MC.createWorld(20260921);
-      // un point de climat assez froid pour geler (on force la nature du bloc :
-      // seul le mécanisme de gel/dégel est éprouvé ici, pas la génération des lacs)
-      var cx = 0, cz = 0;
-      var froid = null;
-      for (var r = -8000; r < 8000 && !froid; r += 137) {
-        if (w.bio.climat(r, 0).t < 0.3) froid = { x: r, z: 0 };
+    it('SPEC-SAISON-005 : eau dormante — lac, lac de cratère et rivière calme oui ; cascade, rapide, mer et océan non', function () {
+      var T = MC.Eau.TYPES, SEA = C.SEA_LEVEL;
+      // une rivière plate de trois de large (z = -1..1) à la cote 40, entre deux berges de pierre
+      function riviere(modif) {
+        return function (x, y, z) {
+          var v = Math.abs(z) <= 1 ? (y <= 40 ? B.WATER : 0) : (y <= 41 ? B.STONE : 0);
+          return modif ? modif(x, y, z, v) : v;
+        };
       }
-      A.ok(froid, 'un point assez froid existe dans ce monde');
-      cx = Math.floor(froid.x / C.CHUNK_X); cz = Math.floor(froid.z / C.CHUNK_Z);
-      var chunk = w.getChunk(cx, cz, true);
-      var lx = froid.x - cx * C.CHUNK_X, lz = froid.z - cz * C.CHUNK_Z;
-      var y = w.groundAt(froid.x, froid.z) + 1;
-      w.setBlock(froid.x, y, froid.z, B.WATER);
-      w.setBlock(froid.x, y + 1, froid.z, 0);
-      chunk.eau.nature[lz * C.CHUNK_X + lx] = MC.Eau.TYPES.lac;
+      A.ok(MC.Eau.eauDormante(T.riviere, riviere(), 0, 40, 0), 'une rivière plate est calme');
+      // un palier : trois blocs plus bas à partir de x = 2 (cascade en aval)
+      var aval = riviere(function (x, y, z, v) { return (x >= 2 && Math.abs(z) <= 1) ? (y <= 37 ? B.WATER : 0) : v; });
+      A.notOk(MC.Eau.eauDormante(T.riviere, aval, 0, 40, 0), 'à deux blocs d\'une cascade (aval) : pas calme');
+      A.ok(MC.Eau.eauDormante(T.riviere, aval, -3, 40, 0), 'plus loin de la cascade : calme de nouveau');
+      // un palier plus haut en amont
+      var amont = riviere(function (x, y, z, v) { return (x <= -2 && Math.abs(z) <= 1) ? (y <= 43 ? B.WATER : 0) : v; });
+      A.notOk(MC.Eau.eauDormante(T.riviere, amont, 0, 40, 0), 'au pied d\'une cascade (amont) : pas calme');
+      // un rapide : de l'eau courante tout près
+      var rapide = riviere(function (x, y, z, v) { return (x === 1 && y === 40 && z === 0) ? B.EAU_5 : v; });
+      A.notOk(MC.Eau.eauDormante(T.riviere, rapide, 0, 40, 0), 'eau courante voisine : pas calme');
+      // le gel gagne de proche en proche : une voisine déjà prise en glace ne compte pas comme une cascade
+      var prise = riviere(function (x, y, z, v) { return (y === 40 && Math.abs(z) <= 1 && x === 1) ? B.ICE : v; });
+      A.ok(MC.Eau.eauDormante(T.riviere, prise, 0, 40, 0), 'une voisine gelée au même niveau laisse la rivière calme');
+      // lacs, mers
+      A.ok(MC.Eau.eauDormante(T.lac, riviere(), 0, 40, 0), 'un lac dort toujours');
+      A.ok(MC.Eau.eauDormante(T.mer, riviere(), 0, SEA + 9, 0), 'une « mer » perchée (lac de cratère) dort');
+      A.notOk(MC.Eau.eauDormante(T.mer, riviere(), 0, SEA, 0), 'la mer, au niveau de la mer : non');
+      A.notOk(MC.Eau.eauDormante(T.ocean, riviere(), 0, SEA, 0), 'l\'océan : non');
+      A.notOk(MC.Eau.eauDormante(T.chute, riviere(), 0, 40, 0), 'une chute : non');
+      A.notOk(MC.Eau.eauDormante(0, riviere(), 0, 40, 0), 'une eau qui n\'est pas générée (fontaine, seau) : non');
+    });
 
-      var hiver = DC.YEAR_LENGTH * 0.875, printemps = DC.YEAR_LENGTH * 0.125;
-      // il faut laisser le mécanisme (une seconde de jeu réel par appel) tourner un peu
-      for (var i = 0; i < 5; i++) w.tick(1, 14, Math.random, { temps: hiver, eau: false });
-      A.equal(w.getBlock(froid.x, y, froid.z), B.ICE, 'le lac gèle l hiver');
+    /* Une colonne d'eau générée, de nature `nat`, dans un climat donné : le
+       premier point d'une spirale (pas de 24 blocs) où `pred(colonne)` est vrai. */
+    function chercherColonne(w, pred, rayon) {
+      for (var r = 0; r <= (rayon || 12000); r += 24) {
+        var n = Math.max(1, Math.round(r * 2 * Math.PI / 24));
+        for (var k = 0; k < n; k++) {
+          var x = Math.round(Math.cos(k / n * 2 * Math.PI) * r), z = Math.round(Math.sin(k / n * 2 * Math.PI) * r);
+          var col = w.bio.colonne(x, z);
+          if (pred(col, x, z)) return { x: x, z: z, col: col };
+        }
+      }
+      return null;
+    }
+    function charger3x3(w, x, z) {
+      var cx = Math.floor(x / C.CHUNK_X), cz = Math.floor(z / C.CHUNK_Z);
+      for (var a = -1; a <= 1; a++) for (var b = -1; b <= 1; b++) w.getChunk(cx + a, cz + b, true);
+    }
+    function surface(w, x, z) { var y = C.WORLD_H - 1; while (y > 0 && w.getBlock(x, y, z) === 0) y--; return y; }
+    function balayer(w, temps, fois, surBloc) {
+      var n = 0;
+      for (var i = 0; i < fois; i++) n += w.tickEauxSaison(temps, surBloc);
+      return n;
+    }
+    var HIVER = DC.YEAR_LENGTH * 0.875, PRINTEMPS = DC.YEAR_LENGTH * 1.125, ETE = DC.YEAR_LENGTH * 1.375;
+    var SEUIL = 0.38;
 
-      for (var j = 0; j < 5; j++) w.tick(1, 14, Math.random, { temps: printemps, eau: false });
-      A.equal(w.getBlock(froid.x, y, froid.z), B.WATER, 'et dégèle au printemps');
+    it('SPEC-SAISON-005 : dans un monde généré, un lac et une rivière calme des régions froides gèlent l\'hiver, dégèlent au printemps @lent', function () {
+      var w = MC.createWorld(20260921), T = MC.Eau.TYPES;
+      A.equal(w.EAUX_SAISON.GEL_CLIMAT_SEUIL, SEUIL, 'seuil de climat du gel');
+      // un vrai lac, assez froid pour geler l'hiver mais pas pris dans la banquise permanente (taïga : t < 0,26)
+      var lac = chercherColonne(w, function (c) { return c.climat.lac && c.climat.t < SEUIL && c.climat.t >= 0.26 && c.eau > c.h; });
+      A.ok(lac, 'un lac froid existe dans ce monde');
+      var riv = chercherColonne(w, function (c, x, z) {
+        if (!(c.climat.riviere && c.climat.t < SEUIL && c.climat.t >= 0.26 && c.eau > c.h)) return false;
+        // calme : le même niveau d'eau tout autour (pas de palier à moins de 3 blocs)
+        for (var dx = -3; dx <= 3; dx++) for (var dz = -3; dz <= 3; dz++) {
+          var v = w.bio.colonne(x + dx, z + dz);
+          if (v.climat.riviere && v.eau !== c.eau) return false;
+        }
+        return true;
+      });
+      A.ok(riv, 'une rivière calme et froide existe dans ce monde');
+      [lac, riv].forEach(function (p) { charger3x3(w, p.x, p.z); });
+      var yLac = surface(w, lac.x, lac.z), yRiv = surface(w, riv.x, riv.z);
+      A.equal(w.getBlock(lac.x, yLac, lac.z), B.WATER, 'le lac est liquide avant l\'hiver');
+      A.equal(w.getBlock(riv.x, yRiv, riv.z), B.WATER, 'la rivière aussi');
+      var cRiv = w.getChunk(Math.floor(riv.x / 16), Math.floor(riv.z / 16));
+      A.equal(cRiv.eau.nature[(riv.z - cRiv.cz * 16) * 16 + (riv.x - cRiv.cx * 16)], T.riviere, 'nature générée : rivière');
 
-      // une glace du joueur (jamais posée par la saison) n est jamais fondue par le dégel saisonnier
-      var wz2 = froid.z + 3;
-      w.setBlock(froid.x, y, wz2, B.ICE);
-      for (var k = 0; k < 5; k++) w.tick(1, 14, Math.random, { temps: printemps, eau: false });
-      A.equal(w.getBlock(froid.x, y, wz2), B.ICE, 'la glace posée par le joueur n est pas concernée');
+      // l'été : rien ne gèle, même en balayant longtemps
+      A.equal(balayer(w, ETE, 200), 0, 'l\'été, rien ne change');
+      // l'hiver : chaque pas reste dans son budget, et le gel finit par tout couvrir
+      var signales = [], parPas = [];
+      for (var i = 0; i < 300; i++) parPas.push(w.tickEauxSaison(HIVER, function (x, y, z, id, etat) { signales.push([x, y, z, id, etat]); }));
+      A.ok(parPas.every(function (n) { return n <= w.EAUX_SAISON.CHANGEMENTS; }), 'jamais plus de ' + w.EAUX_SAISON.CHANGEMENTS + ' blocs changés par pas');
+      A.equal(w.getBlock(lac.x, yLac, lac.z), B.ICE, 'SPEC-SAISON-005 : le lac est gelé en surface l\'hiver');
+      A.equal(w.getEtat(lac.x, yLac, lac.z), w.EAUX_SAISON.ETAT, 'glace de saison (état 1)');
+      A.equal(w.getBlock(lac.x, yLac - 1, lac.z), B.WATER, 'l\'eau reste liquide sous la glace');
+      A.equal(w.getBlock(riv.x, yRiv, riv.z), B.ICE, 'SPEC-SAISON-005 : la rivière calme aussi');
+      A.ok(signales.some(function (s) { return s[0] === lac.x && s[2] === lac.z && s[3] === B.ICE && s[4] === 1; }),
+           'chaque gel est signalé (le serveur le diffuse) avec son état');
+      // on marche sur la glace : c'est un bloc plein pour la physique
+      A.ok(C.isSolid(B.ICE), 'la glace porte le joueur');
+
+      // le printemps : tout ce que la saison a gelé redevient de l'eau
+      var degels = balayer(w, PRINTEMPS, 300);
+      A.gt(degels, 0, 'le dégel change des blocs');
+      A.equal(w.getBlock(lac.x, yLac, lac.z), B.WATER, 'SPEC-SAISON-005 : le lac dégèle au printemps');
+      A.equal(w.getBlock(riv.x, yRiv, riv.z), B.WATER, 'la rivière aussi');
+      A.equal(w.getEtat(lac.x, yLac, lac.z), 0, 'sans état résiduel');
+      A.equal(balayer(w, PRINTEMPS, 100), 0, 'puis plus rien à faire');
+    });
+
+    it('SPEC-SAISON-005 : le gel ne touche ni l\'eau du joueur, ni les constructions, ni la banquise générée, et survit à un redémarrage @lent', function () {
+      var w = MC.createWorld(20260921);
+      var lac = chercherColonne(w, function (c) { return c.climat.lac && c.climat.t < SEUIL && c.climat.t >= 0.26 && c.eau > c.h; });
+      charger3x3(w, lac.x, lac.z);
+      var y = surface(w, lac.x, lac.z);
+      // une fontaine du joueur sur la terre ferme, dans le même froid (colonne sans eau générée)
+      var terre = null;
+      for (var dx = -20; dx <= 20 && !terre; dx++) for (var dz = -20; dz <= 20 && !terre; dz++) {
+        var c = w.bio.colonne(lac.x + dx, lac.z + dz);
+        if (!(c.eau > c.h) && Math.abs(dx) + Math.abs(dz) > 3) terre = { x: lac.x + dx, z: lac.z + dz };
+      }
+      A.ok(terre, 'de la terre ferme près du lac');
+      charger3x3(w, terre.x, terre.z);
+      var yt = surface(w, terre.x, terre.z) + 1;
+      w.setBlock(terre.x, yt, terre.z, B.WATER);
+      // un ponton posé sur le lac : la colonne n'est plus à nu
+      var px = lac.x + 1, py = surface(w, px, lac.z);
+      w.setBlock(px, py + 1, lac.z, B.PLANKS);
+      // un bloc de glace posé par le joueur sur une autre colonne du lac
+      var gx = lac.x - 1, gy = surface(w, gx, lac.z);
+      w.setBlock(gx, gy, lac.z, B.ICE);
+      balayer(w, HIVER, 300);
+      A.equal(w.getBlock(lac.x, y, lac.z), B.ICE, 'le lac gèle');
+      A.equal(w.getBlock(terre.x, yt, terre.z), B.WATER, 'la fontaine du joueur ne gèle pas');
+      A.equal(w.getBlock(px, py, lac.z), B.WATER, 'sous le ponton, l\'eau ne gèle pas');
+      A.equal(w.getBlock(px, py + 1, lac.z), B.PLANKS, 'le ponton est intact');
+
+      // redémarrage : un monde neuf qui relit les modifications sauvegardées (blocs et états)
+      var w2 = MC.createWorld(20260921);
+      w.overrides.forEach(function (id, k) { w2.overrides.set(k, id); });
+      w.etatsOverrides.forEach(function (e, k) { w2.etatsOverrides.set(k, e); });
+      charger3x3(w2, lac.x, lac.z);
+      A.equal(w2.getBlock(lac.x, y, lac.z), B.ICE, 'après redémarrage, le lac est toujours gelé');
+      A.equal(w2.getEtat(lac.x, y, lac.z), 1, 'avec son état de glace de saison');
+      // une construction posée sur la glace de saison l'empêche de fondre (rien n'est détruit)
+      var bx = lac.x + 2, by = surface(w2, bx, lac.z);
+      A.equal(w2.getBlock(bx, by, lac.z), B.ICE, 'une autre colonne du lac est gelée');
+      w2.setBlock(bx, by + 1, lac.z, B.COBBLE);
+      balayer(w2, PRINTEMPS, 300);
+      A.equal(w2.getBlock(lac.x, y, lac.z), B.WATER, 'au printemps, le lac dégèle même après un redémarrage');
+      A.equal(w2.getBlock(gx, gy, lac.z), B.ICE, 'la glace du joueur ne fond jamais');
+      A.equal(w2.getBlock(bx, by + 1, lac.z), B.COBBLE, 'le bloc posé sur la glace est intact');
+      A.equal(w2.getBlock(bx, by, lac.z), B.ICE, 'et la glace qui le porte ne fond pas sous lui');
+
+      // la banquise générée des biomes glacés (taïga…) ne fond jamais
+      var bq = chercherColonne(w2, function (c) { return c.climat.lac && c.climat.t < 0.2 && c.eau > c.h; });
+      if (bq) {
+        charger3x3(w2, bq.x, bq.z);
+        var yb = surface(w2, bq.x, bq.z);
+        if (w2.getBlock(bq.x, yb, bq.z) === B.ICE) {
+          balayer(w2, PRINTEMPS, 400);
+          A.equal(w2.getBlock(bq.x, yb, bq.z), B.ICE, 'la banquise d\'un lac de taïga reste prise au printemps');
+        }
+      }
     });
 
     it('SPEC-SAISON-006 : les cultures poussent selon la saison, jamais l hiver ; la reproduction s arrête l hiver', function () {

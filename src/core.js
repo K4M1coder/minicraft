@@ -314,8 +314,9 @@
   // ─── biomes ───────────────────────────────────────────────────────────────
   defBlock(B.SNOW,   { name: 'Neige', tiles: [56, 57, 2], hardness: 0.5, tool: 'shovel' });
   // la glace est un fondu, comme le verre : on voit l'eau prise dessous
+  // état 1 : glace de saison (SPEC-SAISON-005), posée par le gel d'une eau dormante — elle fond au printemps
   defBlock(B.ICE,    { name: 'Glace', tiles: [58, 58, 58], hardness: 0.5, tool: 'pickaxe',
-                       transparent: true, pass: 'blend', drops: [] });
+                       transparent: true, pass: 'blend', drops: [], etatMax: 1 });
   defBlock(B.SANDSTONE, { name: 'Grès', tiles: [59, 60, 59], hardness: 0.8, tool: 'pickaxe',
                           needsTool: true });
   // cactus : plein, mais il pique (voir player.updateSurvival)
@@ -437,6 +438,7 @@
   planteMarine(B.LAMINAIRE, 'Laminaire', 904, { needsSupport: false, drops: [{ id: B.LAMINAIRE, n: 1 }] });
   // le squelette des récifs : corail blanc, dur, sur lequel poussent les colonies
   defBlock(B.CORAIL_BLANC, { name: 'Corail blanc', tiles: [905, 905, 905], hardness: 1.0, tool: 'pickaxe' });
+
 
   // ─── minerais et structures ────────────────────────────────────────────────
   defBlock(B.GOLD_ORE, { name: "Minerai d'or", tiles: [108, 108, 108], hardness: 3.0, tool: 'pickaxe',

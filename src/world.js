@@ -1125,17 +1125,14 @@
       return nom === 'ete' ? 1 : 2;
     }
 
-    /* SPEC-SAISON-003 et SPEC-SAISON-005 : effets de surface de la saison —
-       gel des eaux dormantes (les lacs, jamais la mer, l'océan ni l'eau
-       courante) dans les régions froides, et couverture neigeuse du sol dans
-       les régions tempérées — tous deux réversibles au printemps.
+    /* SPEC-SAISON-003 : couverture neigeuse du sol dans les régions
+       tempérées, réversible au printemps (le gel des eaux, SPEC-SAISON-005,
+       est l'affaire de tickEauxSaison plus bas).
        Progressif et bon marché : à chaque appel on n'examine qu'UN chunk
        chargé (roulement), quel que soit le nombre de chunks en mémoire. On ne
-       défait que ce qu'on a nous-même posé : banquise ou neige générées avec
-       le monde, comme la glace ou la neige du joueur, restent intactes. */
-    var GEL_CLIMAT_SEUIL = 0.38;           // plus froid que ça : les lacs y gèlent en hiver
+       défait que ce qu'on a nous-même posé : la neige générée avec le monde,
+       comme celle du joueur, reste intacte. */
     var NEIGE_CLIMAT_MIN = 0.26, NEIGE_CLIMAT_MAX = 0.55;   // bande tempérée : la neige s'y dépose
-    var gelSaisonnier = new Map();         // key3 -> true (glace posée par la saison)
     var neigeSaisonniere = new Map();      // key3 -> id d'origine (sous la neige posée par la saison)
     var gelCurseur = 0;
     function tickSaisonSurface(hiver) {
@@ -1152,22 +1149,7 @@
         var lx = col % CX, lz = (col / CX) | 0;
         var wx = c.cx * CX + lx, wz = c.cz * CZ + lz;
         var nat = c.eau && c.eau.nature[col];
-        if (MC.Eau && nat === MC.Eau.TYPES.lac) {
-          if (Bio.climat(wx, wz).t >= GEL_CLIMAT_SEUIL) continue;
-          var y = WH - 1;
-          while (y > 0 && bl[idx(lx, y, lz)] === 0) y--;
-          var id = bl[idx(lx, y, lz)];
-          var k3 = key3(wx, y, wz);
-          if (hiver) {
-            if (id === B.WATER && getBlock(wx, y + 1, wz) === 0) {
-              setBlock(wx, y, wz, B.ICE);
-              gelSaisonnier.set(k3, true);
-            }
-          } else if (id === B.ICE && gelSaisonnier.has(k3)) {
-            setBlock(wx, y, wz, B.WATER);
-            gelSaisonnier.delete(k3);
-          }
-        } else if (!nat) {
+        if (!nat) {
           var cl = Bio.climat(wx, wz).t;
           if (cl < NEIGE_CLIMAT_MIN || cl > NEIGE_CLIMAT_MAX) continue;
           var y2 = WH - 1;
@@ -1185,6 +1167,67 @@
           }
         }
       }
+    }
+
+    /* ─── les eaux de saison ──────────────────────────────────────
+       SPEC-SAISON-005 : en hiver, dans les régions froides, la surface des eaux
+       dormantes générées (lacs, lacs de cratère, rivières calmes — MC.Eau.eauDormante)
+       se prend en glace ; elle dégèle hors de l'hiver, donc dès le printemps.
+       Ce que la saison pose porte l'état ETAT_SAISON (1) — sauvegardé
+       avec les modifications du monde (SPEC-SAVE-024), relu après un redémarrage :
+       on ne défait jamais que cela. La banquise générée et la glace du joueur
+       (état 0) ne fondent jamais ; une eau posée par le joueur hors d'une colonne
+       d'eau générée (fontaine, ruisseau, bassin) ne gèle jamais ; une colonne
+       couverte par une construction (pont, ponton, bloc posé sur la glace) n'est
+       plus à nu : rien n'y gèle ni n'y fond.
+       Le serveur en décide (les postes passent `eauxSaison: false`) et signale
+       chaque changement à `surBloc` (il le diffuse aux joueurs proches). Coût
+       borné à chaque pas, quel que soit le nombre de chunks chargés : au plus
+       EAUX_COLONNES colonnes examinées et EAUX_CHANGEMENTS blocs changés, en
+       roulement sur les chunks chargés ; un pas toutes les EAUX_PAS secondes. */
+    var EAUX_PAS = 0.25, EAUX_COLONNES = 128, EAUX_CHANGEMENTS = 24, ETAT_SAISON = 1;
+    var GEL_CLIMAT_SEUIL = 0.38;           // plus froid que ça : les eaux dormantes y gèlent en hiver
+    var eauxT = 0, eauxChunk = 0, eauxCol = 0;
+    function eauxSaisonColonne(c, col, hiver, nuit, surBloc) {
+      var nat = c.eau.nature[col];
+      if (!nat) return 0;
+      var T = MC.Eau.TYPES;
+      var lx = col % CX, lz = (col / CX) | 0, wx = c.cx * CX + lx, wz = c.cz * CZ + lz, bl = c.blocks;
+      var y = WH - 1;
+      while (y > 0 && bl[idx(lx, y, lz)] === 0) y--;
+      var id = bl[idx(lx, y, lz)];
+      // dégel : seulement la glace que la saison a posée, et seulement hors de l'hiver
+      if (id === B.ICE) {
+        if (hiver || getEtat(wx, y, wz) !== ETAT_SAISON) return 0;
+        setBlock(wx, y, wz, B.WATER);
+        if (surBloc) surBloc(wx, y, wz, B.WATER, 0);
+        return 1;
+      }
+      if (id !== B.WATER) return 0;
+      if (hiver && nat !== T.ecoulement && nat !== T.chute && Bio.climat(wx, wz).t < GEL_CLIMAT_SEUIL &&
+          MC.Eau.eauDormante(nat, getBlock, wx, y, wz)) {
+        setBlock(wx, y, wz, B.ICE);
+        setEtat(wx, y, wz, ETAT_SAISON);
+        if (surBloc) surBloc(wx, y, wz, B.ICE, ETAT_SAISON);
+        return 1;
+      }
+      return 0;
+    }
+    /* Un pas des eaux de saison à l'heure `temps` ; rend le nombre de blocs changés. */
+    function tickEauxSaison(temps, surBloc) {
+      if (!MC.Eau || !MC.DayCycle || !chunks.size) return 0;
+      var hiver = MC.DayCycle.saison(temps).nom === 'hiver', nuit = MC.DayCycle.isNight(temps);
+      var cles = Array.from(chunks.keys()), vus = 0, faits = 0, sauts = 0;
+      while (vus < EAUX_COLONNES && faits < EAUX_CHANGEMENTS && sauts <= cles.length) {
+        if (eauxChunk >= cles.length) { eauxChunk = 0; eauxCol = 0; }
+        var c = chunks.get(cles[eauxChunk]);
+        if (!c || !c.eau) { eauxChunk++; eauxCol = 0; sauts++; continue; }
+        for (; eauxCol < CX * CZ && vus < EAUX_COLONNES && faits < EAUX_CHANGEMENTS; eauxCol++, vus++) {
+          faits += eauxSaisonColonne(c, eauxCol, hiver, nuit, surBloc);
+        }
+        if (eauxCol >= CX * CZ) { eauxChunk++; eauxCol = 0; sauts++; }
+      }
+      return faits;
     }
 
     /* L29 mécanismes (SPEC-MECA-008) : un tic de circuits toutes les 0.2 s
@@ -1326,6 +1369,11 @@
       if (MC.DayCycle && temps !== undefined) {
         gelT += dt;
         if (gelT >= 1) { gelT = 0; tickSaisonSurface(MC.DayCycle.saison(temps).nom === 'hiver'); }
+        // SPEC-SAISON-005 : le serveur seul en décide (les postes passent eauxSaison: false)
+        if (!(opts && opts.eauxSaison === false)) {
+          eauxT += dt;
+          if (eauxT >= EAUX_PAS) { eauxT = 0; tickEauxSaison(temps, surBloc); }
+        }
       }
       return grown;
     }
@@ -1488,6 +1536,10 @@
       definirIndexOverrides: definirIndexOverrides,
       heightAt: heightAt, isCave: isCave, getChunk: getChunk, getBlock: getBlock, setBlock: setBlock,
       groundAt: groundAt, findSpawnColumn: findSpawnColumn, tick: tick,
+      // SPEC-SAISON-005 : gel des eaux dormantes
+      tickEauxSaison: tickEauxSaison,
+      EAUX_SAISON: { PAS: EAUX_PAS, COLONNES: EAUX_COLONNES, CHANGEMENTS: EAUX_CHANGEMENTS, ETAT: ETAT_SAISON,
+                     GEL_CLIMAT_SEUIL: GEL_CLIMAT_SEUIL },
       unloadFar: unloadFar, unloadLoin: unloadLoin, chunksVoulus: chunksVoulus,
       voisinsCharges: voisinsCharges, marquerVoisins: marquerVoisins, estCharge: estCharge,
       chunkDe: function (cx, cz) { return chunks.get(key(cx, cz)) || null; },
