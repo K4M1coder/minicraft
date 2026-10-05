@@ -74,6 +74,13 @@ async function scenarioFactions() {
   const s = await demarrer([]);
   const a = await rejoindre(s.port, 'Alice', 1);
   eq(a.bienvenue.guilde, null, 'SPEC-ARCHI-029 : sans faction, BIENVENUE annonce guilde = null (aucun état local par défaut)');
+  // SPEC-CMD-004 : un `/faction help` brut reçu par le serveur reçoit l'aide (message système), sans rien créer ni changer
+  a.client.envoyer({ t: 'chat', texte: '/faction help' });
+  const aide = await a.client.attendre('chat', 4000, m => /^Usage : \/faction/.test(m.texte || '')).catch(() => null);
+  ok(!!aide && aide.type === 'systeme', 'SPEC-CMD-004 : /faction help brut reçoit l\'aide de /faction en message système', aide && JSON.stringify(aide));
+  a.client.envoyer({ t: 'chat', texte: '/faction' });
+  const info = await a.client.attendre('chat', 4000, m => m.type === 'systeme' && !/^(Usage|Description|Sous-commande|Exemple|Disponibilité|Alias)/.test(m.texte || '')).catch(() => null);
+  ok(!!info, 'SPEC-CMD-004 : après /faction help, aucune faction n\'existe encore (/faction informe normalement)', info && info.texte);
   a.client.envoyer({ t: 'chat', texte: '/faction creer Braves' });
   const rep = await a.client.attendre('chat', 4000, m => /Braves/.test(m.texte || '')).catch(() => null);
   ok(!!rep && /fondée/.test(rep.texte), 'SPEC-ARCHI-029 : /faction creer en solo fermé est arbitrée par le serveur, qui confirme la création', rep && rep.texte);

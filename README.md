@@ -289,9 +289,16 @@ conflit est signalé, et l'aide affiche toujours les touches en vigueur.
 **Manettes** (joueurs 2 à 4) : stick gauche déplacer, stick droit regarder,
 A sauter, L3 courir, LT miner, RT utiliser, LB/RB changer d'objet, Y inventaire.
 
-**Commandes du chat** : `/aide` `/heure` `/jour` `/nuit` `/ou` `/graine` `/vider`
-`/meteo` `/succes` `/rendu [realiste|simple]` `/rejoindre [adresse]` `/quitter` `/qui`,
-et `/admin …` pour un administrateur ou un modérateur connecté. `/jour` et `/nuit`
+**Commandes du chat** : `/list` (alias `/liste`, `/commandes`) affiche toutes les
+commandes disponibles, une ligne chacune, et `/help <commande>` détaille l'une d'elles
+(usage, description, sous-commandes, exemples ; alias, majuscules et `/` initial admis).
+Ces deux commandes, comme toute commande, sont aussi accessibles en suffixe :
+`/duel help` (ou `aide`) affiche l'aide sans rien exécuter. Pour mémoire : `/help`
+(ou `/aide`) `/heure` `/jour` `/nuit` `/ou` (alias `/pos`) `/graine` `/vider` `/meteo`
+`/succes` `/rendu [realiste|simple]` `/rejoindre [adresse]` `/quitter` `/qui`,
+`/faction …`, `/duel …` et `/admin …` pour un administrateur ou un modérateur
+connecté. Un joueur nommé « help » ou « aide » ne peut donc pas être défié par
+`/duel` (et un hôte ainsi nommé se joint par son adresse complète). `/jour` et `/nuit`
 sont des demandes au serveur : elles n'aboutissent qu'en mode créatif ou pour un
 administrateur, en solo comme en réseau. Dormir dans un lit (la nuit) fait passer
 la nuit quand TOUS les joueurs présents dorment.

@@ -11,15 +11,171 @@
   'use strict';
   var MC = G.MC = G.MC || {};
 
-  var LISTE = ['aide', 'heure', 'jour', 'nuit', 'ou', 'graine', 'vider',
-               'rejoindre', 'quitter', 'qui', 'meteo', 'succes', 'rendu', 'admin', 'faction', 'duel'];
+  /* Registre unique des commandes (SPEC-CMD-005) : il alimente /list, /help,
+     /<commande> help et /aide, et LISTE en est dérivée. Chaque entrée :
+       nom (principal), alias[], usage, resume, details (description plus
+       longue), sousCommandes[] (une ligne chacune, pour /admin, /faction et
+       /duel), exemples[], disponibilite : 'toujours' | 'en ligne' | 'admin'.
+     Toute commande ajoutée à `executer` doit y figurer (test de garde). Chaque
+     message produit tient dans MC.Chat.MAX_LONGUEUR (160) caractères. */
+  var REGISTRE = [
+    { nom: 'help', alias: ['aide'], usage: '/help [commande]',
+      resume: 'Aide d\'une commande, ou résumé de toutes',
+      details: 'Sans argument, résume toutes les commandes. Avec un nom (avec ou sans /, alias admis), détaille cette commande.',
+      sousCommandes: [], exemples: ['/help duel', '/help /faction'], disponibilite: 'toujours' },
+    { nom: 'list', alias: ['liste', 'commandes'], usage: '/list',
+      resume: 'Liste toutes les commandes disponibles',
+      details: 'Affiche une ligne par commande du jeu : usage, résumé et, le cas échéant, sa disponibilité.',
+      sousCommandes: [], exemples: ['/list'], disponibilite: 'toujours' },
+    { nom: 'heure', alias: [], usage: '/heure',
+      resume: 'Donne l\'heure, jour ou nuit, et la saison',
+      details: 'Indique l\'heure du monde, s\'il fait jour ou nuit, puis la saison, le jour de l\'année et l\'an.',
+      sousCommandes: [], exemples: ['/heure'], disponibilite: 'toujours' },
+    { nom: 'jour', alias: [], usage: '/jour',
+      resume: 'Demande au serveur de lever le jour',
+      details: 'Demande au serveur de ramener l\'heure à l\'aube. Il n\'accepte qu\'en mode créatif ou pour un administrateur.',
+      sousCommandes: [], exemples: ['/jour'], disponibilite: 'toujours' },
+    { nom: 'nuit', alias: [], usage: '/nuit',
+      resume: 'Demande au serveur de faire tomber la nuit',
+      details: 'Demande au serveur de passer l\'heure à la nuit. Il n\'accepte qu\'en mode créatif ou pour un administrateur.',
+      sousCommandes: [], exemples: ['/nuit'], disponibilite: 'toujours' },
+    { nom: 'ou', alias: ['pos'], usage: '/ou',
+      resume: 'Donne votre position (x / y / z)',
+      details: 'Affiche vos coordonnées exactes dans le monde, à un dixième de bloc près.',
+      sousCommandes: [], exemples: ['/ou', '/pos'], disponibilite: 'toujours' },
+    { nom: 'graine', alias: [], usage: '/graine',
+      resume: 'Donne la graine du monde',
+      details: 'Affiche la graine qui a généré ce monde : la même graine redonne le même monde.',
+      sousCommandes: [], exemples: ['/graine'], disponibilite: 'toujours' },
+    { nom: 'vider', alias: [], usage: '/vider',
+      resume: 'Vide la fenêtre de discussion',
+      details: 'Efface les messages affichés dans le chat. Rien d\'autre n\'est modifié.',
+      sousCommandes: [], exemples: ['/vider'], disponibilite: 'toujours' },
+    { nom: 'rejoindre', alias: [], usage: '/rejoindre [adresse]',
+      resume: 'Se connecte à un serveur',
+      details: 'Se connecte à l\'adresse donnée (nom ou IP, port éventuel), sinon au serveur local. Un hôte nommé help ou aide se joint par son adresse complète.',
+      sousCommandes: [], exemples: ['/rejoindre', '/rejoindre exemple.fr:8080'], disponibilite: 'toujours' },
+    { nom: 'quitter', alias: [], usage: '/quitter',
+      resume: 'Se déconnecte du serveur',
+      details: 'Quitte le serveur courant et revient à une partie en solo.',
+      sousCommandes: [], exemples: ['/quitter'], disponibilite: 'toujours' },
+    { nom: 'qui', alias: [], usage: '/qui',
+      resume: 'Liste les joueurs en ligne',
+      details: 'Affiche les noms des autres joueurs connectés au serveur. Hors ligne, répond « Hors ligne. ».',
+      sousCommandes: [], exemples: ['/qui'], disponibilite: 'en ligne' },
+    { nom: 'meteo', alias: [], usage: '/meteo',
+      resume: 'Décrit le temps, la température et le vent',
+      details: 'Affiche le temps qu\'il fait, la température à votre position (en °C) et la force du vent.',
+      sousCommandes: [], exemples: ['/meteo'], disponibilite: 'toujours' },
+    { nom: 'succes', alias: [], usage: '/succes',
+      resume: 'Compte les succès débloqués',
+      details: 'Affiche le nombre de succès débloqués sur le total existant.',
+      sousCommandes: [], exemples: ['/succes'], disponibilite: 'toujours' },
+    { nom: 'rendu', alias: [], usage: '/rendu [realiste|simple]',
+      resume: 'Règle le rendu lointain',
+      details: 'Sans argument, indique le rendu actuel. « realiste » active arbres, silhouettes, ombrage et voile d\'air au loin ; « simple » est plus sobre.',
+      sousCommandes: [], exemples: ['/rendu', '/rendu simple'], disponibilite: 'toujours' },
+    { nom: 'admin', alias: [], usage: '/admin <sous-commande>',
+      resume: 'Panneau d\'administration du serveur',
+      details: 'Traduit une demande en action réseau ; le serveur seul vérifie le rôle. Exige d\'être en ligne. Sans sous-commande, rappelle l\'usage.',
+      sousCommandes: [
+        '/admin auth <secret> — s\'authentifier comme administrateur',
+        '/admin joueurs — joueurs connectés',
+        '/admin sessions [nom] — sessions d\'un joueur ou de tous',
+        '/admin inventaire <nom> — inventaire d\'un joueur',
+        '/admin listes — listes blanche et noire',
+        '/admin journal [n] — n dernières lignes du journal (50 par défaut)',
+        '/admin liste ajouter|retirer <blanche|noire> <nom|email> <valeur> — gérer une liste',
+        '/admin invitation [usagesMax] [expireMin] [email] — créer une invitation',
+        '/admin invitation revoquer <jeton> — révoquer une invitation',
+        '/admin role <nom> [retirer] — nommer ou retirer un modérateur',
+        '/admin sanction <nom> <avertir|sourdine|expulser|bannir|liste_noire> [dureeMin] — sanctionner'],
+      exemples: ['/admin auth monSecret', '/admin sanction Vilain bannir 30'], disponibilite: 'admin' },
+    { nom: 'faction', alias: [], usage: '/faction [sous-commande]',
+      resume: 'Factions de joueurs (le serveur arbitre)',
+      details: 'Sans sous-commande, informe sur votre faction. Le serveur décide de tout ; sa réponse arrive dans le chat.',
+      sousCommandes: [
+        '/faction creer <nom> [couleur] [emblème] [devise…] — fonder une faction',
+        '/faction postuler <faction> — demander à entrer',
+        '/faction accepter|refuser <faction> <joueur> — répondre à une candidature',
+        '/faction inviter <faction> <joueur> — inviter un joueur',
+        '/faction rejoindre <faction> — accepter une invitation',
+        '/faction quitter <faction> — quitter la faction',
+        '/faction nommer <faction> <joueur> <rang> — donner un rang',
+        '/faction promouvoir|retrograder|exclure <faction> <joueur> — gérer un membre',
+        '/faction transmettre <faction> <joueur> — passer le commandement',
+        '/faction dissoudre <faction> — dissoudre la faction',
+        '/faction principale <faction> — choisir sa faction principale',
+        '/faction relation <faction> <cible> <alliee|neutre|ennemie> — déclarer une relation',
+        '/faction dire <texte> — parler aux membres de sa faction',
+        '/faction info — informations sur sa faction'],
+      exemples: ['/faction creer Loups', '/faction dire rendez-vous au col'], disponibilite: 'en ligne' },
+    { nom: 'duel', alias: [], usage: '/duel <nom>|accepter|refuser',
+      resume: 'Duel consenti avec un autre joueur',
+      details: 'Propose un duel à un joueur, ou répond à un défi reçu. Le serveur arbitre. Un joueur nommé help ou aide ne peut pas être défié ainsi.',
+      sousCommandes: [
+        '/duel <nom> — proposer un duel à ce joueur',
+        '/duel accepter — accepter le défi reçu',
+        '/duel refuser — refuser le défi reçu'],
+      exemples: ['/duel Alice', '/duel accepter'], disponibilite: 'en ligne' },
+  ];
+
+  var LISTE = REGISTRE.map(function (c) { return c.nom; });
+
+  function trouver(nom) {
+    nom = String(nom || '').replace(/^\//, '').toLowerCase();
+    for (var i = 0; i < REGISTRE.length; i++) {
+      if (REGISTRE[i].nom === nom || REGISTRE[i].alias.indexOf(nom) >= 0) return REGISTRE[i];
+    }
+    return null;
+  }
 
   function msg(texte) { return { messages: texte ? [texte] : [], actions: [] }; }
   function action(texte, act) { return { messages: texte ? [texte] : [], actions: [act] }; }
 
+  /* Message court de /help et /aide sans argument : un seul message, généré
+     depuis le registre (SPEC-CMD-001, SPEC-CMD-005). */
   function aide() {
-    return 'Commandes : /heure /jour /nuit /ou /graine /vider /aide /meteo /succes ' +
-           '/rendu [realiste|simple] /rejoindre [adresse] /quitter /qui /admin /faction … /duel <nom>|accepter|refuser';
+    return 'Commandes : ' + REGISTRE.map(function (c) {
+      return '/' + c.nom + (c.nom === 'help' ? ' <commande>' : '');
+    }).join(' ');
+  }
+
+  function inconnue(nom) {
+    var n = String(nom || '').replace(/^\//, '');
+    return 'Commande inconnue : /' + (n.length > 30 ? n.slice(0, 30) + '…' : n) + ' — tapez /list';
+  }
+
+  var MENTION = { 'en ligne': ' [en ligne]', admin: ' [admin]', toujours: '' };
+
+  /* /list (SPEC-CMD-002) : un message d'en-tête, puis un message par commande. */
+  function liste() {
+    var m = [REGISTRE.length + ' commandes — /help <commande> pour le détail'];
+    REGISTRE.forEach(function (c) {
+      m.push(c.usage + ' — ' + c.resume +
+             (c.alias.length ? ' (alias : ' + c.alias.map(function (a) { return '/' + a; }).join(' ') + ')' : '') +
+             MENTION[c.disponibilite]);
+    });
+    return { messages: m, actions: [] };
+  }
+
+  /* Aide détaillée d'une commande du registre (SPEC-CMD-003) : libellés fixes,
+     un message par ligne. */
+  function aideCommande(def) {
+    var m = ['Usage : ' + def.usage, 'Description : ' + def.details];
+    if (def.alias.length) m.push('Alias : ' + def.alias.map(function (a) { return '/' + a; }).join(' '));
+    def.sousCommandes.forEach(function (sc) { m.push('Sous-commande : ' + sc); });
+    def.exemples.forEach(function (ex) { m.push('Exemple : ' + ex); });
+    if (def.disponibilite === 'admin') m.push('Disponibilité : réservée aux administrateurs (le serveur vérifie le rôle)');
+    else if (def.disponibilite === 'en ligne') m.push('Disponibilité : en ligne (arbitrée par le serveur)');
+    return { messages: m, actions: [] };
+  }
+
+  /* /help [commande] et /aide [commande] */
+  function aideDe(args) {
+    if (!args.length) return msg(aide());
+    var def = trouver(args[0]);
+    return def ? aideCommande(def) : msg(inconnue(args[0]));
   }
 
   /* Panneau admin en jeu (SPEC-ADMIN-006), exposé via le chat plutôt qu'un
@@ -152,8 +308,19 @@
   function executer(cmd, ctx) {
     ctx = ctx || {};
     if (!cmd || !cmd.nom) return msg('Commande inconnue.');
+    var def = trouver(cmd.nom);
+    if (!def) return msg(inconnue(cmd.nom));
+    var args = cmd.args || [];
+    /* SPEC-CMD-004 : forme suffixée « /<commande> help|aide » — interceptée ICI,
+       avant tout case, donc sans exécuter la commande ni produire d'action. */
+    if (args.length && /^(help|aide)$/i.test(args[0])) return aideCommande(def);
+    cmd = { nom: def.nom, args: args };      // alias résolus : le switch ne voit que les noms principaux
     var DC = MC.DayCycle;
     switch (cmd.nom) {
+      case 'help':
+        return aideDe(args);
+      case 'list':
+        return liste();
       case 'heure': {
         var t = ctx.temps || 0;
         var txt = 'Il est ' + DC.clockString(t) +
@@ -170,15 +337,12 @@
       case 'nuit':
         return action('La nuit tombe.',
           { type: 'heure', valeur: (ctx.dureeJour || DC.DAY_LENGTH) * 0.7 });
-      case 'ou':
-      case 'pos': {
+      case 'ou': {
         var p = ctx.position || { x: 0, y: 0, z: 0 };
         return msg('Vous êtes en ' + p.x.toFixed(1) + ' / ' + p.y.toFixed(1) + ' / ' + p.z.toFixed(1));
       }
       case 'graine':
         return msg('Graine du monde : ' + ctx.graine);
-      case 'aide':
-        return msg(aide());
       case 'rejoindre': {
         var hote = (cmd.args && cmd.args[0]) || '';
         return action('Connexion' + (hote ? ' à ' + hote : ' au serveur local') + '…',
@@ -224,9 +388,9 @@
       case 'duel':
         return duel(cmd.args || []);
       default:
-        return msg('Commande inconnue : /' + cmd.nom);
+        return msg(inconnue(cmd.nom));
     }
   }
 
-  MC.Commandes = { LISTE: LISTE, executer: executer, aide: aide };
+  MC.Commandes = { LISTE: LISTE, REGISTRE: REGISTRE, executer: executer, aide: aide };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
