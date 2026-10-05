@@ -18,7 +18,8 @@
     it('SPEC-ARCHI-019 : les types de message sont distincts, fusionnés dans NP.MSG, avec un sens ; un budget anti-flood pour chaque c→s', function () {
       var attendus = ['PAUSE', 'PAUSE_ETAT', 'RESEAU', 'RESEAU_ETAT', 'ARRET', 'DORMIR', 'HISTOIRE_ETAT', 'SUCCES_DEBLOQUE', 'SUCCES_ETAT', 'FOUDROYE',
                       'VEHICULE_POSER', 'VEHICULE_MONTER', 'VEHICULE_DESCENDRE', 'VEHICULE_REPARER', 'VEHICULE_EVT',
-                      'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF', 'ACTIONNER'];
+                      'HISTOIRE_PARLER', 'HISTOIRE_REPONSE', 'HISTOIRE_NOTIF', 'ACTIONNER',
+                      'LIVRE_ECRIRE'];
       A.deep(Object.keys(K.MSG).sort(), attendus.slice().sort(), 'exactement ces types');
       var valeurs = attendus.map(function (k) { return K.MSG[k]; });
       A.equal(new Set(valeurs).size, attendus.length, 'aucun doublon interne');
@@ -190,6 +191,29 @@
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'refus', motif: 'pasvu' }), null, 'motif inconnu');
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 0, evt: 'monte', nom: 'CAMION!' }), null, 'nom mal formé');
       A.equal(K.validerVehiculeEvt({ t: 'vehicule_evt', j: 9, evt: 'monte' }), null, 'j hors borne');
+    });
+
+    it('SPEC-INTERIEUR-003 : LIVRE_ECRIRE (c→s) — contenu borné, caractères de contrôle retirés, jamais d\'auteur venu du client', function () {
+      A.equal(K.MSG.LIVRE_ECRIRE, 'livre_ecrire');
+      A.equal(K.SENS.livre_ecrire, 'c>s');
+      A.ok(K.BUDGETS_FLOOD.livre_ecrire > 0 && K.BUDGETS_FLOOD.livre_ecrire <= 10, 'budget anti-flood serré');
+      var ok = K.validerLivreEcrire({ t: 'livre_ecrire', j: 1, seq: 3, i: 4, titre: 'Mon\tjournal\n', pages: ['a\u0000b\r\nc\u202Ed', 'x'], signer: true,
+                                       auteur: 'Usurpateur', data: { signe: true } });
+      A.deep(ok, { t: 'livre_ecrire', j: 1, seq: 3, i: 4, titre: 'Mon journal ', pages: ['ab\ncd', 'x'], signer: true },
+             'tabulation et saut de ligne du titre en espaces, NUL et contrôle bidirectionnel retirés, auteur et data ignorés');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: ['p'] }).signer, false, 'signer par défaut : non');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: [] }), null, 'au moins une page');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: new Array(K.LIVRE_BRUT.PAGES_MAX + 1).fill('') }), null, 'trop de pages');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: ['x'.repeat(K.LIVRE_BRUT.PAGE_MAX + 1)] }), null, 'page trop longue');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: 'x'.repeat(K.LIVRE_BRUT.TITRE_MAX + 1), pages: [''] }), null, 'titre trop long');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 36, titre: '', pages: [''] }), null, 'case hors de l\'inventaire');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 0, i: 0, titre: '', pages: [''] }), null, 'seq invalide');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: 3, pages: [''] }), null, 'titre non textuel');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: [{}] }), null, 'page non textuelle');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', seq: 1, i: 0, titre: '', pages: [''], signer: 'oui' }), null, 'signer booléen');
+      A.equal(K.validerLivreEcrire({ t: 'livre_ecrire', j: 7, seq: 1, i: 0, titre: '', pages: [''] }), null, 'j hors borne');
+      A.deep(NP.valider({ t: 'livre_ecrire', seq: 2, i: 0, titre: 'T', pages: ['p'] }), { t: 'livre_ecrire', j: 0, seq: 2, i: 0, titre: 'T', pages: ['p'], signer: false },
+             'routé par NP.valider côté serveur');
     });
 
     it('SPEC-MECA-005 : ACTIONNER (c→s) — un joueur local actionne la commande d\'une case du monde, rien d\'autre', function () {

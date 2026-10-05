@@ -43,6 +43,8 @@
     FOUDROYE: 'foudroye',                 // s→c : { j } — ce joueur vient d'être foudroyé (lot P-SUCC)
     // amendement L29 (SPEC-MECA-005) : levier ou bouton actionné à la main ; le serveur vérifie la portée et le bloc
     ACTIONNER: 'actionner',               // c→s : { j, x, y, z } — actionner la commande (levier, bouton) de cette case
+    // amendement L24 (SPEC-INTERIEUR-003) : écrire ou signer le livre/la note d'une case ; le serveur applique et signe
+    LIVRE_ECRIRE: 'livre_ecrire',         // c→s : { j, seq, i, titre, pages[], signer } — contenu proposé, borné et nettoyé
   };
   var SENS = {
     pause: 'c>s', pause_etat: 's>c', reseau: 'c>s', reseau_etat: 's>c', arret: 'c>s',
@@ -51,6 +53,7 @@
     histoire_parler: 'c>s', histoire_reponse: 'c>s', histoire_notif: 's>c',
     succes_etat: 's>c', foudroye: 's>c',
     actionner: 'c>s',
+    livre_ecrire: 'c>s',
   };
   // évènements de VEHICULE_EVT et motifs de refus, listes fermées
   var EVT_VEHICULE = { POSE: 'pose', MONTE: 'monte', DESCEND: 'descend', REPARE: 'repare', REFUS: 'refus' };
@@ -98,6 +101,10 @@
   var BUDGETS_FLOOD = { pause: 10, reseau: 5, arret: 2, dormir: 10, histoire_parler: 5, histoire_reponse: 10,
                         vehicule_poser: 5, vehicule_monter: 10, vehicule_descendre: 10, vehicule_reparer: 5 };
   BUDGETS_FLOOD.actionner = 10;   // amendement L29 (SPEC-MECA-005) : dix clics par seconde et par joueur local
+  BUDGETS_FLOOD.livre_ecrire = 4; // amendement L24 (SPEC-INTERIEUR-003) : quatre écritures par seconde et par joueur local
+  /* amendement L24 (SPEC-INTERIEUR-003) : bornes BRUTES d'un LIVRE_ECRIRE — au-delà, le message est rejeté
+     entier ; en deçà, MC.Livres (serveur) borne encore au contenu exact d'un livre (titre, pages, taille JSON). */
+  var LIVRE_BRUT = { TITRE_MAX: 64, PAGES_MAX: 8, PAGE_MAX: 480, CASE_MAX: 35 };
 
   // ─── primitives ────────────────────────────────────────────────────────────
   function estFini(v) { return typeof v === 'number' && isFinite(v); }
@@ -198,6 +205,29 @@
     if (j < 0) return null;
     return { t: MSG.ACTIONNER, j: j, x: m.x, y: m.y, z: m.z };
   }
+  // ── amendement L24 (SPEC-INTERIEUR-003) : écrire un livre ou une note ──
+  /* Caractères de contrôle retirés (C0 sauf le saut de ligne des pages, DEL,
+     C1, séparateurs de ligne Unicode, contrôles bidirectionnels qui
+     retourneraient l'affichage) ; tabulation et retour chariot deviennent
+     espace / saut de ligne ; un titre tient sur une ligne. */
+  function nettoyerTexteLivre(v, multiligne) {
+    var s = String(v).replace(/\r\n?/g, '\n').replace(/\t/g, ' ');
+    s = s.replace(/[\u0000-\u0009\u000B-\u001F\u007F-\u009F\u2028\u2029\u200E\u200F\u202A-\u202E\u2066-\u2069]/g, '');
+    if (!multiligne) s = s.replace(/\n/g, ' ');
+    return s;
+  }
+  // Ni l'auteur ni le reste de la pile ne viennent du client : la signature est le nom que le SERVEUR connaît.
+  function validerLivreEcrire(m) {
+    if (!objet(m) || m.t !== MSG.LIVRE_ECRIRE) return null;
+    var j = joueurLocal(m.j);
+    if (j < 0 || !entierDans(m.seq, 1, BORNES.REV_MAX) || !entierDans(m.i, 0, LIVRE_BRUT.CASE_MAX)) return null;
+    if (typeof m.titre !== 'string' || m.titre.length > LIVRE_BRUT.TITRE_MAX) return null;
+    if (!Array.isArray(m.pages) || m.pages.length < 1 || m.pages.length > LIVRE_BRUT.PAGES_MAX) return null;
+    for (var k = 0; k < m.pages.length; k++) if (typeof m.pages[k] !== 'string' || m.pages[k].length > LIVRE_BRUT.PAGE_MAX) return null;
+    if (m.signer !== undefined && typeof m.signer !== 'boolean') return null;
+    return { t: MSG.LIVRE_ECRIRE, j: j, seq: m.seq, i: m.i, titre: nettoyerTexteLivre(m.titre, false),
+             pages: m.pages.map(function (pg) { return nettoyerTexteLivre(pg, true); }), signer: m.signer === true };
+  }
   // côté serveur : valide un message reçu d'un client parmi les nouveaux types c→s
   function valider(m) {
     if (!objet(m) || typeof m.t !== 'string') return null;
@@ -213,6 +243,7 @@
       case MSG.HISTOIRE_PARLER: return validerHistoireParler(m);
       case MSG.HISTOIRE_REPONSE: return validerHistoireReponse(m);
       case MSG.ACTIONNER: return validerActionner(m);
+      case MSG.LIVRE_ECRIRE: return validerLivreEcrire(m);
       default: return null;
     }
   }
@@ -385,5 +416,6 @@
     validerSuccesEtat: validerSuccesEtat, validerFoudroye: validerFoudroye,
     originesLocales: originesLocales, estAdresseLocale: estAdresseLocale, portsCandidats: portsCandidats,
     validerActionner: validerActionner,
+    validerLivreEcrire: validerLivreEcrire, LIVRE_BRUT: LIVRE_BRUT, nettoyerTexteLivre: nettoyerTexteLivre,
   };
 })(typeof globalThis !== 'undefined' ? globalThis : this);
