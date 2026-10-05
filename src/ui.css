@@ -74,6 +74,9 @@
 
   .held-name { position: absolute; left: 50%; bottom: 124px; transform: translateX(-50%);
                font-size: 13px; text-shadow: 0 1px 3px #000; transition: opacity .2s; }
+  /* SPEC-MECA-003 : ce que dit le bloc visé (niveau d’une batterie), sous le réticule */
+  .info-cible { position: absolute; left: 50%; top: calc(50% + 24px); transform: translateX(-50%);
+                font-size: 13px; font-weight: 600; text-shadow: 0 1px 3px #000; pointer-events: none; white-space: nowrap; }
 
   .toasts { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column;
             gap: 5px; align-items: flex-end; }
@@ -272,6 +275,7 @@
   .hud.compact .stats { bottom: 56px; transform: translateX(-50%) scale(.85); }
   .hud.compact .hotbar { bottom: 10px; }
   .hud.compact .held-name { bottom: 92px; font-size: 11px; }
+  .hud.compact .info-cible { top: calc(50% + 18px); font-size: 11px; }
   .hud.compact .pip { width: 10px; height: 10px; }
   .hud.mort::after { content: ""; position: absolute; inset: 0;
                      background: rgba(120,10,10,.35); pointer-events: none; }

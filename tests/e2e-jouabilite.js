@@ -834,4 +834,147 @@
       key('Escape'); fakeLock(g, true); await frames(2);
     } finally { await quitterPartie(g, p); }
   });
+
+  // ─── L29 mécanismes : levier, énergie, niveau de batterie (SPEC-MECA-002/003/005/006) ─
+  /* Pose au clic droit le bloc de la case `slot` sur la face `face` de
+     `support` ; rend la case posée (le serveur, qui fait foi, l'a confirmée
+     ou l'a fait disparaître : on attend qu'elle tienne). */
+  async function poserSur(g, p, slot, support, face, id, quoi) {
+    var st = g.player.state;
+    st.selected = slot;
+    await frames(2);
+    A.ok(await viser(g, support, face), 'la visée touche ' + quoi + ' — support (' + support.x + ',' + support.y + ',' + support.z + '), face ' + JSON.stringify(face) + ', visée ' + JSON.stringify(g.player.aim()));
+    var visee = g.player.aim(), tenu = JSON.stringify(g.player.held()), tClic = maintenant();
+    var fv = face || { x: 0, y: 1, z: 0 };
+    A.ok(visee && visee.nx === fv.x && visee.ny === fv.y && visee.nz === fv.z, 'la visée touche la bonne face pour ' + quoi + ' (attendue ' + JSON.stringify(fv) + ', visée ' + JSON.stringify(visee) + ', joueur ' + JSON.stringify(st.pos) + ')');
+    mouseDown(g, 2); await frames(1); mouseUp(2);
+    var n = face || { x: 0, y: 1, z: 0 };
+    var pos = { x: support.x + n.x, y: support.y + n.y, z: support.z + n.z };
+    await sonder(function () { return g.world.getBlock(pos.x, pos.y, pos.z) === id; }, 15000);
+    A.equal(g.world.getBlock(pos.x, pos.y, pos.z), id, quoi + ' posé(e) en (' + pos.x + ',' + pos.y + ',' + pos.z + ') — visée ' + JSON.stringify(visee) +
+      ', en main ' + tenu + ', joueur ' + JSON.stringify(st.pos) + '\n' +
+      J.resumerMessages(p.sp.recus, function (m) { return m.t === 'bloc' || m.t === 'inv_maj' || m.t === 'refus'; }, tClic) +
+      '\n envoyés :\n' + J.resumerMessages(p.sp.envoyes, null, tClic));
+    return pos;
+  }
+  // la face horizontale d'un bloc tournée vers le joueur
+  function faceVersJoueur(g, b) {
+    var st = g.player.state, dx = st.pos.x - (b.x + 0.5), dz = st.pos.z - (b.z + 0.5);
+    return Math.abs(dx) > Math.abs(dz) ? { x: dx > 0 ? 1 : -1, y: 0, z: 0 } : { x: 0, y: 0, z: dz > 0 ? 1 : -1 };
+  }
+  /* Un voisin horizontal du sol choisi, au même niveau, avec de l'air sur trois
+     hauteurs, le plus « de côté » vu du joueur : ce qu'on y empile (batterie,
+     générateur) ne masque ni le sol choisi ni ce qu'on posera dessus. */
+  function solVoisin(g, b) {
+    var C = Cr(), w = g.world, st = g.player.state, meilleur = null, sMin = 2;
+    var ux = st.pos.x - (b.x + 0.5), uz = st.pos.z - (b.z + 0.5), nu = Math.hypot(ux, uz) || 1;
+    [[1, 0], [-1, 0], [0, 1], [0, -1]].forEach(function (v) {
+      var x = b.x + v[0], z = b.z + v[1];
+      if (!C.isSolid(w.getBlock(x, b.y, z)) || w.getBlock(x, b.y + 1, z) !== 0 || w.getBlock(x, b.y + 2, z) !== 0 || w.getBlock(x, b.y + 3, z) !== 0) return;
+      if (!voisinageSec(g, x, b.y, z)) return;
+      var s = Math.abs(v[0] * ux + v[1] * uz) / nu;      // 0 : perpendiculaire au regard
+      if (s < sMin) { sMin = s; meilleur = { x: x, y: b.y, z: z }; }
+    });
+    return meilleur;
+  }
+  /* Un sol visable SOUS le niveau des pieds (un bloc empilé dessus reste sous
+     les yeux) qui a un voisin libre pour la batterie et le générateur. */
+  async function solMecanisme(g) {
+    var st = g.player.state, fy = Math.floor(st.pos.y + 0.01), rates = {};
+    for (var k = 0; k < 40; k++) {
+      var b = chercherSol(g, function (x, y, z) { return y >= fy || !!rates[x + ',' + y + ',' + z]; });
+      if (!b) return null;
+      var nb = solVoisin(g, b);
+      if (nb && await viser(g, nb) && await viser(g, b)) return b;   // les deux faces du dessus visables (ni plante ni relief devant)
+      rates[b.x + ',' + b.y + ',' + b.z] = 1;
+    }
+    return null;
+  }
+  /* Comme demarrerPartie, mais la graine retenue doit offrir un sol pour le
+     mécanisme (solMecanisme) : les graines sont fixes, celles qui n'en ont
+     pas sont écartées avec leur motif. */
+  async function partieMecanisme(g, inv) {
+    var graineAvant = g.world.seed, ecartees = [];
+    for (var k = 0; k < GRAINES.length; k++) {
+      var p = await connecterServeurJeu(g, 'survie', inv, GRAINES[k], graineAvant);
+      var terrain = await terrainSousJoueur(g, p);
+      if (terrain.ok) {
+        if (!(await attendreRepos(g, p, true))) terrain = { ok: false, motif: 'joueur jamais au repos — ' + attendreRepos.diag };
+        else {
+          p.solMeca = await solMecanisme(g);
+          if (p.solMeca) return p;
+          terrain = { ok: false, motif: 'aucun sol visable sous les pieds avec un voisin libre — ' + diagSol(g, {}, 0, 0) };
+        }
+      }
+      ecartees.push(GRAINES[k] + ' : ' + terrain.motif);
+      await quitterPartie(g, p);
+    }
+    A.ok(false, 'préparation : aucune graine de la liste fixe ne convient au mécanisme — ' + ecartees.join(' ; '));
+  }
+  function texteInfoCible() {
+    var l = [].slice.call(document.querySelectorAll('.info-cible')).filter(function (el) { return el.style.display !== 'none' && el.textContent; });
+    return l.length ? l[0].textContent : '';
+  }
+  function pourcent(t) { var m = /(\d+) %/.exec(t || ''); return m ? +m[1] : -1; }
+
+  e2e('SPEC-MECA-005/006 : un levier actionné au clic droit allume une lampe seulement alimentée ; SPEC-MECA-002/003 : le générateur nourri de charbon charge la batterie, dont le niveau s\'affiche', {
+        "teste": "dans la vraie page contre un vrai serveur de jeu, en survie : poser générateur thermique, batterie, lampe et levier au clic droit ; actionner le levier au clic droit (message ACTIONNER, état décidé par le serveur) : la lampe reste éteinte sans énergie ; viser la batterie affiche « Batterie : 0 % » sous le réticule ; ranger du charbon dans le générateur par son écran de conteneur : la lampe s'allume et le niveau affiché de la batterie monte",
+        "pourquoi": "les mécanismes ne s'obtenaient et ne s'utilisaient qu'en théorie : levier, bouton et plaque n'étaient pas actionnables, le combustible jamais fourni, la batterie jamais déchargée ni son niveau affiché",
+        "attendu": "levier à l'état 1 reçu du serveur, lampe éteinte tant qu'aucune énergie, « Batterie : 0 % » puis lampe allumée et pourcentage qui augmente après le charbon ; captures avant et après",
+        "delai": 240
+  }, async function (g) {
+    var C = Cr(), B = C.B;
+    var p = await partieMecanisme(g, [[B.GENERATEUR_THERMIQUE, 1], [B.BATTERIE, 1], [B.LAMPE_ETEINTE, 1], [B.LEVIER_CIRCUIT, 1], [C.I.COAL, 4]]);
+    try {
+      var st = g.player.state;
+      await preparer(function () { return st.inv.count(C.I.COAL) === 4 && st.inv.count(B.LEVIER_CIRCUIT) === 1; }, 30000, 'générateur, batterie, lampe, levier et charbon de départ à l\'inventaire');
+      var b = p.solMeca, nb = solVoisin(g, b);
+      T.etape('poser');
+      // batterie et générateur empilés sur le sol voisin, lampe sur le sol choisi (contre la batterie), levier sur la lampe
+      var bat = await poserSur(g, p, 1, nb, null, B.BATTERIE, 'la batterie');
+      var gen = await poserSur(g, p, 0, bat, null, B.GENERATEUR_THERMIQUE, 'le générateur thermique, sur la batterie');
+      var lampe = await poserSur(g, p, 2, b, null, B.LAMPE_ETEINTE, 'la lampe, contre la batterie');
+      var levier = await poserSur(g, p, 3, lampe, null, B.LEVIER_CIRCUIT, 'le levier, sur la lampe');
+      capture('mecanisme-pose');
+
+      T.etape('actionner le levier');
+      A.ok(await viser(g, levier, faceVersJoueur(g, levier)), 'la visée touche le levier');
+      mouseDown(g, 2); await frames(1); mouseUp(2);
+      await sonder(function () { return (g.world.getEtat(levier.x, levier.y, levier.z) & 1) === 1; }, 15000);
+      A.equal(g.world.getEtat(levier.x, levier.y, levier.z) & 1, 1, 'SPEC-MECA-005 : au clic droit, le levier est actionné (état reçu du serveur)\n' +
+        J.resumerMessages(p.sp.envoyes, function (m) { return m.t === 'actionner'; }, 0));
+      var tLev = maintenant();
+      var ech = await observer(function () { return g.world.getBlock(lampe.x, lampe.y, lampe.z); }, tLev, 1500);
+      A.ok(ech.every(function (e) { return e.v === B.LAMPE_ETEINTE; }), 'SPEC-MECA-006 : commandée mais sans énergie (batterie vide, générateur froid), la lampe reste éteinte');
+
+      T.etape('niveau de la batterie');
+      var faceBat = faceVersJoueur(g, bat);
+      A.ok(await viser(g, bat, faceBat), 'la visée touche la batterie');
+      await sonder(function () { return /Batterie : \d+ %/.test(texteInfoCible()); }, 5000);
+      A.equal(texteInfoCible(), 'Batterie : 0 %', 'SPEC-MECA-003 : viser la batterie affiche son niveau sous le réticule');
+      capture('batterie-vide');
+
+      T.etape('combustible');
+      A.ok(await viser(g, gen, faceVersJoueur(g, gen)), 'la visée touche le générateur');
+      var avant = g.ui.container && g.ui.container.cont;
+      mouseDown(g, 2); await frames(1); mouseUp(2);
+      await sonder(function () { return g.ui.container && g.ui.container.cont && g.ui.container.cont !== avant; }, 30000);
+      A.ok(g.ui.container && g.ui.container.cont && g.ui.container.kind === 'distributeur', 'SPEC-MECA-002 : le générateur ouvre son conteneur de combustible (serveur)' + await journalServeurJeu());
+      A.ok(/Générateur thermique/.test((document.querySelector('.inv-screen h2') || {}).textContent || ''), 'l\'écran est titré « Générateur thermique »');
+      cliquer(casesBarre()[4], 0);     // le charbon en main
+      cliquer(casesCoffre()[0], 0);    // rangé dans le générateur
+      await frames(3);
+      key('Escape'); fakeLock(g, true); g.input.setState('playing');
+      await preparer(function () { return !g.ui.isContainerOpen(); }, 3000, 'Échap referme le générateur');
+      await sonder(function () { return g.world.getBlock(lampe.x, lampe.y, lampe.z) === B.LAMPE_ALLUMEE; }, 15000);
+      A.equal(g.world.getBlock(lampe.x, lampe.y, lampe.z), B.LAMPE_ALLUMEE, 'SPEC-MECA-002/006 : le charbon brûle, le réseau est alimenté, la lampe commandée s\'allume');
+      A.ok(await viser(g, bat, faceBat), 'la visée touche de nouveau la batterie');
+      await sonder(function () { return pourcent(texteInfoCible()) > 0; }, 15000);
+      var n1 = pourcent(texteInfoCible());
+      A.ok(n1 > 0, 'SPEC-MECA-003 : la batterie se charge du surplus et son niveau affiché monte (' + texteInfoCible() + ')');
+      await sonder(function () { return pourcent(texteInfoCible()) > n1; }, 15000);
+      A.ok(pourcent(texteInfoCible()) > n1, 'SPEC-MECA-003 : le niveau affiché continue de monter (' + n1 + ' % → ' + texteInfoCible() + ')');
+      capture('batterie-en-charge');
+    } finally { await quitterPartie(g, p); }
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

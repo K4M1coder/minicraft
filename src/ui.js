@@ -768,8 +768,20 @@
       }
 
       var h = p.inv.slots[p.selected];
-      heldName.textContent = h ? C.nameOf(h.id) : '';
+      heldName.textContent = h ? nomPile(h) : '';
       heldName.style.opacity = h ? 1 : 0;
+
+      /* SPEC-MECA-003 : une batterie posée affiche son niveau quand on la vise
+         (l'état du bloc, diffusé par le serveur qui la charge et la décharge). */
+      var infoCible = racine.querySelector('.info-cible');
+      if (!infoCible) { infoCible = el('div', 'info-cible'); racine.appendChild(infoCible); }
+      var texteCible = '';
+      var visee = joueur.aim && !p.dead ? joueur.aim() : null;
+      if (visee && g.world && visee.block === C.B.BATTERIE && MC.Circuits) {
+        texteCible = C.nameOf(C.B.BATTERIE) + ' : ' + MC.Circuits.texteNiveau(g.world.getEtat(visee.x, visee.y, visee.z));
+      }
+      if (infoCible.textContent !== texteCible) infoCible.textContent = texteCible;
+      infoCible.style.display = texteCible ? '' : 'none';
 
       if (p.mining && isFinite(p.mining.total) && p.mining.total > 0) {
         miningRing.style.display = 'block';
@@ -1473,6 +1485,12 @@
     function setRegles(r) { regles = r; }
     function estCreatif() { return !!(regles && regles.blocsIllimites); }
 
+    // nom d'une pile ; une batterie dit son niveau (SPEC-MECA-003 : il voyage dans data.niveau)
+    function nomPile(stack) {
+      var n = C.nameOf(stack.id);
+      if (stack.id === C.B.BATTERIE && MC.Circuits) n += ' (' + MC.Circuits.texteNiveau(stack.data && stack.data.niveau) + ')';
+      return n;
+    }
     function slotEl(cls, stack, onLeft, onRight) {
       var s = el('div', 'slot ' + (cls || ''));
       var ico = el('div', 'ico');
@@ -1481,7 +1499,7 @@
       var n = el('span', 'n', stack && stack.n > 1 ? String(stack.n) : '');
       s.appendChild(n);
       if (stack) {
-        s.title = C.nameOf(stack.id) + (stack.n > 1 ? ' ×' + stack.n : '');
+        s.title = nomPile(stack) + (stack.n > 1 ? ' ×' + stack.n : '');
         // jauge d'usure : seuls les outils en ont une
         var max = C.durabilityOf(stack.id);
         if (max && stack.dmg) {
@@ -1800,7 +1818,8 @@
       invScreen.innerHTML = '';
 
       var box = el('div', 'inv-box');
-      var titre = container.kind === 'craft' ? 'Établi'
+      var titre = (container.cont && container.cont.titre) ? container.cont.titre
+                : container.kind === 'craft' ? 'Établi'
                 : container.kind === 'furnace' ? 'Fourneau'
                 : container.kind === 'trade' ? ((container.pnj && container.pnj.titre) || 'Villageois')
                 : container.kind === 'chest' ? 'Coffre'

@@ -415,6 +415,9 @@
     /* SPEC-ARCHI-025 : un joueur local se couche (actif) ou se lève — le serveur
        tient le compte des dormeurs et fait passer la nuit. */
     function dormir(j, actif) { return envoyer({ t: NP.MSG.DORMIR, j: j || 0, actif: actif !== false }); }
+    /* SPEC-MECA-005 : actionner le levier ou le bouton de cette case — le serveur
+       revérifie portée et bloc, décide du nouvel état et le diffuse (BLOC). */
+    function actionner(x, y, z, j) { return envoyer({ t: NP.MSG.ACTIONNER, j: j || 0, x: x, y: y, z: z }); }
 
     /* `caseInv` (facultatif) : la case d'inventaire d'où vient le bloc posé —
        le serveur y retire l'objet (SPEC-SYNC-028). */
@@ -487,7 +490,7 @@
 
     return {
       connecter: connecter, deconnecter: deconnecter, enLigne: enLigne,
-      envoyer: envoyer, dormir: dormir, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
+      envoyer: envoyer, dormir: dormir, actionner: actionner, histoireParler: histoireParler, histoireReponse: histoireReponse, poserBloc: poserBloc, envoyerChat: envoyerChat, admin: admin, distribuerMaj: distribuerMaj, troc: troc,
       demanderOverrides: demanderOverrides,
       ouvrirConteneur: ouvrirConteneur, fermerConteneur: fermerConteneur,
       poserVehicule: poserVehicule, monterVehicule: monterVehicule, descendreVehicule: descendreVehicule, reparerVehicule: reparerVehicule,

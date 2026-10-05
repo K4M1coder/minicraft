@@ -464,6 +464,9 @@
         conteneurOuvert = { cle: v.cle, mirror: mirror,
                             confirme: { rev: v.rev, slots: mirror.slots.map(copiePile), four: mirror.four ? { burn: mirror.four.burn, cook: mirror.four.cook } : null } };
         var kindUi = v.type === 'furnace' ? 'furnace' : v.type === 'distributeur' ? 'distributeur' : 'chest';
+        // SPEC-MECA-002 : le générateur thermique range son combustible dans un conteneur générique à 9 cases
+        var posCont = String(v.cle).split(',').map(Number);
+        if (posCont.length === 3 && world.getBlock(posCont[0], posCont[1], posCont[2]) === B.GENERATEUR_THERMIQUE) mirror.titre = 'Générateur thermique — combustible';
         ui.openContainer(kindUi, player.state.inv, null, v.cle, undefined, mirror);
         input.setState('ui');
       },
@@ -2386,6 +2389,8 @@
         return;
       }
       if (res === 'dormir') { dormir(target); return; }
+      // SPEC-MECA-005 : levier ou bouton — le serveur valide et diffuse le nouvel état
+      if (res === 'actionner') { net.actionner(target.x, target.y, target.z, 0); audio.jouer(MC.Ambiance.sonInteraction('interface'), interactionOpts(target)); return; }
       if (res === 'exposer' || res === 'retirer') { interagirExposition(res, target); return; }
       if (res === 'livre') { ouvrirLivreEnMain(); return; }
       // SPEC-AUDIO-003 : la pose sonne selon la matière du bloc posé, là où il est posé
@@ -2860,6 +2865,7 @@
       if (res === 'eat') net.manger(idMain, j.index, pl.state.selected);
       if (res.indexOf('vehicule:') === 0) { poserVehicule(pl, res.slice(9), target, j.index); return; }
       if (res === 'dormir') { dormir(target, j); return; }
+      if (res === 'actionner') { net.actionner(target.x, target.y, target.z, j.index); audio.jouer(MC.Ambiance.sonInteraction('interface'), interactionOpts(target)); return; }
       if (res.indexOf('open:') === 0) {
         // seules les interfaces du joueur 1 s'ouvrent : un seul clavier
         if (j.index !== 0) return;
@@ -3087,6 +3093,23 @@
     }
     function frameMonde(dt) {
       world.tick(dt, 14, null, optionsTickClient());
+      sonnerAlarmes(dt);
+    }
+    /* SPEC-MECA-006 : une alarme en marche (état diffusé par le serveur, bit 0)
+       sonne, spatialisée, à 32 blocs au plus du joueur — un coup toutes les
+       0,6 s. Aucune décision ici : c'est le tic de circuits du serveur qui
+       l'allume (signal ET énergie). */
+    var alarmeT = 0;
+    function sonnerAlarmes(dt) {
+      alarmeT += dt;
+      if (alarmeT < 0.6 || !world.circuits || !player) return;
+      alarmeT = 0;
+      var p = player.state.pos;
+      world.circuits.forEach(function (c) {
+        if (c[3] !== B.ALARME || !(world.getEtat(c[0], c[1], c[2]) & 1)) return;
+        if (Math.abs(c[0] - p.x) > 32 || Math.abs(c[1] - p.y) > 32 || Math.abs(c[2] - p.z) > 32) return;
+        audio.jouer(MC.Ambiance.sonInteraction('interface'), interactionOpts({ x: c[0], y: c[1], z: c[2] }));
+      });
     }
 
     function frameConteneurs(dt) {
