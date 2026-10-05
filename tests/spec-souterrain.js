@@ -410,7 +410,10 @@
      génération d'avant, pour chacun de ces chunks (relevé fait en chargeant les
      deux versions côte à côte) : rien d'autre n'a changé. La grille couvre
      ±6 chunks autour de l'origine (un sur trois retenu ici), la suite un chunk de
-     chaque genre de structure trouvé à moins de 1 500 blocs. */
+     chaque genre de structure trouvé à moins de 1 500 blocs. Le chunk (-96,9) de la
+     graine 20260921 contient un lieu : ses empreintes (entière et masquée) ont été
+     relevées de nouveau aux toitures et intérieurs de SPEC-CONSTR-003 et
+     SPEC-INTERIEUR-001, qui ne changent que des bâtiments. */
   var EMPREINTES_L35 = {
       7: [[-6, -6, '32c8d525', 'df93e985', '55fdb2cd'],
         [-6, 0, '9a2c5c6c', 'a8362ecc', '677d4ec0'],
@@ -532,7 +535,7 @@
         [-94, -53, '2e9bb202', '442affca', '97260b36'],
         [-95, -47, 'a2bc54f8', 'a4e7ca95', 'e24c40b9'],
         [-95, -31, '4a7e254f', 'c990f9e9', 'b10e118b'],
-        [-96, 9, 'a9833417', '31cc59d2', '91a090d5'],
+        [-96, 9, 'a9833417', '825c91fb', 'b0082ac4'],
         [-86, -74, 'fb2f8dbb', 'e53f1d9c', 'ea61f4ea'],
         [-88, -46, 'a610295d', 'd94a1afb', 'aa45af74'],
         [-89, 17, 'dffe3b97', '675eb07d', '4e100547'],
