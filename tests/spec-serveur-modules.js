@@ -252,6 +252,30 @@
       A.equal(S.cheminSur('/a%00b'), null, 'octet nul refusé');
     });
 
+    it('SPEC-NET-020 : serveur-http — liste blanche : seules les ressources du jeu, jamais le dépôt, quel que soit l\'encodage', function () {
+      var S = { EP: {}, hote: hote(), fs: fs, path: path, RACINE: RACINE, CONF: {}, DOSSIER_PARTIES: path.join(RACINE, 'parties') };
+      MC.ServeurHttp.installer(S);
+      A.equal(S.cheminSur('/index.html'), path.join(RACINE, 'index.html'));
+      A.equal(S.cheminSur('/admin.html'), path.join(RACINE, 'admin.html'));
+      A.equal(S.cheminSur('/src/core.js?v=3'), path.join(RACINE, 'src', 'core.js'));
+      A.equal(S.cheminSur('/src/ui.css'), path.join(RACINE, 'src', 'ui.css'));
+      ['/.git', '/.git/HEAD', '/%2egit/HEAD', '/..%2f.git/config', '/src/../.git/HEAD', '/%252e%252e%252f.git/HEAD', '/src\\..\\.git\\HEAD',
+        '/src%5c..%5c.git%5cHEAD', '/.GIT/HEAD', '/index.html::$DATA', '/GIT~1/HEAD', '/.git./HEAD', '/.git%20/HEAD', '/SRC/core.js',
+        '/src/core.js.', '/src/core.js%20', '/INDEX.HTML', '/server.js', '/README.md', '/SPECS.md', '/logs/x.log', '/.claude/settings.json',
+        '/node_modules/x/index.js', '/tools/paquet.js', '/tests/index.html', '/tests/', '/src/sous/x.js', '/%E0%A4%A'].forEach(function (c) {
+        A.equal(S.cheminSur(c), null, c + ' refusé');
+      });
+      A.equal(S.cheminBanc('/tests/'), path.join(RACINE, 'tests', 'index.html'), 'banc : sa page');
+      A.equal(S.cheminBanc('/SPECS.md'), path.join(RACINE, 'SPECS.md'), 'banc : SPECS.md relu par la page');
+      A.equal(S.cheminBanc('/tests/donnees/ids.json'), path.join(RACINE, 'tests', 'donnees', 'ids.json'));
+      A.equal(S.cheminBanc('/tests/resultats/2026-10-04_14-32-20_pr/captures/0001-debut.jpg'),
+        path.join(RACINE, 'tests', 'resultats', '2026-10-04_14-32-20_pr', 'captures', '0001-debut.jpg'));
+      ['/tests/../.git/HEAD', '/tests/registre/impact.json', '/tests/resultats/../../server.js', '/tests\\..\\server.js', '/tests/INDEX.html',
+        '/tests/index.html::$DATA', '/tests/resultats/x/../../../.git/HEAD', '/index.html', '/README.md'].forEach(function (c) {
+        A.equal(S.cheminBanc(c), null, 'banc : ' + c + ' refusé');
+      });
+    });
+
     it('SPEC-SERVEUR-008 : serveur-banc — une route du banc qui lève répond 500 en JSON, le serveur continue', function () {
       var lignes = [];
       var S = { EP: {}, hote: hote(), fs: fs, path: path, RACINE: RACINE, NP: NP, C: C, PARAMS: {}, CONF: {}, journal: journalFactice(lignes),

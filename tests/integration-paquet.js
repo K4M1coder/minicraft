@@ -91,6 +91,13 @@ async function attendrePret(port) {
       ok(src.code === 200, 'SPEC-PACK-001 : les modules sont servis depuis l\'archive');
       const admin = await requete(PORT, '/admin.html');
       ok(admin.code === 200, 'SPEC-PACK-001 : la console d\'administration est servie depuis l\'archive');
+      // SPEC-NET-020 : l'archive ne sert que le jeu — ni le serveur, ni les lanceurs, ni les parties
+      const servis = [];
+      for (const c of ['/server.js', '/README.md', '/start.cmd', '/start.sh', '/parties/LISEZMOI.txt', '/tests/', '/tests/version']) {
+        const r = await requete(PORT, c);
+        if (r.code === 200 || r.code === 301) servis.push(c + ' → ' + r.code);
+      }
+      ok(!servis.length, 'SPEC-NET-020 : l\'archive ne sert ni server.js, ni README, ni lanceurs, ni parties, ni banc', servis.join(', '));
     }
     /* SPEC-PACK-001 : hors dépôt git (l'archive n'a pas de .git), le démarrage
        est SILENCIEUX sur la sortie d'erreur — aucun « fatal: not a git

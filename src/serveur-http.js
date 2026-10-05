@@ -20,7 +20,7 @@
       sauvegarderMondeSync, clients, journal,
     } = S;
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
-    Object.assign(S, { cheminSur, lireCorpsJSON, repondreJSON, refusRequeteLocale, servir });
+    Object.assign(S, { cheminSur, cheminBanc, lireCorpsJSON, repondreJSON, refusRequeteLocale, servir });
 
     // ── fichiers statiques ───────────────────────────────────────────────────────
     const TYPES = {
@@ -29,16 +29,48 @@
       '.md': 'text/markdown; charset=utf-8', '.png': 'image/png', '.ico': 'image/x-icon',
     };
 
-    /* Piège classique : « ../../etc/passwd ». On résout le chemin ABSOLU puis on
-       vérifie qu'il reste sous la racine — comparer les chaînes avant résolution
-       ne suffit pas, l'encodage URL permet de contourner. */
-    function cheminSur(urlPath) {
-      let brut;
-      try { brut = decodeURIComponent(urlPath.split('?')[0]); }
+    /* LISTE BLANCHE (SPEC-NET-020, revue de sécurité) : le dossier du serveur
+       est un dépôt complet — .git, .claude/, node_modules/, logs/, parties/,
+       outils, cahiers, sources du serveur. Filtrer ce qui est interdit ne tient
+       pas sous Windows, qui ignore la casse, le point ou l'espace final d'un
+       nom, accepte l'antislash comme séparateur, les flux NTFS (« ::$DATA »)
+       et les noms courts 8.3 (« GIT~1 ») : on ne sert QUE des chemins décrits
+       exactement, une fois l'URL décodée, en minuscules ASCII, chiffres et
+       tirets — sans point de tête, sans antislash, sans « : », « ~ », « % »
+       (un double encodage reste refusé) ni espace. */
+    const RESSOURCES_JEU = [
+      /^\/(index|admin)\.html$/,
+      /^\/src\/[a-z0-9][a-z0-9-]*\.(js|css)$/,
+    ];
+    /* Le banc (SPEC-BANC-120/122) : servi seulement avec --tests et à une
+       requête locale (voir `servir`) ; SPECS.md est relu par sa page. */
+    const RESSOURCES_BANC = [
+      /^\/SPECS\.md$/,
+      /^\/tests\/[a-z0-9][a-z0-9-]*\.(html|js|css)$/,
+      /^\/tests\/donnees\/[a-z0-9][a-z0-9-]*\.json$/,
+      /^\/tests\/resultats\/[A-Za-z0-9][A-Za-z0-9_-]*\/(rapport\.html|resultats\.json|captures\/[A-Za-z0-9][A-Za-z0-9_-]*\.(png|jpg|jpeg|webp))$/,
+    ];
+    function decoderChemin(urlPath) {
+      try { return decodeURIComponent(String(urlPath).split('?')[0]); }
       catch (e) { return null; }
-      if (brut.indexOf('\0') >= 0) return null;                 // octet nul
+    }
+    /* Ressource du JEU (tous les modes) : chemin absolu sur disque, ou null. */
+    function cheminSur(urlPath) {
+      let brut = decoderChemin(urlPath);
       if (brut === '/' || brut === '') brut = '/index.html';
-      else if (brut === '/tests/') brut = '/tests/index.html';   // page du banc (SPEC-BANC-120)
+      return resoudre(brut, RESSOURCES_JEU);
+    }
+    /* Ressource du BANC : chemin absolu sur disque, ou null. */
+    function cheminBanc(urlPath) {
+      let brut = decoderChemin(urlPath);
+      if (brut === '/tests/') brut = '/tests/index.html';   // page du banc (SPEC-BANC-120)
+      return resoudre(brut, RESSOURCES_BANC);
+    }
+    /* Piège classique : « ../../etc/passwd ». La liste blanche l'exclut déjà ;
+       on résout tout de même le chemin ABSOLU et on vérifie qu'il reste sous la
+       racine, hors des parties (défense en profondeur). */
+    function resoudre(brut, motifs) {
+      if (typeof brut !== 'string' || !motifs.some(re => re.test(brut))) return null;
       const resolu = path.resolve(RACINE, '.' + brut);
       const racine = path.resolve(RACINE);
       // le séparateur final évite que /racine-bis passe pour /racine
@@ -309,21 +341,40 @@
       if (!EP.reseauOuvert && !S.hoteLocal(req)) { res.writeHead(403); res.end('403 hôte refusé'); return; }
       if (req.url.split('?')[0].indexOf('/api/parties') === 0) { traiterApiParties(req, res); return; }
       if (req.url.indexOf('/admin/api/') === 0 && traiterApiAdmin(req, res)) return;
-      if (req.url.split('?')[0] === '/tests/resultats' && S.traiterResultatsTest(req, res)) return;
-      if (req.url.split('?')[0] === '/tests/version' && traiterVersion(req, res)) return;
-      if (req.url.split('?')[0] === '/tests/serveur-histoire' && S.traiterServeurHistoireTest(req, res)) return;
-      if (req.url.indexOf('/tests/serveur-jeu') === 0 && S.traiterServeurJeuTest(req, res)) return;
-      if (req.url.indexOf('/tests/cahiers') === 0 && S.filetErreurTests(S.traiterCahiers, req, res)) return;
+      const brut = req.url.split('?')[0];
+      if (brut === '/tests' || brut.indexOf('/tests/') === 0 || brut === '/SPECS.md') { servirBanc(req, res, brut); return; }
+      servirFichier(res, cheminSur(req.url));
+    }
+    /* Le banc de test (SPEC-BANC-015/122) — pages, cahiers, historique,
+       catalogue, périmètre, serveurs de test, images du registre — N'EXISTE
+       que sur un serveur lancé avec --tests (404 sinon : rien ne s'y exécute,
+       rien ne s'y lit), et n'y répond qu'à une requête locale
+       (refusRequeteLocale : ni mandataire, ni Origin ou Host étrangers, ni
+       requête intersites). Chaque route garde en plus ses propres contrôles. */
+    function servirBanc(req, res, brut) {
+      if (!(S.PARAMS && S.PARAMS.tests)) { res.writeHead(404); res.end('404 introuvable'); return; }
+      const motif = refusRequeteLocale(req);
+      if (motif) { repondreJSON(res, 403, { ok: false, motif }); return; }
+      if (brut === '/tests/resultats' && S.traiterResultatsTest(req, res)) return;
+      if (brut === '/tests/version' && traiterVersion(req, res)) return;
+      if (brut === '/tests/serveur-histoire' && S.traiterServeurHistoireTest(req, res)) return;
+      if (brut.indexOf('/tests/serveur-jeu') === 0 && S.traiterServeurJeuTest(req, res)) return;
+      if (brut.indexOf('/tests/cahiers') === 0 && S.filetErreurTests(S.traiterCahiers, req, res)) return;
       // /tests et /tests/ : la page du banc (SPEC-BANC-120) — /tests sans barre
       // finale est redirigé, sinon ses chemins relatifs (banc.css, ../src/…)
       // se résoudraient depuis la racine
-      if (req.url.split('?')[0] === '/tests') { res.writeHead(301, { Location: '/tests/' }); res.end(); return; }
-      if (req.url.indexOf('/tests/historique/') === 0 && S.traiterHistorique(req, res)) return;
-      if (req.url.split('?')[0] === '/tests/catalogue' && S.filetErreurTests(S.traiterCatalogue, req, res)) return;
-      if (req.url.split('?')[0] === '/tests/perimetre' && S.filetErreurTests(S.traiterPerimetre, req, res)) return;
-      if (req.url.indexOf('/tests/registre/images/') === 0 && S.traiterImageRegistre(req, res)) return;
-      const chemin = cheminSur(req.url);
-      if (!chemin) { res.writeHead(403); res.end('403 chemin refusé'); return; }
+      if (brut === '/tests') { res.writeHead(301, { Location: '/tests/' }); res.end(); return; }
+      if (brut.indexOf('/tests/historique/') === 0 && S.traiterHistorique(req, res)) return;
+      if (brut === '/tests/catalogue' && S.filetErreurTests(S.traiterCatalogue, req, res)) return;
+      if (brut === '/tests/perimetre' && S.filetErreurTests(S.traiterPerimetre, req, res)) return;
+      if (brut.indexOf('/tests/registre/images/') === 0 && S.traiterImageRegistre(req, res)) return;
+      if (req.method !== 'GET' && req.method !== 'HEAD') { repondreJSON(res, 405, { ok: false, motif: 'methode_invalide' }); return; }
+      servirFichier(res, cheminBanc(req.url));
+    }
+    /* Hors liste blanche : 404, comme un fichier absent — la réponse ne dit
+       pas si le chemin existe sur le disque. */
+    function servirFichier(res, chemin) {
+      if (!chemin) { res.writeHead(404); res.end('404 introuvable'); return; }
       fs.stat(chemin, (err, st) => {
         if (err || !st.isFile()) { res.writeHead(404); res.end('404 introuvable'); return; }
         // SPEC-SECU-010 : en-têtes de sécurité de base sur toute réponse de

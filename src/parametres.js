@@ -37,8 +37,8 @@
     // fonctionner exactement comme avant.
     { nom: 'origines', cle: 'origines', attend: 'texte', defaut: null,
       aide: 'origines WebSocket autorisées, séparées par des virgules (ex. http://localhost:8080) ; défaut : aucune restriction' },
-    // SPEC-BANC-015 : un serveur --serveur (dédié) refuse les résultats de test SAUF avec --tests
-    { nom: 'tests', cle: 'tests', valeur: false, aide: 'autorise la réception de résultats de test (POST /tests/resultats) même en --serveur dédié' },
+    // SPEC-BANC-015/122 : le banc de test (/tests/…, résultats, cahiers, historique, serveurs de test) n'existe qu'avec --tests
+    { nom: 'tests', cle: 'tests', valeur: false, aide: 'active le banc de test (/tests/ : page, résultats, cahiers, historique, serveurs de test), pour la machine locale seulement ; sans lui ces routes n\'existent pas' },
     // SPEC-BANC-109 : réglage du journal par domaine, comme le paramètre d'URL ?journal= du jeu
     { nom: 'journal', cle: 'journal', attend: 'texte', defaut: null, aide: 'niveaux du journal par domaine, ex. SYNC:trace,SERVEUR:debug (trace, debug, info, warn, error, fatal) ; LANCEUR (ligne MC_PORT=) ne peut pas être relevé au-dessus de info' },
     { nom: 'aide', cle: 'aide', valeur: false, aide: 'affiche cette liste et s\'arrête' },

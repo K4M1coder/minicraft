@@ -192,7 +192,8 @@ node tests/integration-e2e-headless.js  # une vraie petite campagne e2e sans fen
 node tests/run.js --preset e2e-fumee    # quelques e2e représentatifs (< 2 min), sans fenêtre — greffé sur pre-push
 ```
 
-`tests/index.html` (servi aussi sous `/tests/`) rejoue les mêmes tests dans le
+`tests/index.html` (servi sous `/tests/` par un serveur lancé avec `--tests`,
+à la machine locale seulement : `node server.js --tests`) rejoue les mêmes tests dans le
 navigateur **plus** ~150 tests end-to-end qui pilotent une vraie partie ;
 `window.runE2E(ensureGame(), null, 'SPEC-XXX')` n'en lance qu'une partie, filtrée
 par nom. La liste des fichiers de tests est UNE seule, `tests/fichiers-tests.js`,
@@ -225,9 +226,10 @@ Chaque campagne — navigateur ou ligne de commande, même interrompue par
 `--delai` — écrit son **cahier de test** dans `tests/resultats/<date>_<préréglage>/`
 (`resultats.json`, `rapport.html`, `captures/`) ; non versionné, seuls les 20
 derniers dossiers sont gardés. Le serveur peut aussi recevoir un cahier du banc
-navigateur : `POST /tests/resultats`, réservé à la machine locale (voir
-`node server.js --aide`, option `--tests` pour l'autoriser même en `--serveur`
-dédié).
+navigateur : `POST /tests/resultats`, réservé à la machine locale. Sans
+`--tests`, aucune route du banc n'existe (`/tests/…` répond 404) et le serveur
+ne sert que les fichiers du jeu (`index.html`, `admin.html`, `src/*.js|css`) —
+jamais le reste du dossier (`.git`, journaux, parties, outils).
 
 Chaque test e2e prend au moins une capture au début et une à la fin
 (porte G15), rangées à côté du rapport. Le **registre** (`tests/registre/`,

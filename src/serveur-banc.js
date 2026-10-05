@@ -15,7 +15,7 @@
   function installer(S) {
     const { Buffer, URL, __filename, clearTimeout, process, require, setImmediate, setTimeout } = S.hote;
     const {
-      fs, path, crypto, RACINE, NP, C, PARAMS, CONF, journal, cheminSur, lireCorpsJSON,
+      fs, path, crypto, RACINE, NP, C, PARAMS, CONF, journal, cheminBanc, lireCorpsJSON,
       repondreJSON, refusRequeteLocale,
     } = S;
     const EP = S.EP;   // état partagé modifiable, à forme fixe (créé par server.js)
@@ -132,7 +132,7 @@
       new URL(req.url, 'http://localhost').searchParams.forEach((v, k) => { q[k] = v; });
 
       if (url === '/tests/cahiers' || url === '/tests/cahiers/') {
-        const p = cheminSur('/tests/cahiers.html');
+        const p = cheminBanc('/tests/cahiers.html');
         fs.readFile(p, (err, data) => {
           if (err) { res.writeHead(404); res.end('404'); return; }
           res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
