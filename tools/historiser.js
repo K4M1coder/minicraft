@@ -1,7 +1,7 @@
 /* tools/historiser.js — campagnes sur l'HISTORIQUE des merges, des PR et des
    releases (SPEC-BANC-111 à 116, docs/banc/historique-global.md §3.15) :
 
-     node tools/registre.js historiser [--depuis <ref>] [--preset pr] [--lister] [--max N]
+    node tools/registre.js historiser [--depuis <ref>] [--preset regression] [--lister] [--max N]
 
    Pour chaque commit de merge, de PR ou de release de l'historique, du plus
    ancien au plus récent, UNE VRAIE campagne complète sur ce commit — pas un run
@@ -42,7 +42,7 @@ const REG = require('./registre.js');
 const MT = require('./moteur-test.js');
 
 const RACINE = path.join(__dirname, '..');
-const PRESET_DEFAUT = 'pr';
+const PRESET_DEFAUT = 'regression';
 const RE_RELEASE = /^chore\(release\)\s*(?:!)?:\s*v\d/;
 const RE_PR = /(?:\(#\d+\)\s*$|^Merge pull request #\d+)/;
 const RE_TAG_VERSION = /^v\d+\.\d+\.\d+$/;
@@ -138,9 +138,12 @@ function metadonneesCommit(dossierRepo, c) {
 // ══════════════════════════════════════════════════════════════════════════
 /* Les commits (SHA pleins) qui ont déjà une entrée au registre menée à son
    terme : une entrée interrompue ne compte pas, elle sera refaite. */
-function commitsDejaInscrits(dossierRegistre) {
+function commitsDejaInscrits(dossierRegistre, preset) {
   const s = new Set();
-  REG.lireEntrees(dossierRegistre).forEach((e) => { if (e.commit && !e.interrompu) s.add(e.commit); });
+  REG.lireEntrees(dossierRegistre).forEach((e) => {
+    const couvre = !preset || ((e.preset === preset || (preset === 'pr' && e.preset === 'regression')) && e.perimetre !== 'manuel');
+    if (e.commit && !e.interrompu && couvre) s.add(e.commit);
+  });
   return s;
 }
 
@@ -148,16 +151,30 @@ function commitsDejaInscrits(dossierRegistre) {
 // 4. Incompatibilité d'un test avec le commit rejoué (SPEC-BANC-114)
 // ══════════════════════════════════════════════════════════════════════════
 /* Un test qui ÉCHOUE parce que ce commit n'a pas ce que le moteur (ou le test)
-   attend n'est ni réussi ni en échec : il est ignoré, avec la raison. Critère
-   étroit, volontairement : des modules attendus manquent (`modulesAbsents`) ET
-   le message est de la famille « absent / indéfini / n'est pas une fonction ».
+   attend n'est ni réussi ni en échec : il est ignoré, avec la raison. Deux cas,
+   volontairement étroits :
+  1. un module src/ attendu manque ET l'appel identifié dans la pile lit
+    précisément la propriété absente nommée par le message ;
+   2. l'API appelée a disparu d'un module PRÉSENT : le message nomme une API du jeu
+      (`MC.X.f is not a function`, `MC.X.C is not a constructor`, `MC is not defined`).
    Toute autre panne est un vrai résultat pour ce commit : rendue `null`, le test
    reste en échec. */
+const RE_API_DISPARUE = /\bMC(?:\.\w+)+ is not a (?:function|constructor)\b|^MC is not defined\b/;
 const RE_ABSENCE = /\bis not defined\b|\bis not a function\b|\bis not a constructor\b|Cannot read propert(?:y|ies) of (?:undefined|null)|\(reading '[^']*'\)|Cannot destructure|undefined is not/;
-function classerIncompatibilite(message, modulesAbsents) {
+function classerIncompatibilite(message, modulesAbsents, appel) {
   const absents = (modulesAbsents || []).filter(Boolean);
-  if (!absents.length || !message || !RE_ABSENCE.test(String(message))) return null;
-  return 'incompatible avec ce commit : module(s) ' + absents.map(m => 'src/' + m + '.js').join(', ') + ' absent(s) — le moteur ne peut pas exécuter ce test sur ce commit (' + String(message).split('\n')[0].slice(0, 120) + ')';
+  if (!message) return null;
+  const texte = String(message);
+  if (RE_API_DISPARUE.test(texte)) {
+    return 'incompatible avec ce commit : API absente de ce commit — le moteur ne peut pas exécuter ce test sur ce commit (' + texte.split('\n')[0].slice(0, 120) + ')';
+  }
+  if (!RE_ABSENCE.test(texte)) return null;
+  const reference = /^MC\.([\w$]+)\.([\w$]+)$/.exec(appel || '');
+  const propriete = /\(reading '([^']+)'\)/.exec(texte);
+  if (!reference || !propriete || reference[2] !== propriete[1]) return null;
+  const concernes = absents.filter(m => m.replace(/[-_]/g, '').toLowerCase() === reference[1].toLowerCase());
+  if (!concernes.length) return null;
+  return 'incompatible avec ce commit : module(s) ' + concernes.map(m => 'src/' + m + '.js').join(', ') + ' absent(s) — le moteur ne peut pas exécuter ce test sur ce commit (' + texte.split('\n')[0].slice(0, 120) + ')';
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -215,7 +232,15 @@ function campagneReelle(o) {
   if (!dossiers.length) {
     return { ok: false, racineResultats, motif: 'aucun cahier produit (code ' + r.status + ') : ' + String((r.stderr || r.stdout || '')).split('\n').slice(-6).join(' | ').slice(0, 400) };
   }
-  return { ok: true, racineResultats, dossierCahier: dossiers[dossiers.length - 1], code: r.status };
+  const dossierCahier = dossiers[dossiers.length - 1];
+  try {
+    const cahier = JSON.parse(fs.readFileSync(path.join(racineResultats, dossierCahier, 'resultats.json'), 'utf8'));
+    const panne = (cahier.tests || []).find(t => t.infrastructure);
+    if (panne) return { ok: false, racineResultats, dossierCahier, motif: panne.message || 'infrastructure de test indisponible' };
+  } catch (e) {
+    return { ok: false, racineResultats, dossierCahier, motif: 'cahier illisible : ' + e.message };
+  }
+  return { ok: true, racineResultats, dossierCahier, code: r.status };
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -237,7 +262,7 @@ function historiser(opts) {
 
   const commits = listerCommits(rd, o.depuis);
   if (commits === null) return { ok: false, motif: 'historique git illisible' + (o.depuis ? ' (référence « ' + o.depuis + ' » introuvable ?)' : '') };
-  const deja = commitsDejaInscrits(dossierRegistre);
+  const deja = commitsDejaInscrits(dossierRegistre, o.argsCampagne ? null : preset);
   const resultat = { ok: true, lancement, commits: commits.map(c => c.sha), faits: [], sautes: [], echecs: [], entrees: [] };
   const aFaire = commits.filter((c) => { if (deja.has(c.sha)) { resultat.sautes.push(c.sha); return false; } return true; });
   const limite = o.max > 0 ? aFaire.slice(0, o.max) : aFaire;
@@ -251,7 +276,7 @@ function historiser(opts) {
     try {
       w = ouvrirWorktree(rd, c.sha);
       const meta = metadonneesCommit(rd, c);
-      const debutRun = horloge();          // l'heure RÉELLE d'exécution de cette campagne, jamais la date du commit
+      const debutRun = lancement;          // l'heure RÉELLE du lancement de historiser (SPEC-BANC-113), jamais la date du commit
       const camp = lancer({ worktree: w.chemin, sha: c.sha, court: c.court, preset: preset, commit: c, meta: meta, argsCampagne: o.argsCampagne });
       if (!camp || !camp.ok) { resultat.echecs.push({ sha: c.sha, motif: (camp && camp.motif) || 'campagne sans résultat' }); ecrire('  ✗ ' + ((camp && camp.motif) || 'campagne sans résultat')); continue; }
       const ins = REG.inscrire(camp.dossierCahier, {

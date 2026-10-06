@@ -118,6 +118,16 @@
       A.deep(HIST.natureDuCommit({ parents: ['a'], sujet: 'x', etiquettes: ['backup-2025'] }), [], 'une étiquette qui n\'est pas une version');
     });
 
+    it('SPEC-BANC-111 : la campagne par défaut sélectionne aussi les e2e', function () {
+      var catalogue = [
+        { id: 'node', nom: 'node', type: 'spec' },
+        { id: 'integration', nom: 'integration', type: 'integration' },
+        { id: 'navigateur', nom: 'navigateur', type: 'e2e' },
+      ];
+      var criteres = G.MC_TESTS.preset(HIST.PRESET_DEFAUT);
+      A.deep(G.MC_TESTS.selection(catalogue, criteres).map(function (test) { return test.id; }), ['node', 'integration', 'navigateur'], 'la campagne historique complète inclut le navigateur');
+    });
+
     it('SPEC-BANC-111 : listerCommits() rend les merges, PR et releases d\'un vrai dépôt, du plus ancien au plus récent', function () {
       try {
         var d = depotComplet();
@@ -133,7 +143,7 @@
     it('SPEC-BANC-111 : historiser --depuis <ref> sur un historique de trois merges produit trois entrées indiscernables d\'une entrée pre-push, hormis leurs métadonnées de commit', function () {
       try {
         var d = depotTroisMerges();
-        var h = historiserSimule(d);
+        var h = historiserSimule(d, { opts: { preset: 'pr' } });
         A.ok(h.r.ok, 'sans échec : ' + JSON.stringify(h.r.echecs));
         A.equal(h.entrees.length, 3, 'trois entrées de registre');
         A.deep(h.entrees.map(function (e) { return e.commit; }).sort(), d.merges.slice().sort(), 'une par commit de merge');
@@ -226,16 +236,27 @@
           A.notEqual(e.date.slice(0, 10), e.meta_commit.date_commit.slice(0, 10));
         });
         A.ok(Date.parse(h.r.lancement) <= Date.parse(h.entrees[0].date), 'et postérieur au lancement de historiser');
+        // avec une horloge qui avance : toutes les entrées portent l'heure de LANCEMENT de historiser
+        var tic = 0, h2 = historiserSimule(d, { opts: { horloge: function () { return new Date(Date.UTC(2030, 0, 1, 0, tic++)).toISOString(); } } });
+        A.ok(h2.entrees.length > 1);
+        h2.entrees.forEach(function (e) { A.equal(e.date, h2.r.lancement, 'debut_run = heure de lancement de historiser'); });
       } finally { nettoyer(); }
     });
 
     it('SPEC-BANC-114 : un test que le moteur ne peut pas faire tourner sur ce commit est ignoré, avec une raison explicite — jamais réussi, jamais échec', function () {
-      var raison = HIST.classerIncompatibilite("Cannot read properties of undefined (reading 'f')", ['recifs', 'souterrain']);
-      A.ok(raison && /src\/recifs\.js, src\/souterrain\.js/.test(raison) && /incompatible avec ce commit/.test(raison), 'raison explicite : ' + raison);
+      var raison = HIST.classerIncompatibilite("Cannot read properties of undefined (reading 'f')", ['recifs', 'souterrain'], 'MC.Recifs.f');
+      A.ok(raison && /src\/recifs\.js/.test(raison) && !/src\/souterrain\.js/.test(raison) && /incompatible avec ce commit/.test(raison), 'raison limitée au module appelé : ' + raison);
       A.equal(HIST.classerIncompatibilite('MC is not defined', ['recifs']) !== null, true, 'ReferenceError');
       A.equal(HIST.classerIncompatibilite('MC.Absent.f is not a function', ['absent']) !== null, true, 'TypeError');
       A.equal(HIST.classerIncompatibilite("attendu 3, obtenu 4", ['recifs']), null, 'une vraie assertion en échec reste un échec');
       A.equal(HIST.classerIncompatibilite("Cannot read properties of undefined (reading 'f')", []), null, 'aucun module absent : pas d\'incompatibilité, c\'est un échec');
+      // API disparue dans un module PRÉSENT : aucun module absent, mais l'appel à MC.X.f échoue — ignoré aussi
+      A.ok(/incompatible avec ce commit/.test(HIST.classerIncompatibilite('MC.Mesher.ancienneFonction is not a function', []) || ''), 'API disparue d’un module présent');
+      A.ok(HIST.classerIncompatibilite('MC.Mesher.Classe is not a constructor', []) !== null, 'constructeur disparu');
+      A.equal(HIST.classerIncompatibilite('uneVariableLocale is not a function', []), null, 'une fonction locale du test qui plante reste un échec');
+      A.equal(HIST.classerIncompatibilite('uneVariableLocale is not a function', ['recifs']), null, 'un module absent sans rapport ne masque pas une panne locale');
+      A.equal(HIST.classerIncompatibilite("Cannot read properties of undefined (reading 'f')", ['recifs']), null, 'sans appel identifié, une erreur générique reste un échec');
+      A.equal(HIST.classerIncompatibilite("Cannot read properties of undefined (reading 'f')", ['recifs'], 'MC.Souterrain.f'), null, 'le module absent doit correspondre à l\'appel défaillant');
       A.equal(HIST.classerIncompatibilite('', ['x']), null);
       A.equal(HIST.classerIncompatibilite(undefined, ['x']), null);
     });
@@ -253,8 +274,9 @@
           "    it('ESSAI-A : un test qui passe', function () { A.equal(1, 1); });\n" +
           "    it('ESSAI-B : un test qui appelle un module absent de ce commit', function () { MC.Recifs.creer(); });\n" +
           "    it('ESSAI-C : un test en échec pour une vraie raison', function () { A.equal(1, 2, 'vraie assertion'); });\n" +
+          "    it('ESSAI-D : une fonction locale défaillante', function () { var uneVariableLocale = 1; uneVariableLocale(); });\n" +
           "  }); })(globalThis);\n");
-        var r = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--test', 'ESSAI-A : un test qui passe,ESSAI-B : un test qui appelle un module absent de ce commit,ESSAI-C : un test en échec pour une vraie raison', '--sans-fonctions', '--silencieux'],
+        var r = cp.spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--test', 'ESSAI-A : un test qui passe,ESSAI-B : un test qui appelle un module absent de ce commit,ESSAI-C : un test en échec pour une vraie raison,ESSAI-D : une fonction locale défaillante', '--sans-fonctions', '--silencieux'],
           { cwd: RACINE, encoding: 'utf8', env: Object.assign({}, process.env, { MC_RACINE_JEU: arbre, MC_TEST_RESULTATS_DIR: res }), timeout: 120000 });
         var dossiers = fs.readdirSync(res);
         A.equal(dossiers.length, 1, 'un cahier écrit (sortie : ' + String(r.stdout).slice(-300) + String(r.stderr).slice(-300) + ')');
@@ -262,9 +284,10 @@
         var par = {}; j.tests.forEach(function (t) { par[t.nom.slice(0, 7)] = t; });
         A.equal(par['ESSAI-A'].etat, 'ok', 'le test qui passe passe (les tests viennent de l\'arbre rejoué)');
         A.equal(par['ESSAI-B'].etat, 'ignore', 'le test incompatible est ignoré — ni ok ni échec');
-        A.ok(/incompatible avec ce commit/.test(par['ESSAI-B'].raison) && /src\/journal\.js/.test(par['ESSAI-B'].raison), 'avec une raison explicite : ' + par['ESSAI-B'].raison);
+        A.ok(/incompatible avec ce commit/.test(par['ESSAI-B'].raison) && /src\/recifs\.js/.test(par['ESSAI-B'].raison), 'avec le module réellement appelé : ' + par['ESSAI-B'].raison);
         A.equal(par['ESSAI-C'].etat, 'echec', 'une vraie assertion en échec reste un échec');
-        A.equal(j.campagne.totaux.passes, 1); A.equal(j.campagne.totaux.echecs, 1); A.equal(j.campagne.totaux.ignores, 1, 'les trois totaux sont cohérents');
+        A.equal(par['ESSAI-D'].etat, 'echec', 'une panne locale reste en échec malgré les modules absents');
+        A.equal(j.campagne.totaux.passes, 1); A.equal(j.campagne.totaux.echecs, 2); A.equal(j.campagne.totaux.ignores, 1, 'les trois totaux sont cohérents');
         A.ok(j.campagne.rejeu && j.campagne.rejeu.modulesAbsents.indexOf('journal') >= 0, 'la campagne dit quels modules manquaient à ce commit');
         A.equal(j.campagne.moteurTest.version, MT.VERSION, 'et quel moteur l\'a produite');
         A.equal(j.campagne.environnement.versionJeu, '0.0.9', 'la version du jeu est celle de l\'arbre rejoué');
@@ -309,6 +332,19 @@
         var rl = HIST.historiser({ dossierRepo: d.rd, dossierRegistre: registre2, lancerCampagne: simL, depuis: d.racine, aBlanc: true });
         A.equal(simL.appels.length, 0, '--lister ne lance aucune campagne');
         A.ok(Array.isArray(rl.aFaire));
+      } finally { nettoyer(); }
+    });
+
+    it('SPEC-BANC-115 : une entrée pr sans navigateur ne fait pas sauter une demande de campagne complète', function () {
+      try {
+        var d = depotTroisMerges();
+        var registre = dossierTemp('mc-hist-registre-selection-');
+        var premiere = campagneSimulee();
+        HIST.historiser({ dossierRepo: d.rd, dossierRegistre: registre, depuis: d.racine, preset: 'pr', max: 1, lancerCampagne: premiere });
+        var complete = campagneSimulee();
+        var reprise = HIST.historiser({ dossierRepo: d.rd, dossierRegistre: registre, depuis: d.racine, preset: 'regression', max: 1, lancerCampagne: complete });
+        A.equal(complete.appels[0].sha, d.merges[0], 'le premier commit reste à tester avec les e2e');
+        A.equal(reprise.sautes.length, 0, 'la sélection incomplète ne valide aucun commit complet');
       } finally { nettoyer(); }
     });
 

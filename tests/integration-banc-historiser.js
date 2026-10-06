@@ -16,7 +16,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { execFileSync } = require('child_process');
+const { execFileSync, spawnSync } = require('child_process');
 
 const A = require('./aide-integration-archi.js');
 const RACINE = A.RACINE;
@@ -78,9 +78,37 @@ function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: '
         'SPEC-BANC-112/114 : l\'e2e tourne sur le jeu de v0.8.0 (réussi) ou, si le banc de ce commit ne se laisse pas piloter, est ignoré avec sa raison — jamais en échec', JSON.stringify(e3 && e3.tests[0] && { e: e3.tests[0].etat, r: e3.tests[0].raison }));
       R.ok(e3 && e3.moteurRendu && e3.moteurRendu.navigateur, 'SPEC-BANC-112 : et le moteur de rendu (navigateur, GPU) est celui observé par l\'orchestration actuelle', JSON.stringify(e3 && e3.moteurRendu));
     } finally { try { fs.rmSync(registre2, { recursive: true, force: true }); } catch (e) { /* verrouillé */ } }
+    const arbrePanne = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hist-panne-'));
+    if (!require(path.join(RACINE, 'tools', 'navigateur.js')).trouverNavigateur()) R.saut('SPEC-BANC-114 : une panne du banc reste un échec en rejeu', 'aucun Edge/Chrome installé');
+    else try {
+      fs.mkdirSync(path.join(arbrePanne, 'src'));
+      fs.mkdirSync(path.join(arbrePanne, 'tests'));
+      const resultatsPanne = path.join(arbrePanne, 'resultats');
+      fs.mkdirSync(resultatsPanne);
+      fs.writeFileSync(path.join(arbrePanne, 'src', 'core.js'), "globalThis.MC = { Core: { VERSION_JEU: '0.0.9' } };\n");
+      fs.writeFileSync(path.join(arbrePanne, 'server.js'), 'process.exit(23);\n');
+      fs.writeFileSync(path.join(arbrePanne, 'SPECS.md'), '');
+      fs.writeFileSync(path.join(arbrePanne, 'tests', 'fichiers-tests.js'), 'globalThis.MC_FICHIERS_TESTS = [];\n');
+      fs.writeFileSync(path.join(arbrePanne, 'tests', 'e2e.js'), 'e2e("ESSAI-E : panne du serveur de test", { "teste": "le banc", "pourquoi": "panne", "attendu": "échec" }, async function (g) {});\n');
+      const execution = spawnSync(process.execPath, [path.join(RACINE, 'tests', 'run.js'), '--type', 'e2e', '--sans-fonctions', '--silencieux'], {
+        cwd: RACINE, encoding: 'utf8', timeout: 60000,
+        env: Object.assign({}, process.env, { MC_RACINE_JEU: arbrePanne, MC_TEST_RESULTATS_DIR: resultatsPanne }),
+      });
+      const cahiers = fs.readdirSync(resultatsPanne);
+      R.ok(cahiers.length === 1, 'SPEC-BANC-114 : la panne du banc produit un cahier', String(execution.stderr || execution.error || ''));
+      if (cahiers.length) {
+        const cahier = JSON.parse(fs.readFileSync(path.join(resultatsPanne, cahiers[0], 'resultats.json'), 'utf8'));
+        R.ok(cahier.tests.length === 1 && cahier.tests[0].etat === 'echec', 'SPEC-BANC-114 : un serveur de banc arrêté ne transforme pas son test en ignore', JSON.stringify(cahier.tests.map(t => ({ etat: t.etat, raison: t.raison, message: t.message }))));
+        R.eq(execution.status, 1, 'SPEC-BANC-114 : la panne d infrastructure bloque la campagne');
+      }
+      const campagnePanne = HIST.campagneReelle({ worktree: arbrePanne, preset: 'e2e', argsCampagne: ['--type', 'e2e', '--sans-fonctions'] });
+      try {
+        R.ok(!campagnePanne.ok, 'SPEC-BANC-115 : une panne d infrastructure ne devient pas une campagne terminée à sauter', JSON.stringify(campagnePanne));
+      } finally { if (campagnePanne.racineResultats) fs.rmSync(campagnePanne.racineResultats, { recursive: true, force: true }); }
+    } finally { try { fs.rmSync(arbrePanne, { recursive: true, force: true }); } catch (e) {} }
     // reprise : le commit est inscrit, la seconde passe ne lance rien
     let lances = 0;
-    const r2 = HIST.historiser({ dossierRepo: RACINE, dossierRegistre: registre, depuis: 'v0.7.0', lancerCampagne: () => { lances++; return { ok: false, motif: 'ne devrait pas être appelée' }; } });
+    const r2 = HIST.historiser({ dossierRepo: RACINE, dossierRegistre: registre, depuis: 'v0.7.0', preset: 'pr', argsCampagne: ['--test', 'SPEC-BANC-117,SPEC-BANC-119', '--sans-fonctions'], lancerCampagne: () => { lances++; return { ok: false, motif: 'ne devrait pas être appelée' }; } });
     R.ok(lances === 0 && r2.sautes.length === 1 && r2.faits.length === 0, 'SPEC-BANC-115 : relancer ne rejoue pas le commit déjà inscrit');
   } catch (e) {
     R.ok(false, 'historiser sur un vrai commit', e.stack || String(e));

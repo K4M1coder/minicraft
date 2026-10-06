@@ -418,12 +418,14 @@
       } finally { nettoyer(s.d); }
     });
 
-    it('SPEC-BANC-090 : seuls les préréglages pr et e2e-fumee entrent dans le run de release (écart avec « un run par release » documenté)', function () {
+    it('SPEC-BANC-090 : pr, e2e-fumee et regression complète entrent dans le run de release, pas commit', function () {
       var s = scenario();
       try {
         ecrireEntree(s.reg, { id: 'r2x', commit: s.c2, date: '2026-01-02T10:02:00.000Z', preset: 'regression', tests: [testEntree('t', 'reussi', 'ccc.jpg')] });
+        ecrireEntree(s.reg, { id: 'r2z', commit: s.c2, date: '2026-01-02T10:03:00.000Z', preset: 'commit', tests: [testEntree('t', 'reussi', 'ccc.jpg')] });
         compacter(s);
-        A.ok(entreeDe(s.reg, 'r2x').compacte, 'un autre préréglage du même commit est compacté');
+        A.equal(entreeDe(s.reg, 'r2x').release, 'v0.1.0', 'la campagne complète reste une preuve de release');
+        A.ok(entreeDe(s.reg, 'r2z').compacte, 'le préréglage réduit reste compacté');
         A.equal(entreeDe(s.reg, 'r2').release, 'v0.1.0');
         A.equal(entreeDe(s.reg, 'r2f').release, 'v0.1.0');
       } finally { nettoyer(s.d); }

@@ -105,6 +105,17 @@
       A.equal(r.champ, 'domaines');
     });
 
+    it('SPEC-BANC-064 : une valeur répétée dans une liste ne compte le test qu’une fois', function () {
+      var l = H.construireLignes([run({ id: 'rd', tests: [
+        test({ nom: 'dup', domaines: ['RENDU', 'RENDU'], specs: ['SPEC-BANC-064', 'SPEC-BANC-064'], fonctions: ['MC.F.f', 'MC.F.f'], etiquettes: ['t', 't'] }),
+      ] })]);
+      ['domaine', 'spec', 'fonction', 'etiquette'].forEach(function (dim) {
+        var r = REP.repartition(l, dim);
+        A.equal(r.groupes.length, 1, dim + ' : un seul groupe');
+        A.equal(r.groupes[0].nb, 1, dim + ' : le test n’est compté qu’une fois');
+      });
+    });
+
     it('SPEC-BANC-064 : toutes les dimensions (catégorie, spec, fonction, étiquette, raison) ; une dimension inconnue ou héritée est refusée', function () {
       var cat = REP.repartition(LIGNES, 'categorie').groupes.map(function (g) { return g.valeur + ':' + g.nb; }).sort();
       A.deep(cat, ['e2e:1', 'spec:2', 'unitaire:1']);

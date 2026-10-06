@@ -911,17 +911,10 @@ if (e2eSelectionnes.length) {
     const motif = resultatE2E ? resultatE2E.motif : ('code de sortie ' + rE2E.status);
     ecrire('  ✗ end-to-end : infrastructure indisponible (' + motif + ')');
     e2eSelectionnes.forEach((t) => {
-      if (MODE_REJEU) {
-        // SPEC-BANC-114 : le banc de ce vieux commit ne se laisse pas piloter par le moteur actuel — ignorés, avec la raison
-        ignoresIncompatibles++;
-        testsResultats.push({ id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
-          etat: 'ignore', raison: 'incompatible avec ce commit : le serveur et le banc de ce commit ne démarrent pas avec le moteur e2e actuel (' + motif + ')', duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 0 } });
-        return;
-      }
       res.failed++;
       testsResultats.push({
         id: t.id, nom: t.nom, type: t.type, groupe: t.groupe, domaines: t.domaines, specs: t.specs, fiche: t.fiche,
-        etat: 'echec', duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 1 },
+        etat: 'echec', infrastructure: true, duree_ms: 0, etapes: [], assertions: { ok: 0, ko: 1 },
         message: 'campagne e2e sans fenêtre indisponible : ' + motif,
       });
     });
@@ -967,12 +960,25 @@ if (environnementE2E) {
 /* SPEC-BANC-114 : sur un commit REJOUÉ, un test que le moteur ne peut pas faire tourner — il appelle un module ou une
    API que ce commit n'a pas encore (ou plus) — n'est ni réussi ni en échec : il est `ignore`, avec une raison explicite.
    Le critère est volontairement étroit : un module attendu par le moteur manque ET l'erreur est de la famille « absent /
-   indéfini / n'est pas une fonction » ; toute autre panne reste un échec, c'est un vrai résultat pour ce commit. */
-if (MODE_REJEU && (modulesAbsents.length || fichiersIllisibles.length)) {
+   indéfini / n'est pas une fonction », ou l'erreur nomme une API du jeu disparue (`MC.X.f is not a function`) ; toute autre panne reste un échec, c'est un vrai résultat pour ce commit. */
+if (MODE_REJEU) {
   const HIST = require('../tools/historiser.js');
   testsResultats.forEach((t) => {
     if (t.etat !== 'echec' && t.etat !== 'delai') return;
-    const raison = HIST.classerIncompatibilite(t.message, modulesAbsents);
+    let appel = null;
+    for (const lignePile of String(t.pile || '').split('\n')) {
+      const cadre = /\b((?:src|tests)\/[\w/-]+\.js):(\d+):(\d+)/.exec(lignePile);
+      if (!cadre || cadre[1] === 'tests/harness.js') continue;
+      try {
+        const ligne = fs.readFileSync(path.join(racineJeu, cadre[1]), 'utf8').split('\n')[Number(cadre[2]) - 1] || '';
+        const colonne = Number(cadre[3]) - 1;
+        for (const reference of ligne.matchAll(/\bMC\.[\w$]+\.[\w$]+/g)) {
+          if (colonne >= reference.index && colonne <= reference.index + reference[0].length) { appel = reference[0]; break; }
+        }
+      } catch (e) {}
+      break;
+    }
+    const raison = HIST.classerIncompatibilite(t.message, modulesAbsents, appel);
     if (!raison) return;
     t.etat = 'ignore'; t.raison = raison;
     res.failed--; ignoresIncompatibles++;

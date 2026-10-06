@@ -843,7 +843,7 @@ function commiterRegistre(dossierRepo) {
    concurrente n'est jamais touchée) ; `sauvegarde` copie tout ce qui va être
    réécrit ou supprimé pour une restauration complète (`restaurerCompaction`) ;
    `aBlanc` calcule le plan et les tailles sans rien écrire. */
-const PRESETS_DE_RELEASE = new Set(['pr', 'e2e-fumee']);
+const PRESETS_DE_RELEASE = new Set(['pr', 'e2e-fumee', 'regression']);
 const PEREMPTION_VERROU_MS = 10 * 60 * 1000;
 function compacterTest(t, epingles, garderFiche) {
   const out = {
@@ -1316,7 +1316,7 @@ if (require.main === module) {
       '                        | compacter [--a-blanc] [--jusqu-a ref] [--version vX.Y.Z] [--sauvegarde dossier] [--json]   (rétention, SPEC-BANC-090/091)\n' +
       '                        | restaurer <dossier-de-sauvegarde>\n' +
       '                        | instables [--json]   (score d\'instabilité, SPEC-BANC-088)\n' +
-      '                        | historiser [--depuis ref] [--preset pr] [--lister] [--max N]   (campagnes sur les merges, PR et releases, SPEC-BANC-111 à 116)');
+      '                        | historiser [--depuis ref] [--preset regression] [--lister] [--max N]   (campagnes sur les merges, PR et releases, SPEC-BANC-111 à 116)');
     process.exit(sous ? 1 : 0);
   }
 }

@@ -4905,11 +4905,10 @@
       // ── filtre rapide (SPEC-BANC-037) : « Échecs » ne garde que des lignes d'état échec
       var btnEchecs = zone.querySelector('[data-rapide="echecs"]');
       A.ok(btnEchecs, 'bouton de filtre rapide « Échecs » présent');
-      var pageInfoAvant = zone.querySelector('#hist-page-info').textContent;
       btnEchecs.click();
       // le clic pose « chargement… » AU MÊME INSTANT (synchrone) : attendre que ce texte parte, c'est attendre la réponse
       // du serveur et le tableau redessiné — comparer au texte d'avant passait trop tôt (tableau encore celui d'avant)
-      await attendreCondition(function () { var t = zone.querySelector('#hist-page-info').textContent; return t !== pageInfoAvant && t.indexOf('chargement') < 0; }, 8000);
+      await attendreCondition(function () { return zone.querySelector('#hist-page-info').textContent !== 'chargement…'; }, 8000);
       var lignesApres = Array.prototype.slice.call(zone.querySelectorAll('#hist-table tbody tr'));
       var toutesEchecOuVide = lignesApres.length === 0 || lignesApres.every(function (tr) {
         return tr.className.indexOf('etat-echec') >= 0 || tr.textContent.indexOf('aucune ligne') >= 0;
