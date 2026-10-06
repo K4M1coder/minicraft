@@ -26,7 +26,7 @@ const MT = require(path.join(RACINE, 'tools', 'moteur-test.js'));
 const { envGitPour } = require(path.join(RACINE, 'tools', 'git-propre.js'));
 
 const R = A.creerRapport('historiser sur un vrai vieux commit (SPEC-BANC-111, 112, 113, 115)');
-function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: 'utf8', env: envGitPour(RACINE), stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
+function git(args, dossier) { const rd = dossier || RACINE; return execFileSync('git', args, { cwd: rd, encoding: 'utf8', env: envGitPour(rd), stdio: ['ignore', 'pipe', 'ignore'] }).trim(); }
 
 (async () => {
   let release = null;
@@ -36,16 +36,19 @@ function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: '
     process.exit(R.fin());
   }
   const registre = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hist-reel-'));
+  const depotHistorique = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hist-depot-'));
   const traces = [];
   try {
+    git(['clone', '--shared', '--no-checkout', RACINE, depotHistorique], depotHistorique);
+    git(['checkout', '--detach', release], depotHistorique);
     const avant = Date.now();
-    const worktreesAvant = git(['worktree', 'list', '--porcelain']).split('\n').filter(l => /^worktree /.test(l)).length;
+    const worktreesAvant = git(['worktree', 'list', '--porcelain'], depotHistorique).split('\n').filter(l => /^worktree /.test(l)).length;
     let wtVu = null;
     const r = HIST.historiser({
-      dossierRepo: RACINE, dossierRegistre: registre, depuis: 'v0.7.0', preset: 'pr',
+      dossierRepo: depotHistorique, dossierRegistre: registre, depuis: 'v0.7.0', preset: 'pr',
       argsCampagne: ['--test', 'SPEC-BANC-117,SPEC-BANC-119', '--sans-fonctions'],
       ecrire: (t) => traces.push(t),
-      lancerCampagne: (arg) => { wtVu = arg.worktree; R.ok(git(['-C', arg.worktree, 'rev-parse', 'HEAD']) === release, 'SPEC-BANC-112 : le worktree temporaire est sur le commit de la release v0.8.0'); return HIST.campagneReelle(arg); },
+      lancerCampagne: (arg) => { wtVu = arg.worktree; R.ok(git(['rev-parse', 'HEAD'], arg.worktree) === release, 'SPEC-BANC-112 : le worktree temporaire est sur le commit de la release v0.8.0'); return HIST.campagneReelle(arg); },
     });
     const apres = Date.now();
     R.ok(r.ok && r.faits.length === 1 && r.faits[0] === release, 'SPEC-BANC-111 : la release v0.8.0 est le seul commit de merge, de PR ou de release depuis v0.7.0, et sa campagne est faite', JSON.stringify(r.echecs) + ' ' + traces.join(' | '));
@@ -62,13 +65,13 @@ function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: '
     R.ok(/release/.test(e.meta_commit.natures.join()) && e.meta_commit.parents.length >= 1 && e.meta_commit.fichiers_modifies.length > 0 && /v0\.8\.0/.test(e.meta_commit.message), 'SPEC-BANC-113 : message, parents et fichiers modifiés tirés de git');
     R.ok(Date.parse(e.date) >= avant - 1000 && Date.parse(e.date) <= apres, 'SPEC-BANC-113 : debut_run est l\'heure réelle de la campagne (' + e.date + '), pas celle du commit (' + e.meta_commit.date_commit + ')');
     R.ok(wtVu && !fs.existsSync(wtVu), 'SPEC-BANC-112 : le worktree temporaire est supprimé');
-    R.eq(git(['worktree', 'list', '--porcelain']).split('\n').filter(l => /^worktree /.test(l)).length, worktreesAvant, 'SPEC-BANC-112 : aucun worktree ne reste dans le dépôt');
+    R.eq(git(['worktree', 'list', '--porcelain'], depotHistorique).split('\n').filter(l => /^worktree /.test(l)).length, worktreesAvant, 'SPEC-BANC-112 : aucun worktree ne reste dans le dépôt');
     // un e2e rejoué sur ce vieux commit : le serveur et la page du banc de v0.8.0, le moteur CDP actuel (SPEC-BANC-112)
     const registre2 = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-hist-reel-e2e-'));
     if (!require(path.join(RACINE, 'tools', 'navigateur.js')).trouverNavigateur()) R.saut('SPEC-BANC-112 : un e2e rejoué sur v0.8.0', 'aucun Edge/Chrome installé');
     else try {
       const r3 = HIST.historiser({
-        dossierRepo: RACINE, dossierRegistre: registre2, depuis: 'v0.7.0', preset: 'pr',
+        dossierRepo: depotHistorique, dossierRegistre: registre2, depuis: 'v0.7.0', preset: 'pr',
         argsCampagne: ['--test', 'le viseur coïncide avec le centre du canvas', '--sans-fonctions'],
         lancerCampagne: (arg) => HIST.campagneReelle(arg),
       });
@@ -108,11 +111,12 @@ function git(args) { return execFileSync('git', args, { cwd: RACINE, encoding: '
     } finally { try { fs.rmSync(arbrePanne, { recursive: true, force: true }); } catch (e) {} }
     // reprise : le commit est inscrit, la seconde passe ne lance rien
     let lances = 0;
-    const r2 = HIST.historiser({ dossierRepo: RACINE, dossierRegistre: registre, depuis: 'v0.7.0', preset: 'pr', argsCampagne: ['--test', 'SPEC-BANC-117,SPEC-BANC-119', '--sans-fonctions'], lancerCampagne: () => { lances++; return { ok: false, motif: 'ne devrait pas être appelée' }; } });
+    const r2 = HIST.historiser({ dossierRepo: depotHistorique, dossierRegistre: registre, depuis: 'v0.7.0', preset: 'pr', argsCampagne: ['--test', 'SPEC-BANC-117,SPEC-BANC-119', '--sans-fonctions'], lancerCampagne: () => { lances++; return { ok: false, motif: 'ne devrait pas être appelée' }; } });
     R.ok(lances === 0 && r2.sautes.length === 1 && r2.faits.length === 0, 'SPEC-BANC-115 : relancer ne rejoue pas le commit déjà inscrit');
   } catch (e) {
     R.ok(false, 'historiser sur un vrai commit', e.stack || String(e));
   }
   try { fs.rmSync(registre, { recursive: true, force: true }); } catch (e) { /* verrouillé */ }
+  try { fs.rmSync(depotHistorique, { recursive: true, force: true }); } catch (e) { /* verrouillé */ }
   process.exit(R.fin());
 })();

@@ -193,6 +193,15 @@ committer et pousser en détaché (`nohup`), surveiller avec un moniteur.
   leur totalité ; les preuves navigateur acquises sont celles des lots, de la
   jouabilité et de la fumée. Poussée finale : `master` et `v0.9.0` ensemble,
   avec le crochet `pre-push` actif.
+- Première tentative de push refusée par `pre-push` (3/1 847 échecs), avant
+  tout transfert de référence : FACTION-007 à 41,9 ms et deux fixtures du banc
+  dépendantes de l'état réel du dépôt. Le rejeu historique utilise désormais
+  un clone jetable arrêté sur `v0.8.0` (moteur actuel conservé, 21 vérifications
+  vertes) ; la concurrence des exports filtre une fixture de 2 000 lignes,
+  indépendante de l'historique qui dépasse 100 000 lignes (104/104 verts).
+  FACTION-007 relancée : 9/9, seuil inchangé. Corrections de tests seulement :
+  code du jeu, tag et ZIP `v0.9.0` inchangés ; nouvelle tentative avec crochets
+  actifs après commit des fixtures.
   Les sauvegardes non suivies dans `parties/` sont conservées hors des commits.
 
 ## Table d'avancement

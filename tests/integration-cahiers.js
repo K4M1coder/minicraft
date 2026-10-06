@@ -279,9 +279,20 @@ async function attendrePret(port) {
 
     // export borné et découpé : un seul à la fois, et la boucle d'évènements
     // reste disponible pendant qu'il s'écrit
-    await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&taille=1', null); // index déjà construit
+    const dossierExport = path.join(racineRes, '2000-01-01_00-00-00_integration-cahiers-export-concurrent');
+    fs.mkdirSync(dossierExport, { recursive: true });
+    fs.writeFileSync(path.join(dossierExport, 'resultats.json'), JSON.stringify({
+      campagne: { debut: '2000-01-01T00:00:00.000Z', preset: 'integration' },
+      tests: Array.from({ length: 2000 }, (_, index) => ({
+        nom: 'SPEC-BANC-122 : export concurrent integration-cahiers ' + index,
+        groupe: 'G-exports', etat: 'reussi', duree: 1, captures: [],
+      })),
+    }));
+    const filtreExport = encodeURIComponent(JSON.stringify({ nom: 'export concurrent integration-cahiers' }));
+    const indexExport = await requete(PORT, 'GET', '/tests/historique/lignes?rapide=tous&taille=1&filtre=' + filtreExport, null);
+    eq(JSON.parse(indexExport.corps.toString()).total, 2000, 'SPEC-BANC-122 : la concurrence porte sur les seules lignes de la fixture');
     const toutesColonnes = 'run,debut_run,commit,commit_court,sujet_commit,rang_commit,branche,preset,origine,inscrit,test,cle,nom,type,groupe,domaines,specs,fonctions,etiquettes,debut_test,duree_ms,etat,erreur,raison,nb_captures,motif,arbre_modifie,interrompu';
-    const exports = [0, 1, 2, 3, 4].map(() => requete(PORT, 'GET', '/tests/historique/export?format=html&rapide=tous&colonnes=' + toutesColonnes, null));
+    const exports = [0, 1, 2, 3, 4].map(() => requete(PORT, 'GET', '/tests/historique/export?format=html&rapide=tous&colonnes=' + toutesColonnes + '&filtre=' + filtreExport, null));
     await dodo(30);
     const t0Sonde = Date.now();
     const rSonde = await requete(PORT, 'GET', '/tests/version', null);
@@ -295,6 +306,7 @@ async function attendrePret(port) {
     ok(rSonde.code === 200 && latenceSonde < 1500, 'SPEC-BANC-122 : le serveur répond pendant un export (' + latenceSonde + ' ms)', 'code ' + rSonde.code);
     const rFin = rExports.find(r => r.code === 200);
     ok(rFin && /<\/html>$/.test(rFin.corps.toString('utf8')), 'SPEC-BANC-122 : l\'export découpé arrive complet (page HTML fermée)');
+    fs.rmSync(dossierExport, { recursive: true, force: true });
 
     // ── SPEC-BANC-041 à 045 : séries, matrice et témoins servis aux graphiques et diaporamas ──
     const rSerie = await requete(PORT, 'GET', '/tests/historique/series?rapide=tous&x=rang_commit&props=etat,duree_ms,nb_captures', null);
