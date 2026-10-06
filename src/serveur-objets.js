@@ -17,10 +17,11 @@
     const { NP, C, CA, regles, monde, entites, expositions, conteneursPoses, clients, envoyer, diffuser, journal } = S;
     Object.assign(S, {
       exposer, retirerExposition, libererExposition, envoyerExpositionsProches, envoyerExpositionsDuChunk,
-      ouvrirCoffreSuspect,
+      entretenirExpositions, ouvrirCoffreSuspect,
     });
 
     const RAYON_EXPOSITION = 96;      // SPEC-SYNC-027 : même rayon que la diffusion d'état et EQUIP_VU
+    const expositionsEnvoyees = new WeakMap();
     const cleDe = (x, y, z) => x + ',' + y + ',' + z;
     const estSupport = (x, y, z) => { const d = C.BLOCKS[monde.getBlock(x, y, z)]; return !!(d && d.expose); };
     const aPortee = (js, x, y, z) => {
@@ -54,10 +55,17 @@
       });
       return l;
     }
+    function annoncerExposition(c, exposition) {
+      envoyer(c, { t: CA.MSG.EXPOSITIONS, l: [exposition] });
+      const connues = expositionsEnvoyees.get(c) || new Map();
+      const cle = cleDe(exposition[0], exposition[1], exposition[2]);
+      if (exposition[3]) connues.set(cle, exposition[3]); else connues.delete(cle);
+      expositionsEnvoyees.set(c, connues);
+    }
     // un changement part aux seuls clients à moins de 96 blocs ; les autres le recevront à l'arrivée dans le chunk
     function diffuserExposition(x, y, z) {
-      const msg = { t: CA.MSG.EXPOSITIONS, l: [entree(x, y, z)] };
-      proches(x, z).forEach(cl => envoyer(cl, msg));
+      const exposition = entree(x, y, z);
+      proches(x, z).forEach(cl => annoncerExposition(cl, exposition));
     }
     /* Le support a disparu sans passer par la casse d'un joueur (explosion, feu…) :
        l'objet exposé tombe sur place. Un chunk non chargé n'est pas touché. */
@@ -67,39 +75,59 @@
       if (estSupport(p[0], p[1], p[2])) return true;
       expositions.delete(k);
       entites.dropStack(p[0] + 0.5, p[1] + 0.5, p[2] + 0.5, pileDe(e));
+      diffuserExposition(p[0], p[1], p[2]);
       return false;
     }
-    // par paquets bornés ; l'état d'un chunk (cx, cz) remplace ce que le client en avait, il tient en un seul message
+    // par paquets bornés ; seul le premier paquet remplace ce que le client savait du chunk
     function envoyerListe(c, l, chunk) {
       const MAX = CA.BORNES.EXPOSITIONS_MAX;
-      if (chunk) { envoyer(c, { t: CA.MSG.EXPOSITIONS, l: l.slice(0, MAX), cx: chunk.cx, cz: chunk.cz }); return; }
-      for (let i = 0; i < l.length; i += MAX) envoyer(c, { t: CA.MSG.EXPOSITIONS, l: l.slice(i, i + MAX) });
+      for (let i = 0; i < l.length || (chunk && i === 0); i += MAX) {
+        const message = { t: CA.MSG.EXPOSITIONS, l: l.slice(i, i + MAX) };
+        if (chunk && i === 0) { message.cx = chunk.cx; message.cz = chunk.cz; }
+        envoyer(c, message);
+      }
     }
     // à l'arrivée : tout ce qui est exposé à moins de 96 blocs de l'un des joueurs du poste (SPEC-SYNC-027)
     function envoyerExpositionsProches(c) {
-      if (!expositions.size || !c.joueurs) return;
-      const l = [];
+      if (!c.joueurs) return;
+      const connues = expositionsEnvoyees.get(c) || new Map(), courantes = new Map(), l = [];
       Array.from(expositions.entries()).forEach(([k, e]) => {
         const p = k.split(',').map(Number);
         if (!c.joueurs.some(j => Math.hypot(j.joueur.state.pos.x - (p[0] + 0.5), j.joueur.state.pos.z - (p[2] + 0.5)) < RAYON_EXPOSITION)) return;
-        if (aSupportOuLibere(k, e)) l.push([p[0], p[1], p[2], e.id]);
+        if (!aSupportOuLibere(k, e)) return;
+        courantes.set(k, e.id);
+        if (connues.get(k) !== e.id) l.push([p[0], p[1], p[2], e.id]);
+      });
+      connues.forEach((id, k) => {
+        if (!courantes.has(k)) l.push(k.split(',').map(Number).concat([0]));
       });
       if (l.length) envoyerListe(c, l, null);
+      expositionsEnvoyees.set(c, courantes);
     }
-    // un chunk que le client charge : l'état complet de ce chunk, s'il y a quelque chose à y montrer
+    function entretenirExpositions() {
+      Array.from(expositions.entries()).forEach(([k, e]) => aSupportOuLibere(k, e));
+      clients.forEach(c => { if (c.rejoint && c.joueurs) envoyerExpositionsProches(c); });
+    }
+    // un chunk que le client charge : son état complet, vide compris
     function envoyerExpositionsDuChunk(c, cx, cz) {
-      if (!expositions.size) return;
       const l = [];
       Array.from(expositions.entries()).forEach(([k, e]) => {
         const p = k.split(',').map(Number);
         if (Math.floor(p[0] / 16) !== cx || Math.floor(p[2] / 16) !== cz) return;
         if (aSupportOuLibere(k, e)) l.push([p[0], p[1], p[2], e.id]);
       });
-      if (l.length) envoyerListe(c, l, { cx, cz });
+      envoyerListe(c, l, { cx, cz });
+      const connues = expositionsEnvoyees.get(c) || new Map();
+      connues.forEach((id, k) => {
+        const p = k.split(',').map(Number);
+        if (Math.floor(p[0] / 16) === cx && Math.floor(p[2] / 16) === cz) connues.delete(k);
+      });
+      l.forEach(e => connues.set(cleDe(e[0], e[1], e[2]), e[3]));
+      expositionsEnvoyees.set(c, connues);
     }
     // refus : le client reprend l'état qui fait foi, pour cette case et pour son inventaire
     function refuser(c, m) {
-      envoyer(c, { t: CA.MSG.EXPOSITIONS, l: [entree(m.x, m.y, m.z)] });
+      annoncerExposition(c, entree(m.x, m.y, m.z));
       S.envoyerInvMaj(c, m.j, {});
     }
     /* EXPOSER : UN exemplaire de la case `i` de l'inventaire SERVEUR passe sur le
@@ -126,6 +154,7 @@
       if (!js || !c.rejoint || js.joueur.state.dead) return;
       const k = cleDe(m.x, m.y, m.z), e = expositions.get(k);
       if (!e || !aPortee(js, m.x, m.y, m.z)) return refuser(c, m);
+      if (!estSupport(m.x, m.y, m.z)) { libererExposition(m.x, m.y, m.z); return refuser(c, m); }
       expositions.delete(k);
       rendreAuJoueur(js, e);
       diffuserExposition(m.x, m.y, m.z);

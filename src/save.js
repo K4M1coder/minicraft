@@ -96,11 +96,9 @@
       chests: state.chests ? Object.keys(state.chests).map(function (k) {
         return [k, state.chests[k].serialize(), state.chests[k].size];
       }) : [],
-      // SPEC-INTERIEUR-002 : ce qu'exposent les présentoirs et les socles.
-      expositions: state.expositions ? Object.keys(state.expositions).map(function (k) {
-        var s = state.expositions[k];
-        return [k, s.id, s.n, s.data || null];
-      }) : [],
+      // SPEC-SYNC-027 : le contenu des présentoirs est tenu par le serveur ; le miroir du client (id seul,
+      // sans la donnée d'un livre signé) n'est jamais écrit, ce serait un état périmé. Champ gardé (SPEC-SAVE-018).
+      expositions: [],
       // SPEC-INTERIEUR-002 : la réapparition se fixe sur le dernier lit où
       // l'on a dormi — absente tant qu'on n'a jamais dormi (comportement
       // d'avant cette spec : la réapparition suit alors le point d'arrivée).
@@ -485,14 +483,10 @@
       });
     }
 
-    // SPEC-INTERIEUR-002 : présentoirs et socles ; absent des vieilles
-    // sauvegardes (d'avant cette spec), donc juste vidé dans ce cas.
+    // SPEC-SYNC-027 : le miroir des présentoirs n'est pas relu d'une sauvegarde locale (le serveur l'annonce) ;
+    // les anciennes sauvegardes gardent leur champ, que le serveur reprend à l'import (extras.expositions).
     if (state.expositions) {
       for (var ek in state.expositions) delete state.expositions[ek];
-      (data.expositions || []).forEach(function (e) {
-        if (!e || !e[1]) return;
-        state.expositions[e[0]] = { id: e[1], n: e[2], data: e[3] || undefined };
-      });
     }
     // le point de réapparition ne se fixe que si l'on a dormi au moins une
     // fois ; sinon on laisse game.js retomber sur son comportement d'avant

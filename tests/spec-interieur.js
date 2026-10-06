@@ -408,7 +408,10 @@
       A.equal(etat2.chests['10,20,10'].size, 9, 'la taille du conteneur (étagère) est restaurée');
       A.deep(etat2.chests['10,20,10'].stackAt(0).data, etat.chests['10,20,10'].stackAt(0).data,
              'le contenu de la note posée dans l\'étagère survit');
-      A.deep(etat2.expositions['1,20,1'], { id: I.EMERALD, n: 1 }, 'l\'objet exposé est restauré');
+      /* SPEC-SYNC-027 : le miroir client des présentoirs n'est pas une source de vérité (id seul, sans la donnée
+         d'un livre signé) : ni écrit dans la sauvegarde locale, ni relu — le serveur l'annonce. */
+      A.equal(Object.keys(etat2.expositions).length, 0, 'le miroir des objets exposés n\'est pas restauré depuis la sauvegarde locale');
+      A.deep(MC.Save.serialize(etat).expositions, [], 'et il n\'est pas écrit (ce serait un état périmé, sans donnée de livre)');
       A.deep(etat2.spawnPoint, etat.spawnPoint, 'la réapparition fixée par le lit survit à la sauvegarde');
     });
   });

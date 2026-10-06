@@ -472,6 +472,118 @@
       A.equal(S.joueurParCle('4/0'), null);
     });
 
+    function contexteExpositions() {
+      var blocs = new Map(), messages = [], objetsLaches = [];
+      var poste = { rejoint: true, joueurs: [{ joueur: { state: { pos: { x: 0.5, y: 40, z: 0.5 }, dead: false } } }] };
+      var contexte = {
+        hote: hote(), NP: NP, C: C, CA: CA, regles: {}, PORTEE_BLOC: 6,
+        monde: { getBlock: function (x, y, z) { return blocs.get(x + ',' + y + ',' + z) || 0; }, chunkDe: function () { return {}; } },
+        entites: { dropStack: function (x, y, z, pile) { objetsLaches.push({ x: x, y: y, z: z, pile: pile }); } },
+        expositions: new Map(), conteneursPoses: new Map(), clients: new Map([['poste', poste]]),
+        envoyer: function (destinataire, message) { messages.push({ destinataire: destinataire, message: message }); },
+        diffuser: function () {}, journal: function () {},
+      };
+      MC.ServeurObjets.installer(contexte);
+      return { S: contexte, poste: poste, blocs: blocs, messages: messages, objetsLaches: objetsLaches };
+    }
+
+    it('SPEC-SYNC-027 : un chunk sans objet exposé transmet aussi son état vide', function () {
+      var scenario = contexteExpositions();
+      scenario.S.envoyerExpositionsDuChunk(scenario.poste, 0, 0);
+      A.equal(scenario.messages.length, 1, 'un état vide est transmis pour effacer un ancien miroir');
+      A.deep(scenario.messages[0].message, { t: CA.MSG.EXPOSITIONS, l: [], cx: 0, cz: 0 }, 'le chunk complet est vide');
+    });
+
+    it('SPEC-SYNC-027 : un chunk contenant 257 objets exposés les transmet tous sans effacer les paquets précédents', function () {
+      var scenario = contexteExpositions();
+      for (var index = 0; index < 257; index++) {
+        var cle = (index % 16) + ',' + (40 + Math.floor(index / 256)) + ',' + (Math.floor(index / 16) % 16);
+        scenario.blocs.set(cle, C.B.PRESENTOIR);
+        scenario.S.expositions.set(cle, { id: C.I.DIAMOND, n: 1 });
+      }
+      scenario.S.envoyerExpositionsDuChunk(scenario.poste, 0, 0);
+      var miroir = new Map(), remplacements = 0;
+      scenario.messages.forEach(function (envoi) {
+        var message = envoi.message;
+        A.ok(CA.validerExpositions(message), 'chaque paquet respecte le contrat réseau existant');
+        if (message.cx !== undefined) { miroir.clear(); remplacements++; }
+        message.l.forEach(function (exposition) { miroir.set(exposition.slice(0, 3).join(','), exposition[3]); });
+      });
+      A.equal(miroir.size, 257, 'aucun objet n\'est tronqué dans le miroir du client');
+      A.equal(remplacements, 1, 'le chunk est remplacé une seule fois');
+    });
+
+    it('SPEC-ARCHI-043 : un support disparu est libéré une seule fois et vidé chez deux clients présents', function () {
+      var scenario = contexteExpositions();
+      var autre = { rejoint: true, joueurs: [{ joueur: { state: { pos: { x: 2.5, y: 40, z: 0.5 }, dead: false } } }] };
+      scenario.S.clients.set('autre', autre);
+      scenario.blocs.set('0,40,0', C.B.PRESENTOIR);
+      scenario.S.expositions.set('0,40,0', { id: C.I.DIAMOND, n: 1 });
+      scenario.S.envoyerExpositionsProches(scenario.poste);
+      scenario.S.envoyerExpositionsProches(autre);
+      scenario.blocs.delete('0,40,0');
+      scenario.messages.length = 0;
+      A.equal(typeof scenario.S.entretenirExpositions, 'function', 'le module publie l\'entretien des expositions');
+      scenario.S.entretenirExpositions();
+      scenario.S.entretenirExpositions();
+      A.equal(scenario.S.expositions.size, 0, 'l\'objet n\'est plus exposé sans son support');
+      A.equal(scenario.objetsLaches.length, 1, 'un seul objet tombe, même après deux entretiens');
+      [scenario.poste, autre].forEach(function (poste) {
+        A.ok(scenario.messages.some(function (envoi) { return envoi.destinataire === poste && envoi.message.l.some(function (exposition) { return exposition[0] === 0 && exposition[1] === 40 && exposition[2] === 0 && exposition[3] === 0; }); }), 'le miroir de chaque client est vidé');
+      });
+    });
+
+    it('SPEC-SYNC-027 : revenir sous 96 blocs resynchronise un chunk déjà connu sans redemande', function () {
+      var scenario = contexteExpositions();
+      scenario.blocs.set('0,40,0', C.B.PRESENTOIR);
+      scenario.S.expositions.set('0,40,0', { id: C.I.DIAMOND, n: 1 });
+      scenario.S.envoyerExpositionsProches(scenario.poste);
+      A.equal(typeof scenario.S.entretenirExpositions, 'function', 'le module publie l\'entretien des expositions');
+      scenario.messages.length = 0;
+      scenario.S.entretenirExpositions();
+      A.equal(scenario.messages.length, 0, 'un objet inchangé ne produit pas un nouvel état');
+      scenario.poste.joueurs[0].joueur.state.pos.x = 100;
+      scenario.S.entretenirExpositions();
+      scenario.S.expositions.set('0,40,0', { id: C.I.EMERALD, n: 1 });
+      scenario.messages.length = 0;
+      scenario.S.entretenirExpositions();
+      A.equal(scenario.messages.length, 0, 'le remplacement hors rayon n\'est pas envoyé');
+      scenario.poste.joueurs[0].joueur.state.pos.x = 90;
+      scenario.S.entretenirExpositions();
+      A.ok(scenario.messages.some(function (envoi) { return envoi.message.l.some(function (exposition) { return exposition[3] === C.I.EMERALD; }); }), 'l\'émeraude courante est reçue au retour');
+    });
+
+    it('SPEC-SYNC-027 : une exposition reçue par chunk puis retirée hors rayon est effacée au retour', function () {
+      var scenario = contexteExpositions();
+      scenario.poste.joueurs[0].joueur.state.pos.x = 100;
+      scenario.blocs.set('0,40,0', C.B.PRESENTOIR);
+      scenario.S.expositions.set('0,40,0', { id: C.I.DIAMOND, n: 1 });
+      scenario.S.envoyerExpositionsDuChunk(scenario.poste, 0, 0);
+      A.ok(scenario.messages.some(function (envoi) { return envoi.message.l.some(function (exposition) { return exposition[3] === C.I.DIAMOND; }); }), 'le client connaît le diamant par le snapshot du chunk');
+      scenario.messages.length = 0;
+      scenario.S.libererExposition(0, 40, 0);
+      A.equal(scenario.messages.length, 0, 'la destruction hors rayon n\'est pas diffusée à ce poste');
+      scenario.poste.joueurs[0].joueur.state.pos.x = 90;
+      scenario.S.entretenirExpositions();
+      A.ok(scenario.messages.some(function (envoi) { return envoi.message.l.some(function (exposition) { return exposition[0] === 0 && exposition[1] === 40 && exposition[2] === 0 && exposition[3] === 0; }); }), 'le miroir ancien est vidé au retour sans recharger le chunk');
+    });
+
+    it('SPEC-SYNC-027 : une exposition annoncée par un refus hors portée reste synchronisée après sa disparition', function () {
+      var scenario = contexteExpositions();
+      scenario.S.envoyerInvMaj = function () {};
+      scenario.poste.joueurs[0].joueur.state.pos.x = 100;
+      scenario.blocs.set('0,40,0', C.B.PRESENTOIR);
+      scenario.S.expositions.set('0,40,0', { id: C.I.DIAMOND, n: 1 });
+      scenario.S.exposer(scenario.poste, { j: 0, x: 0, y: 40, z: 0, i: 0 });
+      A.ok(scenario.messages.some(function (envoi) { return envoi.message.l.some(function (exposition) { return exposition[3] === C.I.DIAMOND; }); }), 'le refus annonce l\'état qui fait foi');
+      scenario.messages.length = 0;
+      scenario.S.libererExposition(0, 40, 0);
+      A.equal(scenario.messages.length, 0, 'la disparition hors rayon ne part pas directement au client');
+      scenario.poste.joueurs[0].joueur.state.pos.x = 90;
+      scenario.S.entretenirExpositions();
+      A.ok(scenario.messages.some(function (envoi) { return envoi.message.l.some(function (exposition) { return exposition[0] === 0 && exposition[1] === 40 && exposition[2] === 0 && exposition[3] === 0; }); }), 'l\'objet annoncé par le refus disparaît du miroir au retour');
+    });
+
     it('SPEC-SERVEUR-008 : serveur-tic — mesures désactivées par défaut ; un tic en pause n\'avance pas le monde', function () {
       var S = { EP: {}, hote: hote(), C: C, CONF: { tickHz: 60, etatHz: 60 }, clients: new Map(), monde: {}, SPAWN: { x: 0, y: 64, z: 0 } };
       S.EP.enPause = true; S.EP.heure = 5;

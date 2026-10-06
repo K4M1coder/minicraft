@@ -356,6 +356,7 @@
         entretienDuMonde();
         // SPEC-SECU-012 : qui s'approche d'une région redéfinie l'apprend avant d'y entrer
         clients.forEach(c => synchroniserZones(c));
+        if (S.entretenirExpositions) S.entretenirExpositions();
         if (profilTics) profilTics.section('entretien du monde');
         avancerEconomie();
         verifierSommeil();

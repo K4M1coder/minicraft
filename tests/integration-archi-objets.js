@@ -31,6 +31,37 @@ async function demarrer(args, env) {
   serveurs.push(s);
   return s;
 }
+// attente par sondage borné (jamais par délai fixe) ; renvoie la valeur vraie, ou null au bout de `ms`
+async function jusqua(f, ms) {
+  const fin = Date.now() + (ms || 3000);
+  for (;;) {
+    const v = f();
+    if (v) return v;
+    if (Date.now() > fin) return null;
+    await new Promise(r => setTimeout(r, 25));
+  }
+}
+/* Barrière : le serveur traite les messages d'un client dans l'ordre et répond au ping de trame après
+   eux. Quand le pong revient, tout ce qui précédait est traité et ses réponses sont déjà reçues : on peut
+   alors affirmer qu'il n'y a PAS eu de réponse, sans rien attendre au hasard. */
+async function barriere(cl) {
+  const n = cl.pongs;
+  cl.ping();
+  return !!(await jusqua(() => cl.pongs > n, 4000));
+}
+/* Envoie `msg`, puis le renvoie à intervalle tant que `predicat` n'est pas vrai (borné) : un message au-delà
+   du budget anti-flood est ignoré sans réponse, il n'y a donc rien à attendre d'autre que le budget qui se
+   vide ; le renvoi est sans effet de bord pour les refus et pour les actions dont on attend le résultat. */
+async function insister(cl, msg, predicat, ms) {
+  const fin = Date.now() + (ms || 6000);
+  for (;;) {
+    cl.envoyer(msg);
+    const v = await jusqua(predicat, 400);
+    if (v) return v;
+    if (Date.now() > fin) return null;
+  }
+}
+const pvDe = (cl) => { const e = cl.dernier('etat'); return e && e.toi && e.toi[0] ? e.toi[0].pv : null; };
 const pile = (c) => (c && c !== 0) ? { id: c[0], n: c[1], data: c[3] } : null;
 const compte = (inv, id) => inv.reduce((n, c) => { const p = pile(c); return n + (p && p.id === id ? p.n : 0); }, 0);
 const indexDe = (inv, id) => inv.findIndex(c => { const p = pile(c); return p && p.id === id; });
@@ -99,27 +130,27 @@ async function scenarioExposition() {
   ok(!!(await attendreExposition(B_, ps, I.DIAMOND).catch(() => null)), 'SPEC-SYNC-027 : un socle expose comme un présentoir');
 
   // refus : la pierre n\'est pas un présentoir ; le client doit retrouver l\'état qui fait foi
-  await dodo(1100);   // budget anti-flood d'EXPOSER : 5 par seconde et par joueur local
+  // (le budget anti-flood d'EXPOSER est de 5 par seconde et par joueur local : `insister` renvoie tant que rien n'est revenu)
+  // l'exposition sur le socle a retiré un diamant : on attend l'inventaire qui en rend compte (2 restants)
+  ok(!!(await jusqua(() => compte(A_.dernier('inv_maj').inv, I.DIAMOND) === 2)), 'SPEC-ARCHI-043 : exposer sur le socle retire aussi UN diamant (3 → 2)');
   const invRef = A_.dernier('inv_maj').inv;
   const nbDiamants = compte(invRef, I.DIAMOND);
   const vuRefus = A_.depuis();
-  A_.envoyer({ t: 'exposer', j: 0, x: pierre.x, y: pierre.y, z: pierre.z, i: indexDe(invRef, I.DIAMOND) });
-  await A_.attendre('expositions', 3000, m => m.l.some(e => e[0] === pierre.x && e[3] === 0)).catch(() => null);
-  await dodo(300);
-  ok(vuRefus('expositions').some(m => m.l.some(e => e[0] === pierre.x && e[3] === 0)) && vuRefus('inv_maj').length > 0 && vuRefus('inv_maj').every(m => compte(m.inv, I.DIAMOND) === nbDiamants),
+  const refusPierre = await insister(A_, { t: 'exposer', j: 0, x: pierre.x, y: pierre.y, z: pierre.z, i: indexDe(invRef, I.DIAMOND) },
+    () => vuRefus('expositions').some(m => m.l.some(e => e[0] === pierre.x && e[3] === 0)) && vuRefus('inv_maj').length > 0);
+  ok(!!refusPierre && vuRefus('inv_maj').every(m => compte(m.inv, I.DIAMOND) === nbDiamants),
      'SPEC-ARCHI-043 : exposer sur un bloc qui n\'est pas un présentoir est refusé, l\'inventaire ne bouge pas et le client retrouve l\'état du serveur');
-  await dodo(1100);
-  // refus : hors de portée
+  // refus : loin de tout support (la portée d'un VRAI présentoir lointain est éprouvée dans scenarioRefus)
   const loin = { x: pp.x + 40, y: pp.y, z: pp.z };
   const vuLoin = A_.depuis();
-  A_.envoyer({ t: 'exposer', j: 0, x: loin.x, y: loin.y, z: loin.z, i: indexDe(invRef, I.DIAMOND) });
-  await dodo(500);
-  ok(!vuLoin('inv_maj').some(m => compte(m.inv, I.DIAMOND) !== nbDiamants), 'SPEC-ARCHI-043 : exposer hors de portée est refusé, rien ne bouge');
-  await dodo(1100);
+  const refusLoin = await insister(A_, { t: 'exposer', j: 0, x: loin.x, y: loin.y, z: loin.z, i: indexDe(invRef, I.DIAMOND) },
+    () => vuLoin('expositions').some(m => m.l.some(e => e[0] === loin.x && e[3] === 0)));
+  ok(!!refusLoin && !vuLoin('inv_maj').some(m => compte(m.inv, I.DIAMOND) !== nbDiamants), 'SPEC-ARCHI-043 : exposer sur une case sans support est refusé, rien ne bouge');
   // refus : case vide / forgée
-  A_.envoyer({ t: 'exposer', j: 0, x: pp.x, y: pp.y, z: pp.z, i: 35 });
-  await dodo(400);
-  eq(vue(A_.messages.filter(m => m.t === 'expositions'), pp), I.EMERALD, 'SPEC-ARCHI-043 : une case vide ne vide pas le présentoir (il garde l\'émeraude)');
+  const vuVide = A_.depuis();
+  const refusVide = await insister(A_, { t: 'exposer', j: 0, x: pp.x, y: pp.y, z: pp.z, i: 35 },
+    () => vuVide('expositions').some(m => m.l.some(e => e[0] === pp.x && e[1] === pp.y && e[2] === pp.z)));
+  ok(!!refusVide && vue(vuVide('expositions'), pp) === I.EMERALD, 'SPEC-ARCHI-043 : une case vide ne vide pas le présentoir (il garde l\'émeraude)');
 
   // retirer : B reprend l'émeraude, A et C voient le présentoir vide
   const invB = (B_.dernier('inv_maj')).inv;
@@ -131,8 +162,8 @@ async function scenarioExposition() {
   // retirer une seconde fois : rien à reprendre, aucune duplication
   const vuDouble = B_.depuis();
   B_.envoyer({ t: 'expo_retirer', j: 0, x: pp.x, y: pp.y, z: pp.z });
-  await dodo(500);
-  ok(!vuDouble('inv_maj').some(m => compte(m.inv, I.EMERALD) !== compte(majB.inv, I.EMERALD)), 'SPEC-ARCHI-043 : reprendre deux fois ne duplique rien');
+  ok(await barriere(B_) && vuDouble('inv_maj').length > 0 && !vuDouble('inv_maj').some(m => compte(m.inv, I.EMERALD) !== compte(majB.inv, I.EMERALD)),
+     'SPEC-ARCHI-043 : reprendre deux fois ne duplique rien (refus, et le client retrouve l\'état du serveur)');
 
   // casser le socle : l\'objet exposé tombe sur place
   const vuCasse = A_.depuis();
@@ -159,7 +190,6 @@ async function scenarioPersistance() {
     cl.envoyer({ t: 'exposer', j: 0, x: pp.x, y: pp.y, z: pp.z, i: indexDe(inv0, I.DIAMOND) });
     await attendreExposition(cl, pp, I.DIAMOND);
     cl.fermer();
-    await dodo(300);
     await s.arreter();
     const sauve = JSON.parse(fs.readFileSync(f, 'utf8'));
     ok(Array.isArray(sauve.expositions) && sauve.expositions.some(e => e[0] === pp.x && e[1] === pp.y && e[2] === pp.z && e[3][0] === I.DIAMOND),
@@ -187,7 +217,6 @@ async function scenarioImportSolo() {
     const vu = await attendreExposition(cl, { x: px, y: py, z: pz }, I.EMERALD, 4000).catch(() => null);
     ok(!!vu, 'SPEC-SYNC-027 : une exposition de l\'ancienne partie solo (extras.expositions) est reprise par le serveur, les entrées mal formées écartées');
     cl.fermer();
-    await dodo(300);
     await s.arreter();
     const sauve = JSON.parse(fs.readFileSync(f, 'utf8'));
     ok(Array.isArray(sauve.expositions) && sauve.expositions.length === 1 && sauve.expositions[0][3][0] === I.EMERALD,
@@ -215,17 +244,16 @@ async function scenarioSuspects() {
   // un coffre ordinaire n\'est pas un coffre suspect
   const vuOrdinaire = cl.depuis();
   cl.envoyer({ t: 'coffre_suspect', j: 0, x: pc.x, y: pc.y, z: pc.z });
-  await dodo(500);
-  ok(vuOrdinaire('chat').length === 0 && vuOrdinaire('bloc').length === 0, 'SPEC-ARCHI-044 : COFFRE_SUSPECT sur un coffre ordinaire est ignoré');
+  ok(await barriere(cl) && vuOrdinaire('chat').length === 0 && vuOrdinaire('bloc').length === 0 && vuOrdinaire('cont_etat').length === 0, 'SPEC-ARCHI-044 : COFFRE_SUSPECT sur un coffre ordinaire est ignoré');
   // hors de portée : ignoré
   const vuLoin = cl.depuis();
   cl.envoyer({ t: 'coffre_suspect', j: 0, x: p1.x + 30, y: p1.y, z: p1.z });
-  await dodo(400);
-  ok(vuLoin('chat').length === 0, 'SPEC-ARCHI-044 : COFFRE_SUSPECT hors de portée est ignoré');
+  ok(await barriere(cl) && vuLoin('chat').length === 0, 'SPEC-ARCHI-044 : COFFRE_SUSPECT sur une case sans coffre suspect est ignoré (la portée d\'un vrai coffre lointain est éprouvée dans scenarioRefus)');
 
   // sans kit : le piège se déclenche (flèches), le coffre redevient un coffre normal, ouvert devant le joueur
   cl.envoyer({ t: 'coffre_suspect', j: 0, x: p1.x, y: p1.y, z: p1.z });
   ok(!!(await messageChat(cl, /tire dessus/).catch(() => null)), 'SPEC-ARCHI-044 : sans kit, le piège (flèches) se déclenche, tiré par le serveur');
+  ok(!!(await jusqua(() => pvDe(cl) !== null && pvDe(cl) <= 14)), 'SPEC-ARCHI-044 : les flèches font 6 points de dégâts au joueur, appliqués par le serveur (20 → 14) ' + pvDe(cl));
   const cle1 = p1.x + ',' + p1.y + ',' + p1.z;
   const ouvert = await cl.attendre('cont_etat', 3000, m => m.cle === cle1).catch(() => null);
   ok(ouvert && ouvert.type === 'chest', 'SPEC-ARCHI-044 : le coffre piégé devenu normal s\'ouvre (CONTENEUR_ETAT)');
@@ -241,10 +269,9 @@ async function scenarioSuspects() {
   eq(cl.messages.filter(m => m.t === 'bloc' && m.x === p3.x && m.y === p3.y && m.z === p3.z).pop().id, B.CHEST, 'SPEC-ARCHI-044 : le coffre désamorcé est un coffre ordinaire');
 
   // la surprise (butin rare, hasard à 0) : un coffre contenant du butin rare, ouvert devant le joueur
-  await dodo(1100);   // le budget anti-flood de COFFRE_SUSPECT est de 4 par seconde et par joueur local
-  cl.envoyer({ t: 'coffre_suspect', j: 0, x: p2.x, y: p2.y, z: p2.z });
+  // le budget anti-flood de COFFRE_SUSPECT est de 4 par seconde et par joueur local : on renvoie tant que le coffre ne s'est pas ouvert
   const cle2 = p2.x + ',' + p2.y + ',' + p2.z;
-  const rare = await cl.attendre('cont_etat', 3000, m => m.cle === cle2).catch(() => null);
+  const rare = await insister(cl, { t: 'coffre_suspect', j: 0, x: p2.x, y: p2.y, z: p2.z }, () => cl.messages.find(m => m.t === 'cont_etat' && m.cle === cle2));
   const butin = rare ? rare.slots.map(pile).filter(Boolean) : [];
   ok(butin.length >= 2 && butin.every(p => [I.DIAMOND, I.EMERALD, I.GOLD_INGOT, I.BIJOU].indexOf(p.id) >= 0), 'SPEC-ARCHI-044 : la surprise donne un butin rare tiré par le serveur ' + JSON.stringify(butin));
   // forger : un kit « désigné » qui n\'en est pas un ne désamorce rien
@@ -268,6 +295,7 @@ async function scenarioSuspects() {
   cl.envoyer({ t: 'coffre_suspect', j: 0, x: q3.x, y: q3.y, z: q3.z, i: indexDe(inv, I.KIT_DESAMORCAGE) });
   ok(!!(await messageChat(cl, /échoue/).catch(() => null)), 'SPEC-ARCHI-044 : le désamorçage peut échouer (tiré par le serveur)');
   ok(!!(await messageChat(cl, /gaz toxique/).catch(() => null)), 'SPEC-ARCHI-044 : après un échec, le piège se déclenche');
+  ok(!!(await jusqua(() => pvDe(cl) !== null && pvDe(cl) < 20, 9000)), 'SPEC-ARCHI-044 : le gaz toxique rend malade : de petites brûlures s\'ensuivent, appliquées par le serveur ' + pvDe(cl));
   // la surprise « mimic »
   cl.envoyer({ t: 'coffre_suspect', j: 0, x: q2.x, y: q2.y, z: q2.z });
   ok(!!(await messageChat(cl, /pas un vrai coffre/).catch(() => null)), 'SPEC-ARCHI-044 : la surprise peut être un mimic');
@@ -291,6 +319,100 @@ async function scenarioSuspects() {
     cl.fermer();
     await s.arreter();
   }
+}
+
+// ── refus et robustesse côté serveur : portée réelle, état d'un chunk, support disparu, joueur mort, dégâts ──
+/* Le monde est fabriqué : le joueur reste à (0,5 ; 40 ; 0,5) (MC_TEST_SPAWN), les blocs sont posés par le fichier de monde.
+   Portée de pose : 7 blocs. Près : présentoir N (3,41,3), pierre (1,41,3), trois coffres piégés (dont un en -4,41,3)
+   (-2,41,3) et (-3,41,3). Loin (14 blocs) : présentoir F (14,41,3) exposant un diamant, coffre piégé G (14,41,6).
+   Sans support : une exposition sur (5,41,5), où il n'y a que de l'air (explosion, feu : le support a disparu). */
+async function scenarioRefus() {
+  const d = A.dossierTemp('mc-objets-ref-');
+  try {
+    const N = { x: 3, y: 41, z: 3 }, PIERRE = { x: 1, y: 41, z: 3 }, T3 = { x: -4, y: 41, z: 3 };
+    const T1 = { x: -2, y: 41, z: 3 }, T2 = { x: -3, y: 41, z: 3 };
+    const F = { x: 14, y: 41, z: 3 }, G = { x: 14, y: 41, z: 6 }, VIDE = { x: 5, y: 41, z: 5 };
+    const f = path.join(d, 'monde.json');
+    const blocs = [[N, B.PRESENTOIR], [PIERRE, B.STONE], [T3, B.COFFRE_PIEGE], [T1, B.COFFRE_PIEGE], [T2, B.COFFRE_PIEGE], [F, B.PRESENTOIR], [G, B.COFFRE_PIEGE]];
+    fs.writeFileSync(f, JSON.stringify({ v: 2, graine: 20260921, heure: 60, overrides: blocs.map(b => [b[0].x, b[0].y, b[0].z, b[1]]), etats: [], crops: [],
+      extras: { expositions: [[F.x + ',' + F.y + ',' + F.z, I.DIAMOND, 1, null], [VIDE.x + ',' + VIDE.y + ',' + VIDE.z, I.EMERALD, 1, null]], explores: [] } }));
+    const s = await demarrer(['--monde', f, '--dossier-parties', d], Object.assign(seed([[I.DIAMOND, 3], [I.EMERALD, 2]]), { MC_TEST_SPAWN: '0.5,40,0.5', MC_TEST_ALEA: '0.3' }));
+    const { client: cl } = await rejoindre(s.port, 'Refus', 1);
+    const inv0 = await inventaireInitial(cl);
+    const iDia = indexDe(inv0, I.DIAMOND), iEme = indexDe(inv0, I.EMERALD);
+    ok(iDia >= 0 && iEme >= 0, 'préparation : le joueur porte des diamants et des émeraudes');
+
+    // SPEC-SYNC-027 : l'état complet d'un chunk part quand le client le demande (sa branche serveur)
+    cl.envoyer({ t: 'overrides_demande', cx: 0, cz: 0 });
+    const chunk = await cl.attendre('expositions', 3000, m => m.cx === 0 && m.cz === 0).catch(() => null);
+    ok(!!chunk && chunk.l.some(e => e[0] === F.x && e[1] === F.y && e[2] === F.z && e[3] === I.DIAMOND),
+       'SPEC-SYNC-027 : le chunk que le client charge reçoit l\'état complet de ses présentoirs (cx, cz, objets exposés)');
+
+    // le support a disparu (explosion, feu) : l'objet n'est pas annoncé, il tombe sur place
+    ok(!cl.messages.some(m => m.t === 'expositions' && m.l.some(e => e[0] === VIDE.x && e[1] === VIDE.y && e[2] === VIDE.z && e[3] !== 0)),
+       'SPEC-SYNC-027 : une exposition dont le support a disparu n\'est jamais annoncée aux clients');
+    const tombe = await cl.attendre('etat', 5000, m => (m.mobs || []).some(e => e.t === 'item')).catch(() => null);
+    ok(!!tombe, 'SPEC-ARCHI-043 : l\'objet dont le support a disparu tombe sur place (lâché par le serveur)');
+
+    // portée : un VRAI présentoir, garni, à 14 blocs (portée 7). EXPOSER et EXPOSITION_RETIRER sont refusés
+    const vuF = cl.depuis();
+    const refusExposer = await insister(cl, { t: 'exposer', j: 0, x: F.x, y: F.y, z: F.z, i: iEme },
+      () => vuF('expositions').some(m => m.l.some(e => e[0] === F.x && e[1] === F.y && e[2] === F.z)));
+    ok(!!refusExposer && vue(vuF('expositions'), F) === I.DIAMOND && vuF('inv_maj').every(m => compte(m.inv, I.EMERALD) === 2 && compte(m.inv, I.DIAMOND) === 3),
+       'SPEC-ARCHI-043 : exposer sur un présentoir réel hors de portée est refusé (l\'objet exposé reste, l\'inventaire ne bouge pas)');
+    const vuR = cl.depuis();
+    const refusRetirer = await insister(cl, { t: 'expo_retirer', j: 0, x: F.x, y: F.y, z: F.z },
+      () => vuR('expositions').some(m => m.l.some(e => e[0] === F.x && e[1] === F.y && e[2] === F.z)));
+    ok(!!refusRetirer && vue(vuR('expositions'), F) === I.DIAMOND && vuR('inv_maj').every(m => compte(m.inv, I.DIAMOND) === 3),
+       'SPEC-ARCHI-043 : reprendre l\'objet d\'un présentoir hors de portée est refusé (rien ne passe dans l\'inventaire)');
+    // portée : un VRAI coffre piégé à 14 blocs ne se déclenche pas
+    const vuG = cl.depuis();
+    cl.envoyer({ t: 'coffre_suspect', j: 0, x: G.x, y: G.y, z: G.z });
+    ok(await barriere(cl) && vuG('chat').length === 0 && vuG('bloc').length === 0 && vuG('cont_etat').length === 0,
+       'SPEC-ARCHI-044 : COFFRE_SUSPECT sur un vrai coffre piégé hors de portée est ignoré (aucun piège, aucun changement de bloc)');
+
+    // dégâts : l'explosion fait 10 points, appliqués par le serveur ; deux explosions tuent
+    cl.envoyer({ t: 'coffre_suspect', j: 0, x: T1.x, y: T1.y, z: T1.z });
+    ok(!!(await messageChat(cl, /explose/).catch(() => null)), 'SPEC-ARCHI-044 : le piège « explosion » se déclenche');
+    ok(!!(await jusqua(() => pvDe(cl) !== null && pvDe(cl) <= 10)), 'SPEC-ARCHI-044 : l\'explosion fait 10 points de dégâts au joueur (20 → 10) ' + pvDe(cl));
+    cl.envoyer({ t: 'coffre_suspect', j: 0, x: T2.x, y: T2.y, z: T2.z });
+    const mort = await jusqua(() => { const e = cl.dernier('etat'); return e && e.toi && e.toi[0] && e.toi[0].mort === 1; });
+    ok(!!mort, 'préparation : une seconde explosion tue le joueur (état du serveur) ' + pvDe(cl));
+
+    // joueur mort : EXPOSER et COFFRE_SUSPECT n'ont aucun effet (même à portée, sur un support valide)
+    const vuMort = cl.depuis();
+    cl.envoyer({ t: 'exposer', j: 0, x: N.x, y: N.y, z: N.z, i: iDia });
+    cl.envoyer({ t: 'coffre_suspect', j: 0, x: T3.x, y: T3.y, z: T3.z });
+    ok(await barriere(cl) && vuMort('expositions').length === 0 && vuMort('inv_maj').length === 0 && vuMort('chat').length === 0 && vuMort('bloc').length === 0,
+       'SPEC-ARCHI-043 : un joueur mort n\'expose rien et n\'ouvre aucun coffre piégé (ni message, ni bloc, ni inventaire modifié)');
+    cl.fermer();
+    await s.arreter();
+  } finally { A.supprimerDossier(d); }
+}
+
+// ── inventaire plein : l'objet repris tombe aux pieds, jamais perdu (SPEC-ARCHI-043) ──
+async function scenarioInventairePlein() {
+  const fillers = Object.keys(C.I).map(k => C.I[k]).filter(id => id !== I.DIAMOND_SWORD).slice(0, 34);
+  const plein = fillers.map(id => [id, 1]).concat([[B.PRESENTOIR, 1], [I.DIAMOND_SWORD, 1]]);
+  const s = await demarrer(['--ouvert'], seed(plein));
+  const a = await rejoindre(s.port, 'Alice', 1);
+  const b = await rejoindre(s.port, 'Bob', 1);
+  const invA = await inventaireInitial(a.client);
+  const invB = await inventaireInitial(b.client);
+  eq(invB.filter(c => c && c !== 0).length, 36, 'préparation : l\'inventaire de Bob est plein (36 cases)');
+  const pp = position(a.bienvenue, 0, 0);
+  await poser(a.client, pp, B.PRESENTOIR, indexDe(invA, B.PRESENTOIR));
+  a.client.envoyer({ t: 'exposer', j: 0, x: pp.x, y: pp.y, z: pp.z, i: indexDe(invA, I.DIAMOND_SWORD) });
+  ok(!!(await attendreExposition(b.client, pp, I.DIAMOND_SWORD).catch(() => null)), 'préparation : Alice expose l\'épée, Bob la voit');
+  const sol0 = b.client.messages.filter(m => m.t === 'etat' && (m.mobs || []).some(e => e.t === 'item')).length;
+  b.client.envoyer({ t: 'expo_retirer', j: 0, x: pp.x, y: pp.y, z: pp.z });
+  ok(!!(await attendreExposition(b.client, pp, 0).catch(() => null)), 'SPEC-ARCHI-043 : Bob reprend l\'objet exposé');
+  const tombe = await b.client.attendre('etat', 5000, m => (m.mobs || []).some(e => e.t === 'item')).catch(() => null);
+  ok(!!tombe && sol0 === 0, 'SPEC-ARCHI-043 : inventaire plein, l\'objet repris tombe aux pieds (rien n\'est perdu)');
+  await barriere(b.client);
+  ok(compte(b.client.dernier('inv_maj').inv, I.DIAMOND_SWORD) === 1, 'SPEC-ARCHI-043 : et l\'inventaire plein de Bob ne gagne pas de second exemplaire');
+  a.client.fermer(); b.client.fermer();
+  await s.arreter();
 }
 
 // ── audit statique de src/game.js ───────────────────────────────────────────
@@ -320,6 +442,8 @@ function scenarioAudit() {
     await scenarioPersistance();
     await scenarioImportSolo();
     await scenarioSuspects();
+    await scenarioRefus();
+    await scenarioInventairePlein();
     scenarioAudit();
   } catch (e) {
     ok(false, 'le scénario ne doit pas lever d\'exception', e && e.stack);

@@ -119,6 +119,7 @@
       var m = MC.Save.migrerV2(copie(f));
       A.deep(cheminsDe(m, X), [], 'plus aucun 129 dans la sauvegarde migrée');
       A.equal(m.banque[0][0], I.COAL, 'devenu le charbon de l\'espace actuel');
+      A.equal(m.expositions[0][1], I.COAL, 'l\'ancien contenu exposé reste migré pour son import par le serveur');
       // chargement réel puis balayage des chemins porteurs de la sauvegarde réécrite
       var e = etatComplet();
       A.ok(MC.Save.apply(copie(f), e), 'la sauvegarde forgée se charge');
@@ -128,7 +129,8 @@
       A.deep(restes, [], 'aucun chemin porteur ne contient 129 après MC.Save.apply');
       A.equal(e.world.banque.slots[0].id, I.COAL, 'banque');
       A.equal(e.distributeurs['8,40,8'].slots[0].id, I.COAL, 'distributeur');
-      A.equal(e.expositions['7,40,7'].id, I.COAL, 'présentoir');
+      A.deep(e.expositions, {}, 'le miroir des présentoirs attend son état du serveur');
+      A.deep(s.expositions, [], 'le miroir client ne remplace jamais le contenu tenu par le serveur');
       A.equal(e.histoire.enquete.indices[0].objet, I.COAL, 'indice d\'enquête');
       A.ok(e.economie.lieux.get('lieu1').stocks[I.COAL], 'stock de l\'économie réindexé sur le charbon actuel');
     });
