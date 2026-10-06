@@ -142,6 +142,22 @@ async function attendrePret(port) {
     ok(SEAE.deplier(lot, d).deplie === true, 'SPEC-PACK-001 : premier lancement, les fichiers sont dépliés');
     fs.writeFileSync(path.join(d, 'parties', 'LISEZMOI.txt'), 'mien');
     ok(SEAE.deplier(lot, d).deplie === false, 'SPEC-PACK-001 : relancé à l\'identique, rien n\'est redéplié');
+    const accessAvant = fs.accessSync;
+    let refuseEcriture = false;
+    try {
+      fs.accessSync = function (cible, mode) {
+        if (path.resolve(cible) === path.resolve(d) && mode === fs.constants.W_OK) {
+          const erreur = new Error('dossier en lecture seule');
+          erreur.code = 'EACCES';
+          throw erreur;
+        }
+        return accessAvant.apply(fs, arguments);
+      };
+      try { SEAE.deplier(lot, d); } catch (e) { refuseEcriture = e.code === 'EACCES'; }
+    } finally {
+      fs.accessSync = accessAvant;
+    }
+    ok(refuseEcriture, 'SPEC-PACK-001 : une empreinte identique ne masque pas un dossier devenu non inscriptible');
     lot[0] = { nom: 'server.js', contenu: Buffer.from('2') };
     SEAE.deplier(lot, d);
     ok(fs.readFileSync(path.join(d, 'server.js'), 'utf8') === '2' && fs.readFileSync(path.join(d, 'parties', 'LISEZMOI.txt'), 'utf8') === 'mien',

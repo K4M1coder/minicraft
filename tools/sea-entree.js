@@ -52,8 +52,11 @@ function deplier(entrees, dossier) {
   entrees.forEach(e => { empreinte.update(e.nom); empreinte.update(e.contenu); });
   const sceau = empreinte.digest('hex');
   const fichierSceau = path.join(dossier, '.empreinte');
-  try { if (fs.readFileSync(fichierSceau, 'utf8') === sceau) return { dossier: dossier, deplie: false }; } catch (e) { /* première fois */ }
+  let dejaDeplie = false;
+  try { dejaDeplie = fs.readFileSync(fichierSceau, 'utf8') === sceau; } catch (e) { /* première fois */ }
   fs.mkdirSync(dossier, { recursive: true });
+  fs.accessSync(dossier, fs.constants.W_OK);
+  if (dejaDeplie) return { dossier: dossier, deplie: false };
   entrees.forEach(e => {
     const n = nomSur(e.nom);
     const cible = path.join(dossier, n);
