@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.9.0] - 2026-10-06
 ### Ajouté
 - SPEC-ENV-005 — **une éruption proche rend le gardien d'un donjon plus dangereux** : tant qu'un volcan actif est en éruption à moins de 600 blocs d'un donjon, les renforts de son gardien viennent 1,5 à 2 fois plus souvent (×2 au pied du cratère, ×1,5 en bordure du rayon, le plus proche des volcans l'emporte ; rien hors éruption). `MC.Volcanisme.multiplicateurRenforts` / `multiplicateurRenfortsDonjon` (pures, par graine et heure) ; le serveur passe le facteur à `entites.update` (`opts.multRenforts`), qui raccourcit d'autant la cadence d'invocation ; le plafond de sbires vivants (SPEC-DONJON-005) reste appliqué. Aucun changement de génération ni de sauvegarde. Tests : `tests/spec-environnement.js` (règle pure, vrai monde, comptage des renforts ×1,5 et ×2 sur 30 minutes simulées, plafond), `tests/spec-serveur-modules.js` (le câblage : le tic du serveur passe à `entites.update` un `multRenforts` qui convertit l'id « rx,rz » en région, lit le donjon du monde et interroge le volcanisme à l'heure et avec la graine du serveur).
 - SPEC-LIMITE-007 — **sonde navigateur du rendu loin de l'origine, tableau de mesures au cahier** : à 10⁴, 10⁵, 10⁶ et 10⁷ blocs (et à l'origine pour référence), le jeu est téléporté, une image est capturée et l'écart entre images fixes est mesuré pour un déplacement de caméra de 1/64 de bloc (géométrie) et pour 0,05 s de temps (eau, vent, nuages). Nouvelle API de test `T.mesure(titre, entetes, lignes)` : les tableaux d'un test sont portés par la clé `mesures` de `resultats.json` (`tools/e2e-headless.js`) et rendus par `tests/rapport.js` sous les métriques du test, dans le cahier HTML. Tests : `tests/e2e.js` (la sonde), `tests/spec-banc.js` (les mesures entrent au cahier, modèle et HTML).
@@ -1569,6 +1571,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.9.0]: #
 [0.8.0]: #
 [0.7.0]: #
 [0.6.0]: #
