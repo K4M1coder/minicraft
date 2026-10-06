@@ -475,11 +475,13 @@
 
     it('SPEC-BANC-006 : le périmètre d\'un fichier source sélectionne exactement ce que la carte d\'impact relie à ses fonctions (chaque test retenu a sa raison, aucun n\'est inventé)', function () {
       var P = require(path.join(RACINE, 'tools', 'perimetre.js'));
-      var p = JSON.parse(cp.execFileSync(process.execPath, [path.join(RACINE, 'tools', 'perimetre.js'), '--fichiers', 'src/mesher.js', '--json'], { cwd: RACINE, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
-      A.equal(p.repli, null, 'pas de repli : la carte est exploitable');
+      var carte = P.lireCarte();
+      A.ok(carte && carte.commit, 'une carte d\'impact existe pour exercer la sélection');
+      var ecart = Number(cp.execFileSync('git', ['rev-list', '--count', carte.commit + '..HEAD'], { cwd: RACINE, env: GP.envSansGit(), encoding: 'utf8' }).trim());
+      var p = JSON.parse(cp.execFileSync(process.execPath, [path.join(RACINE, 'tools', 'perimetre.js'), '--fichiers', 'src/mesher.js', '--ecart-max', String(ecart + 1), '--json'], { cwd: RACINE, encoding: 'utf8', maxBuffer: 256 * 1024 * 1024 }));
+      A.equal(p.repli, null, 'pas de repli : la carte est autorisée par la limite d\'âge explicite de ce scénario');
       A.ok(p.selection.length > 0, 'périmètre non vide');
       A.ok(p.selection.every(function (t) { return t.raisons && t.raisons.length > 0; }), 'chaque test retenu dit pourquoi');
-      var carte = P.lireCarte();
       var parFonction = {};
       p.fonctions.forEach(function (f) { parFonction[f] = new Set(P.appelantsDe(carte, f)); });
       var viaCarte = p.selection.filter(function (t) { return t.raisons.some(function (r) { return r.indexOf('fonction:') === 0; }); });
