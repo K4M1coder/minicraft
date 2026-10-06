@@ -150,6 +150,8 @@
     var monSeq = ++etat.seq;
     t.querySelector('#hist-page-info').textContent = 'chargement…';
     rafraichirGraphes();
+    var panneauTest = document.getElementById('hist-panneau-test');
+    if (panneau.o && panneauTest && !panneauTest.hidden) chargerPanneau();
     fetch(urlLignes()).then(lireJSON).then(function (data) {
       if (monSeq !== etat.seq) return; // réponse périmée : une requête plus récente est partie
       etat.effectifs = data.effectifs || {};
@@ -582,11 +584,13 @@
     var pos = d.positions[d.index];
     var pa = pos && pos.passage, cap = pos && pos.capture;
     if (!pa || !cap) return;
+    var monSeq = panneau.seq;
     d.message.textContent = 'épinglage…';
     fetch('/tests/registre/temoin', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ test: pa.nom, commit: pa.commit, image: cap.image, cle_image: d.cle }),
+      body: JSON.stringify({ test: pa.cle, commit: pa.commit, image: cap.image, cle_image: d.cle }),
     }).then(lireJSON).then(function () {
+      if (monSeq !== panneau.seq) return;
       panneau.temoins[d.cle] = { epingle: true, run: pa.run, commit: pa.commit, commit_court: pa.commit_court, image: cap.image };
       panneau.diapos.forEach(function (autre) { if (autre.cle === d.cle) { afficherTemoin(autre); majScene(autre); } });
       d.message.textContent = 'témoin épinglé';

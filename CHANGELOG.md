@@ -26,6 +26,7 @@ respecter (voir PLAN.md, « Commits et versions »).
 
 ### Corrigé
 - SPEC-PACK-001 — un dossier de jeu déjà déplié, dont les droits d'écriture ont été retirés, n'est plus accepté sur sa seule empreinte : le lanceur vérifie son accessibilité et peut se replier vers le dossier personnel. Test de régression : `tests/integration-paquet.js`.
+- SPEC-BANC-048/052/119 — les diaporamas ouverts suivent les changements de filtre ; les nouveaux témoins utilisent l'identité complète du test (sans mélange entre homonymes), valident le rôle et le libellé de leur capture, et une réponse d'épinglage périmée ne modifie plus le panneau suivant. Les anciens témoins restent lisibles. Tests de régression : `tests/spec-historique.js`, `tests/spec-historique-vues.js` ; preuve du périmètre SPEC-BANC-006 renforcée à tous les appelants encore connus.
 - Banc de tests, inscription : un arbre modifié cite le commit HEAD (et non celui du cahier) comme l'exige SPEC-BANC-058 ; l'identité d'image d'un témoin (`cle_image`) est validée (200 caractères au plus, pas de clé spéciale) ; preuves de la colonne « Arbre modifié » et du format des noms d'image ; routes du banc et `tests/e2e-banc.js` documentées.
 
 ## [0.8.0] - 2026-10-05

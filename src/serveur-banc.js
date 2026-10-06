@@ -388,10 +388,10 @@
          capture inscrite) — calculé sur TOUS les passages du test, pas sur la vue filtrée */
       const passages = HIST.imagesDeTest(toutes, q.test, { filtre: filtre, tri: q.tri });
       const toutesDuTest = HIST.lignesDeTest(toutes, q.test);
-      const nomTest = toutesDuTest.length ? toutesDuTest[0].nom : null;
+      const cleTest = toutesDuTest.length ? toutesDuTest[0].cle : null;
       repondreJSON(res, 200, {
         images: passages,
-        temoins: nomTest ? HIST.temoinsDeTest(toutesDuTest, nomTest, require('./tools/registre.js').lireTemoins()) : {},
+        temoins: cleTest ? HIST.temoinsDeTest(toutesDuTest, cleTest, require('./tools/registre.js').lireTemoins()) : {},
       });
       return true;
     }

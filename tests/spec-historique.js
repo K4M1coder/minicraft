@@ -660,7 +660,7 @@
       ];
       var temoins = o.temoins === undefined ? { 'debut|début': { epingle: false, run: 'p2', commit: SHA('2'), commit_court: 'c2c2', image: SHA('d') + '.jpg' } } : o.temoins;
       var d = fauxDom(function (url, init) {
-        if (/\/images\?/.test(url)) return { images: passages, temoins: temoins };
+        if (/\/images\?/.test(url)) return { images: o.filtrer ? o.filtrer(url, passages) : passages, temoins: temoins };
         if (/\/registre\/temoin$/.test(url)) return { ok: true };
         return { lignes: [], total: 0, effectifs: {} };
       });
@@ -707,6 +707,20 @@
       tri.value = 'commit'; tri.declencher('change');
       A.ok(/tri=commit/.test(d.appels[d.appels.length - 1]), 'le tri « commit » est demandé : ' + d.appels[d.appels.length - 1]);
       A.equal(d.H.panneau.diapos.length, 1, 'le diaporama ouvert reste ouvert après le changement d\'ordre');
+    });
+
+    it('SPEC-BANC-048 : changer le filtre actualise les positions des diaporamas déjà ouverts', function () {
+      var d = panneauDemo({ filtrer: function (url, passages) {
+        return /rapide=echecs/.test(url) ? passages.filter(function (pa) { return pa.etat === 'echec'; }) : passages;
+      } });
+      vignette(d, 'debut|début', 'p3').click();
+      vignette(d, 'fin|fin', 'p3').click();
+      A.equal(d.H.panneau.diapos.length, 2, 'deux diaporamas ouverts');
+      d.obtenir('__rapide-echecs').click();
+      A.equal(d.H.panneau.diapos.length, 2, 'les deux restent ouverts');
+      d.H.panneau.diapos.forEach(function (diapo) {
+        A.deep(diapo.positions.map(function (position) { return position.passage.run; }), ['p2'], 'seul le run en échec reste dans le diaporama');
+      });
     });
 
     it('SPEC-BANC-049 et SPEC-BANC-050 : plusieurs diaporamas coexistent, indépendants (flèches, curseur), « synchroniser » les aligne ; la lecture ne démarre que sur le bouton', function () {
@@ -794,9 +808,35 @@
       var ecr = d.ecritures[d.ecritures.length - 1];
       A.equal(ecr.url, '/tests/registre/temoin', 'route POST du témoin');
       A.equal(ecr.methode, 'POST', 'en POST');
-      A.deep(ecr.corps, { test: 't', commit: SHA('2'), image: SHA('d') + '.jpg', cle_image: 'debut|début' }, 'cette image de ce run de ce test');
+      A.deep(ecr.corps, { test: 'G › t', commit: SHA('2'), image: SHA('d') + '.jpg', cle_image: 'debut|début' }, 'cette image de ce run de ce test, identifié par sa clé complète');
       A.equal(dia.getAttribute('data-temoin'), 'epingle', 'le témoin est désormais marqué épinglé');
       A.ok(/épinglé/.test(dans(dia, 'hist-temoin-legende').textContent), 'et le dit');
+    });
+
+    it('SPEC-BANC-052 : une réponse d\'épinglage tardive ne modifie pas le panneau du test suivant', function () {
+      var d = panneauDemo();
+      var fetchAvant = d.ctx.fetch, repondre;
+      d.ctx.fetch = function (url, init) {
+        if (/\/registre\/temoin$/.test(url)) {
+          var etapes = [];
+          var differee = { then: function (suite) { etapes.push(suite); return differee; }, catch: function () { return differee; } };
+          repondre = function () {
+            var resultat = fetchAvant(url, init);
+            etapes.forEach(function (suite) { resultat = resultat.then(suite); });
+          };
+          return differee;
+        }
+        return fetchAvant(url, init);
+      };
+      vignette(d, 'debut|début', 'p2').click();
+      dans(diapos(d)[0], 'hist-diapo-epingler').click();
+      d.passages.forEach(function (pa) { pa.cle = 'Autre › t'; });
+      d.H.ouvrirTest({ cle: 'Autre › t', nom: 't', run: 'p2' });
+      vignette(d, 'debut|début', 'p2').click();
+      A.equal(d.H.panneau.temoins['debut|début'].epingle, false, 'le nouveau test n\'a pas de témoin épinglé');
+      repondre();
+      A.equal(d.H.panneau.temoins['debut|début'].epingle, false, 'la réponse de l\'ancien panneau est ignorée');
+      A.equal(diapos(d)[0].getAttribute('data-temoin'), 'derniere', 'le diaporama du nouveau test reste inchangé');
     });
 
     it('SPEC-BANC-052 : un témoin épinglé ressort comme tel dans les diaporamas suivants (rechargés depuis le serveur)', function () {

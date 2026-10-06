@@ -410,7 +410,7 @@
           var post = dernier(appels, '/tests/registre/temoin');
           A.equal(post.init.method, 'POST', 'en POST');
           var corps = JSON.parse(post.init.body);
-          A.equal(corps.test, 'banc diaporama', 'ce test');
+          A.equal(corps.test, 'e2e › banc diaporama', 'ce test, identifié par sa clé complète');
           A.equal(corps.image, iB, 'cette image');
           A.equal(corps.commit, passages[1].commit, 'de ce run');
           A.equal(corps.cle_image, 'debut|début', 'pour cette image-là');

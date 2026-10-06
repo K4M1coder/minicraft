@@ -683,7 +683,8 @@ function marquerTemoin(testId, commit, image, opts) {
   if (o.cleImage !== undefined && !cleImageValide(o.cleImage)) return { ok: false, motif: 'identité d image invalide' };
   const entrees = lireEntrees(dossierRegistre);
   const existe = entrees.some(e => e.commit === commit &&
-    (e.tests || []).some(t => (t.id === testId || t.nom === testId) && (t.captures || []).some(c => c.image === image)));
+    (e.tests || []).some(t => (cleDeTest(t) === testId || t.id === testId || t.nom === testId) && (t.captures || []).some(c => c.image === image
+      && (!o.cleImage || (c.role || '') + '|' + (c.libelle || '') === o.cleImage))));
   if (!existe) return { ok: false, motif: 'aucune capture de ce test, à ce commit, avec cette image, dans le registre' };
   const temoins = lireTemoins(dossierRegistre);
   const precedent = temoins[testId] && typeof temoins[testId] === 'object' ? temoins[testId] : {};

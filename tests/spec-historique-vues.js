@@ -213,7 +213,7 @@
       RT.ecrireCahier({
         schema: 1, campagne: { preset: 'pr', debut: new Date().toISOString(), interrompue: !!opt.interrompue, environnement: { commit: opt.commit || 'HEAD' },
           totaux: { total: 1, passes: 1, echecs: 0, ignores: 0 } },
-        tests: [{ id: 'DEMO-BANC', nom: 'demo banc', type: 'e2e', groupe: 'end-to-end', domaines: [], specs: [], etat: 'ok', duree_ms: 5,
+        tests: [{ id: 'DEMO-BANC', nom: opt.nom || 'demo banc', type: opt.type || 'e2e', groupe: opt.groupe || 'end-to-end', domaines: [], specs: [], etat: 'ok', duree_ms: 5,
           captures: [{ libelle: 'début', fichier: 0, role: 'debut', t_ms: 0 }, { libelle: 'fin', fichier: 1, role: 'fin', t_ms: 9 }] }],
       }, { racine: racine, nom: nom, captures: [{ libelle: 'début', type: 'image/jpeg', base64: JPEG.toString('base64') }, { libelle: 'fin', type: 'image/jpeg', base64: Buffer.concat([JPEG, Buffer.from([1])]).toString('base64') }] });
     }
@@ -365,8 +365,31 @@
         ['__proto__', 'constructor', 'prototype', new Array(500).join('x')].forEach(function (cle) {
           A.equal(REG.marquerTemoin('demo banc', dp.plein, img, { dossierRegistre: registre, cleImage: cle }).ok, false, 'refusée : ' + cle.slice(0, 20));
         });
+        A.equal(REG.marquerTemoin('demo banc', dp.plein, img, { dossierRegistre: registre, cleImage: 'fin|fin' }).ok, false, 'une capture de début ne devient pas le témoin de la fin');
         A.equal(REG.lireTemoins(registre)['demo banc'], undefined, 'rien d\'écrit par les refus');
         A.equal(REG.marquerTemoin('demo banc', dp.plein, img, { dossierRegistre: registre, cleImage: 'debut|début' }).ok, true, 'une identité normale passe');
+      } finally { nettoyer(racine); nettoyer(registre); nettoyer(dp.d); }
+    });
+
+    it('SPEC-BANC-052 / SPEC-BANC-119 : deux tests homonymes gardent des témoins distincts par identité complète', function () {
+      var racine = tmp('res'), registre = tmp('reg'), dp = depot();
+      try {
+        cahier(racine, 'runA', { commit: dp.court, type: 'spec', groupe: 'groupe A', nom: 'homonyme' });
+        cahier(racine, 'runB', { commit: dp.court, type: 'spec', groupe: 'groupe B', nom: 'homonyme' });
+        var options = { racineResultats: racine, dossierRegistre: registre, dossierRepo: dp.d };
+        A.ok(REG.inscrireDepuisBanc({ dossier: 'runA' }, options).ok, 'inscription A');
+        A.ok(REG.inscrireDepuisBanc({ dossier: 'runB' }, options).ok, 'inscription B');
+        var cleA = 'groupe A › homonyme', cleB = 'groupe B › homonyme';
+        var imageA = REG.sha1(JPEG) + '.jpg';
+        var imageB = REG.sha1(Buffer.concat([JPEG, Buffer.from([1])])) + '.jpg';
+        A.ok(REG.marquerTemoin(cleA, dp.plein, imageA, { dossierRegistre: registre, cleImage: 'debut|début' }).ok, 'épinglage par identité A');
+        A.ok(REG.marquerTemoin(cleB, dp.plein, imageB, { dossierRegistre: registre, cleImage: 'fin|fin' }).ok, 'épinglage par identité B');
+        var temoins = REG.lireTemoins(registre);
+        A.equal(temoins[cleA].image, imageA, 'B ne remplace pas A');
+        A.equal(temoins[cleB].image, imageB, 'B garde son image');
+        var lignes = H.construireLignes(REG.lireEntrees(registre));
+        A.equal(H.temoinsDeTest(H.lignesDeTest(lignes, cleA), cleA, temoins)['debut|début'].epingle, true, 'le témoin A est relu');
+        A.equal(H.temoinsDeTest(H.lignesDeTest(lignes, cleB), cleB, temoins)['fin|fin'].epingle, true, 'le témoin B est relu');
       } finally { nettoyer(racine); nettoyer(registre); nettoyer(dp.d); }
     });
 
@@ -387,6 +410,7 @@
         var temoins = H.temoinsDeTest(ligne, 'demo banc', REG.lireTemoins(registre));
         A.equal(temoins['debut|début'].epingle, true, 'ressort comme épinglé dans les diaporamas suivants');
         A.equal(temoins['debut|début'].image, imgDebut, 'la bonne image');
+        A.equal(H.temoinsDeTest(ligne, 'e2e › demo banc', REG.lireTemoins(registre))['debut|début'].epingle, true, 'la clé complète relit aussi un ancien témoin enregistré sous le nom');
         A.equal(REG.marquerTemoin('demo banc', dp.plein, 'inexistante.jpg', { dossierRegistre: registre }).ok, false, 'une image absente du registre est refusée');
         A.equal(REG.marquerTemoin('', dp.plein, imgDebut, { dossierRegistre: registre }).ok, false, 'identifiant requis');
         // compatibilité : sans identité d'image, l'épinglage d'avant reste lisible
@@ -467,8 +491,11 @@
       var attendus = [];
       Object.keys(parFonction).forEach(function (f) { parFonction[f].forEach(function (cle) { attendus.push(cle); }); });
       var retenus = new Set(p.selection.map(function (t) { return t.cle; }));
-      var present = attendus.filter(function (cle) { return retenus.has(cle); });
-      A.ok(present.length > 0, 'les appelants de la carte figurent dans la sélection (' + present.length + '/' + attendus.length + ', les autres ne sont plus au catalogue)');
+      var catalogue = G.MC_TESTS.construire(T, [], G.MC_TESTS.indexSpecs(lire('SPECS.md')));
+      var connus = new Set(catalogue.map(function (test) { return test.cle; }));
+      var attendusConnus = Array.from(new Set(attendus)).filter(function (cle) { return connus.has(cle); });
+      A.ok(attendusConnus.length > 0, 'la carte porte des appelants encore présents au catalogue');
+      A.deep(attendusConnus.filter(function (cle) { return !retenus.has(cle); }), [], 'aucun appelant connu de la carte ne manque à la sélection');
       A.equal(p.exclus + p.selection.length > p.selection.length, true, 'le reste du catalogue est exclu (' + p.exclus + ')');
     });
   });

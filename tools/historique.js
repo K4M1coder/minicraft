@@ -447,7 +447,9 @@ function imagesDeTest(lignes, testId, opts) {
 function cleImage(c) { return (c && c.role ? c.role : '') + '|' + (c && c.libelle ? c.libelle : ''); }
 function temoinsDeTest(lignes, nom, temoins) {
   const sortie = {};
-  const epingles = temoins && estObjet(temoins[nom]) ? temoins[nom] : null;
+  const ancienNom = lignes.length ? lignes[0].nom : null;
+  const cleTemoin = temoins && estObjet(temoins[nom]) ? nom : ancienNom;
+  const epingles = temoins && cleTemoin && estObjet(temoins[cleTemoin]) ? temoins[cleTemoin] : null;
   const inscrites = lignes.filter(l => l.inscrit).slice().sort((a, b) => comparerValeurs(a.debut_run, b.debut_run));
   const cles = new Set();
   lignes.forEach((l) => (l.captures || []).forEach((c) => { if (c && c.image) cles.add(cleImage(c)); }));
