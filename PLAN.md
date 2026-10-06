@@ -141,8 +141,11 @@ banc B (af8de28) et les présentoirs (13b602b) sont fusionnés, après revue,
 corrections et portes vertes (tête combinée : 1 805/1 805 tests Node).
 SAVE-017, ENV-005 et LIMITE-007 sont ✅. PACK-001 reste ⏳ : seul Windows a été
 construit et lancé, macOS/Linux non vérifiés. Objets 64/64, livres 32/32 et
-jouabilité 34/34 passent après rebase. Publication et push restent à faire ;
-les tâches 7.1 à 7.5 restent ouvertes. Le détail des
+jouabilité 34/34 passent après rebase. v0.9.0 publiée localement (c1a816e),
+archive portable vérifiée (108 fichiers, sans sauvegardes), après les portes
+finales sur `master` ; G7/G8/G9 complets non revérifiés. Poussée finale de
+`master` et du tag avec crochets actifs ; les tâches 7.1 à 7.5 restent ouvertes.
+Le détail des
 preuves et les points de reprise sont dans `docs/feuille-de-route.md`.
 
 **Vérification du 2026-10-05 (état réel après la v0.8.0)** : chaque ligne de la

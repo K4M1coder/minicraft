@@ -182,7 +182,17 @@ committer et pousser en détaché (`nohup`), surveiller avec un moniteur.
   verte : 1 805/1 805 tests Node, génération 40,37 ms en moyenne, maillage
   56,09 ms en moyenne et 81,40 ms de p95, cinq e2e de fumée capturés.
   **Présentoirs fusionnés en avance rapide** sur `master` (`13b602b`).
-- Publication 0.9.0 et poussée finale non faites.
+- **Publication locale v0.9.0 effectuée** par `tools/version.js --publier`
+  (`c1a816e`, étiquette annotée `v0.9.0`), après les portes finales sur
+  `master` : 1 805/1 805 tests Node, budgets inchangés respectés, cinq e2e de
+  fumée capturés. Archive `dist/releases/minicraft-v0.9.0.zip` relue et vérifiée :
+  108 fichiers, 2 708 654 octets, version et lanceurs présents, aucune sauvegarde
+  embarquée (seul le texte explicatif du dossier `parties/`). Le registre a
+  compacté quatre entrées et retiré 587 images ; aucun nouveau run de release
+  n'a été marqué. Les portes manuelles G7/G8/G9 n'ont pas été revérifiées dans
+  leur totalité ; les preuves navigateur acquises sont celles des lots, de la
+  jouabilité et de la fumée. Poussée finale : `master` et `v0.9.0` ensemble,
+  avec le crochet `pre-push` actif.
   Les sauvegardes non suivies dans `parties/` sont conservées hors des commits.
 
 ## Table d'avancement
@@ -204,6 +214,7 @@ signifie « en grande partie livré, il reste les fiches ⏳ citées ».
 | 0.3 | L50 : lot reporté | SYNC-027 (présentoirs/socles tenus par le serveur) → ARCHI-043 ; coffres piégés côté serveur → ARCHI-044 (suit L25 « coffres piégés ») ; ils débloquent INTERIEUR-003 (rangement des livres) et OBJET-005 en ligne | SYNC-027, ARCHI-043, 044 ; INTERIEUR-003 | ☑ | fusionné (13b602b), fiches visées ✅ ; revue et corrections appliquées, objets 64/64, livres 32/32, jouabilité 34/34 après rebase, portes automatiques vertes |
 | 0.4 | Release | `v0.5.1` : vol/horloge/créatures + banc ; zip de release | — | ☑ | publiée en `v0.6.0` (d65b0d1) au lieu de 0.5.1 |
 | 0.5 | Release | `v0.8.0` : mécanismes, `/list` et `/help`, monde (gel des lacs, densité, souterrain), bâtiments, factions, tics serveur, découpage de `server.js`, sécurité, ambiance sonore | — | ☑ | publiée (1427bed, étiquette `v0.8.0`) |
+| 0.6 | Release | `v0.9.0` : restes isolés, banc A/B, présentoirs, livres et coffres suspects | — | ☑ | publiée localement (c1a816e, étiquette `v0.9.0`), ZIP portable vérifié ; portes automatiques vertes, G7/G8/G9 complets non revérifiés ; poussée finale de master et du tag avec crochets actifs |
 
 ### Phase 1 — Vitesse et sûreté de travail
 
