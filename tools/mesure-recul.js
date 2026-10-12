@@ -18,10 +18,16 @@
    serveur (écart réel, temps perdu au plafond de 0,25 s).
 
    Conditions : `--charge N` lance N boucles CPU Node en parallèle ;
-   `--blocage 2000:500` bloque le tic serveur 500 ms toutes les 2 s.
+   `--blocage 2000:500` bloque le tic serveur 500 ms toutes les 2 s ;
+   `--console-morte` donne au serveur une sortie standard FICHIER qui devient
+   invalide (EBADF) peu après son démarrage, par le préchargement
+   tools/precharge-console-morte.js — comme un serveur relancé par une bascule
+   de partie dont la console a disparu. Le résumé dit alors ce que le journal
+   fichier du serveur a reçu (octets, lignes, exceptions, notes E-JOURNAL-001).
 
    Usage : node tools/mesure-recul.js [--racine DIR] [--duree 30] [--charge N]
            [--blocage P:D] [--json] [--graine N] [--prechargement R] [--journal F]
+           [--console-morte]
    Module : require('./mesure-recul.js').mesurer(opts) → résumé. */
 'use strict';
 const net = require('net');
@@ -118,17 +124,25 @@ function portLibre() {
   return new Promise((res) => { const s = net.createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
 }
 
-async function lancerServeur(racine, port, env, args) {
-  const proc = spawn(process.execPath, ['-r', path.join(__dirname, 'mesure-recul-preload.js'), path.join(racine, 'server.js'), '--port', String(port)].concat(args || []),
-    { cwd: racine, stdio: ['ignore', 'pipe', 'pipe'], env });
+async function lancerServeur(racine, port, env, args, sortieFichier) {
+  /* sortieFichier : la sortie standard du serveur est ce FICHIER (Node en fait
+     un SyncWriteStream), que le préchargement de la console morte invalide. */
+  const prech = ['-r', path.join(__dirname, 'mesure-recul-preload.js')];
+  if (sortieFichier) prech.push('-r', path.join(__dirname, 'precharge-console-morte.js'));
+  const fd = sortieFichier ? fs.openSync(sortieFichier, 'w+') : null;   // lisible : le préchargement y guette MC_PORT=
+  let proc;
+  try {
+    proc = spawn(process.execPath, prech.concat([path.join(racine, 'server.js'), '--port', String(port)], args || []),
+      { cwd: racine, stdio: fd === null ? ['ignore', 'pipe', 'pipe'] : ['ignore', fd, fd], env });
+  } finally { if (fd !== null) fs.closeSync(fd); }
   const logs = [];
   let vivant = true;
-  proc.stdout.on('data', d => logs.push(String(d)));
-  proc.stderr.on('data', d => logs.push('ERR ' + String(d)));
+  if (proc.stdout) proc.stdout.on('data', d => logs.push(String(d)));
+  if (proc.stderr) proc.stderr.on('data', d => logs.push('ERR ' + String(d)));
   const sortie = new Promise(r => proc.on('exit', (code) => { vivant = false; r(code); }));
   const fin = Date.now() + 60000;
   for (;;) {
-    if (!vivant) throw new Error('serveur arrêté au démarrage : ' + logs.join('').slice(-600));
+    if (!vivant) throw new Error('serveur arrêté au démarrage : ' + (sortieFichier ? lireSur(sortieFichier) : logs.join('')).slice(-600));
     const ok = await new Promise(r => { const s = net.connect(port, '127.0.0.1', () => { s.destroy(); r(true); }); s.on('error', () => r(false)); });
     if (ok) break;
     if (Date.now() > fin) { proc.kill(); throw new Error('démarrage trop long'); }
@@ -143,6 +157,25 @@ async function lancerServeur(racine, port, env, args) {
       if (vivant) { try { process.kill(proc.pid, 'SIGKILL'); } catch (e) { /* déjà */ } await Promise.race([sortie, dodo(2000)]); }
     },
   };
+}
+
+function lireSur(f) { try { return fs.readFileSync(f, 'utf8'); } catch (e) { return ''; } }
+
+/* Ce que le journal FICHIER du serveur a reçu (dossier MC_JOURNAL_DOSSIER). */
+function resumeJournal(dossier) {
+  const r = { octets: 0, lignes: 0, exceptions: 0, notesConsole: 0, tempetes: 0 };
+  let fichiers = [];
+  try { fichiers = fs.readdirSync(dossier).filter(f => /\.log$/.test(f)); } catch (e) { return r; }
+  fichiers.forEach((f) => {
+    const txt = lireSur(path.join(dossier, f));
+    r.octets += Buffer.byteLength(txt);
+    const lignes = txt.split('\n').filter(l => /^\d+ \d{4}-/.test(l));
+    r.lignes += lignes.length;
+    r.exceptions += lignes.filter(l => /EXCEPTION NON RATTRAPÉE/.test(l)).length;
+    r.notesConsole += lignes.filter(l => /E-JOURNAL-001/.test(l)).length;
+    r.tempetes += lignes.filter(l => /E-SERV-008/.test(l)).length;
+  });
+  return r;
 }
 
 /* Charge CPU : N processus Node en boucle active, arrêtés avec le banc. */
@@ -173,7 +206,8 @@ function parcours(t, yaw0) {
 function centile(l, p) { if (!l.length) return 0; const s = l.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(p * s.length))]; }
 
 async function mesurer(o) {
-  o = Object.assign({ racine: path.join(__dirname, '..'), prechargement: 6, duree: 30, charge: 0, blocage: '', graine: 20260921, seuil: 0.01, journal: null }, o || {});
+  o = Object.assign({ racine: path.join(__dirname, '..'), prechargement: 6, duree: 30, charge: 0, blocage: '', graine: 20260921, seuil: 0.01, journal: null,
+    consoleMorte: false, consoleMorteMs: 300, pendant: null }, o || {});
   const racine = path.resolve(o.racine);
   const MC = chargerModules(racine);
   const SY = MC.Synchro;
@@ -184,6 +218,9 @@ async function mesurer(o) {
     MC_DIFFICULTE: 'paisible', MC_TEST_ARRET_SI_MORT: String(process.pid), MC_SAUVEGARDE_MS: '3600000',
     MC_JOURNAL_DOSSIER: path.join(os.tmpdir(), 'mesure-recul-logs-' + process.pid + '-' + port),   // supprimé à la fin
   });
+  const sortieFichier = o.consoleMorte ? path.join(os.tmpdir(), 'mesure-recul-sortie-' + process.pid + '-' + port + '.txt') : null;
+  const temoinMort = o.consoleMorte ? sortieFichier + '.morte' : null;
+  if (o.consoleMorte) Object.assign(env, { MC_CONSOLE_MORTE_MS: String(o.consoleMorteMs), MC_CONSOLE_MORTE_TEMOIN: temoinMort });
   /* Le monde du serveur jetable va dans un dossier temporaire, jamais dans
      parties/ de l'arbre mesuré. Seuls les arbres antérieurs à --dossier-parties
      (avant L50) ne l'acceptent pas : un paramètre inconnu y arrêterait le
@@ -195,9 +232,19 @@ async function mesurer(o) {
   if (accepte) args = ['--dossier-parties', dossierParties];
   else if (path.resolve(racine) === path.resolve(__dirname, '..')) throw new Error('cet arbre ne connaît pas --dossier-parties : refus d\'écrire dans ses parties/');
   const charge = o.charge > 0 ? lancerCharge(o.charge) : null;
-  const srv = await lancerServeur(racine, port, env, args);
+  const srv = await lancerServeur(racine, port, env, args, sortieFichier);
   let cl = null, iv = null;
   try {
+    /* console morte : le client ne se connecte qu'une fois la sortie standard
+       invalide (sondage borné), pour que son arrivée et sa marche se journalisent
+       sur une console morte, comme chez le joueur. */
+    if (temoinMort) {
+      const fin = Date.now() + 30000;
+      while (!fs.existsSync(temoinMort)) {
+        if (Date.now() > fin) throw new Error('mesure-recul : la sortie standard du serveur n\'est jamais morte (préchargement tools/precharge-console-morte.js)');
+        await dodo(25);
+      }
+    }
     cl = await connecter(port);
     const NP = MC.NetProtocol;
     const pBienvenue = cl.attendre(NP.MSG.BIENVENUE, 30000);
@@ -272,8 +319,12 @@ async function mesurer(o) {
     const depart = { x: st.pos.x, y: st.pos.y, z: st.pos.z };
     tDebut = performance.now(); mesure = true;
     const dateDebut = Date.now();
+    /* `pendant(port)` : une sonde de l'appelant, menée PENDANT la marche (requêtes
+       HTTP, mesures) ; son résultat est rendu dans `res.pendant`. */
+    const sonde = typeof o.pendant === 'function' ? Promise.resolve().then(() => o.pendant(port)).catch(e => ({ erreur: String(e && e.message || e) })) : null;
     await dodo(o.duree * 1000);
     mesure = false;
+    const resultatSonde = sonde ? await sonde : undefined;
     const dateFin = Date.now();
     clearInterval(iv); iv = null;
     let stats = null;
@@ -317,6 +368,8 @@ async function mesurer(o) {
         v: [+r.dx.toFixed(3), +r.dy.toFixed(3), +r.dz.toFixed(3)], div: r.div === null ? null : +r.div.toFixed(3), retard: r.retard, retardS: +r.retardS.toFixed(3) })),
     };
     corr.forEach(r => { const p = res.parPhase[r.phase] = res.parPhase[r.phase] || { n: 0, recul: 0 }; p.n++; p.recul = +(p.recul + Math.max(0, r.recul)).toFixed(3); });
+    if (sonde) res.pendant = resultatSonde;
+    if (o.consoleMorte) res.journalServeur = Object.assign(resumeJournal(env.MC_JOURNAL_DOSSIER), { sortieStandardOctets: Buffer.byteLength(lireSur(sortieFichier)) });
     if (dtHeure.length) res.heureServeurParEtat = { moyenne: +(dtHeure.reduce((a, b) => a + b, 0) / dtHeure.length).toFixed(4), max: +Math.max(...dtHeure).toFixed(3) };
     if (o.journal) fs.writeFileSync(o.journal, JSON.stringify({ res, releves }, null, 1));
     return res;
@@ -326,6 +379,7 @@ async function mesurer(o) {
     await srv.arreter();
     if (charge) charge.arreter();
     try { fs.unlinkSync(fichierStats); } catch (e) { /* absent */ }
+    if (sortieFichier) { try { fs.unlinkSync(sortieFichier); } catch (e) { /* absent */ } try { fs.unlinkSync(temoinMort); } catch (e) { /* absent */ } }
     try { fs.rmSync(dossierParties, { recursive: true, force: true }); } catch (e) { /* tant pis */ }
     try { fs.rmSync(env.MC_JOURNAL_DOSSIER, { recursive: true, force: true }); } catch (e) { /* tant pis */ }
   }
@@ -344,6 +398,7 @@ if (require.main === module) {
     else if (a[i] === '--journal') o.journal = a[++i];
     else if (a[i] === '--json') o.json = true;
     else if (a[i] === '--prechargement') o.prechargement = +a[++i];
+    else if (a[i] === '--console-morte') o.consoleMorte = true;
   }
   mesurer(o).then((r) => {
     if (o.json) console.log(JSON.stringify(r));
