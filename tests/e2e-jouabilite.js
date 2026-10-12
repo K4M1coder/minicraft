@@ -485,12 +485,14 @@
         "delai": 180
   }, async function (g) {
     var p = await demarrerPartie(g, 'survie', []);
+    capture('partie en survie démarrée sur le serveur de jeu');
     try {
       T.etape('repos');
       var auRepos = await attendreRepos(g, p, true);
       var st = g.player.state;
       A.ok(auRepos, 'préparation : joueur au repos au sol, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
       A.ok(st.onGround, 'le joueur est au sol');
+      capture('au repos au sol, avant les 8 s sans bouger');
       T.etape('immobile 8 s');
       var m = await mesurerImmobilite(g, p, DUREE_IMMOBILE_MS);
       capture('apres-immobilite');
@@ -498,6 +500,7 @@
         J.messagePositions('client (chaque image)', m.client) + '\n' + J.messagePositions('serveur (ETAT.toi)', m.serveur));
       A.ok(m.client.echantillons > 100, 'mesure à chaque image (' + m.client.echantillons + ' relevés en ' + (m.client.duree_ms / 1000).toFixed(1) + ' s)');
       A.ok(m.serveur.echantillons > 30, (m.serveur.echantillons > 30 ? '' : await journalServeurJeu()) + 'le serveur a envoyé ses relevés pendant la mesure (' + m.serveur.echantillons + ' en ' + (m.serveur.duree_ms / 1000).toFixed(1) + ' s, plus grand intervalle entre deux ETAT ' + m.plusGrandTrouEtat + ' ms)');
+      capture('fin des 8 s : le joueur est toujours exactement où il était');
     } finally { await quitterPartie(g, p); }
   });
 
@@ -508,6 +511,7 @@
         "delai": 180
   }, async function (g) {
     var p = await demarrerPartie(g, 'creatif', []);
+    capture('partie en créatif démarrée sur le serveur de jeu');
     try {
       var st = g.player.state;
       await preparer(function () { return !!p.sp.dernierEtat(); }, 30000, 'le serveur envoie l\'état du joueur (ETAT)');
@@ -517,10 +521,12 @@
       var t0 = maintenant();
       await sonder(function () { return maintenant() - t0 > 700; }, 2000);
       key('Space', 'keyup');
+      capture('montée de 700 ms terminée : le joueur est en l\'air');
       T.etape('arrêt');
       var auRepos = await attendreRepos(g, p, false);
       A.ok(auRepos, 'préparation : joueur en vol statique, relevés frais et entrées acquittées — non atteint en 60 s : ' + attendreRepos.diag);
       A.ok(st.flying, 'le joueur vole');
+      capture('en vol statique, avant les 8 s');
       T.etape('vol statique 8 s');
       var m = await mesurerImmobilite(g, p, DUREE_IMMOBILE_MS, function (toi) {
         if (!st.flying) return 'le client ne vole plus';

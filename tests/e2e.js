@@ -29,7 +29,12 @@
     return function () {
       try {
         var r = fn.apply(null, arguments);
-        if (enCours) enCours.assertions.ok++;
+        if (enCours) {
+          enCours.assertions.ok++;
+          // politique de captures (a) : une assertion qui passe et qui est commentée prouve quelque chose
+          var dernier = arguments[arguments.length - 1];
+          if (typeof dernier === 'string' && dernier) temoin('preuve', 'preuve : ' + dernier.replace(/\s+/g, ' ').slice(0, 90), 2);
+        }
         return r;
       } catch (e) {
         if (enCours) enCours.assertions.ko++;
@@ -64,17 +69,22 @@
     if (g.vues && g.vues.length > 1 && g.render.renderViews) g.render.renderViews(g.vues);
     else g.render.render();
   }
+  function toileJeu(g) {
+    rendreTout(g);
+    var src = g.render.renderer.domElement;
+    var w = src.width, h = src.height;
+    if (!w || !h) return null;
+    var echelle = Math.min(1, 480 / w);
+    var cw = Math.max(1, Math.round(w * echelle)), ch = Math.max(1, Math.round(h * echelle));
+    var c = document.createElement('canvas');
+    c.width = cw; c.height = ch;
+    c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+    return c;
+  }
   function capturer(g, libelle) {
     try {
-      rendreTout(g);
-      var src = g.render.renderer.domElement;
-      var w = src.width, h = src.height;
-      if (!w || !h) return null;
-      var echelle = Math.min(1, 480 / w);
-      var cw = Math.max(1, Math.round(w * echelle)), ch = Math.max(1, Math.round(h * echelle));
-      var c = document.createElement('canvas');
-      c.width = cw; c.height = ch;
-      c.getContext('2d').drawImage(src, 0, 0, cw, ch);
+      var c = toileJeu(g);
+      if (!c) return null;
       // URL de données complète : banc-ui.js l'utilise TELLE QUELLE comme
       // src des vignettes affichées dans la page (SPEC-BANC-011) — retirer
       // le préfixe ici casserait leur affichage. C'est envoyerCahier(),
@@ -82,6 +92,232 @@
       // du base64 pur (voir tests/banc-ui.js).
       return { libelle: libelle || '', type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.7) };
     } catch (e) { return null; }
+  }
+
+  // ─── politique de captures automatiques (témoins) ──────────────────────────
+  /* Le harnais ne se contente plus d'un début et d'une fin : il pose lui-même
+     des témoins DISTINCTS (image différente de toutes celles déjà prises par
+     le test — une image identique est jetée, pas stockée), chacun avec un
+     libellé qui dit ce qu'il prouve :
+       - « pellicule » : une image toutes les ~2 s tant que le test n'a rien
+         montré depuis (attente, marche, vol, immobilité), plafonnée ;
+       - « action » : « avant » et « après » chaque touche significative
+         (hors déplacement) et chaque clic (casser, poser, ouvrir) ;
+       - « ecran » : chaque menu / inventaire / carte… dès qu'il s'ouvre,
+         rasterisé AVEC son DOM (le canvas seul ne le montre pas) ;
+       - « preuve » : les premières assertions commentées qui passent.
+     Les plafonds bornent le coût et le poids ; un test étiqueté `rendu`
+     (horloge figée, SPEC-BANC-084) ou `fiche.captureAuto === false` ne reçoit
+     aucun témoin automatique, seulement ses captures explicites. */
+  var POLITIQUE = { pelliculeMs: 2000, sondeMs: 250, max: { pellicule: 8, action: 12, ecran: 8, preuve: 5 } };
+  var TOUCHE_MOUVEMENT = /^(Key[WASD]|Arrow(Up|Down|Left|Right)|Space|Shift(Left|Right)|Control(Left|Right))$/;
+  /* Tests qui MESURENT le temps d'image ou les appels de dessin (cadence, FPS injecté, antialias adaptatif,
+     budgets du thread principal, immobilité mesurée à chaque image à 0,001 bloc près) : un rendu ou un encodage JPEG supplémentaire fausserait leur mesure. */
+  var SANS_TEMOINS = /cadence|FPS|setAntialias|temps du thread principal|temps de maillage|g.perf expose|JOUABLE-00[12] :/;
+  function autoPossible(c) { return !!c && !c.fini && !c.sansAuto; }
+  function libelleUnique(c, base) {
+    c.libelles[base] = (c.libelles[base] || 0) + 1;
+    return c.libelles[base] > 1 ? base + ' #' + c.libelles[base] : base;
+  }
+  // pose un témoin automatique : refusé (false) s'il est identique à une image déjà prise par ce test
+  function poserTemoin(c, cap) {
+    if (!cap || !autoPossible(c)) return false;
+    for (var i = 0; i < c.captures.length; i++) if (c.captures[i].base64 === cap.base64) return false;
+    cap.libelle = libelleUnique(c, cap.libelle);
+    c.captures.push(cap);
+    c.derniere = ahora();
+    return true;
+  }
+  function attendreImages(n) {
+    return new Promise(function (res) {
+      var left = n;
+      var pas = function () { if (--left <= 0) return res(); requestAnimationFrame(pas); };
+      if (n <= 0) res(); else requestAnimationFrame(pas);
+    });
+  }
+  // l'écran DOM actuellement ouvert (menu, pause, options… = .overlay ; inventaire = .inv-screen), ou null
+  function ecranOuvert() {
+    var sels = ['.overlay', '.inv-screen'];
+    for (var i = 0; i < sels.length; i++) {
+      var e = document.querySelector(sels[i]);
+      if (!e) continue;
+      var cs = getComputedStyle(e);
+      if (cs.display === 'none' || cs.visibility === 'hidden') continue;
+      var r = e.getBoundingClientRect();
+      if (r.width > 0 && r.height > 0) return e;
+    }
+    return null;
+  }
+  function titreEcran(el) {
+    var h = el.querySelector('h1,h2,h3');
+    return ((h ? h.textContent : '') || el.className || 'écran').replace(/\s+/g, ' ').trim().slice(0, 50);
+  }
+  // copie les styles calculés, sans `zoom` (appliqué à part, à l'échelle) ni les dimensions libres
+  /* Seules les propriétés qui changent l'aspect sont recopiées (une cinquantaine
+     au lieu de ~350 par élément) : la rasterisation d'un gros écran (livre des
+     recettes) coûtait sinon plusieurs secondes. */
+  var PROPS_ECRAN = ['display', 'position', 'top', 'left', 'right', 'bottom', 'transform', 'transform-origin', 'z-index', 'flex', 'flex-direction', 'flex-wrap', 'flex-grow', 'flex-shrink', 'flex-basis', 'align-items',
+    'align-self', 'align-content', 'justify-content', 'gap', 'row-gap', 'column-gap', 'grid-template-columns', 'grid-template-rows',
+    'grid-column', 'grid-row', 'grid-auto-flow', 'margin', 'padding', 'box-sizing', 'border', 'border-radius', 'box-shadow', 'outline',
+    'color', 'background-color', 'background-image', 'opacity', 'font-family', 'font-size', 'font-weight', 'font-style', 'line-height',
+    'letter-spacing', 'text-align', 'text-transform', 'text-decoration', 'text-overflow', 'white-space', 'word-break', 'vertical-align',
+    'background-clip', '-webkit-background-clip', '-webkit-text-fill-color', 'list-style', 'min-width', 'max-width', 'image-rendering', 'visibility', 'text-shadow', 'cursor'];
+  function copierStylesEcran(src, dst, racine, compte) {
+    var cs = getComputedStyle(src), t = '';
+    for (var i = 0; i < PROPS_ECRAN.length; i++) {
+      var p = PROPS_ECRAN[i];
+      t += p + ':' + cs.getPropertyValue(p) + ';';
+    }
+    // petits éléments (cases, icônes, viseur, barres) : dimensions exactes ; grands conteneurs : libres, le texte reflue
+    if (!racine) {
+      var w = parseFloat(cs.getPropertyValue('width')), h = parseFloat(cs.getPropertyValue('height'));
+      if (w > 0 && w <= 320) t += 'width:' + w + 'px;';
+      if (h > 0 && h <= 320 && w > 0 && w <= 320) t += 'height:' + h + 'px;';
+    }
+    dst.setAttribute('style', t);
+    compte.n++;
+    for (var k = 0; k < src.children.length; k++) copierStylesEcran(src.children[k], dst.children[k], false, compte);
+  }
+  /* Capture « ce que voit le joueur » : le canvas ET, si un écran DOM est
+     ouvert, son contenu rasterisé par-dessus (SVG foreignObject, comme
+     captureAvecPanneau). Tout ce qui lit l'état (canvas, clone du DOM) se fait
+     SYNCHRONE à l'appel ; seul le chargement de l'image SVG est asynchrone. */
+  function capturerEcran(g, libelle) {
+    var t = ahora() - (enCours ? enCours.t0 : 0);
+    var c, el;
+    try { c = toileJeu(g); } catch (e) { c = null; }
+    if (!c) return Promise.resolve(null);
+    var fin = function () { return { libelle: libelle, type: 'image/jpeg', base64: c.toDataURL('image/jpeg', 0.7), t_ms: t }; };
+    try { el = ecranOuvert(); } catch (e) { el = null; }
+    // pas d'écran ouvert : ce que le joueur voit en jeu, c'est le canvas ET le HUD (DOM : barres, barre d'objets, viseur)
+    var cibles = [], racineHud = !el;
+    try {
+      cibles = el ? Array.prototype.slice.call(el.children)
+        : Array.prototype.slice.call(document.querySelectorAll('.hud')).filter(function (h) { return getComputedStyle(h).display !== 'none'; });
+    } catch (e) { cibles = []; }
+    if (!cibles.length) return Promise.resolve(fin());
+    var pieces = [];
+    try {
+      var rc = g.render.renderer.domElement.getBoundingClientRect();
+      var kx = c.width / rc.width, ky = c.height / rc.height;
+      // la surface du jeu est mise à l'échelle par CSS (transform: scale) : les styles calculés sont en pixels de mise en page, pas à l'écran
+      var sc = rc.width / (g.render.renderer.domElement.offsetWidth || rc.width);
+      var ctx2 = c.getContext('2d');
+      if (el) {
+        ctx2.fillStyle = el.classList.contains('overlay') ? 'rgba(14,18,27,0.96)' : 'rgba(8,10,15,0.7)';
+        ctx2.fillRect(0, 0, c.width, c.height);
+      }
+      for (var i = 0; i < cibles.length; i++) {
+        var ch = cibles[i], r = ch.getBoundingClientRect();
+        if (r.width < 2 || r.height < 2 || getComputedStyle(ch).display === 'none') continue;
+        if (ch.getElementsByTagName('*').length > 700) continue;   // trop gros pour une capture à tout coup : le canvas seul
+        var z = (parseFloat(getComputedStyle(ch).zoom) || 1) * sc;   // zoom CSS du panneau ET échelle de la surface
+        var clone = ch.cloneNode(true);
+        // le texte de débogage du HUD (FPS, position, heure) change à chaque image : il rendrait toutes les captures différentes et masque la scène
+        var dbg = racineHud ? ch.querySelectorAll('.debug') : [], dbgAvant = [];
+        for (var q = 0; q < dbg.length; q++) { dbgAvant.push(dbg[q].style.display); dbg[q].style.display = 'none'; }
+        copierStylesEcran(ch, clone, true, { n: 0 });
+        for (var q2 = 0; q2 < dbg.length; q2++) dbg[q2].style.display = dbgAvant[q2];
+        clone.style.position = 'static'; clone.style.transform = 'none'; clone.style.margin = '0';
+        clone.style.width = (r.width / z) + 'px';
+        if (racineHud) { clone.style.position = 'relative'; clone.style.height = (r.height / z) + 'px'; clone.style.inset = 'auto'; clone.style.left = '0'; clone.style.top = '0'; }
+        var wSvg = Math.ceil(r.width / z), hSvg = Math.ceil(r.height / z * (racineHud ? 1 : 1.3));
+        var svg = '<svg xmlns="http://www.w3.org/2000/svg" width="' + wSvg + '" height="' + hSvg + '">' +
+          '<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">' +
+          new XMLSerializer().serializeToString(clone) + '</div></foreignObject></svg>';
+        // un panneau plus haut que la fenêtre (défilement) est réduit pour tenir entièrement dans l'image
+        var fit = r.height > rc.height * 0.98 ? (rc.height * 0.98) / r.height : 1;
+        var gauche = (r.left - rc.left) + r.width * (1 - fit) / 2, haut = fit < 1 ? rc.height * 0.01 : (r.top - rc.top);
+        pieces.push({ svg: svg, x: gauche * kx, y: haut * ky, w: wSvg * z * kx * fit, h: hSvg * z * ky * fit });
+      }
+    } catch (e) { return Promise.resolve(fin()); }
+    return Promise.all(pieces.map(function (p) {
+      return new Promise(function (ok2) {
+        var img = new Image();
+        img.onload = function () { ok2(Object.assign({ img: img }, p)); };
+        img.onerror = function () { ok2(null); };
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(p.svg);
+      });
+    })).then(function (imgs) {
+      try { imgs.forEach(function (p) { if (p) c.getContext('2d').drawImage(p.img, p.x, p.y, p.w, p.h); }); } catch (e) { /* le canvas seul reste */ }
+      return fin();
+    });
+  }
+  /* Témoin automatique d'une famille (plafond POLITIQUE.max[famille]) : pris
+     après `attente` images (l'interface a eu le temps de réagir), ajouté au
+     test quand son image est inédite. */
+  function temoin(famille, libelle, attente, ctxPropre) {
+    var c = ctxPropre || enCours;
+    if (!autoPossible(c)) return;
+    var n = c.auto[famille] || 0;
+    if (n >= POLITIQUE.max[famille]) return;
+    c.auto[famille] = n + 1;
+    c.derniere = ahora();
+    var lib = libelle;
+    // attente < 0 : état lu TOUT DE SUITE (témoin « avant » une action), seul l'encodage de l'image est différé
+    var prise = attente < 0 ? capturerEcran(c.g, lib)
+      : attendreImages(attente | 0).then(function () { return autoPossible(c) ? capturerEcran(c.g, lib) : null; });
+    var p = prise.then(function (cap) { if (!poserTemoin(c, cap)) c.auto[famille]--; }, function () { c.auto[famille]--; });
+    c.pendants.push(p);
+  }
+  // témoin « avant » : l'état AVANT l'action, lu tout de suite
+  function temoinAvant(libelle) { temoin('action', libelle, -1); }
+  /* Les actions que les tests déclenchent par l'API du jeu plutôt que par une
+     vraie touche (poser, attaquer, tirer, jeter, subir des dégâts, changer
+     d'écran) sont enveloppées pour la durée du test : un témoin « avant » (pris
+     tout de suite) et un « après » (deux images plus tard). Restaurées à la
+     conclusion. */
+  function envelopperActions(g, c) {
+    var defs = [
+      [g.player, 'useOn', 'poser ou utiliser un bloc (clic droit)', true],
+      [g.player, 'attack', 'attaquer', true],
+      [g.player, 'tirer', 'tirer', true],
+      [g.player, 'dropSelected', 'jeter l\'objet tenu', true],
+      [g.player, 'hurt', 'subir des dégâts', true],
+      [g.player, 'respawn', 'réapparaître', true],
+      [g.input, 'setState', 'changer d\'écran', false],
+    ];
+    var poses = [];
+    defs.forEach(function (d) {
+      var obj = d[0], nom = d[1], lib = d[2], avant = d[3];
+      if (!obj || typeof obj[nom] !== 'function') return;
+      var orig = obj[nom];
+      var env = function () {
+        var etat = (nom === 'setState') ? ' → ' + arguments[0] : '';
+        if (avant) temoinAvant('avant : ' + lib);
+        var r = orig.apply(this, arguments);
+        temoin('action', 'après : ' + lib + etat, 2);
+        return r;
+      };
+      obj[nom] = env;
+      poses.push(function () { if (obj[nom] === env) obj[nom] = orig; });
+    });
+    return function () { poses.forEach(function (f) { try { f(); } catch (e) { /* rien */ } }); };
+  }
+  /* Les captures de début / fin / échec (prises par capturer(), canvas seul) sont complétées par le HUD ou l'écran
+     ouvert : l'état est relu tout de suite, l'image du canvas est remplacée dès que la version complète est prête. */
+  function enrichir(c, cap) {
+    if (c.sansAuto) return;
+    c.pendants.push(capturerEcran(c.g, cap.libelle).then(function (n) { if (n) cap.base64 = n.base64; }, function () { /* le canvas seul reste */ }));
+  }
+  function drainerTemoins(c) {
+    var n = c.pendants.length;
+    return Promise.all(c.pendants).then(function () { return c.pendants.length > n ? drainerTemoins(c) : null; });
+  }
+  // sonde (toutes les 250 ms) : un nouvel écran DOM ouvert, ou plus de 2 s sans rien montrer
+  function demarrerVeille(c) {
+    return setInterval(function () {
+      if (!autoPossible(c)) return;
+      var el = null;
+      try { el = ecranOuvert(); } catch (e) { el = null; }
+      var sig = el ? el.className + '|' + titreEcran(el) : null;
+      if (sig && sig !== c.dernierEcran) temoin('ecran', 'écran ouvert : ' + titreEcran(el), 2, c);
+      c.dernierEcran = sig;
+      if (ahora() - c.derniere >= POLITIQUE.pelliculeMs) {
+        var e2 = c.etapeCourante2 && c.etapeCourante2.nom;
+        temoin('pellicule', 'pellicule ' + ((c.auto.pellicule || 0) + 1) + ' : attente pendant « ' + (e2 || 'test') + ' »', 0, c);
+      }
+    }, POLITIQUE.sondeMs);
   }
 
   /* Déclare une étape en cours d'exécution (SPEC-BANC-009) : visible en
@@ -93,7 +329,7 @@
     enCours.etapeCourante = libelle + (total ? ' (' + n + '/' + total + ')' : '');
     enCours.etapes.push({ libelle: libelle, t_ms: ahora() - enCours.t0, n: n, total: total });
     var c = capturer(enCours.g, libelle);
-    if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); }
+    if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); enCours.derniere = ahora(); }
   }
 
   /* Capture manuelle, hors étape déclarée : `capture('apres-teleportation')`
@@ -105,8 +341,27 @@
      même point du test à travers plusieurs runs. */
   function capture(libelle) {
     if (!enCours) return;
-    var c = capturer(enCours.g, libelle || 'capture');
-    if (c) { c.t_ms = ahora() - enCours.t0; enCours.captures.push(c); }
+    var ctx = enCours;
+    if (!ctx.sansAuto) {
+      // ce que voit le joueur : canvas + HUD (ou écran ouvert) ; état lu tout de suite, image finie plus tard
+      ctx.derniere = ahora();
+      ctx.pendants.push(capturerEcran(ctx.g, libelle || 'capture').then(function (cap) {
+        if (cap && !ctx.fini) ctx.captures.push(cap);
+      }, function () { /* pas d'image : le test continue */ }));
+      return;
+    }
+    var c = capturer(ctx.g, libelle || 'capture');
+    if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); ctx.derniere = ahora(); }
+  }
+  /* Capture explicite d'un écran DOM ouvert (menu, inventaire, coffre, carte,
+     options, chat…) : le canvas du jeu ET le contenu de l'écran. Asynchrone :
+     `await captureEcran('inventaire ouvert')`. Sans écran DOM ouvert, équivaut à capture(). */
+  function captureEcran(libelle) {
+    var c = enCours;
+    if (!c) return Promise.resolve();
+    return capturerEcran(c.g, libelle || 'écran').then(function (cap) {
+      if (cap && !c.fini) { c.captures.push(cap); c.derniere = ahora(); }
+    });
   }
 
   /* Horloge RÉELLE, liée au chargement : un test étiqueté `rendu` remplace
@@ -336,11 +591,17 @@
   }
 
   function key(code, type) {
+    var act = enCours && (!type || type === 'keydown') && !TOUCHE_MOUVEMENT.test(code);
+    if (act) temoinAvant('avant la touche ' + code);
     window.dispatchEvent(new KeyboardEvent(type || 'keydown', { code: code, bubbles: true }));
+    if (act) temoin('action', 'après la touche ' + code, 2);
   }
   function mouseDown(g, button) {
+    var nom = button === 0 ? 'gauche' : (button === 2 ? 'droit' : 'milieu');
+    if (enCours) temoinAvant('avant le clic ' + nom);
     g.render.renderer.domElement.dispatchEvent(
       new MouseEvent('mousedown', { button: button, bubbles: true, cancelable: true }));
+    if (enCours) temoin('action', 'après le clic ' + nom, 3);
   }
   function mouseUp(button) {
     window.dispatchEvent(new MouseEvent('mouseup', { button: button, bubbles: true }));
@@ -388,6 +649,7 @@
     s.yaw = 0; s.pitch = 0;
     g.streamChunks(true);
     await frames(3);
+    temoin('action', 'état de départ : joueur au sol au point d\'apparition, inventaire vide', 0);
     return s;
   }
 
@@ -399,8 +661,12 @@
         "pourquoi": "un joueur qui arrive doit voir le menu tout de suite, sans attendre la génération",
         "attendu": "état menu, overlay visible, des chunks déjà présents, boutons Nouvelle partie et Multijoueur"
   }, async function (g) {
+    g.input.setState('playing');
+    await frames(2);
+    await captureEcran('avant : partie en cours, aucun menu');
     g.input.setState('menu');
     await frames(2);
+    await captureEcran('après : le menu principal recouvre le monde déjà généré');
     A.equal(g.input.state, 'menu', 'état menu');
     A.equal(getComputedStyle(document.querySelector('.overlay')).display, 'flex', 'écran visible');
     A.gt(g.world.chunks.size, 20, 'chunks déjà générés (' + g.world.chunks.size + ')');
@@ -432,8 +698,10 @@
     var cr = g.ui.hudDe(0).querySelector('.crosshair').getBoundingClientRect();
     A.close(cr.left + cr.width / 2, r.left + r.width / 2, 1.5, 'viseur centré horizontalement');
     A.close(cr.top + cr.height / 2, r.top + r.height / 2, 1.5, 'viseur centré verticalement');
+    capture('le viseur au centre du canvas, comme à l\'écran');
     // et le rapport d'aspect de la caméra doit suivre, sinon l'image est étirée
     A.close(g.render.camera.aspect, r.width / r.height, 0.02, 'aspect de la caméra cohérent');
+    capture('aspect de la caméra cohérent avec le canvas : image non étirée');
   });
 
   e2e('passer en partie masque le menu', {
@@ -441,9 +709,13 @@
         "pourquoi": "le menu ne doit pas rester visible par-dessus le jeu une fois la partie lancée",
         "attendu": "état playing et overlay display: none"
   }, async function (g) {
+    g.input.setState('menu');
+    await frames(2);
+    await captureEcran('avant : le menu est affiché');
     g.input.setState('playing');
     fakeLock(g, true);
     await frames(2);
+    await captureEcran('après : la partie est lancée, le menu a disparu');
     A.equal(g.input.state, 'playing');
     A.equal(getComputedStyle(document.querySelector('.overlay')).display, 'none', 'menu masqué');
   });
@@ -458,9 +730,11 @@
   }, async function (g) {
     await reset(g);
     A.equal(g.input.state, 'playing', 'en partie');
+    capture('avant : en partie, souris capturée');
     fakeLock(g, false);                     // simule Échap / clic hors fenêtre
     await frames(2);
     A.equal(g.input.state, 'paused', 'le jeu est passé en pause, pas en course libre');
+    capture('après : la souris est perdue, le jeu est en pause');
     A.equal(getComputedStyle(document.querySelector('.overlay')).display, 'flex', 'menu pause affiché');
   });
 
@@ -472,10 +746,13 @@
     await reset(g);
     var s = g.player.state;
     s.pos.y += 8;                            // en l'air : il devrait tomber
+    capture('avant : le joueur est en l\'air, la partie tourne');
     fakeLock(g, false);
     await frames(2);
     var y0 = s.pos.y, t0 = g.time;
+    capture('en pause : le menu pause recouvre le monde');
     await frames(30);
+    capture('30 images plus tard : le monde n\'a pas bougé');
     A.close(s.pos.y, y0, 1e-6, 'le joueur ne bouge plus');
     A.close(g.time, t0, 1e-6, 'le temps du monde est figé');
   });
@@ -486,9 +763,11 @@
         "attendu": "état paused après un événement blur"
   }, async function (g) {
     await reset(g);
+    capture('avant : en partie, fenêtre active');
     window.dispatchEvent(new Event('blur'));
     await frames(2);
     A.equal(g.input.state, 'paused', 'pause sur perte de focus');
+    capture('après : la fenêtre a perdu le focus, le jeu est en pause');
   });
 
   e2e('les touches sont relâchées quand on perd le contrôle', {
@@ -498,10 +777,12 @@
   }, async function (g) {
     await reset(g);
     key('KeyW');
+    capture('touche avancer enfoncée, en partie');
     A.ok(g.input.actions().forward, 'touche enfoncée');
     fakeLock(g, false);
     await frames(2);
     A.notOk(g.input.actions().forward, 'touche relâchée : pas de dérive fantôme');
+    capture('contrôle perdu : plus aucune touche enfoncée, pause affichée');
   });
 
   e2e('reprendre depuis la pause relance la partie', {
@@ -541,14 +822,18 @@
   }, async function (g) {
     await reset(g);
     var y0 = g.player.state.yaw;
+    capture('avant : vue de départ');
     look(100, 0);
     A.ne(g.player.state.yaw, y0, 'en partie : la vue tourne');
+    await frames(2);
+    capture('en partie : la vue a tourné de 100 pixels');
 
     fakeLock(g, false);
     await frames(2);
     var y1 = g.player.state.yaw;
     look(100, 0);
     A.equal(g.player.state.yaw, y1, 'en pause : la vue ne bouge plus');
+    capture('en pause : la souris ne tourne plus la vue');
   });
 
   e2e('un delta de souris aberrant est ignoré', {
@@ -558,10 +843,14 @@
   }, async function (g) {
     await reset(g);
     var y0 = g.player.state.yaw;
+    capture('avant : vue de départ');
     look(5000, 0);                           // artefact d'acquisition du verrou
     A.equal(g.player.state.yaw, y0, 'le saut de vue est filtré');
+    capture('après un saut de 5000 pixels : la vue n\'a pas bougé');
     look(50, 0);
     A.ne(g.player.state.yaw, y0, 'un mouvement normal passe');
+    await frames(2);
+    capture('un mouvement normal de 50 pixels fait tourner la vue');
   });
 
   e2e('la souris tourne dans le bon sens', {
@@ -572,14 +861,20 @@
     await reset(g);
     var s = g.player.state;
     s.yaw = 0; s.pitch = 0;
+    await frames(2);
+    capture('avant : cap 0, horizon à plat');
     function avant(yaw) { return { x: -Math.sin(yaw), z: -Math.cos(yaw) }; }
     var f0 = avant(0);
     look(120, 0);                            // souris vers la droite
     var f1 = avant(s.yaw);
     A.gt(f0.x * f1.z - f0.z * f1.x, 0, 'souris à droite => on tourne à droite');
+    await frames(2);
+    capture('souris vers la droite : la vue tourne à droite');
     s.pitch = 0;
     look(0, 120);                            // souris vers le bas
     A.lt(s.pitch, 0, 'souris en bas => on regarde en bas');
+    await frames(2);
+    capture('souris vers le bas : on regarde en bas');
   });
 
   e2e('le tangage est borné : on ne se retourne jamais', {
@@ -588,10 +883,15 @@
         "attendu": "|pitch| < π/2 + epsilon dans les deux sens, même après de nombreux mouvements extrêmes"
   }, async function (g) {
     await reset(g);
+    capture('avant : horizon à plat');
     for (var i = 0; i < 60; i++) look(0, -150);
     A.lt(Math.abs(g.player.state.pitch), Math.PI / 2 + 1e-6, 'tangage borné');
+    await frames(2);
+    capture('souris poussée à fond vers le haut : regard bloqué à la verticale');
     for (var j = 0; j < 120; j++) look(0, 150);
     A.lt(Math.abs(g.player.state.pitch), Math.PI / 2 + 1e-6, 'borné dans l\'autre sens');
+    await frames(2);
+    capture('souris poussée à fond vers le bas : regard bloqué à la verticale');
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -628,8 +928,10 @@
     var s = await reset(g);
     s.pos.y += 12;
     s.vel.y = 0;
+    capture('avant : le joueur est 12 blocs au-dessus du sol');
     for (var i = 0; i < 200 && !s.onGround; i++) await frames(1);
     A.ok(s.onGround, 'posé au sol');
+    capture('après la chute : le joueur est posé au sol');
     A.ok(MC.Core.isSolid(g.world.getBlock(Math.floor(s.pos.x), Math.floor(s.pos.y) - 1, Math.floor(s.pos.z))),
       'un bloc solide sous les pieds');
   });
@@ -1240,6 +1542,7 @@
   }, async function (g) {
     var s = await reset(g);
     var o = await sceneDegagee(g, s, 4);
+    capture('scène dégagée, avant de composer l\'équipe de quatre');
     fausseManette([{ axes: [0, 0, 0, 0] }, { axes: [0, 0, 0, 0] }, { axes: [0, 0, 0, 0] }]);
     g.composerEquipe(4, MC.Modes.regles('creatif', 'facile'));
     try {
@@ -1256,6 +1559,7 @@
       await frames(10);
       var av = g.render.avatarsLocaux;
       A.equal(av.length, 4, 'quatre avatars locaux');
+      capture('quatre avatars locaux placés face à face');
       av.forEach(function (m, i) { A.equal(m.userData.armure.length, 9, 'joueur ' + (i + 1) + ' : armure complète'); });
       capture('quatre-joueurs-en-armure');
       /* Cadence médiane (robuste aux à-coups du banc) sur 90 images, mesurée
@@ -1354,11 +1658,16 @@
     var by = g.world.groundAt(bx, bz, true);
     g.world.setBlock(bx, by + 1, bz, 0);
     var n0 = s.inv.count(B.BRICK);
+    await frames(2);
+    capture('avant : dix briques en main, case visée libre');
     var r = g.player.useOn({ x: bx, y: by, z: bz, block: g.world.getBlock(bx, by, bz),
                              nx: 0, ny: 1, nz: 0 });
     A.equal(r, 'place', 'pose acceptée');
+    await frames(2);
+    capture('après : la brique est posée sur la face visée');
     A.equal(g.world.getBlock(bx, by + 1, bz), B.BRICK, 'brique posée sur la face visée');
     A.equal(s.inv.count(B.BRICK), n0 - 1, 'une brique consommée');
+    capture('une brique de moins dans la barre d\'objets');
   });
 
   e2e('poser dans son propre corps est refusé', {
@@ -1371,9 +1680,13 @@
     var bx = Math.floor(s.pos.x), bz = Math.floor(s.pos.z);
     var by = Math.floor(s.pos.y) - 1;
     var n0 = s.inv.count(B.BRICK);
+    await frames(2);
+    capture('avant : cinq briques en main, on vise ses propres pieds');
     var r = g.player.useOn({ x: bx, y: by, z: bz, block: g.world.getBlock(bx, by, bz),
                              nx: 0, ny: 1, nz: 0 });
     A.equal(r, null, 'refusé : le bloc irait dans les jambes');
+    await frames(2);
+    capture('après : la pose est refusée, rien n\'apparaît dans les jambes');
     A.equal(s.inv.count(B.BRICK), n0, 'rien consommé');
   });
 
@@ -1448,7 +1761,10 @@
     try {
       g.entities.spawn('zombie', s.pos.x + 0.6, s.pos.y, s.pos.z);
       var hp0 = s.hp;
+      await frames(2);
+      capture('un zombie local colle le joueur');
       await frames(90);
+      capture('après 90 images au contact : la vie du joueur est intacte');
       A.equal(s.hp, hp0, 'aucun dégât calculé par le client (' + s.hp + ')');
     } finally { g.world.reglesZoneEn = r0; g.entities.list.length = 0; }
   });
@@ -1509,11 +1825,17 @@
     var by = g.world.groundAt(bx, bz, true);
     g.world.setBlock(bx, by, bz, B.FARMLAND);
     g.world.setBlock(bx, by + 1, bz, B.WHEAT0);
+    await frames(2);
+    capture('un plant de blé vient d\'être semé sur la terre labourée');
     for (var i = 0; i < 12; i++) g.world.tick(20, 14, function () { return 0; });
     A.equal(g.world.getBlock(bx, by + 1, bz), B.WHEAT3, 'blé mûr');
+    await frames(2);
+    capture('après douze ticks : le blé est mûr');
     var res = g.player.mineTick(0.1, { x: bx, y: by + 1, z: bz, block: B.WHEAT3 },
                                 function () { return 0; });
     A.ok(res, 'récolté');
+    await frames(2);
+    capture('le blé est récolté : la parcelle est vide');
     A.ok(res.drops.some(function (d) { return d.id === I.WHEAT; }), 'du blé obtenu');
   });
 
@@ -1773,6 +2095,7 @@
         "attendu": "au moins un bloc d'air trouvé en sondant des colonnes de chunks générés entre y=5 et y=20"
   }, async function (g) {
     await reset(g);
+    capture('point de départ en surface : les grottes sont sous les pieds');
     var creux = 0;
     g.world.chunks.forEach(function (c) {
       for (var y = 5; y < 20; y++)
@@ -1782,6 +2105,7 @@
       }
     });
     A.gt(creux, 0, 'des vides souterrains sont generes (' + creux + ')');
+    capture('vides souterrains comptés dans les chunks chargés');
   });
 
   /* SPEC-AUDIT-002 : retirer une entite doit liberer geometrie ET materiaux.
@@ -1794,9 +2118,12 @@
     for (var i = 0; i < 5; i++) mobs.push(g.entities.spawn('zombie', s.pos.x + 3 + i, s.pos.y, s.pos.z));
     // selon ce qu'a laissé le test précédent, la boucle peut mettre quelques images à les mailler
     for (var k = 0; k < 60 && mobs.some(function (m) { return !g.render.entityMeshes.has(m.eid); }); k++) await frames(1);
+    capture('cinq zombies créés devant le joueur, leurs maillages sont là');
     // d'autres créatures peuvent naître entre-temps (habitants, petits) : on suit les nôtres
     A.equal(mobs.filter(function (m) { return g.render.entityMeshes.has(m.eid); }).length, 5, 'cinq maillages crees');
     mobs.forEach(function (m) { g.entities.remove(m); });
+    await frames(3);
+    capture('les cinq zombies sont retirés : plus de maillage');
     await frames(3);
     A.equal(mobs.filter(function (m) { return g.render.entityMeshes.has(m.eid); }).length, 0, 'maillages retires');
     A.ok(g.render.materiauxLiberes > avant,
@@ -1809,11 +2136,13 @@
     for (var i = 0; i < 4; i++) g.entities.spawn('sheep', s.pos.x + 2 + i, s.pos.y, s.pos.z);
     g.entities.dropItem(s.pos.x, s.pos.y + 1, s.pos.z, B.COBBLE, 1);
     await frames(3);
+    capture('quatre moutons et un objet jeté, tous maillés');
     A.ok(g.render.entityMeshes.size >= 5, 'des maillages existent');
     var avant = g.render.materiauxLiberes;
     g.render.libererToutesEntites();
     A.equal(g.render.entityMeshes.size, 0, 'tout est retire');
     A.ok(g.render.materiauxLiberes > avant, 'les materiaux sont liberes');
+    capture('toutes les entités libérées : la scène est vide');
     g.entities.list.length = 0;
     await frames(2);
   });
@@ -1888,11 +2217,16 @@
     await reset(g);
     g.chat.vider();
     g.chat.ouvrir();
+    await frames(2);
+    capture('chat ouvert : fenêtre de saisie vide');
     g.chat.saisie = '/graine';
+    await frames(2);
+    capture('la commande /graine est saisie');
     var m = g.chat.valider('Joueur');
     g.traiterMessage(m);
     await frames(2);
     var sys = g.chat.messages.filter(function (x) { return x.type === 'systeme'; });
+    capture('la réponse du système est affichée dans le chat');
     A.ok(sys.length > 0, 'une reponse systeme est apparue');
     A.ok(sys[0].texte.indexOf(String(g.world.seed)) >= 0, 'la graine est annoncee');
   });
@@ -1900,9 +2234,12 @@
   e2e('SPEC-CHAT-007 : un message contenant du balisage est neutralise', async function (g) {
     await reset(g);
     g.chat.vider();
+    await frames(2);
+    capture('chat vide avant le message piégé');
     g.chat.envoyer('Pirate', '<img src=x onerror=alert(1)>');
     await frames(3);
     var log = document.querySelector('.chat-log');
+    capture('le message piégé est affiché en texte brut');
     A.equal(log.querySelectorAll('img').length, 0, 'aucune balise injectee');
     A.ok(log.textContent.indexOf('onerror') >= 0, 'le texte brut est bien affiche');
   });
@@ -1959,7 +2296,9 @@
     fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
     g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
     await frames(5);
+    capture('écran partagé à quatre : chaque joueur a son HUD sur sa vue');
     var hs = document.querySelectorAll('.hud');
+    capture('les quatre HUD comptés');
     A.equal(hs.length, 4, 'quatre HUD');
     // `g.vues[i]` est exprimé dans le repère de référence de l'hôte (sa
     // taille de disposition, `clientWidth`/`clientHeight`) ; le rectangle
@@ -1981,10 +2320,14 @@
     fausseManette([{ axes: [0,0,0,0] }]);
     g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
     await frames(3);
+    capture('deux joueurs en écran partagé, inventaires et vies pleins');
     g.equipe[0].player.state.inv.add(B.COBBLE, 7);
     g.equipe[0].player.hurt(6);
+    await frames(2);
+    capture('joueur 1 : sept pavés en plus et six points de vie en moins');
     A.equal(g.equipe[1].player.state.inv.count(B.COBBLE), 0, 'inventaire distinct');
     A.equal(g.equipe[1].player.state.hp, 20, 'vie distincte');
+    capture('joueur 2 : inventaire et vie inchangés');
     soloRetabli(g); await frames(3);
   });
 
@@ -1993,12 +2336,15 @@
     fausseManette([{ axes: [0, -1, 0, 0] }]);
     g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
     await frames(3);
+    capture('deux joueurs, le joueur 2 en vol avant la poussée du stick');
     var st = g.equipe[1].player.state;
     st.flying = true;
     // en l'air, loin du relief : une pente devant lui l'arrêterait, pas la manette
     st.pos.y = C.WORLD_H - 4; st.vel.y = 0;
     var x0 = st.pos.x, z0 = st.pos.z;
+    capture('stick gauche poussé : départ du joueur 2');
     await frames(40);
+    capture('après 40 images : le joueur 2 a avancé');
     var d = Math.hypot(st.pos.x - x0, st.pos.z - z0);
     A.gt(d, 1, 'le joueur 2 a avance a la manette (' + d.toFixed(2) + ')');
     soloRetabli(g); await frames(3);
@@ -2009,10 +2355,12 @@
     fausseManette([{ connected: false, axes: [0, -1, 0, 0] }]);
     g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
     await frames(3);
+    capture('deux joueurs, la manette du joueur 2 est débranchée');
     var st = g.equipe[1].player.state;
     st.flying = true; st.vel.x = 0; st.vel.z = 0;
     var x0 = st.pos.x, z0 = st.pos.z;
     await frames(40);
+    capture('après 40 images : le joueur 2 n\'a pas bougé');
     A.close(Math.hypot(st.pos.x - x0, st.pos.z - z0), 0, 0.05, 'aucun deplacement');
     soloRetabli(g); await frames(3);
   });
@@ -2022,9 +2370,11 @@
     fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
     g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
     await frames(4);
+    capture('quatre vues qui se partagent le cadre');
     var host = g.render.renderer.domElement.parentElement;
     var aire = g.vues.reduce(function (s2, v) { return s2 + v.w * v.h; }, 0);
     A.close(aire, host.clientWidth * host.clientHeight, 4, 'couverture totale');
+    capture('couverture totale mesurée : aucun vide ni chevauchement');
     soloRetabli(g); await frames(3);
   });
 
@@ -2057,12 +2407,16 @@
     fausseManette([{ axes: [0, -1, 0, 0] }]);
     g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
     await frames(3);
+    capture('deux joueurs en écran partagé avant la mort du joueur 1');
     g.equipe[0].player.state.dead = true;
+    await frames(2);
+    capture('le joueur 1 est mort, la partie continue');
     var st2 = g.equipe[1].player.state;
     st2.flying = true;
     st2.pos.y = C.WORLD_H - 4; st2.vel.y = 0;       // hors du relief, comme SPLIT-011
     var x0 = st2.pos.x, z0 = st2.pos.z;
     await frames(40);
+    capture('après 40 images : le joueur 2 bouge encore');
     A.gt(Math.hypot(st2.pos.x - x0, st2.pos.z - z0), 0.5, 'le joueur 2 bouge encore');
     soloRetabli(g);
     g.player.state.dead = false; g.player.state.hp = 20;
@@ -2074,10 +2428,12 @@
     fausseManette([{ axes: [0,0,0,0] }, { axes: [0,0,0,0] }, { axes: [0,0,0,0] }]);
     g.composerEquipe(4, MC.Modes.regles('survie', 'facile'));
     await frames(10);
+    capture('écran partagé à quatre joueurs, avant la mesure de cadence');
     var t0 = performance.now();
     await frames(60);
     var fps = 60 / ((performance.now() - t0) / 1000);
     A.gt(fps, 20, 'au moins 20 images/s en quadrant (' + fps.toFixed(0) + ')');
+    capture('après 60 images à quatre joueurs : la cadence tient');
     soloRetabli(g); await frames(3);
   });
 
@@ -2156,12 +2512,15 @@
     // la bienvenue replace le joueur là où le serveur le tient : on vise APRÈS
     for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
     await wait(300);
+    capture('connecté au serveur sous le nom Poseur');
     var s2 = g.player.state;
     var cl = caseLibreProche(g), bx = cl.x, by = cl.y, bz = cl.z;
     g.world.setBlock(bx, by, bz, 0);
     g.net.poserBloc(bx, by, bz, B.BRICK);
     await wait(600);
+    capture('le serveur a diffusé la pose de brique');
     A.equal(g.world.getBlock(bx, by, bz), B.BRICK, 'le serveur a confirme la pose');
+    capture('brique posée confirmée par le serveur');
     g.net.deconnecter();
     await wait(300);
   });
@@ -2172,9 +2531,11 @@
     navigator.getGamepads = function () { return [{ connected: true, index: 0, axes: [0,0,0,0], buttons: [] }]; };
     g.composerEquipe(2, MC.Modes.regles('survie', 'facile'));
     await frames(4);
+    capture('écran partagé à deux avant la connexion au serveur');
     g.net.connecter('', 'Duo', g.equipe.length);
     for (var t = 0; t < 30 && g.net.etat !== 'en ligne'; t++) await wait(100);
     A.equal(g.net.etat, 'en ligne', 'connecte malgre l ecran partage');
+    capture('connecté en ligne malgré l\'écran partagé');
     A.equal(g.equipe.length, 2, 'toujours deux joueurs locaux');
     A.equal(g.vues.length, 2, 'toujours deux vues');
     g.net.deconnecter();
@@ -2305,11 +2666,14 @@
 
   e2e('SPEC-MENU-001 : le menu liste les parties avec leurs metadonnees', async function (g) {
     videParties();
+    g.afficherMenu(); await frames(2);
+    await captureEcran('avant : le menu sans aucune partie enregistrée');
     MC.Saves.creer(localStorage, { nom: 'Alpha', mode: 'creatif',
                                    difficulte: 'cauchemar', graine: 4242 });
     g.afficherMenu();
     await frames(3);
     var l = document.querySelectorAll('.partie');
+    await captureEcran('après : la partie Alpha est listée avec son mode, sa difficulté et sa graine');
     A.equal(l.length, 1, 'une partie listee');
     var t = l[0].textContent;
     A.ok(t.indexOf('Alpha') >= 0, 'le nom');
@@ -2323,6 +2687,7 @@
     videParties(); g.afficherMenu(); await frames(2);
     document.querySelector('#btn-nouvelle').click();
     await frames(3);
+    await captureEcran('formulaire de nouvelle partie : nom, graine, mode, difficulté, joueurs');
     A.ok(document.querySelector('#f-nom'), 'champ nom');
     A.ok(document.querySelector('#f-graine'), 'champ graine');
     A.equal(document.querySelectorAll('.choix[data-nom="mode"] .opt').length, 3, 'trois modes : survie, créatif, histoire');
@@ -2332,22 +2697,28 @@
     var fsH = document.querySelector('#f-histoire');
     A.equal(fsH.style.display, 'none', 'paramètres d histoire repliés hors du mode histoire');
     document.querySelector('.choix[data-nom="mode"] .opt[data-val="histoire"]').click();
+    await captureEcran('mode histoire choisi : héros et longueur dépliés');
     A.ok(fsH.style.display !== 'none', 'dépliés en mode histoire');
     A.ok(document.querySelector('#f-heros') && document.querySelectorAll('.choix[data-nom="longueur"] .opt').length === 3, 'héros et longueur');
     document.querySelector('.choix[data-nom="interactions"] .opt[data-val="restreinte"]').click();
+    await captureEcran('interactions restreintes : la pierre est décochée');
     var pierre = document.querySelector('.cat-bloc[value="pierre"]'), vegetal = document.querySelector('.cat-bloc[value="vegetal"]');
     A.ok(!pierre.checked && vegetal.checked, 'le préréglage coche ses catégories');
     document.querySelector('.choix[data-nom="interactions"] .opt[data-val="libre"]').click();
+    await captureEcran('interactions libres : toutes les catégories sont cochées');
     A.ok(pierre.checked, 'libre : tout coché');
   });
 
   e2e('SPEC-MENU-004 : une graine textuelle est convertie', async function (g) {
     videParties(); g.afficherMenu(); await frames(2);
     document.querySelector('#btn-nouvelle').click(); await frames(2);
+    await captureEcran('formulaire de nouvelle partie ouvert');
     document.querySelector('#f-nom').value = 'Test graine';
     document.querySelector('#f-graine').value = 'mot de passe';
+    await captureEcran('formulaire rempli : nom « Test graine » et graine textuelle « mot de passe »');
     document.querySelector('#btn-creer').click();
     await frames(8);
+    capture('la partie est créée depuis la graine textuelle');
     A.equal(g.world.seed, MC.Modes.graineDepuisTexte('mot de passe'),
       'la graine du monde suit le mot saisi');
     videParties();
@@ -2372,11 +2743,14 @@
   e2e('SPEC-MENU-005 : le mode et la difficulte choisis sont appliques', async function (g) {
     videParties(); g.afficherMenu(); await frames(2);
     document.querySelector('#btn-nouvelle').click(); await frames(2);
+    await captureEcran('formulaire de nouvelle partie ouvert');
     document.querySelector('#f-nom').value = 'Creatif paisible';
     document.querySelector('.choix[data-nom="mode"] .opt[data-val="creatif"]').click();
     document.querySelector('.choix[data-nom="diff"] .opt[data-val="paisible"]').click();
+    await captureEcran('mode créatif et difficulté paisible choisis');
     document.querySelector('#btn-creer').click();
     await frames(8);
+    capture('partie créée en créatif paisible : le joueur vole');
     A.equal(g.regles.mode.id, 'creatif', 'mode applique');
     A.equal(g.regles.difficulte.id, 'paisible', 'difficulte appliquee');
     A.ok(g.player.state.flying, 'le vol est actif en creatif');
@@ -2391,10 +2765,13 @@
               { connected: true, index: 1, axes: [0,0,0,0], buttons: [] }];
     };
     document.querySelector('#btn-nouvelle').click(); await frames(2);
+    await captureEcran('formulaire de nouvelle partie ouvert, deux manettes branchées');
     document.querySelector('#f-nom').value = 'A trois';
     document.querySelector('.choix[data-nom="joueurs"] .opt[data-val="3"]').click();
+    await captureEcran('trois joueurs locaux choisis');
     document.querySelector('#btn-creer').click();
     await frames(8);
+    capture('partie créée : écran partagé à trois joueurs');
     A.equal(g.equipe.length, 3, 'trois joueurs locaux');
     A.equal(g.vues.length, 3, 'trois vues');
     g.composerEquipe(1, MC.Modes.regles('survie', 'facile'));
@@ -2405,14 +2782,17 @@
     videParties();
     MC.Saves.creer(localStorage, { nom: 'A jeter', graine: 1 });
     g.afficherMenu(); await frames(3);
+    await captureEcran('une partie « A jeter » est listée');
     A.equal(document.querySelectorAll('.partie').length, 1, 'une partie');
     var b = document.querySelector('.suppr');
     b.click();                       // premier clic : arme seulement
     await frames(2);
+    await captureEcran('après un premier clic : le bouton demande confirmation');
     A.equal(document.querySelectorAll('.partie').length, 1, 'toujours la apres un seul clic');
     A.ok(/Confirmer/.test(b.textContent), 'le bouton demande confirmation');
     b.click();                       // second clic : confirme
     await frames(3);
+    await captureEcran('après le second clic : la partie est supprimée');
     A.equal(document.querySelectorAll('.partie').length, 0, 'partie supprimee');
     videParties();
   });
@@ -2421,11 +2801,13 @@
     videParties(); g.afficherMenu(); await frames(2);
     document.querySelector('#btn-multi').click();
     await frames(3);
+    await captureEcran('écran multijoueur : adresse du serveur et pseudo');
     A.ok(document.querySelector('#f-hote'), 'champ adresse');
     A.ok(document.querySelector('#f-pseudo'), 'champ pseudo');
     A.ok(document.querySelector('#btn-join'), 'bouton rejoindre');
     document.querySelector('#btn-retour').click();
     await frames(2);
+    await captureEcran('après « Retour » : la liste des parties est de retour');
     A.ok(document.querySelector('#btn-nouvelle'), 'retour a la liste');
   });
 
@@ -2653,12 +3035,16 @@
     g.time = DL * 0.2;
     await frames(3);
     var jour = g.render.scene.background.getHex();
+    capture('plein jour (20 % du cycle)');
     g.time = DL * 0.7;
     await frames(3);
     var nuit = g.render.scene.background.getHex();
+    capture('nuit (70 % du cycle) : le ciel est plus sombre');
     A.ne(jour, nuit, 'la couleur du ciel diffère');
     var lum = function (h) { return (h >> 16) + ((h >> 8) & 255) + (h & 255); };
     A.lt(lum(nuit), lum(jour), 'la nuit est plus sombre');
+    await frames(3);
+    capture('retour au jour : le cycle reboucle');
     g.time = DL * 0.2;
   });
 
@@ -2669,15 +3055,19 @@
   }, async function (g) {
     var s = await reset(g);
     var far0 = g.render.scene.fog.far;
+    capture('avant : à l\'air libre, brouillard lointain');
     // on crée une poche d'eau autour de la tête
     var bx = Math.floor(s.pos.x), by = Math.floor(s.pos.y), bz = Math.floor(s.pos.z);
     for (var y = by; y <= by + 3; y++) g.world.setBlock(bx, y, bz, B.WATER);
     s.flying = true;
     await frames(4);
     A.lt(g.render.scene.fog.far, far0, 'brouillard resserré sous l\'eau');
+    capture('sous l\'eau : la vue se teinte et le brouillard se resserre');
     for (var y2 = by; y2 <= by + 3; y2++) g.world.setBlock(bx, y2, bz, 0);
     s.flying = false;
     s.pos.y = g.world.groundAt(bx, bz, true) + 1.2;
+    await frames(4);
+    capture('l\'eau est retirée : retour à l\'air libre');
     await frames(4);
   });
 
@@ -2700,6 +3090,8 @@
     g.world.setBlock(bx, by, bz, B.BRICK);
     s.inv.add(B.GLASS, 33);
     s.hp = 11;
+    await frames(3);
+    capture('avant la sauvegarde : une brique posée, 33 verres et 11 points de vie');
     A.ok(MC.Saves.sauvegarder(localStorage, g.partieId, g), 'sauvegarde écrite');   // le module de sauvegarde (le serveur l'utilise) : le client n'a plus de doSave
 
     // on casse tout et on vide l'inventaire
@@ -2707,12 +3099,16 @@
     s.inv.load([]);
     s.hp = 20;
     A.equal(g.world.getBlock(bx, by, bz), 0, 'construction effacée');
+    await frames(3);
+    capture('après effacement : plus de brique, inventaire vidé, vie pleine');
 
     A.ok(MC.Saves.charger(localStorage, g.partieId, g), 'rechargée');
     g.world.getChunk(Math.floor(bx / 16), Math.floor(bz / 16), true);
     A.equal(g.world.getBlock(bx, by, bz), B.BRICK, 'brique retrouvée');
     A.equal(s.inv.count(B.GLASS), 33, 'inventaire retrouvé');
     A.equal(s.hp, 11, 'vie retrouvée');
+    await frames(3);
+    capture('après rechargement : brique, verres et vie sont retrouvés');
     MC.Saves.toutEffacer(localStorage);
   });
 
@@ -2727,6 +3123,7 @@
     var s = await reset(g);
     s.hp = 6; s.hunger = 4;
     await frames(3);
+    capture('vie à 6 (trois cœurs pleins) et faim à 4 (deux pastilles)');
     // un HUD par joueur depuis l ecran partage : on interroge celui du joueur 1
     var hud = g.ui.hudDe(0);
     var pleins = hud.querySelectorAll('.bar.health .pip.full').length;
@@ -2734,6 +3131,8 @@
     var food = hud.querySelectorAll('.bar.hunger .pip.full').length;
     A.equal(food, 2, '4 points de faim = 2 pastilles');
     s.hp = 20; s.hunger = 20;
+    await frames(3);
+    capture('vie et faim pleines : toutes les pastilles sont remplies');
   });
 
   e2e('la jauge d\'air n\'apparaît que sous l\'eau', {
@@ -2778,10 +3177,16 @@
   }, async function (g) {
     var s = await reset(g);
     s.selected = 0;
+    await frames(2);
+    capture('case 1 sélectionnée dans la barre d\'objets');
     window.dispatchEvent(new WheelEvent('wheel', { deltaY: 100 }));
     A.equal(s.selected, 1, 'molette bas => case suivante');
+    await frames(2);
+    capture('molette vers le bas : case 2 sélectionnée');
     window.dispatchEvent(new WheelEvent('wheel', { deltaY: -100 }));
     A.equal(s.selected, 0, 'molette haut => case précédente');
+    await frames(2);
+    capture('molette vers le haut : retour à la case 1');
   });
 
   // ══════════════════════════════════════════════════════════════════════════
@@ -2793,10 +3198,12 @@
         "attendu": "fps mesuré > 20 (seuil volontairement bas pour absorber la variance du banc headless)"
   }, async function (g) {
     await reset(g);
+    capture('départ : joueur au sol, avant de mesurer la cadence');
     var t0 = performance.now();
     await frames(90);
     var dt = performance.now() - t0;
     var fps = 90 / (dt / 1000);
+    capture('après 90 images : la boucle de jeu a tourné');
     A.gt(fps, 20, 'au moins 20 images/s (mesuré ' + fps.toFixed(0) + ')');
   });
 
@@ -3094,13 +3501,17 @@
     fausseManette([{ axes: [0, 0, 0, 0] }]);
     g.composerEquipe(2, MC.Modes.regles('creatif', 'facile'));
     await frames(3);
+    capture('deux joueurs en écran partagé, avant l\'éloignement du joueur 2');
     var st = g.equipe[1].player.state;
     st.flying = true;
     st.pos.x += 400; st.pos.y = C.WORLD_H - 4; st.vel.x = st.vel.y = st.vel.z = 0;
     // la génération est budgétée : on laisse le streaming rattraper
     for (var i = 0; i < 40 && !g.world.estCharge(st.pos.x, st.pos.z); i++) await frames(5);
+    await frames(2);
+    capture('le joueur 2 est à 400 blocs : sa vue attend que le sol se charge');
     A.ok(g.world.estCharge(st.pos.x, st.pos.z), 'le chunk sous le joueur 2 est chargé');
     A.ok(g.world.estCharge(g.player.state.pos.x, g.player.state.pos.z), 'celui du joueur 1 aussi');
+    capture('le sol est chargé sous les deux joueurs');
     soloRetabli(g); await frames(3);
   });
 
@@ -3461,6 +3872,7 @@
     var v = g.entities.spawn('villager', p.x - 3, p.y, p.z, { role: 'forgeron', pnj: 'e2e-forgeron' });
     try {
       await frames(3);
+      capture('un zombie à droite et un forgeron à gauche, tous deux maillés');
       var mz = g.render.entityMeshes.get(z.eid), mv = g.render.entityMeshes.get(v.eid);
       A.ok(mz && mz.userData.membres, 'le zombie a des membres articulés');
       A.ok(mv && mv.userData.membres && mv.userData.membres.tete, 'l habitant aussi, et une tête');
@@ -3469,9 +3881,11 @@
       var angles = [];
       for (var i = 0; i < 12; i++) { fe.age += 0.05; g.render.animerMembres(mz, fe, 0.05, 'essai'); angles.push(mz.userData.membres.jambeG.rotation.x); }
       A.gt(Math.max.apply(null, angles) - Math.min.apply(null, angles), 0.2, 'les jambes bougent en marchant');
+      capture('zombie en marche : les jambes bougent');
       fe.vel.x = 0; fe.coupA = fe.age; fe.age += 0.18;
       g.render.animerMembres(mz, fe, 0.05, 'essai');
       A.lt(mz.userData.membres.brasD.rotation.x, -1, 'le bras se lève pour frapper');
+      capture('zombie qui frappe : le bras se lève');
       fe.coupA = undefined; fe.vise = { x: fe.pos.x - 8, y: fe.pos.y + 1.6, z: fe.pos.z };
       g.render.animerMembres(mz, fe, 0.05, 'essai');
       A.close(mz.userData.membres.tete.rotation.y, 1.2, 0.01, 'la tête se tourne vers la cible (bornée)');
@@ -3884,6 +4298,7 @@
     });
     A.equal(p.appelsDessin, g.render.renderer.info.render.calls, 'appelsDessin == renderer.info.render.calls');
     A.equal(p.triangles, g.render.renderer.info.render.triangles, 'triangles == renderer.info.render.triangles');
+    capture('après 20 images à distance 4 : métriques de g.perf finies et cohérentes');
   });
 
   /* SPEC-PERF-016 : le panneau F3 s'ouvre et se ferme sur la touche F3, et
@@ -4042,6 +4457,7 @@
     var opt = g.options.mipmaps;
     try {
       g.reglerOption('mipmaps', true);
+      capture('mipmaps activés : monde rendu avec sa chaîne de niveaux');
       await frames(1);
       var tex = g.render.materials.opaque.map, C = MC.Core, TILE = 16, COLS = MC.Mesher.ATLAS_COLS;
       var cv = tex.mipmaps[0], L = cv.width;
@@ -4068,6 +4484,7 @@
         });
       });
       A.gt(controlees, 0, 'au moins une tuile translucide contrôlée');
+      capture('contrôle terminé : le rendu reste le même après vérification des alphas');
     } finally {
       g.reglerOption('mipmaps', opt);
       await frames(1);
@@ -4084,15 +4501,18 @@
       g.reglerOption('mipmaps', false);
       caps.isWebGL2 = false;
       g.reglerOption('mipmaps', true);
+      capture('sans WebGL2 : l\'option mipmaps demandée');
       await frames(1);
       A.notOk(g.render.mipmapsActifs, 'mipmaps refusés sans WebGL2');
       A.equal(tex.minFilter, THREE.NearestFilter, 'filtre nearest');
       A.equal(tex.mipmaps.length, 0, 'aucune chaîne de niveaux');
+      capture('niveau 0 seul : aucune chaîne de niveaux, rendu inchangé');
     } finally {
       caps.isWebGL2 = avant;
       g.reglerOption('mipmaps', false);
       g.reglerOption('mipmaps', opt);
       await frames(1);
+      capture('réglages rétablis : le rendu de référence, mipmaps comme au départ');
     }
   });
 
@@ -4219,6 +4639,7 @@
   e2e('SPEC-RENDU-011 : l’avertissement de rendu logiciel ne s’affiche qu’une seule fois', async function (g) {
     var avant = document.querySelectorAll('.toast').length;
     g.ui.avertirRenduLogiciel('SwiftShader (simulé)');
+    capture('premier appel de l\'avertissement de rendu logiciel');
     await frames(2);
     var apresUn = document.querySelectorAll('.toast').length;
     A.ok(apresUn - avant <= 1, 'au plus un avertissement ajouté par cet appel : ' + avant + ' → ' + apresUn);
@@ -4230,6 +4651,7 @@
     await frames(2);
     var apresDeux = document.querySelectorAll('.toast').length;
     A.equal(apresDeux, apresUn, 'un second appel ne redouble pas l’avertissement');
+    capture('second appel : pas de second avertissement');
   });
 
   /* SPEC-RENDU-013 : les maillages de chunk gardent le frustum culling actif
@@ -4239,6 +4661,7 @@
     g.render.setDistance(4);
     g.streamChunks(true);
     for (var i = 0; i < 10; i++) await frames(1);
+    capture('chunks chargés à distance 4 autour du joueur');
     var trouve = 0, culled = 0;
     g.world.chunks.forEach(function (c) {
       g.render.PASSES.forEach(function (p) {
@@ -4248,6 +4671,7 @@
     });
     A.gt(trouve, 0, 'des maillages de chunk existent');
     A.equal(culled, trouve, 'tous ont le frustum culling actif : ' + culled + '/' + trouve);
+    capture('tous les maillages vérifiés sont soumis au frustum culling');
   });
 
   /* SPEC-RENDU-006 : le contexte WebGL se crée désormais sans MSAA (voir la
@@ -4280,6 +4704,7 @@
 
     A.equal(g.render.renderer, rendererAvant, 'même instance de renderer — pas de reconstruction du contexte');
     A.gt(avecAA, sansAA, 'la passe FXAA ajoute au moins un appel de dessin : ' + avecAA + ' (actif) > ' + sansAA + ' (coupé)');
+    capture('antialias coupé : image de référence sans passe FXAA');
 
     // réactivable manuellement (la fiche l'exige explicitement) : par le
     // choix « toujours actif » des options, qu'aucun tick adaptatif n'écrase
@@ -4289,6 +4714,7 @@
       g.reglerOption('antialias', 'oui');
       await frames(1);
       A.equal(g.render.antialiasActif, true, 'réactivable manuellement dans les options');
+      capture('antialias réactivé par le réglage des options');
     } finally {
       g.reglerOption('antialias', choixAvant || 'auto');
     }
@@ -4499,6 +4925,7 @@
     g.streamChunks(true);
     for (var i = 0; i < 10; i++) await frames(1);
     A.gt(g.render.eau.enVue, 0, 'de l’eau dans le champ');
+    capture('mer vue d\'en haut, avant la mesure de réfraction');
     // FPS p50 injecté bas : la même source que le panneau F3 (SPEC-RENDU-015)
     g.render.eau.options.fpsP50 = 10;
     // renderer.info compte aussi la carte d'ombres et d'autres passes : on
@@ -4512,6 +4939,7 @@
     }
     var appels = g.render.eau.appelsRefraction - avant;
     A.ok(appels < vuesRendues, 'moins d’appels de réfraction que d’images rendues : ' + appels + '/' + vuesRendues);
+    capture('après 40 images rendues sous FPS bas injecté');
     s.flying = false;
     await reset(g);
   });
@@ -4646,6 +5074,7 @@
       };
       var res = await runUnE2E(g, faux, { delaiDefaut: 30 });
       enCours = enComptePrecedent;
+      capture('après le faux test à deux étapes : le jeu est intact');
       A.equal(res.etat, 'reussi', 'le faux test se termine normalement : ' + res.message);
       A.equal(res.etapesTriplets.length, 3, 'trois étapes au total : ' + JSON.stringify(res.etapesTriplets.map(function (e) { return e.nom; })));
       A.equal(res.etapesTriplets.map(function (e) { return e.nom; }).join(','), 'test,a,b', 'implicite « test » puis les deux déclarées, dans l\'ordre');
@@ -4676,6 +5105,58 @@
         A.ok(c.instabilite && typeof c.instabilite.pixels === 'number' && c.instabilite.pixels >= 0, 'score d\'instabilité pixels : nombre ≥ 0');
         A.ok(typeof c.instabilite.pose === 'number' && c.instabilite.pose >= 0, 'score d\'instabilité de pose : nombre ≥ 0');
       });
+    });
+
+  /* SPEC-BANC-026 (politique de témoins) : un test qui ne capture rien lui-même
+     reçoit quand même des témoins DISTINCTS — avant/après une touche
+     significative, pellicule pendant une attente de plus de 2 s, preuves des
+     assertions. Faux test imbriqué (même patron que ci-dessus), inspecté depuis
+     l'extérieur. */
+  e2e('SPEC-BANC-026 : le harnais pose lui-même des témoins distincts pendant un test muet',
+    { teste: 'que runUnE2E ajoute des captures automatiques, toutes différentes, aux captures de début et de fin, sans que le test appelle capture()',
+      pourquoi: 'un cahier à deux images par test ne permet pas de voir ce que le test a réellement fait ni de repérer une dérive au milieu d\'un scénario',
+      attendu: 'libellés « avant/après la touche KeyE », au moins une « pellicule » pendant la marche, une « preuve : … », au moins 6 images distinctes hors triplets, aucune image en double' },
+    async function (g) {
+      await reset(g);
+      var enComptePrecedent = enCours;
+      var faux = {
+        id: 'demo-temoins-interne', name: 'faux test muet de 6 s (interne, jamais listé dans une vraie campagne)',
+        fn: async function (gg) {
+          key('KeyE');
+          await frames(3);
+          A.ok(true, 'inventaire ouvert par E');
+          key('KeyE');
+          fakeLock(gg, true);
+          await frames(2);
+          key('KeyW');
+          gg.player.state.yaw += 1.2;
+          await wait(4500);
+          gg.player.state.yaw -= 2.4;
+          key('KeyW', 'keyup');
+          await frames(2);
+          A.ok(true, 'marche terminée');
+        },
+      };
+      var res = await runUnE2E(g, faux, { delaiDefaut: 60 });
+      enCours = enComptePrecedent;
+      A.equal(res.etat, 'reussi', 'le faux test se termine normalement : ' + res.message);
+      var libelles = res.captures.filter(function (c) { return c.role !== 'triplet'; }).map(function (c) { return c.libelle; });
+      A.ok(libelles.indexOf('avant la touche KeyE') >= 0, 'témoin « avant la touche KeyE » : ' + libelles.join(' | '));
+      // le témoin « après » peut porter le libellé du changement d'écran qui le précède (même image : un seul est gardé)
+      A.ok(libelles.some(function (l) { return /^après/.test(l); }), 'un témoin « après » une action : ' + libelles.join(' | '));
+      A.ok(libelles.some(function (l) { return /^pellicule /.test(l); }), 'au moins un témoin de pellicule pendant la marche : ' + libelles.join(' | '));
+      A.ok(libelles.some(function (l) { return /^preuve : /.test(l); }), 'au moins une preuve d\'assertion : ' + libelles.join(' | '));
+      var distinctes = res.captures.filter(function (c) { return c.role !== 'triplet'; });
+      A.gt(distinctes.length, 5, 'au moins 6 captures hors triplets : ' + libelles.join(' | '));
+      var vues = {};
+      distinctes.forEach(function (c, i) {
+        if (i > 0 && i < distinctes.length - 1) A.ok(!vues[c.base64], 'aucune image automatique en double : ' + c.libelle);
+        vues[c.base64] = true;
+      });
+      A.equal(distinctes[0].libelle, 'début', 'la première est « début »');
+      A.equal(distinctes[distinctes.length - 1].libelle, 'fin', 'la dernière est « fin »');
+      var t = distinctes.map(function (c) { return c.t_ms; });
+      A.ok(t.every(function (x, i) { return i === 0 || x >= t[i - 1]; }), 'dans l\'ordre chronologique');
     });
 
   /* SPEC-OPTION-008 : l'espace de rendu (rendu, HUD, menus) ne descend
@@ -4772,14 +5253,20 @@
     await reset(g);
     var d = MC.Debug.creer(g);
     var av = d.teleporter(g.player.state.pos.x + 5, g.player.state.pos.z + 5);
+    await frames(2);
+    capture('après la téléportation de 5 blocs en X et en Z');
     A.close(g.player.state.pos.x, av.x, 1e-6, 'téléportation en X appliquée');
     A.close(g.player.state.pos.z, av.z, 1e-6, 'téléportation en Z appliquée');
 
     var t = d.heure(6);
+    await frames(2);
+    capture('heure réglée à 6 h : le soleil se lève');
     A.ok(t >= 0, 'heure réglée (' + t + ')');
 
     var avantD = g.render.RENDER_DIST;
     d.distanceVue(3);
+    await frames(3);
+    capture('distance de vue réduite à 3 chunks');
     A.equal(g.render.RENDER_DIST, 3, 'distance de vue changée');
     d.distanceVue(avantD);
 
@@ -4789,6 +5276,8 @@
     panneau.style.cssText = 'position:fixed;top:0;left:0;width:300px;height:200px;';
     document.body.appendChild(panneau);
     A.ok(d.agrandir(panneau), 'passage en plein panneau');
+    await frames(2);
+    capture('le jeu est agrandi dans un panneau');
     A.ok(d.estAgrandi, 'état agrandi');
     A.ok(d.reduire(), 'retour à la taille normale');
     A.notOk(d.estAgrandi, 'état réduit');
@@ -4798,6 +5287,7 @@
 
     var img = d.capture();
     A.ok(typeof img === 'string' && img.indexOf('data:image/jpeg') === 0, 'capture manuelle produite');
+    capture('après la capture manuelle : taille et aspect rétablis');
   });
 
   /* SPEC-BANC-016 : la fin d'un test referme ce qu'il a laissé ouvert. On
@@ -4995,11 +5485,13 @@
     var centre = [Math.floor(pt[0] / 16), Math.floor(pt[1] / 16)];
     var avant = chunksVoulusCharges(g, centre, 5);
     A.equal(avant, 0, 'endroit vraiment inexploré au départ');
+    capture('endroit inexploré avant la génération des 20 chunks');
     var t0 = performance.now();
     var images = 0;
     while (chunksVoulusCharges(g, centre, 5) - avant < 20 && images < 400) { await frames(1); images++; }
     var ms = performance.now() - t0;
     A.gt(chunksVoulusCharges(g, centre, 5) - avant, 0, 'au moins un chunk généré à cet endroit inexploré');
+    capture('les chunks voulus sont générés et affichés');
     // budget large et délibérément permissif (rendu logiciel possible en CI) :
     // ce test surveille une RÉGRESSION grossière (blocage du thread
     // principal), pas une performance de pointe
@@ -5018,11 +5510,13 @@
     s.pos.x = pt[0]; s.pos.z = pt[1];
     var centre = [Math.floor(pt[0] / 16), Math.floor(pt[1] / 16)];
     var avantMailles = maillesVoulusCharges(g, centre, 5);
+    capture('avant le maillage des chunks de ce coin');
     var t0 = performance.now();
     var images = 0;
     while (maillesVoulusCharges(g, centre, 5) - avantMailles < 15 && images < 400) { await frames(1); images++; }
     var ms = performance.now() - t0;
     A.gt(maillesVoulusCharges(g, centre, 5) - avantMailles, 0, 'au moins un chunk maillé et affiché');
+    capture('chunks maillés et affichés');
     var budget = lent ? 60000 : 15000;
     A.lt(ms, budget, 'thread principal pas bloqué pour le maillage (' + Math.round(ms) + ' ms, budget ' + budget + ' ms)' +
          (lent ? ' [rendu logiciel]' : ''));
@@ -5043,6 +5537,7 @@
     for (var j = 0; j < 60 && !g.world.voisinsCharges(cx, cz); j++) await frames(1);
     if (!g.world.voisinsCharges(cx, cz)) return;   // terrain trop lent à charger sur cette machine : test non concluant
     var voisins = MC.TachesChunks.instantaneVoisins(g.world, cx, cz);
+    capture('chunks voisins chargés autour du coin inexploré');
     var transferables = MC.ContratsV2.transferablesDe({ voisins: voisins });
     A.gt(transferables.length, 0, 'au moins un tampon à transférer');
     var buf0 = transferables[0];
@@ -5052,6 +5547,7 @@
     var mc = new MessageChannel();
     mc.port1.postMessage(null, transferables);
     A.equal(buf0.byteLength, 0, 'le tampon d\'origine est détaché après le transfert');
+    capture('tampon d\'origine détaché après le transfert vers le worker');
   });
 
   /* SPEC-PERF-014 : remailler 100 fois le même chunk ne doit pas créer 100
@@ -5062,6 +5558,7 @@
     g.streamChunks(true);
     var c = g.world.chunks.get(g.world.key(Math.floor(g.player.state.pos.x / 16), Math.floor(g.player.state.pos.z / 16)));
     A.ok(c, 'un chunk existe sous le joueur');
+    capture('le chunk sous le joueur, avant les 100 remaillages');
     var avant = g.render.perf().geometriesCreees;
     for (var i = 0; i < 100; i++) {
       c.dirty = true;
@@ -5072,6 +5569,7 @@
     // départ éventuellement nulle) : on tolère une poignée de recréations,
     // jamais 100
     A.lt(creees, 10, '100 remaillages du même chunk créent très peu de géométries (' + creees + ')');
+    capture('après 100 remaillages : le chunk est inchangé à l\'écran');
   });
 
   /* SPEC-PERF-006 : sans Worker (globale retirée AVANT la création du jeu),
@@ -5222,15 +5720,18 @@
   }, async function (g) {
     var s = await reset(g);
     avecAudio(g);
+    capture('avant : joueur au sol, sons du serveur à relayer');
     var p = s.pos, n0 = g.sons.derniers.length;
     g.sonsServeur([{ k: 'blesse', e: 'wolf', x: p.x + 3, y: p.y, z: p.z },
                    { k: 'gardien', e: 'boss_zombie', x: p.x - 6, y: p.y, z: p.z }]);
     var l = g.sons.derniers.slice(n0);
     A.ok(l.some(function (x) { return x.nom === MC.Ambiance.sonCreature('wolf', 'blesse') && x.joue; }), 'la blessure du loup');
     A.ok(l.some(function (x) { return x.nom === MC.Ambiance.sonEvenement('gardien') && x.joue; }), 'le réveil du gardien');
+    capture('la blessure du loup et le réveil du gardien sont joués');
     var n1 = g.sons.derniers.length;
     g.sonsServeur([{ k: 'mort', e: 'sheep', x: p.x + 200, y: p.y, z: p.z }]);
     A.ok(g.sons.derniers.slice(n1).every(function (x) { return !x.joue; }), 'à 200 blocs, rien ne se joue');
+    capture('à 200 blocs de distance : rien ne se joue');
   });
 
   e2e('SPEC-AUDIO-006 : chaque catégorie de sons a son volume dans les options, appliqué aussitôt', {
@@ -5763,12 +6264,17 @@
     return new Promise(function (resolve) {
       var ctx = { g: g, t0: ahora(), debutISO: new Date().toISOString(), images: [], etapes: [], captures: [],
                   assertions: { ok: 0, ko: 0 }, etapeCourante: null, mesures: [],
+                  // témoins automatiques (politique de captures)
+                  fini: false, auto: {}, libelles: {}, pendants: [], derniere: ahora(), dernierEcran: null,
+                  sansAuto: SANS_TEMOINS.test(test.name) || !!(test.fiche && (test.fiche.captureAuto === false || (Array.isArray(test.fiche.etiquettes) && test.fiche.etiquettes.indexOf('rendu') >= 0))),
                   // étapes déclarées et triplets (SPEC-BANC-077 à 081)
                   etapesTriplets: [], etapeCourante2: null, _chaineEtapes: null };
       enCours = ctx;
       var diag = demarrerDiagnostics(test);
       var c0 = capturer(g, 'début');
-      if (c0) { c0.t_ms = 0; ctx.captures.push(c0); }
+      if (c0) { c0.t_ms = 0; ctx.captures.push(c0); enrichir(ctx, c0); }
+      ctx.veille = demarrerVeille(ctx);
+      ctx.restaurerActions = ctx.sansAuto ? null : envelopperActions(g, ctx);
       // étape IMPLICITE `test` (SPEC-BANC-077) : ouverte dès le départ, comme
       // n'importe quelle étape déclarée — un test qui n'appelle jamais
       // T.etape() garde exactement CETTE étape, du début à la fin du test.
@@ -5781,6 +6287,8 @@
          ou « délai dépassé ») ne sont connues qu'une fois le test terminé —
          d'où l'affectation ICI, une seule fois, plutôt qu'à chaque push. */
       function assignerRoles() {
+        // les témoins automatiques arrivent de façon asynchrone : on remet tout dans l'ordre où les images ont été prises
+        ctx.captures = ctx.captures.map(function (c, i) { return { c: c, i: i }; }).sort(function (a, b) { return (a.c.t_ms - b.c.t_ms) || (a.i - b.i); }).map(function (o) { return o.c; });
         var n = ctx.captures.length;
         ctx.captures.forEach(function (c, i) {
           c.role = (i === 0) ? 'debut' : (i === n - 1 ? 'fin' : 'intermediaire');
@@ -5827,6 +6335,9 @@
       function metriques() { return metriquesFenetre(); }
       function conclure(etat, message, pile, attendu, obtenu) {
         if (fini) return; fini = true;
+        ctx.fini = true;
+        clearInterval(ctx.veille);
+        if (ctx.restaurerActions) ctx.restaurerActions();
         clearTimeout(minuteur);
         // referme l'étape encore ouverte (implicite `test`, ou la dernière
         // déclarée) puis attend TOUTE la chaîne d'étapes (SPEC-BANC-077) —
@@ -5891,15 +6402,19 @@
         try { return await test.fn(g); }
         finally { ctx.instantane = prendreInstantane(g); }
       })().then(function () {
-        var c = capturer(g, 'fin');
-        if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
-        conclure('reussi', null);
+        return drainerTemoins(ctx).then(function () {
+          var c = capturer(g, 'fin');
+          if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); enrichir(ctx, c); }
+          return drainerTemoins(ctx).then(function () { conclure('reussi', null); });
+        });
       }, function (e) {
         var msg = (e && e.message) || String(e);
         var pile = (e && e.stack) ? String(e.stack) : null;
-        var c = capturer(g, 'échec');
-        if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); }
-        conclure('echec', msg, pile, e && e.attendu, e && e.obtenu);
+        return drainerTemoins(ctx).then(function () {
+          var c = capturer(g, 'échec');
+          if (c) { c.t_ms = ahora() - ctx.t0; ctx.captures.push(c); enrichir(ctx, c); }
+          return drainerTemoins(ctx).then(function () { conclure('echec', msg, pile, e && e.attendu, e && e.obtenu); });
+        });
       });
     });
   }
@@ -5985,7 +6500,7 @@
     },
     A: A, T: T, fail: fail, frames: frames, wait: wait, key: key, fakeLock: fakeLock,
     mouseDown: mouseDown, mouseUp: mouseUp, look: look, reset: reset, sonderE2E: sonderE2E,
-    serveurPresent: serveurPresent, capture: capture, initRefs: initRefs,
+    serveurPresent: serveurPresent, capture: capture, captureEcran: captureEcran, initRefs: initRefs,
     // rendu reproductible et mouvements scriptés (SPEC-BANC-082, 084)
     capturerTriplet: capturerTriplet, poseCourante: poseCourante,
   };
@@ -5993,6 +6508,7 @@
   G.E2E_LISTE = tests;
   G.etape = etape;
   G.capture = capture;
+  G.captureEcran = captureEcran;
   /* NE JAMAIS remplacer le harnais : dans tests/index.html, tests/harness.js
      a déjà posé G.T (describe/it/run, et les suites de tous les fichiers
      unit/functional/spec-* chargés avant ce fichier). L'écraser par ce petit

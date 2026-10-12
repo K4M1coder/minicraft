@@ -333,6 +333,29 @@
       A.ok(/capturer\(g, 'délai dépassé'\)/.test(corpsRunUnE2E), 'une capture est prise au délai dépassé');
     });
 
+    it('SPEC-BANC-026 : le harnais pose des témoins automatiques distincts (pellicule + avant/après les actions + écrans DOM + preuves) plafonnés et sans doublon', function () {
+      // Vérification STRUCTURELLE (le comportement réel est celui du faux test
+      // imbriqué de tests/e2e.js « le harnais pose lui-même des témoins
+      // distincts » et de la porte G15, qui affiche les témoins distincts du cahier).
+      var src = fs.readFileSync(path.join(RACINE, 'tests', 'e2e.js'), 'utf8');
+      var pol = /var POLITIQUE = \{ pelliculeMs: (\d+), sondeMs: (\d+), max: \{ pellicule: (\d+), action: (\d+), ecran: (\d+), preuve: (\d+) \} \};/.exec(src);
+      A.ok(pol, 'la politique est déclarée en un seul endroit (POLITIQUE)');
+      A.ok(+pol[1] >= 1500 && +pol[1] <= 2500, 'pellicule : une image toutes les ~2 s (' + pol[1] + ' ms)');
+      A.ok(+pol[3] >= 4 && +pol[3] <= 20 && +pol[4] >= 6 && +pol[5] >= 4 && +pol[6] >= 3, 'plafonds par famille : pellicule ' + pol[3] + ', action ' + pol[4] + ', écran ' + pol[5] + ', preuve ' + pol[6]);
+      A.ok(/temoinAvant\('avant la touche '/.test(src) && /temoin\('action', 'après la touche '/.test(src), 'avant ET après chaque touche significative');
+      A.ok(/temoinAvant\('avant le clic '/.test(src) && /temoin\('action', 'après le clic '/.test(src), 'avant ET après chaque clic');
+      A.ok(/TOUCHE_MOUVEMENT/.test(src), 'les touches de déplacement ne déclenchent pas de témoin d\'action');
+      A.ok(/temoin\('preuve', 'preuve : '/.test(src), 'une assertion commentée qui passe devient un témoin libellé par son message');
+      A.ok(/temoin\('ecran', 'écran ouvert : '/.test(src) && /function ecranOuvert\(\)/.test(src), 'un menu / inventaire ouvert est capturé avec son DOM');
+      A.ok(/temoin\('pellicule', 'pellicule '/.test(src), 'la pellicule est prise par la sonde pendant les attentes');
+      A.ok(/c\.captures\[i\]\.base64 === cap\.base64/.test(src), 'une image identique à une image déjà prise est jetée (registre : pas de doublon)');
+      A.ok(/drainerTemoins\(ctx\)/.test(src) && /ctx\.fini = true/.test(src) && /clearInterval\(ctx\.veille\)/.test(src), 'les témoins en vol sont attendus avant « fin » et la sonde est arrêtée à la conclusion');
+      A.ok(/captureAuto === false/.test(src) && /indexOf\('rendu'\) >= 0\)\)\),/.test(src), 'un test étiqueté rendu ou captureAuto:false n\'a aucun témoin automatique');
+      A.ok(/captureEcran: captureEcran/.test(src), 'captureEcran() est exposée aux lots d\'e2e');
+      var gates = fs.readFileSync(path.join(RACINE, 'tests', 'gates.js'), 'utf8');
+      A.ok(/témoins distincts hors triplets/.test(gates), 'G15 rapporte le nombre de témoins distincts du cahier');
+    });
+
     it('SPEC-BANC-026 / SPEC-BANC-027 : un test sans aucun capture()/etape() garde quand même ≥ 2 captures dans le cahier écrit, dans l\'ordre chronologique', function () {
       // Reproduit ce que produit runUnE2E pour un test qui n'appelle JAMAIS
       // capture() ni etape() lui-même : seules les captures automatiques de

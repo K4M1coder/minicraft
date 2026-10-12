@@ -658,11 +658,13 @@
       A.ok(cv.width >= 800 && cv.height >= 600, 'résolution jamais sous 800×600 : ' + cv.width + '×' + cv.height);
       A.close(g.player.state.yaw, sc.yaw, 1e-9, 'orientation (lacet) fixée');
       A.close(g.player.state.pitch, sc.pitch, 1e-9, 'orientation (tangage) fixée');
+      capture('scène fixée : midi clair, caméra à la pose demandée');
       // l'horloge est virtuelle : un multiple exact de la durée d'une image, qui avance d'une image à la fois
       var t0 = performance.now();
       var n0 = (t0 - R.ORIGINE_HORLOGE_MS) / R.DT_MS;
       A.close(n0, Math.round(n0), 1e-6, 'performance.now est une horloge virtuelle (origine + n × ' + R.DT_MS.toFixed(3) + ' ms)');
       await R.attendreImages(5);
+      capture('cinq images virtuelles plus tard : la scène n\'a pas bougé');
       var n1 = (performance.now() - t0) / R.DT_MS;
       A.ok(Math.abs(n1 - Math.round(n1)) < 1e-6 && Math.round(n1) >= 5, 'cinq images du jeu avancent l\'horloge d\'au moins cinq images virtuelles (' + n1.toFixed(3) + ')');
     });
@@ -792,6 +794,7 @@
       attendu: 'graine, position, heure, météo, chunks chargés/en attente/en maillage, files des workers, versions de chunk, entités et mode réseau sont présents et cohérents, sans erreur de lecture' },
     async function (g) {
       A.ok(G.MC_DEBUG && typeof G.MC_DEBUG.instantane === 'function', 'MC_DEBUG.instantane existe');
+      capture('la vraie partie du banc, avant l\'instantané');
       var i = G.MC_DEBUG.instantane();
       A.equal(i.graine, g.world.seed, 'graine du monde');
       A.close(i.position.x, g.player.state.pos.x, 0.001, 'position du joueur');
@@ -805,10 +808,12 @@
       A.equal(i.entites.total, g.entities.list.length, 'entités');
       A.ok(typeof i.reseau.etat === 'string' && typeof i.reseau.en_ligne === 'boolean', 'mode réseau');
       egal(i.erreurs, [], 'aucun champ illisible : ' + i.erreurs.join(' | '));
+      capture('instantané lu : aucun champ illisible');
       // l'instantané ne change rien à la partie
       var avant = g.world.chunks.size;
       G.MC_DEBUG.instantane();
       A.equal(g.world.chunks.size, avant, 'lecture seule');
+      capture('après deux instantanés : la partie est inchangée');
     });
 
   e2e('SPEC-BANC-095 : une exception non rattrapée levée par le jeu pendant un test est captée avec sa pile, avant les scripts du jeu et jusque dans le journal',

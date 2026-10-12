@@ -453,7 +453,10 @@ porte('G15', 'Chaque test e2e du cahier produit ≥ 2 captures réelles, début 
   const capturesDir = path.join(dossierResultats, dossier, 'captures');
   const insuffisants = [];
   let octetsCaptures = 0;
+  // témoins DISTINCTS par test (hors triplets : trois images quasi identiques d'un même instant), à titre d'information
+  const distincts = [];
   testsE2E.forEach((t) => {
+    distincts.push((t.captures || []).filter(c => c && c.role !== 'triplet' && c.fichier !== undefined && c.fichier !== null).length);
     const caps = t.captures || [];
     const valides = caps.filter((c) => {
       if (!c.fichier) return false;
@@ -467,7 +470,8 @@ porte('G15', 'Chaque test e2e du cahier produit ≥ 2 captures réelles, début 
     return { ok: false, detail: insuffisants.length + '/' + testsE2E.length + ' test(s) e2e avec moins de 2 captures réelles : ' + insuffisants.slice(0, 5).join(', ') };
   }
   const ko = testsE2E.length ? Math.round(octetsCaptures / 1024) : 0;
-  return { ok: true, detail: testsE2E.length + ' test(s) e2e, tous ≥ 2 captures (' + ko + ' Ko de captures pour ce cahier)' };
+  const mini = Math.min.apply(null, distincts), moy = distincts.reduce((a, b) => a + b, 0) / distincts.length;
+  return { ok: true, detail: testsE2E.length + ' test(s) e2e, tous ≥ 2 captures (' + ko + ' Ko de captures pour ce cahier ; témoins distincts hors triplets : min ' + mini + ', moyenne ' + moy.toFixed(1) + ')' };
 });
 
 // ── G16 : tout passe par le journal (SPEC-BANC-110) ─────────────────────────

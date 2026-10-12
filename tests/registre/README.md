@@ -89,7 +89,12 @@ comme un succès.
 - `role` : `debut` (première capture du test — toujours prise, même sans
   aucun `capture()`/`etape()` explicite, voir SPEC-BANC-026), `fin`
   (dernière — idem), `intermediaire` (toutes les autres, dont chaque
-  `capture('libellé')` nommé appelé explicitement PENDANT le test).
+  `capture('libellé')` nommé appelé explicitement PENDANT le test, et les
+  témoins automatiques du harnais : `avant la touche X` / `après : …`,
+  `pellicule N : …`, `écran ouvert : …`, `preuve : …`, `état de départ : …`).
+  Un témoin automatique n'est jamais enregistré s'il est identique à une
+  image déjà prise par le même test : les images du registre, dédoublonnées
+  par empreinte, ne grossissent que de ce qui est réellement différent.
 - `libelle` : stable d'un run à l'autre pour une même capture nommée
   (ex. `apres-teleportation`) — c'est CE libellé qui identifie « la même
   image » à travers l'historique d'un test, pas sa position.
