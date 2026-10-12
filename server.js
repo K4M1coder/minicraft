@@ -296,14 +296,19 @@ if (process.env.MC_TEST_ARRET_SI_MORT) {
    à moitié écrite : on journalise, on tente une sauvegarde de secours
    (synchrone et atomique, comme à l'arrêt — l'état du processus n'inspire
    plus confiance, autant écrire vite et proprement plutôt qu'attendre le
-   prochain tour de la boucle d'évènements), puis on continue de tourner. */
-process.on('uncaughtException', (e) => {
-  journal(`EXCEPTION NON RATTRAPÉE (le serveur continue) : ${(e && e.stack) || e}`);
-  try { sauvegarderMondeSync(); } catch (e2) { journal('échec de la sauvegarde de secours : ' + e2.message); }
+   prochain tour de la boucle d'évènements), puis on continue de tourner.
+   Le gardien (src/serveur-journal.js) borne tout cela : non ré-entrant, pannes
+   identiques regroupées, une sauvegarde de secours au plus toutes les 30 s, et
+   arrêt (code 70, E-SERV-008) sur une tempête de pannes — jamais un serveur
+   qui tourne des jours dans le vide. */
+const gardien = MC.ServeurJournal.gardienPannes({
+  horloge: () => Date.now(),
+  journaliser: (niveau, texte, code) => logServeur[niveau](texte, null, null, { code }),
+  sauvegarder: () => sauvegarderMondeSync(),
+  arreter: (code) => process.exit(code),
 });
-process.on('unhandledRejection', (raison) => {
-  journal(`PROMESSE REJETÉE SANS GESTIONNAIRE (le serveur continue) : ${(raison && raison.stack) || raison}`);
-});
+process.on('uncaughtException', (e) => gardien.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', e, { sauvegarde: true }));
+process.on('unhandledRejection', (raison) => gardien.signaler('PROMESSE REJETÉE SANS GESTIONNAIRE (le serveur continue)', raison));
 
 /* Bascules de test réservées aux suites d'intégration (voir MC_TEST_PANNE
    plus haut) : provoquent une exception ASYNCHRONE, hors de tout handler de
@@ -311,6 +316,11 @@ process.on('unhandledRejection', (raison) => {
 if (process.env.MC_TEST_PANNE_ASYNC === '1') {
   // MC_TEST_PANNE_ASYNC_MS : l'instant de la panne (défaut 200 ms), pour la placer pendant une sauvegarde asynchrone
   setTimeout(() => { throw new Error('panne asynchrone de test SPEC-SECU-002'); }, parseInt(process.env.MC_TEST_PANNE_ASYNC_MS, 10) || 200);
+}
+// MC_TEST_PANNE_TEMPETE : une exception à chaque tour de boucle, sans fin (garde-fou E-SERV-008 du gardien)
+if (process.env.MC_TEST_PANNE_TEMPETE === '1') {
+  const tempete = () => { setImmediate(tempete); throw new Error('tempête de test SPEC-SECU-002'); };
+  setTimeout(tempete, parseInt(process.env.MC_TEST_PANNE_ASYNC_MS, 10) || 200);
 }
 if (process.env.MC_TEST_PANNE_REJET === '1') {
   setTimeout(() => { Promise.reject(new Error('rejet de test SPEC-SECU-002')); }, 200);

@@ -27,6 +27,17 @@
       return `[${h}] ${prefixe}${code}${J.ligneSure(e.message)}`;
     }
     J.configurer({ mode: 'serveur', console: { methode: 'log', format: formatConsoleServeur } });
+    /* Une sortie standard devenue invalide (relance par une bascule de partie
+       dont la console a disparu, exécutable lancé sans console, terminal
+       fermé) signale sa panne par l'évènement « error » du flux, APRÈS
+       l'écriture : sans écouteur, Node en fait une exception non rattrapée à
+       chaque ligne du journal. L'écouteur coupe la console du journal pour de
+       bon (E-JOURNAL-001) ; le fichier du journal continue. */
+    [process.stdout, process.stderr].forEach((flux) => {
+      if (flux && typeof flux.on === 'function' && typeof J.consoleEnPanne === 'function') {
+        flux.on('error', (e) => { try { J.consoleEnPanne(e, { morte: true }); } catch (err) { /* jamais lever ici */ } });
+      }
+    });
     const logServeur = J('SERVEUR');
     S.logServeur = logServeur;
     /* Lignes lues par un programme (aide, MC_PORT=) : un domaine à part, jamais
@@ -98,5 +109,80 @@
     function journal(txt) { logServeur.info(txt); }
   }
 
-  MC.ServeurJournal = { installer: installer };
+  /* Gardien des pannes du processus (SPEC-SECU-002) : ce que font les
+     gestionnaires `uncaughtException` / `unhandledRejection` de server.js.
+     Fonction PURE (horloge, journal, sauvegarde et arrêt injectés), testée
+     seule (tests/spec-serveur-modules.js).
+
+     Une panne est journalisée (E-SERV-007) et le serveur continue, comme
+     avant ; mais le gardien ne doit JAMAIS tourner dans le vide :
+       - non ré-entrant : une panne levée pendant qu'il traite la précédente
+         est comptée, rien de plus ;
+       - il n'appelle rien qui puisse lever sans le rattraper (journal compris :
+         c'est un journal qui levait à chaque ligne qui faisait boucler) ;
+       - la même panne répétée n'écrit pas N lignes : la première en entier,
+         puis une ligne de compte au plus toutes les `regroupementMs` ;
+       - la sauvegarde de secours (synchrone et atomique) : la première tout de
+         suite, puis au plus une toutes les `sauvegardeMs` ;
+       - au-delà de `max` pannes en `fenetreMs` (une tempête : le processus ne
+         fait plus que ça), une dernière sauvegarde, une ligne E-SERV-008, et
+         l'arrêt du processus avec le code `codeArret`. */
+  const GARDIEN = { max: 200, fenetreMs: 5000, sauvegardeMs: 30000, regroupementMs: 30000, codeArret: 70 };
+  function gardienPannes(o) {
+    const reglage = Object.assign({}, GARDIEN, o.reglage || {});
+    const etat = { pannes: 0, ignorees: 0, lignes: 0, sauvegardes: 0, arret: false };
+    const recentes = [];                         // instants des dernières pannes (au plus max)
+    let enCours = false, derniereSauvegarde = null, courante = null;
+    function horloge() { try { const t = o.horloge(); return typeof t === 'number' && isFinite(t) ? t : 0; } catch (e) { return 0; } }
+    function ecrire(niveau, texte, code) { etat.lignes++; try { o.journaliser(niveau, texte, code); } catch (e) { /* un journal en panne ne fait pas boucler */ } }
+    function texteDe(x) { try { return String((x && x.stack) || x); } catch (e) { return '(panne illisible)'; } }
+    function resumeDe(x) {
+      const t = texteDe(x).split('\n');
+      const site = t.find(l => /^\s+at /.test(l));
+      return t[0].slice(0, 300) + (site ? ' ' + site.trim().slice(0, 200) : '');
+    }
+    function sauvegarder() {
+      etat.sauvegardes++;
+      try { o.sauvegarder(); } catch (e) { ecrire('error', 'échec de la sauvegarde de secours : ' + texteDe(e && e.message || e).slice(0, 300), 'E-SERV-007'); }
+    }
+    function compte(t) {
+      if (!courante || courante.repetitions === 0) return;
+      ecrire('error', `${courante.libelle} : la même panne s'est répétée ${courante.repetitions} fois en ${Math.round((t - courante.debut) / 1000)} s — ${courante.resume}`, 'E-SERV-007');
+      courante.repetitions = 0; courante.debut = t;
+    }
+    function signaler(libelle, panne, opts) {
+      etat.pannes++;
+      if (enCours || etat.arret) { etat.ignorees++; return; }
+      enCours = true;
+      try {
+        const t = horloge();
+        recentes.push(t);
+        if (recentes.length > reglage.max) recentes.shift();
+        if (recentes.length >= reglage.max && t - recentes[0] <= reglage.fenetreMs) {
+          etat.arret = true;
+          compte(t);
+          ecrire('fatal', `E-SERV-008 tempête de pannes : ${reglage.max} en moins de ${reglage.fenetreMs / 1000} s (dernière : ${resumeDe(panne)}) — dernière sauvegarde puis arrêt du processus (code ${reglage.codeArret})`, 'E-SERV-008');
+          sauvegarder();
+          try { o.arreter(reglage.codeArret); } catch (e) { /* rien de plus à faire */ }
+          return;
+        }
+        const resume = resumeDe(panne);
+        if (courante && courante.libelle === libelle && courante.resume === resume) {
+          courante.repetitions++;
+          if (t - courante.debut >= reglage.regroupementMs) compte(t);
+        } else {
+          compte(t);
+          courante = { libelle, resume, debut: t, repetitions: 0 };
+          ecrire('error', `${libelle} : ${texteDe(panne)}`, 'E-SERV-007');
+        }
+        if (opts && opts.sauvegarde && (derniereSauvegarde === null || t - derniereSauvegarde >= reglage.sauvegardeMs)) {
+          derniereSauvegarde = t;
+          sauvegarder();
+        }
+      } finally { enCours = false; }
+    }
+    return { signaler, etat: () => Object.assign({}, etat), reglage };
+  }
+
+  MC.ServeurJournal = { installer: installer, gardienPannes: gardienPannes, GARDIEN: GARDIEN };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

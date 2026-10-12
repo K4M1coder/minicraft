@@ -113,6 +113,116 @@
       } finally { supprimer(d); }
     });
 
+    /* Gardien des pannes de server.js (gestionnaires uncaughtException /
+       unhandledRejection). Avant lui : chaque panne écrivait une ligne et
+       sauvegardait le monde EN SYNCHRONE, et un journal qui levait à son tour
+       relançait la panne — boucle sans fin, des jours durant. */
+    function gardienFactice(reglage, journalQuiLeve) {
+      var t = { maintenant: 1000 }, lignes = [], sauvegardes = [], arrets = [];
+      var g = MC.ServeurJournal.gardienPannes({
+        horloge: function () { return t.maintenant; },
+        journaliser: function (niveau, texte, code) { lignes.push({ niveau: niveau, texte: texte, code: code }); if (journalQuiLeve) { var e = new Error('EBADF: bad file descriptor, write'); e.code = 'EBADF'; throw e; } },
+        sauvegarder: function () { sauvegardes.push(t.maintenant); },
+        arreter: function (code) { arrets.push(code); },
+        reglage: reglage,
+      });
+      return { g: g, t: t, lignes: lignes, sauvegardes: sauvegardes, arrets: arrets };
+    }
+    function panne(message, site) { var e = new Error(message); e.stack = 'Error: ' + message + '\n    at ' + (site || 'f (x.js:1:1)'); return e; }
+
+    it('SPEC-SECU-002 : gardienPannes — une panne journalisée (E-SERV-007, pile entière), le serveur continue, première sauvegarde de secours immédiate', function () {
+      var f = gardienFactice();
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('boum'), { sauvegarde: true });
+      A.equal(f.lignes.length, 1);
+      A.equal(f.lignes[0].code, 'E-SERV-007');
+      A.equal(f.lignes[0].niveau, 'error');
+      A.ok(/^EXCEPTION NON RATTRAPÉE \(le serveur continue\) : Error: boum\n    at f/.test(f.lignes[0].texte), 'libellé historique puis pile : ' + f.lignes[0].texte);
+      A.deep(f.sauvegardes, [1000], 'sauvegarde de secours immédiate');
+      A.deep(f.arrets, [], 'le serveur continue');
+      f.g.signaler('PROMESSE REJETÉE SANS GESTIONNAIRE (le serveur continue)', 'raison nue');
+      A.ok(/^PROMESSE REJETÉE SANS GESTIONNAIRE \(le serveur continue\) : raison nue$/.test(f.lignes[1].texte), f.lignes[1].texte);
+      A.equal(f.sauvegardes.length, 1, 'un rejet ne sauvegarde pas (comme avant)');
+    });
+
+    it('SPEC-SECU-002 : gardienPannes — un journal qui lève ne fait jamais lever le gardien ; la même panne répétée tient en une ligne de compte', function () {
+      var f = gardienFactice({ max: 100000 }, true);
+      for (var i = 0; i < 1000; i++) { f.t.maintenant += 10; f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('EBADF: bad file descriptor, write'), { sauvegarde: true }); }
+      A.equal(f.lignes.length, 1, '1000 pannes identiques en 10 s : une seule ligne (pas de compte avant 30 s)');
+      f.t.maintenant += 30000;
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('EBADF: bad file descriptor, write'), { sauvegarde: true });
+      A.equal(f.lignes.length, 2, 'au-delà de 30 s : une ligne de compte');
+      A.ok(/s'est répétée 1000 fois en 40 s/.test(f.lignes[1].texte), f.lignes[1].texte);
+      A.equal(f.lignes[1].code, 'E-SERV-007');
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('autre chose', 'g (y.js:2:2)'));
+      A.equal(f.lignes.length, 3, 'une panne différente est écrite en entier');
+      A.ok(/autre chose/.test(f.lignes[2].texte));
+      A.equal(f.g.etat().pannes, 1002);
+    });
+
+    it('SPEC-SECU-002 : gardienPannes — sauvegarde de secours au plus une toutes les 30 s ; non ré-entrant', function () {
+      var f = gardienFactice({ max: 100000 });
+      for (var i = 0; i < 70; i++) { f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('x'), { sauvegarde: true }); f.t.maintenant += 1000; }
+      A.deep(f.sauvegardes, [1000, 31000, 61000], '70 pannes en 70 s : 3 sauvegardes, pas 70');
+      // ré-entrance : une panne levée PENDANT le traitement d'une autre est comptée, rien de plus
+      var r = null;
+      var g2 = MC.ServeurJournal.gardienPannes({
+        horloge: function () { return 0; },
+        journaliser: function () { if (!r) { r = 'dedans'; g2.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('imbriquée')); } },
+        sauvegarder: function () {}, arreter: function () {},
+      });
+      g2.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('extérieure'));
+      A.equal(g2.etat().pannes, 2);
+      A.equal(g2.etat().ignorees, 1, 'la panne imbriquée est comptée, pas traitée');
+      A.equal(g2.etat().lignes, 1);
+    });
+
+    it('SPEC-SECU-002 : gardienPannes — une tempête (200 pannes en moins de 5 s) : dernière sauvegarde, une ligne E-SERV-008, arrêt code 70', function () {
+      var f = gardienFactice();
+      for (var i = 0; i < 199; i++) { f.t.maintenant += 1; f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('boucle'), { sauvegarde: true }); }
+      A.deep(f.arrets, [], '199 pannes : pas encore');
+      f.t.maintenant += 1;
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('boucle'), { sauvegarde: true });
+      A.deep(f.arrets, [70], 'arrêt avec le code 70');
+      var fatale = f.lignes.filter(function (l) { return l.code === 'E-SERV-008'; });
+      A.equal(fatale.length, 1);
+      A.equal(fatale[0].niveau, 'fatal');
+      A.ok(/tempête de pannes/.test(fatale[0].texte) && /boucle/.test(fatale[0].texte), fatale[0].texte);
+      A.equal(f.sauvegardes.length, 2, 'la première sauvegarde, puis la dernière avant l\'arrêt (malgré la limite de 30 s)');
+      A.ok(f.lignes.some(function (l) { return /répétée 198 fois/.test(l.texte); }), 'le compte des répétitions est écrit avant l\'arrêt');
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('après'));
+      A.equal(f.arrets.length, 1, 'plus rien après l\'arrêt demandé');
+      // 200 pannes étalées sur plus de 5 s : pas de tempête
+      var lent = gardienFactice();
+      for (var k = 0; k < 400; k++) { lent.t.maintenant += 30; lent.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('lente')); }
+      A.deep(lent.arrets, [], '400 pannes à 33 par seconde : le serveur continue');
+    });
+
+    it('SPEC-SECU-002 : serveur-journal — l\'évènement « error » de la sortie standard coupe la console du journal au lieu de devenir une exception non rattrapée', function () {
+      var ecouteurs = {}, signalees = [];
+      function flux(nom) { return { on: function (ev, f) { ecouteurs[nom + ':' + ev] = f; } }; }
+      function J() { return { info: function () {}, warn: function () {}, error: function () {}, fatal: function () {}, debug: function () {} }; }
+      J.configurer = function () {};
+      J.consoleEnPanne = function (e, o) { signalees.push([e.code, o && o.morte]); return true; };
+      var proc = Object.assign({}, hote().process, { stdout: flux('stdout'), stderr: flux('stderr') });
+      MC.ServeurJournal.installer({ EP: {}, hote: hote({ process: proc }), fs: fs, path: path, RACINE: os.tmpdir(), J: J });
+      A.equal(typeof ecouteurs['stdout:error'], 'function', 'écouteur posé sur stdout');
+      A.equal(typeof ecouteurs['stderr:error'], 'function', 'et sur stderr');
+      var e = new Error('EBADF: bad file descriptor, write'); e.code = 'EBADF';
+      ecouteurs['stdout:error'](e);
+      A.deep(signalees, [['EBADF', true]], 'la panne du flux est rapportée au journal, console morte');
+    });
+
+    it('SPEC-ARCHI-013 : serveur-http — la relance d\'une bascule de partie n\'hérite d\'une sortie standard que terminal ou tube, jamais un fichier', function () {
+      function Socket() {}
+      var tube = new Socket(), fichier = { fd: 1, write: function () {} }, terminal = { isTTY: true };
+      var SR = MC.ServeurHttp.stdioRelance;
+      A.equal(SR({ stdout: terminal, stderr: terminal }, Socket), 'inherit', 'terminal');
+      A.equal(SR({ stdout: tube, stderr: tube }, Socket), 'inherit', 'tube (lanceur, suite de test qui lit les lignes)');
+      A.equal(SR({ stdout: fichier, stderr: fichier }, Socket), 'ignore', 'fichier (SyncWriteStream) : ignoré');
+      A.equal(SR({ stdout: terminal, stderr: fichier }, Socket), 'ignore', 'il faut les deux');
+      A.equal(SR({}, Socket), 'ignore', 'pas de sortie : ignoré');
+    });
+
     it('SPEC-SERVEUR-008 : serveur-parties — l\'adaptateur de fichiers de MC.Saves écrit l\'index et refuse toute autre clé', function () {
       var d = dossierTemp('mc-srv-parties-');
       try {

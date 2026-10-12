@@ -14,6 +14,10 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+### Corrigé
+- SPEC-BANC-106, SPEC-BANC-108 — **un serveur dont la console meurt ne boucle plus** : une sortie standard devenue invalide (EBADF, EPIPE, EIO, flux détruit : serveur relancé par une bascule de partie, exécutable lancé sans console, terminal fermé) coupe la console du journal pour le reste du processus, avec une seule note E-JOURNAL-001 dans le fichier ; le serveur écoute l'évènement « error » de ses sorties, qui devenait une exception non rattrapée à chaque ligne (tests/spec-journal.js, tests/spec-serveur-modules.js, tests/integration-console-morte.js).
+- SPEC-SECU-002 — **le gardien des pannes du serveur est borné** : non ré-entrant, il ne laisse jamais lever son journal, regroupe la même panne en une ligne de compte (E-SERV-007), ne fait la sauvegarde de secours synchrone qu'au plus une fois toutes les 30 s, et sur une tempête (200 pannes en moins de 5 s) sauvegarde une dernière fois puis arrête le processus avec le code 70 (E-SERV-008) au lieu de tourner des jours dans le vide — c'était la cause du « joueur qui revient sur ses pas » de v0.9.0 (tic affamé, ETAT tardifs) (tests/spec-serveur-modules.js, tests/integration-console-morte.js).
+- SPEC-ARCHI-013 — **la relance d'une bascule de partie n'hérite plus d'une sortie standard fichier** : seulement d'un terminal ou d'un tube, sinon `ignore` — l'enfant a son propre journal fichier (tests/spec-serveur-modules.js, tests/integration-console-morte.js).
 
 ## [0.9.0] - 2026-10-06
 ### Ajouté

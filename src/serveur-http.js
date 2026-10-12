@@ -12,6 +12,20 @@
   'use strict';
   var MC = G.MC = G.MC || {};
 
+  /* Sorties standard du processus relancé par une bascule de partie : il les
+     hérite seulement si celles du parent sont un terminal ou un tube (un
+     lanceur, une suite de test qui lit ses lignes) ; sinon — un fichier, un
+     descripteur sans console (exécutable lancé par double-clic) — 'ignore' :
+     l'enfant a son propre journal fichier, et une sortie héritée qui devient
+     invalide lui faisait lever EBADF à chaque ligne (E-JOURNAL-001). `Socket` :
+     net.Socket (tubes et terminaux en sont, SyncWriteStream non). */
+  function sortieHeritable(flux, Socket) {
+    return !!flux && (flux.isTTY === true || (typeof Socket === 'function' && flux instanceof Socket));
+  }
+  function stdioRelance(proc, Socket) {
+    return sortieHeritable(proc.stdout, Socket) && sortieHeritable(proc.stderr, Socket) ? 'inherit' : 'ignore';
+  }
+
   function installer(S) {
     const { Buffer, Promise, URL, __filename, clearTimeout, process, require, setTimeout } = S.hote;
     const {
@@ -335,7 +349,7 @@
       clients.forEach(c => { try { c.socket.destroy(); } catch (e) {} });
       S.fermerEcouteurs().then(() => {
         const enfant = require('child_process').spawn(process.execPath, args, {
-          detached: true, stdio: 'inherit', windowsHide: true, cwd: process.cwd(),
+          detached: true, stdio: stdioRelance(process, require('net').Socket), windowsHide: true, cwd: process.cwd(),
           env: Object.assign({}, process.env, { MC_RELANCE: '1', MC_ADMIN_HERITE: ADMIN_SECRET }),
         });
         enfant.unref();
@@ -420,5 +434,5 @@
     }
   }
 
-  MC.ServeurHttp = { installer: installer };
+  MC.ServeurHttp = { installer: installer, stdioRelance: stdioRelance };
 })(typeof globalThis !== 'undefined' ? globalThis : this);

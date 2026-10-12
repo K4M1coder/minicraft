@@ -28,6 +28,11 @@
      2. chaque sortie a son seuil ; la console suit aussi le réglage du
         domaine (`?journal=RENDU:debug` montre le debug de RENDU à la console).
 
+   La console ne fait jamais lever : morte (EBADF, EPIPE, EIO, flux détruit —
+   levé à l'écriture, ou rapporté plus tard par l'hôte avec
+   `consoleEnPanne(erreur, { morte: true })`), elle est coupée pour le reste
+   du processus avec une seule note E-JOURNAL-001 dans les autres sorties.
+
    C'est le SEUL fichier de src/ et server.js qui touche à `console`
    (porte G16, SPEC-BANC-110). */
 (function (G) {
@@ -53,6 +58,10 @@
   var REMONTEE = { max: 5, fenetreMs: 10000, messageMax: 500, pileMax: 2000 };
   var REMONTEE_SERVEUR = { globalMax: 30, globalFenetreMs: 60000, maxAdresses: 1000 };
   var CAPACITE_TAMPON = 2000;
+  /* Pannes qui disent que la console est MORTE (descripteur fermé, tube coupé,
+     terminal disparu, flux détruit) : elle ne reviendra pas, la console est
+     coupée pour le reste du processus (E-JOURNAL-001). */
+  var CONSOLE_MORTE = { EBADF: true, EPIPE: true, EIO: true, ERR_STREAM_DESTROYED: true };
   var RE_CODE = /\bE-[A-Z]+-\d{3}\b/;
   var RE_DOMAINE = /^[A-Z0-9_-]{1,24}$/;
   /* Caractères de contrôle C0 (hors tabulation et saut de ligne), DEL, C1,
@@ -221,6 +230,7 @@
       cibleConsole: null,           // null : la console de l'environnement (G.console)
       formatConsole: null,
       methodeConsole: null,
+      consoleCoupee: null,          // code de la panne qui a coupé la console (EBADF…), ou null
       enCours: 0,
     };
     /* Tampon circulaire : un tableau de taille fixe, un index de début, une
@@ -242,22 +252,42 @@
       garder.forEach(anneauAjouter);
     }
 
+    /* La console ne lève JAMAIS vers l'appelant. Une sortie standard devenue
+       invalide (serveur relancé dont la console a disparu) lève à CHAQUE
+       écriture — de façon synchrone, ou plus tard par l'évènement « error » du
+       flux, que l'hôte rapporte par `consoleEnPanne` : elle est alors coupée
+       pour de bon, avec une seule note dans les autres sorties. */
     var sortieConsole = {
       nom: 'console', seuil: MODES[modeInitial].console, suitDomaines: true,
       ecrire: function (e) {
-        var c = etat.cibleConsole || G.console;
-        if (!c) return;
-        var methode = etat.methodeConsole || METHODE[e.niveau];
-        var f = typeof c[methode] === 'function' ? c[methode] : c.log;
-        if (typeof f !== 'function') return;
-        if (etat.formatConsole) { f.call(c, etat.formatConsole(e)); return; }
-        if (e.brut) { f.call(c, e.message); return; }
-        var args = ['[' + e.domaine + '] ' + prefixeCode(e) + e.message];
-        if (e.donnees !== null) args.push(e.donnees);
-        if (e.erreurObjet) args.push(e.erreurObjet);
-        f.apply(c, args);
+        if (etat.consoleCoupee) return;
+        try { ecrireConsole(e); } catch (err) { consoleEnPanne(err); }
       },
     };
+    function consoleEnPanne(err, opts) {
+      var code = err && typeof err === 'object' && typeof err.code === 'string' ? err.code : null;
+      var morte = (code && aPropre(CONSOLE_MORTE, code)) || !!(opts && opts.morte);
+      if (!morte) return false;
+      if (etat.consoleCoupee) return true;
+      etat.consoleCoupee = code || 'flux';
+      // la console est coupée AVANT la note : elle ne va qu'aux autres sorties
+      emettre('JOURNAL', 'warn', 'sortie console du journal en panne (' + etat.consoleCoupee + ') : coupée pour le reste du processus, le journal continue dans ses autres sorties',
+        { code: etat.consoleCoupee }, null, { code: 'E-JOURNAL-001' });
+      return true;
+    }
+    function ecrireConsole(e) {
+      var c = etat.cibleConsole || G.console;
+      if (!c) return;
+      var methode = etat.methodeConsole || METHODE[e.niveau];
+      var f = typeof c[methode] === 'function' ? c[methode] : c.log;
+      if (typeof f !== 'function') return;
+      if (etat.formatConsole) { f.call(c, etat.formatConsole(e)); return; }
+      if (e.brut) { f.call(c, e.message); return; }
+      var args = ['[' + e.domaine + '] ' + prefixeCode(e) + e.message];
+      if (e.donnees !== null) args.push(e.donnees);
+      if (e.erreurObjet) args.push(e.erreurObjet);
+      f.apply(c, args);
+    }
     var sortieTampon = { nom: 'tampon', seuil: 'trace', ecrire: anneauAjouter };
     var sorties = [sortieConsole, sortieTampon];
     var loggers = Object.create(null);
@@ -356,7 +386,7 @@
       if (o.console !== undefined) {
         var c = o.console || {};
         ancien.console = { cible: etat.cibleConsole, format: etat.formatConsole, methode: etat.methodeConsole };
-        if ('cible' in c) etat.cibleConsole = c.cible || null;
+        if ('cible' in c) { etat.cibleConsole = c.cible || null; etat.consoleCoupee = null; }   // une autre console : on lui redonne sa chance
         if ('format' in c) etat.formatConsole = typeof c.format === 'function' ? c.format : null;
         if ('methode' in c) etat.methodeConsole = c.methode || null;
       }
@@ -365,7 +395,7 @@
     function configuration() {
       var d = {};
       Object.keys(etat.domaines).forEach(function (k) { d[k] = etat.domaines[k]; });
-      return { mode: etat.mode, seuilConsole: sortieConsole.seuil, production: etat.production, domaines: d,
+      return { mode: etat.mode, seuilConsole: sortieConsole.seuil, production: etat.production, domaines: d, consoleCoupee: etat.consoleCoupee,
                capaciteTampon: anneau.cases.length, sorties: sorties.map(function (s) { return s.nom; }) };
     }
 
@@ -451,6 +481,7 @@
     journal.ajouterSortie = ajouterSortie;
     journal.retirerSortie = retirerSortie;
     journal.seuilSortie = seuilSortie;
+    journal.consoleEnPanne = consoleEnPanne;
     journal.tampon = tampon;
     journal.viderTampon = viderTampon;
     // outils sans état, communs à toutes les instances

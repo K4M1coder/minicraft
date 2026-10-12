@@ -315,6 +315,59 @@
       A.equal(NP.valider({ t: 'chat', texte: '\n\r' }), null, 'chat vide après nettoyage : refusé');
     });
 
+    /* Sortie standard d'un serveur relancé devenue invalide (console fermée,
+       lanceur sans console) : chaque écriture lève EBADF. Avant ce correctif la
+       console restait branchée et le gestionnaire SPEC-SECU-002 du serveur,
+       qui journalise, relevait la même erreur à chaque tour : boucle infinie. */
+    it('SPEC-BANC-106 : une console qui lève EBADF ne fait jamais lever le journal ; elle se coupe pour de bon, une seule note E-JOURNAL-001 va aux autres sorties', function () {
+      var J = MC.Journal.creer({ mode: 'serveur' });
+      var appels = 0;
+      function ebadf() { appels++; var e = new Error('EBADF: bad file descriptor, write'); e.code = 'EBADF'; throw e; }
+      J.configurer({ console: { cible: { log: ebadf, info: ebadf, warn: ebadf, error: ebadf, debug: ebadf } } });
+      var fichier = J.outilsHarnais.sortieCollecte('fichier', 'info');
+      J.ajouterSortie(fichier);
+      var e1 = J('SERVEUR').info('première');
+      A.ok(e1, 'l\'entrée est rendue malgré la console en panne');
+      J('SERVEUR').info('deuxième');
+      J('SERVEUR').warn('troisième');
+      A.equal(appels, 1, 'la console n\'est plus appelée après sa première panne');
+      var notes = fichier.entrees.filter(function (e) { return e.code === 'E-JOURNAL-001'; });
+      A.equal(notes.length, 1, 'une seule note E-JOURNAL-001, pas une par ligne');
+      A.equal(notes[0].domaine, 'JOURNAL');
+      A.ok(/EBADF/.test(notes[0].message), 'la note cite le code système : ' + notes[0].message);
+      A.deep(fichier.entrees.filter(function (e) { return e.domaine === 'SERVEUR'; }).map(function (e) { return e.message; }), ['première', 'deuxième', 'troisième'],
+        'le fichier reçoit toujours chaque ligne');
+      A.equal(J.configuration().consoleCoupee, 'EBADF', 'la configuration dit que la console est coupée, et pourquoi');
+    });
+
+    it('SPEC-BANC-106 : EPIPE, EIO, ERR_STREAM_DESTROYED coupent la console ; une autre panne non, et une console rebranchée repart', function () {
+      ['EPIPE', 'EIO', 'ERR_STREAM_DESTROYED'].forEach(function (code) {
+        var J = MC.Journal.creer({ mode: 'serveur' });
+        var n = 0;
+        J.configurer({ console: { cible: { log: function () { n++; var e = new Error(code); e.code = code; throw e; } }, methode: 'log' } });
+        J('X').info('a'); J('X').info('b');
+        A.equal(n, 1, code + ' : coupée après la première panne');
+      });
+      var J2 = MC.Journal.creer({ mode: 'serveur' });
+      var m = 0;
+      J2.configurer({ console: { cible: { log: function () { m++; throw new Error('passagère'); } }, methode: 'log' } });
+      J2('X').info('a'); J2('X').info('b');
+      A.equal(m, 2, 'une panne sans code de descripteur mort ne coupe pas la console');
+      A.equal(J2.configuration().consoleCoupee, null);
+      // signalement asynchrone par l'hôte (évènement « error » du flux de sortie)
+      var c = fausseConsole();
+      J2.configurer({ console: { cible: c } });
+      var note = J2.outilsHarnais.sortieCollecte('fichier', 'info');
+      J2.ajouterSortie(note);
+      A.equal(J2.consoleEnPanne({ code: 'EPIPE', message: 'EPIPE: broken pipe, write' }), true, 'l\'hôte signale la panne asynchrone');
+      A.equal(J2.consoleEnPanne({ code: 'EPIPE' }), true, 'un second signalement ne refait pas de note');
+      J2('X').info('après');
+      A.equal(c.appels.length, 0, 'plus rien à la console');
+      A.equal(note.entrees.filter(function (e) { return e.code === 'E-JOURNAL-001'; }).length, 1);
+      J2.configurer({ console: { cible: fausseConsole() } });
+      A.equal(J2.configuration().consoleCoupee, null, 'brancher une autre console la rétablit');
+    });
+
     it('SPEC-BANC-109 : --journal est une option du serveur', function () {
       var r = MC.Parametres.analyser(['--journal', 'SYNC:trace']);
       A.ok(r.ok, r.message);
