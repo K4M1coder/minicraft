@@ -48,10 +48,22 @@ Exécutées par `node tests/gates.js`. Toute porte rouge bloque le commit.
 | **G10** | La version suit le versionnage sémantique et CHANGELOG.md la publie | oui (et crochet pre-commit) |
 | **G11** | Les crochets git sont branchés et la règle du cran est juste | oui |
 | **G12** | Budget de performance de la génération (lot perf, `tests/bench-generation.js`) | oui |
-| **G13** | Les crochets git citent un préréglage du catalogue de tests, existant et non vide (SPEC-BANC-006) ; étendue par le lot BANC (historique global, §3.6) : `pre-commit` calcule un périmètre non vide, `pre-push` et `pre-merge-commit` citent la suite complète (SPEC-BANC-075) | oui |
+| **G13** | Les crochets git citent un préréglage du catalogue de tests, existant et non vide (SPEC-BANC-006) ; étendue par le lot BANC (historique global, §3.6) : `pre-commit` calcule un périmètre non vide, `pre-push` et `pre-merge-commit` citent la suite complète (SPEC-BANC-075) ; étendue par le lot SCENARIO : `pre-push` cite aussi `jouabilite-rapide` (SPEC-BANC-168) | oui |
 | **G14** | 100 % des tests, y compris les end-to-end, ont une fiche déclarée ou déduite d'une spec citée (SPEC-BANC-002) ; étendue par le lot BANC : 100 % des tests ont aussi au moins un domaine et une fonction, déclarée ou observée (SPEC-BANC-066) | oui |
-| **G15** | Chaque test e2e du cahier produit au moins deux captures réelles, début et fin (SPEC-BANC-026/027) | oui |
+| **G15** | Chaque test e2e du cahier produit des captures réelles, dans l'ordre chronologique (SPEC-BANC-026/027) : au moins 2 par e2e, au moins 4 par e2e de fumée (`e2e-fumee`) et au moins 6 par scénario de `tests/scenarios/`, images clés comprises, dont au moins 2 images clés nommées (révisée par SPEC-BANC-170, décision du propriétaire du 2026-10-13 ; jusqu'à sa livraison, la porte contrôle encore 2 captures par e2e) | oui |
 | **G16** | Aucun `console.*` direct dans `src/` ou `server.js` hors de `src/journal.js` : tout passe par `MC.Journal` (SPEC-BANC-110) ; livrée avec le journal (`tests/gates.js`) | oui |
+| **G17** | Scénarios et références d'images (lot SCENARIO) : aucun court-circuit de l'action du joueur dans `tests/scenarios/` (SPEC-BANC-160) ; chaque référence de `tests/references/` a son `.json`, pèse au plus 1,5 Mo, le dossier au plus 100 Mo, au plus 2 références par scénario et par famille de moteur sauf `referencesMax` déclaré, familles autorisées seulement, empreinte conforme à `tests/references/journal.jsonl`, aucune écriture sous `tests/references` hors de `tools/references.js` ; chaque scénario de `jouabilite-rapide` a une image clé de référence et son PNG (SPEC-BANC-147, 152, 155) | oui (à livrer avec le lot SCENARIO) |
+
+`pre-push` lance, dans l'ordre, `--preset pr`, `--preset e2e-fumee` puis
+`--preset jouabilite-rapide` (décision du propriétaire du 2026-10-13 : scénarios
+clés en vrai navigateur contre un vrai serveur, 5 min au plus, ignorés avec un
+avertissement sans Edge ni Chrome, SPEC-BANC-168) ; `pre-merge-commit` garde la
+suite actuelle (`pr`, `e2e-fumee`). À confirmer par le propriétaire :
+`tools/version.js --publier` lancerait en plus `--preset jouabilite` et
+`--preset e2e`, inscrits au registre, un échec refusant la publication
+(SPEC-BANC-169). `CONTRIBUTING.md` (tableau des portes, crochets) et la liste
+des portes de `node tests/gates.js` sont mis à jour quand G15 révisée, G17 et
+le nouveau `pre-push` sont livrés.
 
 ### Commits et versions
 
@@ -134,6 +146,8 @@ Chaque lot suit le cycle S1→S7 et se termine par un commit.
 | **L47** | Performance de génération et de maillage : bruit interpolé en cache, greedy meshing, génération et maillage en Web Workers, métriques et panneau F3 | `PERF` | fait |
 | **L48** | Rendu fiable et adaptatif : contexte WebGL perdu/restauré, réfraction et antialias/DPR pilotés par le FPS, mobs instanciés, détection d'un rendu logiciel, culling de chunks | `RENDU` | fait (v0.8.0) : RENDU-001 à 015 ✅ (RENDU-006 antialias réglable, 012 mipmaps sûrs par défaut, 015 une seule mesure du FPS livrées en v0.8.0) ; RENDU-008 piloté par seuils de FPS, pas par un budget en ms ; défaut de rendu préexistant ouvert : traits sombres aux bords de chunks sur la glace de saison (feuille de route, 7.3) |
 | **JOUABLE** | Tests de jouabilité / synchro client-serveur (demandé par l'utilisateur, priorité haute, garantie de qualité avant tout nouveau lot) : e2e dans un vrai navigateur sans fenêtre contre un vrai serveur de jeu (`tests/e2e-jouabilite.js`, `POST /tests/serveur-jeu`), préréglage `node tests/run.js --preset jouabilite` — position immobile stable 8 s en survie et en vol statique créatif ; bloc cassé qui reste cassé et bloc posé qui reste posé (créatif et survie, 4 s après, client + serveur + second client) ; inventaire (glisser-déposer, demi-pile, jeter, ramasser) et coffre (dépôt, retrait, réouverture) jamais annulés, client = serveur ; tout échec détaille la nature du problème (série des déplacements erronés : vecteur, décalage cumulé, intervalle, source ; instant du retour arrière et messages du serveur). Bogues révélés et corrigés : objet jeté rendu aussitôt, `DONNE` qui dupliquait un objet côté client, clic droit qui utilisait deux fois, équipe recomposée sans prédiction d'inventaire (serveur dans un autre mode), coffre en ligne inutilisable (miroir sans taille) et coffre affiché faux après un dépôt puis un retrait (delta appliqué au miroir prédit) | `JOUABLE` | fait : fusionné dans master (6e406d6), SPEC-JOUABLE-001 à 009 ✅ |
+| **SCENARIO** | Plateforme de scénarios de jouabilité (audit du 2026-10-13, décisions du propriétaire du même jour) : journaux qui font échouer (exception non rattrapée en `error` avec `E-SERV-007`, console morte en `warn` avec `E-SERV-008` sans exception, jugement des journaux serveur, client et navigateur, liste blanche raisonnée, modes `rapport` puis `bloquant`, messages nouveaux signalés), budgets jugés (tic serveur p99, images/s selon la classe du moteur de rendu, mémoire JS, mémoire du serveur, temps de chargement), métriques nommées au registre, colonnes d'historique et alerte de dérive, diagnostics gardés pour la jouabilité, marque `rejoue` et niveau de réalisme de chaque test ; images clés PNG sur scène fixée et stable, comparées par tuiles à des références versionnées par famille de moteur (masques, tolérance, rapport de différences, acceptation explicite et journalisée, voulu ou inattendu, signatures de commit à commit, préréglage `visuel`) ; format déclaratif de scénario en vrai navigateur contre un vrai serveur (entrées CDP, essai de la souris relative, aucun court-circuit, contrat fermé de `POST /tests/serveur-jeu`, préparation seulement hors connexion, relevés à chaque image, conditions dégradées, pannes réseau et serveur, deux pages, portage de JOUABLE-001 à 009) ; préréglages `jouabilite-rapide` (pre-push, 5 min au plus) et `jouabilite` élargi, campagnes de publication (à confirmer), G15 révisée, G17 — voir découpage ci-dessous | `BANC` (123 à 171) | à faire : fiches ⏳ |
+| **JOUABLE-2** | Parc de scénarios, après SCENARIO : marche et course, pas de côté et saut sans recul, et les mêmes sous navigateur ralenti, console morte et tics longs ; nage et noyade ; casse selon l'outil ; fabrication, four et cultures en ligne ; coffre cassé, présentoir, coffre piégé ; combat porté et subi, mort et réapparition ; sommeil, lave ; `/list` et `/help` ; bascule de partie avec relance ; sauvegarde et rechargement par le menu réel ; reconnexion sous le même nom ; deux vraies pages, hors duel et duel ; quête, troc ; câble et lampe ; carte en survie ; camion et autres véhicules ; ciel piloté par le serveur ; écran partagé en jeu ; livres en ligne ; panorama de référence ; vol par double appui ; donjon à pied ; eau versée et glace ; circuit logique ; factions de joueurs ; dialogue de PNJ ; menus du serveur (import, attente, quitter) ; arc ; sommeil à deux ; réseau dégradé ; serveur tué et relancé ; interface à 800×600 | `JOUABLE` (010 à 056) | à faire : fiches ⏳ |
 | **L50** | Architecture serveur unique (Node requis, même en solo) : un processus serveur de jeu démarre toujours ; il n'écoute le réseau que si explicitement ouvert (boucle locale, contrôle d'origine, ouverture à chaud) ; pause exacte et sauvegarde immédiate en local fermé au réseau ; parties sur disque, import des parties existantes ; élimination des 49 branches `net.enLigne()` de `game.js` ; portage serveur de l'histoire, des succès et des véhicules | `ARCHI` | fait : ARCHI-043/044 livrées avec les présentoirs et coffres suspects (13b602b), reformulation approuvée par le propriétaire, revue et preuves réelles appliquées ; ARCHI-001 et 020 ✅ (86b5545), architecture publiée en v0.6.0 |
 
 **Reprise du 2026-10-06** : les restes isolés (540508a), banc A (76091a5) et
@@ -401,6 +415,33 @@ le banc », SPEC-BANC-117 à 122, hors de son périmètre) :
   jamais utilisés quand le jeu est servi par le serveur (SPEC-PERF-006). Sonder
   avec le vrai script (même origine) — change le chemin de génération en jeu,
   à valider par les e2e de performance.
+
+### Découpage des lots SCENARIO et JOUABLE-2
+
+Fiches SPEC-BANC-123 à 171 et SPEC-JOUABLE-010 à 056 (SPECS.md, sections
+« Plateforme de jouabilité » de L42 et « Parc de scénarios » de JOUABLE).
+Ordre : S0 d'abord, puis S1, S2 et S3 en parallèle, puis S4, puis S5 et S6.
+Durée actuelle des crochets à connaître avant S5 : `e2e-fumee` < 2 min
+(SPEC-BANC-025), `pr` de l'ordre de dizaines de minutes ; S5 commence par les
+mesurer, ainsi que `jouabilite-rapide`, sur la machine de référence.
+
+| Étape | Contenu | Fiches | Dépend de |
+|---|---|---|---|
+| **S0** | Journal serveur : exception non rattrapée en `error` avec `E-SERV-007`, console morte avec `E-SERV-008` sans exception ; codes ajoutés à `docs/erreurs.md` | BANC-123, 124 | — (en premier) |
+| **S1** | Jugement des journaux (intégration, e2e, navigateur, liste blanche, modes `rapport` et `bloquant`, messages nouveaux) ; listes blanches des intégrations existantes ; le passage au mode `bloquant` (BANC-130) vient après un cycle complet de campagnes en mode `rapport` | BANC-125 à 131 | S0 |
+| **S2** | Budgets (tic, images/s, classe du moteur, mémoire JS et serveur, chargement), métriques au registre, colonnes d'historique, dérive, diagnostics gardés, marque `rejoue`, niveau de réalisme | BANC-132 à 142 | S0 (parallèle à S1 et S3) |
+| **S3** | Prérequis : forçage de `MC_DEBUG.meteo`, `heure` et `saison` (BANC-143, constat de BANC-017) ; puis images clés, scène stable, masques, PNG sans perte, références, comparaison par tuiles, rapport de différences, acceptation, voulu ou inattendu, signatures de commit à commit, préréglage `visuel`, G17 (partie références) | BANC-143 à 155 | S0 (parallèle à S1 et S2) |
+| **S4** | Format et interpréteur de scénarios, essai de la souris relative (en premier), entrées CDP, interdits (G17), contrat fermé de `POST /tests/serveur-jeu` avec les champs qui manquent au serveur de test (blocs, entités, conteneurs et pièges, joueurs, quêtes, livres, croissance, parties sur disque, conditions), préparation hors connexion, relevés par image, conditions dégradées, pannes réseau et serveur, deux pages, portage de JOUABLE-001 et 003 à 009 | BANC-156 à 167 | S1, S2 |
+| **S5** | Préréglages et crochets : `jouabilite-rapide` dans `pre-push`, `jouabilite` élargi, G15 révisée ; campagnes de publication seulement après accord du propriétaire (BANC-169) | BANC-168 à 171 | S4, premiers scénarios de S6 |
+| **S6** | Scénarios de `jouabilite-rapide` d'abord (JOUABLE-010, 024, 029 en variante rapide, et les portages de 003, 004 et 008), puis le reste du parc par lots de 4 à 6 scénarios | JOUABLE-010 à 056 | S3, S4 |
+
+Au plus 4 agents en parallèle (S1, S2, S3, puis les lots de S6). Points à
+trancher par le propriétaire avant l'implémentation : seuils par défaut
+(images/s, tas JS de BANC-135 marqués « à confirmer », comparaison d'images,
+dérive de 20 %), famille de moteur de référence (`logiciel-swiftshader` par
+défaut), poids des références dans git (1,5 Mo par PNG, 100 Mo au total),
+manette simulée par `navigator.getGamepads` (JOUABLE-041), campagnes de
+publication (BANC-169).
 
 ---
 

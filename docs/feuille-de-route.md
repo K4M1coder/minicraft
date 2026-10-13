@@ -297,6 +297,73 @@ une fiche `SPECS.md` (S1) : aucune n'est écrite ici.
 | 7.5 | **Escaliers déjà posés** | ils gardent leur ancienne forme tant qu'un voisin ne change pas (correctif des angles intérieur et extérieur de `formeDepuisVoisins`, CONSTR-001, v0.8.0) : décider d'une réactualisation ou la documenter | CONSTR-001 ✅ | ☐ | décision à prendre : réactualiser au chargement ou documenter dans le README |
 | 7.6 | **Présentoirs, coffres piégés** | déjà au lot 0.3 (SYNC-027, ARCHI-043/044, INTERIEUR-003, OBJET-005 en ligne) | voir 0.3 | ☑ | livré avec 0.3 (13b602b) |
 
+### Phase 8 — Plateforme de jouabilité
+
+Ouverte le 2026-10-13 sur décision du propriétaire, après l'audit de la
+plateforme de test (voir « Audit du 2026-10-13 » ci-dessous) : des scénarios de
+jouabilité dont l'analyse des journaux et la comparaison d'images clés
+détectent régressions, bugs et tout changement inattendu. Décisions prises :
+nouvelles fiches inscrites (SPEC-BANC-123 à 171, SPEC-JOUABLE-010 à 056, toutes
+⏳) ; préréglage `jouabilite-rapide` (≈ 5 min) ajouté au `pre-push` ; G15 portée
+à 6 captures par scénario (4 par e2e de fumée). Contenu et découpage fin
+(étapes S0 à S6) : `PLAN.md`, lots SCENARIO et JOUABLE-2. A, B et C sont
+indépendants et se mènent en parallèle (au plus 4 agents) ; les parcs D
+viennent après C, D1 en premier.
+
+| # | Lot | Contenu | Fiches | État | Reprise |
+|---|---|---|---|---|---|
+| 8.A | **Journaux** | exception non rattrapée en `error` (`E-SERV-007`), console morte en `warn` (`E-SERV-008`) sans exception ; jugement des journaux serveur, client et navigateur ; liste blanche raisonnée ; mode `rapport` puis `bloquant` après un cycle complet ; messages nouveaux signalés | BANC-123 à 131 | ☐ | commencer par BANC-123/124 (S0) ; passer en `bloquant` seulement après le relevé d'un cycle complet |
+| 8.B | **Images clés** | forçage de `MC_DEBUG.meteo`, `heure`, `saison` (prérequis) ; scène stable, masques, PNG sans perte, références par famille de moteur, comparaison par tuiles, rapport de différences, acceptation journalisée, voulu ou inattendu, signatures de commit à commit, préréglage `visuel`, G17 (références) | BANC-143 à 155 | ☐ | BANC-143 d'abord ; seuils et famille de référence à confirmer par le propriétaire |
+| 8.C | **Format de scénario, préréglages, registre** | budgets et métriques au registre, dérive, diagnostics gardés, marque `rejoue`, niveau de réalisme ; format et interpréteur de scénarios, essai de la souris relative, entrées CDP, interdits, contrat fermé de `POST /tests/serveur-jeu`, préparation hors connexion, relevés, conditions dégradées, deux pages, portage de JOUABLE-001 et 003 à 009 ; `jouabilite-rapide` au `pre-push`, `jouabilite` élargi, G15 révisée ; campagnes de publication après accord | BANC-132 à 142, 156 à 171 | ☐ | l'essai de la souris relative (BANC-159) en premier : il peut imposer le pont ; BANC-169 attend l'accord du propriétaire |
+| 8.D1 | **Parc rapide** | scénarios de `jouabilite-rapide` : marche et course, combat subi, bascule rapide, portages de JOUABLE-003, 004 (survie) et 008 | JOUABLE-010, 024, 029 (variante rapide) | ☐ | après 8.C ; durée totale ≤ 5 min à mesurer sur la machine de référence |
+| 8.D2 | **Parc déplacement** | pas de côté, saut, conditions dégradées, nage, noyade, vol par double appui, réseau dégradé | JOUABLE-011 à 015, 044, 054 | ☐ | après 8.D1 |
+| 8.D3 | **Parc objets** | casse selon l'outil, fabrication, four, cultures, coffre cassé, présentoir, coffre piégé | JOUABLE-016 à 022 | ☐ | après 8.C |
+| 8.D4 | **Parc combat et monde** | combat porté, mort et réapparition, sommeil, lave, `/list` et `/help`, donjon à pied, arc | JOUABLE-023, 025 à 028, 045, 051 | ☐ | après 8.C |
+| 8.D5 | **Parc parties et réseau** | bascule de partie, sauvegarde et rechargement, reconnexion, deux pages, hors duel et duel, menus du serveur, serveur tué et relancé | JOUABLE-029 à 034, 050, 055 | ☐ | après 8.C (deux pages : BANC-166) |
+| 8.D6 | **Parc société et mécanismes** | quête, troc, câble et lampe, carte en survie, circuit logique, factions de joueurs, dialogue de PNJ | JOUABLE-035 à 038, 047 à 049 | ☐ | après 8.C |
+| 8.D7 | **Parc véhicules, ciel et rendu** | camion, ciel piloté par le serveur, écran partagé, livres en ligne, panorama de référence, eau versée et glace, sommeil à deux, autres véhicules, interface à 800×600 | JOUABLE-039 à 043, 046, 052, 053, 056 | ☐ | après 8.B et 8.C (images de référence) |
+
+## Audit du 2026-10-13 (couverture réelle des fiches ✅)
+
+Audit en lecture seule de la plateforme de test et des fiches ✅ (13 lots
+d'audit). **281 fiches ✅ sur 767 portent un constat** : FAIBLE 180 (test qui
+existe mais ne prouve qu'une partie de la fiche), SANS_CODE ≈ 48 (comportement
+absent ou partiel dans le jeu réel), E2E_MANQUANT ≈ 44 (aucun test dans le
+navigateur alors que la fiche le demande), CREUX ≈ 24 (test tautologique ou
+qui n'exerce pas le code) ; un même constat peut cumuler plusieurs verdicts.
+Gravité : 33 hautes, 134 moyennes, 119 basses ou faibles. Aucune fiche n'est
+repassée à ⏳ par cet audit : une fiche ne change d'état qu'avec l'accord du
+propriétaire. Constats de la plateforme elle-même : phase 8 ci-dessus.
+
+Lots de correction proposés, un par domaine d'audit (constats, dont gravité
+haute) ; chacun commence par les constats de gravité haute et par les
+SANS_CODE, qui demandent une décision du propriétaire (coder ou repasser la
+fiche à ⏳) :
+
+| Lot de correction | Constats | Haute | SANS_CODE | E2E_MANQUANT | CREUX |
+|---|---|---|---|---|---|
+| DONJON, FACTION, PVP, QUETE, ECO, METIER, TRANSPORT, ENV (rejoint 5.2 et 5.3) | 30 | 10 | 16 | 4 | 2 |
+| RENDU, RELIEF, VUE, OMBRE, TEXTURE, LUMIERE, CIEL, NUAGE, GRILLE, SPLIT | 30 | 3 | 2 | 9 | 3 |
+| BIOME, TERRAIN, MINERAI, SOUTERRAIN, DENSITE, ZONE, ROUTE, CARTE, PHYS, COLL | 28 | 4 | 2 | 4 | 5 |
+| HUD, MENU, OPTION, CHAT, CMD, AUDIO | 26 | 2 | 2 | 6 | 1 |
+| HABITAT, CONSTR, INTERIEUR, LIVRE, HISTOIRE, BLOC, PORTE, POP, IA | 25 | 2 | 3 | 3 | 1 |
+| ARME, COMBAT, MOB, FAUNE, EQUIP, OBJET, VEHIC, RECETTE, DROP, SUCCES | 22 | 0 | 0 | 0 | 1 |
+| MER, EAU, LAVE, NAGE, METEO, VENT, SAISON, VEGE | 22 | 2 | 2 | 7 | 3 |
+| BANC 001 à 060 | 22 | 2 | 6 | 4 | 1 |
+| SYNC, NET | 20 | 1 | 0 | 0 | 1 |
+| MODE, DIFF, JOUABLE, MECA, ADMIN, PACK, AUDIT | 18 | 2 | 8 | 3 | 2 |
+| SAVE, MIGR, PERF, LIMITE | 17 | 2 | 1 | 2 | 3 |
+| BANC 061 à 122 | 15 | 2 | 3 | 2 | 0 |
+| ARCHI, SERVEUR, SECU | 11 | 1 | 3 | 0 | 1 |
+
+Les colonnes comptent les constats dont le verdict contient ce motif. Beaucoup
+de constats E2E_MANQUANT et FAIBLE des fonctions jouées se referment par les
+scénarios de la phase 8 (parcs D) ; les autres lots de correction se mènent
+après 8.A (un test vert ne doit plus cacher une erreur au journal). Constats
+hors fiche relevés au passage, sans fiche pour l'instant : le rejeu unique des
+intégrations masque un premier échec (`tests/run.js`, traité par BANC-141) ;
+`MC_DEBUG.meteo` écrasée à l'image suivante (traité par BANC-143).
+
 ## Règles pour modifier cette feuille
 
 - On peut réordonner, **avec la raison** dans « Principes » ou la colonne
