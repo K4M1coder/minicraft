@@ -42,6 +42,76 @@ async function attendrePret(port) {
   return false;
 }
 
+/* SPEC-PACK-001, SPEC-ARCHI-013, SPEC-SECU-002 — l'EXÉCUTABLE RÉEL (Windows), la voie du joueur de
+   la v0.9.0 : créer une partie et la charger (ce que fait le menu, par /api/parties) relance le
+   serveur (bascule) ; la sortie standard héritée par l'enfant devient invalide (lanceur sans
+   console, terminal fermé : tools/precharge-console-morte.js, passé par NODE_OPTIONS que
+   l'exécutable et sa relance honorent). L'enfant doit répondre, diffuser ses ETAT et ne pas
+   boucler dans son gestionnaire d'exceptions — en v0.9.0, il levait EBADF à chaque ligne de
+   journal et réécrivait le monde en synchrone, sans fin. */
+async function basculeExeConsoleMorte(exe, dossier) {
+  const AI = require('./aide-integration-archi.js');
+  const PRECHARGE = path.join(RACINE, 'tools', 'precharge-console-morte.js');
+  const d = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-exe-bascule-'));
+  const journaux = path.join(d, 'logs'), temoin = path.join(d, 'morte.pid'), sortie = path.join(d, 'sortie.txt');
+  const port = await new Promise((res) => { const s = require('net').createServer(); s.listen(0, '127.0.0.1', () => { const p = s.address().port; s.close(() => res(p)); }); });
+  const fd = fs.openSync(sortie, 'w+');
+  let proc = null, pidEnfant = null;
+  try {
+    proc = spawn(exe, ['--port', String(port)], {
+      cwd: dossier, stdio: ['ignore', fd, fd], windowsHide: true,
+      env: Object.assign({}, process.env, {
+        NODE_OPTIONS: ((process.env.NODE_OPTIONS || '') + ' --require "' + PRECHARGE.split(path.sep).join('/') + '"').trim(),
+        MC_CONSOLE_MORTE_RELANCE: '1', MC_CONSOLE_MORTE_MS: '200', MC_CONSOLE_MORTE_TEMOIN: temoin,
+        MC_JOURNAL_DOSSIER: journaux, MC_TEST_ARRET_SI_MORT: String(process.pid),
+      }),
+    });
+  } finally { fs.closeSync(fd); }
+  const sonder = async (f, ms) => { const fin = Date.now() + ms; for (;;) { if (await f()) return true; if (Date.now() >= fin) return false; await dodo(100); } };
+  try {
+    ok(await sonder(async () => (await AI.requete(port, '/api/parties')).code === 200, 30000), 'SPEC-PACK-001 : l\'exécutable (mode local par défaut) répond à /api/parties', fs.readFileSync(sortie, 'utf8').slice(-300));
+    const cree = await AI.requete(port, '/api/parties', { corps: { nom: 'Bascule exe', graine: 9 } });
+    const id = cree.json && cree.json.partie && cree.json.partie.id;
+    ok(!!id, 'SPEC-ARCHI-013 : l\'exécutable crée une partie (comme le menu)', cree.corps.slice(0, 200));
+    await AI.requete(port, '/api/parties/charger', { corps: { id } });
+    ok(await sonder(async () => { const r = await AI.requete(port, '/api/parties'); if (r.json && r.json.actif === id && r.json.monde) { pidEnfant = r.json.monde.pid; return true; } return false; }, 30000),
+      'SPEC-ARCHI-013 : charger la partie relance l\'exécutable sur elle (bascule)');
+    ok(pidEnfant && pidEnfant !== proc.pid, 'préparation : la partie tourne dans un autre processus (pid ' + pidEnfant + ')');
+    const lireTemoin = () => { try { return fs.readFileSync(temoin, 'utf8'); } catch (e) { return ''; } };
+    ok(await sonder(async () => lireTemoin() === String(pidEnfant), 15000), 'préparation : la sortie standard du serveur relancé (et d\'elle seule) est devenue invalide', lireTemoin());
+    // des joueurs arrivent et partent : des lignes de journal à des tours de boucle différents
+    for (let k = 0; k < 2; k++) {
+      try { const t = await AI.rejoindre(port, 'Passant' + k, 1); await dodo(200); t.client.fermer(); } catch (e) { /* refusé : la ligne suffit */ }
+      await dodo(300);
+    }
+    const j = await AI.rejoindre(port, 'Alice', 1);
+    const vus = j.client.depuis();
+    const api = { requetes: 0, echecs: 0, maxMs: 0 };
+    const finApi = Date.now() + 3000;
+    while (Date.now() < finApi) {
+      const t0 = Date.now();
+      const r = await Promise.race([AI.requete(port, '/api/parties'), dodo(2000).then(() => ({ code: 0 }))]);
+      api.requetes++; if (r.code !== 200) api.echecs++; api.maxMs = Math.max(api.maxMs, Date.now() - t0);
+      await dodo(250);
+    }
+    const etats = vus('etat').length;
+    j.client.fermer();
+    ok(api.echecs === 0 && api.maxMs < 2000, 'SPEC-SECU-002 : l\'exécutable relancé sans console reste réactif (/api/parties en moins de 2 s)', JSON.stringify(api));
+    ok(etats >= 100, 'SPEC-SECU-002 : il diffuse ses ETAT à cadence normale (' + etats + ' en ≈ 3 s, attendu ≈ 180)');
+    let lignes = [];
+    try { lignes = fs.readdirSync(journaux).filter(f => /\.log$/.test(f)).map(f => fs.readFileSync(path.join(journaux, f), 'utf8')).join('').split('\n').filter(l => l.indexOf(pidEnfant + ' ') === 0); } catch (e) { lignes = []; }
+    ok(lignes.some(l => /Alice/.test(l)), 'préparation : le journal fichier du serveur relancé a reçu ses lignes', lignes.slice(-2).join(' | '));
+    const exceptions = lignes.filter(l => /EXCEPTION NON RATTRAPÉE/.test(l)).length;
+    ok(exceptions === 0, 'SPEC-SECU-002 : aucune exception non rattrapée dans l\'exécutable relancé (' + exceptions + ' ; v0.9.0 : une boucle sans fin)', lignes.filter(l => /EXCEPTION/.test(l)).slice(0, 1).join(''));
+  } finally {
+    await AI.arreterSurPort(port, 5000);
+    try { proc.kill(); } catch (e) { /* déjà arrêté */ }
+    if (pidEnfant) { try { process.kill(pidEnfant); } catch (e) { /* déjà arrêté */ } }
+    await dodo(300);
+    try { fs.rmSync(d, { recursive: true, force: true }); } catch (e) { /* tant pis */ }
+  }
+}
+
 (async function () {
   const paquet = require(path.join(RACINE, 'tools', 'paquet.js'));
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-paquet-'));
@@ -223,6 +293,7 @@ async function attendrePret(port) {
             try { ex.kill(); } catch (e) {}
             await dodo(300);
           }
+          await basculeExeConsoleMorte(path.join(alone, 'minicraft.exe'), alone);
         }
       } else {
         details.push(`  ${C.d}- IGNORÉ (${process.platform}) : injection et lancement de l'exécutable réel, vérifiés seulement sous Windows${C.x}`);
