@@ -1,6 +1,8 @@
 /* e2e-jouabilite.js — lot « tests de jouabilité / synchro client-serveur »
    (SPEC-JOUABLE-001 à 009). Une garantie de qualité avant tout nouveau lot :
-   le joueur ne bouge pas tout seul, rien de ce qu'il fait ne s'annule.
+   le joueur ne bouge pas tout seul, n'est jamais tiré en arrière quand il
+   marche (serveur normal, navigateur ralenti, serveur à console morte), rien
+   de ce qu'il fait ne s'annule.
 
    Chaque test joue dans la VRAIE page du jeu (vrai rendu, vraie boucle,
    vraies touches et vrais clics) contre un VRAI serveur de jeu lancé pour lui
@@ -103,7 +105,7 @@
     opts = opts || {};
     var graineAvant = g.world.seed, ecartees = [], t0 = maintenant();
     for (var k = 0; k < GRAINES.length; k++) {
-      var p = await connecterServeurJeu(g, mode, inv, GRAINES[k], graineAvant);
+      var p = await connecterServeurJeu(g, mode, inv, GRAINES[k], graineAvant, opts);
       var terrain = await terrainSousJoueur(g, p);
       if (terrain.ok && opts.sol) {
         await attendreRepos(g, p, mode === 'survie');
@@ -146,17 +148,23 @@
     return verdict || { ok: false, motif: 'terrain non prêt en 45 s (chunks 3×3 chargés ' + chunksAutour(g) + '/9, joueur ' + JSON.stringify(g.player.state.pos) + ', ' + Math.round(maintenant() - t0) + ' ms)' };
   }
 
-  async function connecterServeurJeu(g, mode, inv, graine, graineAvant) {
+  /* `opts.serveur` : champs de plus pour POST /tests/serveur-jeu (ex. `consoleMorte`) ;
+     `opts.avantConnexion(p)` : appelé quand le serveur de jeu répond, AVANT que la page le rejoigne. */
+  async function connecterServeurJeu(g, mode, inv, graine, graineAvant, opts) {
+    opts = opts || {};
     await reset(g);
     var rep = null;
     try {
       var r = await fetch('/tests/serveur-jeu', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: mode, difficulte: 'paisible', graine: graine, inv: inv || [] }) });
+        body: JSON.stringify(Object.assign({ mode: mode, difficulte: 'paisible', graine: graine, inv: inv || [] }, opts.serveur || {})) });
       rep = await r.json();
     } catch (e) { rep = { ok: false, motif: String(e && e.message || e) }; }
     var p = { g: g, mode: mode, graine: graine, graineAvant: graineAvant, port: rep && rep.port, sp: null, temoin: null };
     if (!rep || !rep.ok) {
       A.ok(false, 'serveur de jeu de test indisponible (POST /tests/serveur-jeu, banc lancé avec server.js --tests) : ' + JSON.stringify(rep));
+    }
+    if (opts.avantConnexion) {
+      try { await opts.avantConnexion(p); } catch (e) { await quitterPartie(g, p); throw e; }
     }
     p.sp = poserEspion(rep.port);
     try {
@@ -201,7 +209,7 @@
     } catch (e) { return '\n journal du serveur de jeu illisible : ' + (e && e.message); }
   }
 
-  async function attendreRepos(g, p, auSol) {
+  async function attendreRepos(g, p, auSol, delaiMs) {
     var st = g.player.state, sp = p.sp;
     /* Un serveur figé (charge de la machine) n'envoie plus rien : « aucun ETAT
        nouveau » ressemblerait à de l'immobilité. Le repos n'est donc admis que
@@ -229,7 +237,7 @@
       }
       // le serveur TRAITE les entrées du client (acquittement en progrès), il n'est pas figé
       return ok && n >= 3 && e.s - sMin >= 10 && i >= 0 && Math.hypot(st.pos.x - e.x, st.pos.y - e.y, st.pos.z - e.z) < 1e-3;
-    }, 60000);
+    }, delaiMs || 60000);
     if (!stable) {
       var e = sp.dernierEtat();
       attendreRepos.diag = 'dernier ETAT ' + (e ? Math.round(maintenant() - e.t) + ' ms avant, acquitté s=' + e.s + ' pour ' + sp.dernierEnvoye + ' envoyées, sol=' + e.sol + ' vol=' + e.vol +
@@ -526,6 +534,258 @@
       A.ok(m.client.echantillons > 100, 'mesure à chaque image (' + m.client.echantillons + ' relevés)');
     } finally { await quitterPartie(g, p); }
   });
+
+  // ─── la marche : jamais tiré en arrière (SPEC-JOUABLE-001, SPEC-ARCHI-037, SPEC-SECU-002) ─
+  /* Le symptôme de la v0.5.0 puis de la v0.9.0 : en marchant, le joueur « revient sur ses pas ».
+     Les tests d'immobilité (001/002) ne le voient pas, ni un client émulé en Node contre un
+     serveur à la console saine (tests/integration-archi-recul.js) : il faut MARCHER, dans la vraie
+     page, contre un vrai serveur — y compris un serveur dont la console est morte (bascule de
+     partie lancée sans console : le serveur bouclait sur EBADF, tic affamé, ETAT tardifs).
+
+     Programme de touches (cycle de 10 s, deux fois) : avancer ; courir ; avancer en pas de côté à
+     gauche puis à droite ; courir en sautant. Un joueur bloqué (mur, arbre) saute, puis contourne
+     (le regard tourne de 50°) : sur un monde neuf, le terrain devant lui est généré en route.
+     Position relevée à CHAQUE image avec la date, la direction voulue (touches et regard) et les
+     ETAT arrivés ; analyse pure par MC_JOUABILITE.analyserMarche (SPEC-JOUABLE-009). Pellicule :
+     une capture toutes les 2 s. Après la marche, touches lâchées, l'observation continue jusqu'à
+     ce que le serveur ait acquitté la dernière entrée (15 s au plus) : un serveur affamé ne
+     ramène le joueur en arrière qu'au moment où il le rattrape — au-delà de MAX_EN_ATTENTE
+     entrées non acquittées, client et serveur ont oublié les plus anciennes.
+
+     Preuve du rouge (v0.9.0, a2655e9, rapport du lot F2) : serveur à console morte ET fichier de
+     monde sur un disque lent (50 ms par écriture synchrone, comme le dossier OneDrive du serveur
+     empaqueté) — un seul ETAT en 20 s de marche, 768 entrées non acquittées, puis recul de 7,97
+     blocs au rattrapage. Sur disque rapide, la même boucle d'exceptions n'affamait pas assez la
+     génération du terrain pour faire reculer le joueur en 20 s. */
+  /* PARCOURS_MIN : garde-fou « il a vraiment marché » — navigateur ralenti, les images de plus de
+     50 ms ne simulent que 50 ms (src/game.js) : le parcours y tombe vers 40 blocs en 20 s. */
+  var DUREE_MARCHE_MS = 20000, PELLICULE_MS = 2000, PARCOURS_MIN = 25, RATTRAPAGE_MAX_MS = 15000;
+  /* Surtout en courant : le joueur doit sortir du terrain que le serveur a déjà généré (sur un
+     serveur affamé, il l'y attend — MC.Synchro.patienterEntrees — pendant qu'il marche chez lui). */
+  function phaseMarche(t) {
+    var c = t % 10000;
+    if (c < 1500) return { avant: 1, nom: 'avancer' };
+    if (c < 5000) return { avant: 1, course: 1, nom: 'courir' };
+    if (c < 6500) return { avant: 1, course: 1, gauche: 1, nom: 'courir en pas de côté à gauche' };
+    if (c < 8000) return { avant: 1, course: 1, droite: 1, nom: 'courir en pas de côté à droite' };
+    return { avant: 1, course: 1, saut: 1, nom: 'courir en sautant' };
+  }
+
+  /* Demande au pilote CDP (tools/e2e-headless.js) de ralentir le processeur de la page. Rend
+     null sans pilote (banc avec fenêtre : la page ne peut pas se ralentir elle-même). */
+  async function ralentirCPU(taux) {
+    if (typeof G.mcPiloteCDP !== 'function') return null;
+    var id = 'cpu-' + taux + '-' + Math.round(maintenant());
+    G.mcPiloteCDP(JSON.stringify({ id: id, action: 'ralentirCPU', taux: taux }));
+    await sonder(function () { return !!(G.__mcPiloteReponses && G.__mcPiloteReponses[id]); }, 10000);
+    return (G.__mcPiloteReponses && G.__mcPiloteReponses[id]) || { ok: false, motif: 'pas de réponse du pilote CDP en 10 s' };
+  }
+
+  async function etatServeurJeu() {
+    try { return await (await fetch('/tests/serveur-jeu/journal')).json(); } catch (e) { return { ok: false, motif: String(e && e.message || e) }; }
+  }
+
+  /* Console morte : attendre que la sortie du serveur soit invalide (témoin du préchargement),
+     puis lui faire écrire des lignes de journal à des tours de boucle différents (un second client
+     arrive puis part, deux fois) — sur l'ancien code, la seconde levait EBADF hors de tout
+     try/catch et lançait la boucle du gestionnaire d'exceptions, AVANT l'arrivée du joueur, comme
+     sur le serveur empaqueté de la v0.9.0. */
+  async function tuerConsole(p) {
+    var j = null, fin = maintenant() + 30000;
+    do { j = await etatServeurJeu(); if (j && j.consoleMorte && j.consoleMorte.morte) break; await frames(6); } while (maintenant() < fin);
+    A.ok(j && j.consoleMorte && j.consoleMorte.morte, 'préparation : la sortie standard du serveur de jeu devient invalide (préchargement tools/precharge-console-morte.js) — ' +
+      JSON.stringify(j && j.consoleMorte ? { morte: j.consoleMorte.morte, sortieOctets: j.consoleMorte.sortieOctets } : j));
+    for (var k = 0; k < 2; k++) {
+      var cl = MC.createNetClient({});
+      cl.connecter('ws://127.0.0.1:' + p.port, 'Passant' + k, 1);
+      await sonder(function () { return cl.etat === 'en ligne' || cl.etat === 'erreur'; }, 30000);
+      await frames(12);
+      try { cl.deconnecter(); } catch (e) { /* déjà parti */ }
+      await frames(18);
+    }
+    p.consoleAvant = (await etatServeurJeu()).consoleMorte;
+  }
+
+  /* Le cap de départ : parmi 16 directions, celle qui offre le plus long chemin à pied sur le
+     terrain déjà chargé (surface sèche, dénivelé d'au plus un bloc d'une colonne à la suivante,
+     48 blocs au plus) — marcher, pas nager. */
+  function directionMarche(g) {
+    var st = g.player.state, w = g.world, C = Cr(), meilleur = { yaw: st.yaw, libre: -1 };
+    function surface(x, z, yRef) {
+      if (!w.getChunk(Math.floor(x / 16), Math.floor(z / 16))) return null;
+      for (var y = yRef + 6; y >= yRef - 6; y--) { var id = w.getBlock(x, y, z); if (id && (C.isSolid(id) || liquide(id))) return { y: y, liquide: liquide(id) }; }
+      return null;
+    }
+    for (var a = 0; a < 16; a++) {
+      var yaw = a * Math.PI / 8, yPrec = Math.floor(st.pos.y) - 1, d = 1;
+      for (; d <= 48; d++) {
+        var s = surface(Math.floor(st.pos.x - Math.sin(yaw) * d), Math.floor(st.pos.z - Math.cos(yaw) * d), yPrec);
+        if (!s || s.liquide || Math.abs(s.y - yPrec) > 1) break;
+        yPrec = s.y;
+      }
+      if (d - 1 > meilleur.libre) meilleur = { yaw: yaw, libre: d - 1 };
+    }
+    return meilleur;
+  }
+
+  async function marcher(g, p, dureeMs) {
+    var st = g.player.state, sp = p.sp, PH = MC.Physics;
+    var tenues = {};
+    function tenir(code, oui) { if (!!tenues[code] === !!oui) return; tenues[code] = !!oui; key(code, oui ? 'keydown' : 'keyup'); }
+    var t0 = maintenant(), dernierN = sp.nEtats, toi = sp.dernierEtat();
+    var ech = [], serveur = [], detours = [], phases = [], images = [];
+    var nCapture = 0, prochaineCapture = 0, sautObstacle = 0, phasePrec = null, mort = null, remplace = false, tPrec = t0, retardMax = { n: 0, t: 0 };
+    var tFin = null, sFin = 0, derniereDir = null, rattrapage = null;
+    var cap = directionMarche(g);
+    st.yaw = cap.yaw; st.pitch = -0.15;
+    try {
+      for (;;) {
+        var maintenantMs = maintenant(), t = maintenantMs - t0;
+        images.push(maintenantMs - tPrec); tPrec = maintenantMs;
+        if (g.player.state !== st) { remplace = true; break; }
+        if (st.dead) { mort = Math.round(t); break; }
+        var nouveaux = sp.etats.filter(function (e) { return e.n > dernierN; });
+        if (nouveaux.length) dernierN = nouveaux[nouveaux.length - 1].n;
+        var delta = 0;
+        nouveaux.forEach(function (e) {
+          if (toi) delta = Math.max(delta, Math.hypot(e.x - toi.x, e.z - toi.z));
+          toi = e;
+          serveur.push({ t: e.t - t0, x: e.x, y: e.y, z: e.z, s: e.s });
+        });
+        // entrées envoyées que le serveur n'a pas encore acquittées (au-delà de MC.Synchro.MAX_EN_ATTENTE, oubliées)
+        if (toi && sp.dernierEnvoye) { var retard = sp.dernierEnvoye - toi.s; if (retard > retardMax.n) retardMax = { n: retard, t: Math.round(t) }; }
+        /* Après la marche, touches lâchées, on observe encore jusqu'à ce que le serveur ait acquitté
+           la dernière entrée de la marche (au plus RATTRAPAGE_MAX_MS) : un serveur en retard ne ramène
+           le joueur en arrière qu'au moment où il le rattrape. La direction voulue reste la dernière. */
+        var fin = t >= dureeMs;
+        if (fin && tFin === null) { tFin = t; sFin = sp.dernierEnvoye || 0; ['KeyW', 'ShiftLeft', 'KeyA', 'KeyD', 'Space'].forEach(function (c) { tenir(c, false); }); }
+        if (fin && toi && toi.s >= sFin && t - tFin >= 500) { rattrapage = { ms: Math.round(t - tFin), atteint: true }; break; }
+        if (fin && t - tFin > RATTRAPAGE_MAX_MS) { rattrapage = { ms: Math.round(t - tFin), atteint: false, acquitte: toi ? toi.s : null, attendu: sFin }; break; }
+        var ph = fin ? {} : phaseMarche(t);
+        if (!fin && ph.nom !== phasePrec) { phases.push(Math.round(t) + ' ms ' + ph.nom); phasePrec = ph.nom; }
+        /* bloqué ? sur la dernière seconde, moins de 0,5 bloc : on saute (0,3 s), puis on contourne */
+        if (!fin && ech.length > 30) {
+          var ref = null;
+          for (var q = ech.length - 1; q >= 0 && ech[q].t >= t - 1000; q--) ref = ech[q];
+          if (ref && t - ref.t > 900 && Math.hypot(st.pos.x - ref.x, st.pos.z - ref.z) < 0.5) {
+            if (!sautObstacle) sautObstacle = t;
+            else if (t - sautObstacle > 600) { st.yaw += 50 * Math.PI / 180; detours.push(Math.round(t)); sautObstacle = 0; }
+          } else if (sautObstacle && t - sautObstacle > 300) sautObstacle = 0;
+        }
+        tenir('KeyW', ph.avant); tenir('ShiftLeft', ph.course); tenir('KeyA', ph.gauche); tenir('KeyD', ph.droite);
+        tenir('Space', ph.saut || (sautObstacle && t - sautObstacle < 300));
+        var fwd = ph.avant ? 1 : 0, strafe = (ph.droite ? 1 : 0) - (ph.gauche ? 1 : 0);
+        var dir = (fwd || strafe) ? PH.wishDirection(st.yaw, fwd, strafe) : (fin ? derniereDir : null);
+        if (!fin && dir) derniereDir = dir;
+        ech.push({ t: t, x: st.pos.x, y: st.pos.y, z: st.pos.z, dir: dir, etats: nouveaux.length, ecart: g.ecartReseau, deltaServeur: delta,
+          info: nouveaux.length ? 'ETAT s=' + nouveaux[nouveaux.length - 1].s + ' (' + nouveaux.length + ' reçu(s)), ' + (ph.nom || 'rattrapage, touches lâchées') + ', ' +
+            (sp.dernierEnvoye - nouveaux[nouveaux.length - 1].s) + ' entrées non acquittées, image ' + Math.round(images[images.length - 1]) + ' ms' : undefined });
+        if (!fin && t >= prochaineCapture) {
+          capture('pellicule-' + (nCapture < 10 ? '0' : '') + nCapture);
+          nCapture++; prochaineCapture += PELLICULE_MS;
+        }
+        await frames(1);
+      }
+    } finally {
+      ['KeyW', 'ShiftLeft', 'KeyA', 'KeyD', 'Space'].forEach(function (c) { tenir(c, false); });
+    }
+    if (nCapture * PELLICULE_MS <= dureeMs) { capture('pellicule-' + (nCapture < 10 ? '0' : '') + nCapture); nCapture++; }
+    if (!rattrapage) rattrapage = { ms: 0, atteint: false, interrompu: true };
+    var trou = 0;
+    for (var k = 1; k < serveur.length; k++) trou = Math.max(trou, serveur[k].t - serveur[k - 1].t);
+    var triees = images.slice(1).sort(function (a, b) { return a - b; });
+    var octets = 0;
+    try { octets = JSON.stringify(ech).length + JSON.stringify(serveur).length; } catch (e) { octets = -1; }
+    return {
+      client: J.analyserMarche(ech), serveur: serveur, captures: nCapture, detours: detours, phases: phases, mort: mort, remplace: remplace,
+      plusGrandTrouEtat: Math.round(trou), etatsParS: serveur.filter(function (e) { return tFin === null || e.t <= tFin; }).length / (Math.max(1, tFin !== null ? tFin : (ech.length ? ech[ech.length - 1].t : 1)) / 1000),
+      imageMediane: triees.length ? triees[Math.floor(triees.length / 2)] : 0, imageMax: triees.length ? triees[triees.length - 1] : 0,
+      octets: octets, dureeMs: tFin !== null ? tFin : (ech.length ? ech[ech.length - 1].t : 0), cap: cap, retardMax: retardMax, rattrapage: rattrapage,
+    };
+  }
+
+  /* Le scénario commun aux trois conditions : `condition.ralenti` (taux CDP), `condition.consoleMorte`. */
+  async function scenarioMarche(g, condition) {
+    A.ok(G.innerWidth >= 800 && G.innerHeight >= 600, 'rendu d\'au moins 800×600 (' + G.innerWidth + '×' + G.innerHeight + ')');
+    var debut = maintenant(), ralenti = null;
+    if (condition.ralenti) {
+      ralenti = await ralentirCPU(condition.ralenti);
+      if (ralenti === null) { A.ok(true, 'pilote CDP absent (banc avec fenêtre) : la condition « navigateur ralenti » ne tourne que sans fenêtre (tools/e2e-headless.js) — test ignoré'); return; }
+      A.ok(ralenti.ok, 'préparation : le navigateur est ralenti ×' + condition.ralenti + ' (CDP Emulation.setCPUThrottlingRate) — ' + JSON.stringify(ralenti));
+    }
+    var p = null;
+    try {
+      p = await demarrerPartie(g, 'survie', [], condition.consoleMorte ? { serveur: { consoleMorte: true, disqueLentMs: condition.disqueLentMs }, avantConnexion: tuerConsole } : {});
+      T.etape('repos');
+      /* Le repos (serveur à jour, joueur immobile) n'est qu'un bon départ : un serveur affamé ne
+         l'atteint jamais — c'est justement ce qu'on mesure. Au-delà de 20 s, on marche quand même,
+         et l'analyse de la marche dira ce que le serveur fait du joueur. */
+      var auRepos = await attendreRepos(g, p, true, 20000);
+      var diagRepos = auRepos ? 'au repos' : 'PAS au repos après 20 s (' + attendreRepos.diag + ')';
+      A.ok(!!p.sp.dernierEtat(), 'préparation : le serveur a envoyé au moins un ETAT du joueur');
+      var tPrep = maintenant() - debut;
+      T.etape('marche ' + (DUREE_MARCHE_MS / 1000) + ' s');
+      var m = await marcher(g, p, DUREE_MARCHE_MS);
+      var etatJeu = await etatServeurJeu();
+      var cons = condition.consoleMorte ? etatJeu.consoleMorte : null;
+      var attentesSol = cons ? cons.attentesSol || [] : (String(etatJeu.journal || '').match(/sol d un joueur généré d un coup après [\d.]+ s/g) || []).map(function (l) { return parseFloat(/après ([\d.]+)/.exec(l)[1]); });
+      var a = m.client;
+      var contexte = '\n condition : ' + condition.nom + ' ; départ ' + diagRepos + ' ; graine ' + p.graine + ', cap ' + Math.round(m.cap.yaw * 180 / Math.PI) + '° (' + m.cap.libre + ' blocs à pied devant) ; préparation ' + (tPrep / 1000).toFixed(1) + ' s ; ' + m.captures + ' captures ; ETAT ' + m.serveur.length +
+        ' (' + m.etatsParS.toFixed(1) + '/s, plus grand intervalle ' + m.plusGrandTrouEtat + ' ms) ; image médiane ' + m.imageMediane.toFixed(1) + ' ms, max ' + Math.round(m.imageMax) +
+        ' ms ; détours ' + (m.detours.length ? m.detours.join(', ') + ' ms' : 'aucun') + ' ; relevés ' + a.echantillons + ' images (' + m.octets + ' octets)' +
+        ' ; entrées non acquittées au plus ' + m.retardMax.n + ' (t=' + m.retardMax.t + ' ms ; au-delà de ' + MC.Synchro.MAX_EN_ATTENTE + ' elles sont oubliées)' +
+        ' ; sol attendu côté serveur : ' + (attentesSol.length ? attentesSol.join(' s, ') + ' s' : 'aucune attente au-delà de 5 s') +
+        ' ; rattrapage après la marche : ' + (m.rattrapage.atteint ? m.rattrapage.ms + ' ms' : 'NON atteint ' + JSON.stringify(m.rattrapage)) +
+        (cons ? '\n console du serveur : ' + JSON.stringify({ morte: cons.morte, journalOctets: cons.journalOctets, exceptions: cons.exceptionsFin1Mio, ebadf: cons.ebadfFin1Mio, notes: cons.notesConsole }) : '') +
+        '\n phases : ' + m.phases.join(' ; ');
+      T.mesure('Marche ' + (DUREE_MARCHE_MS / 1000) + ' s — ' + condition.nom, ['mesure', 'valeur'], [
+        ['durée de la marche (ms)', Math.round(m.dureeMs)], ['préparation (ms)', Math.round(tPrep)], ['relevés client (images)', a.echantillons], ['taille des relevés (octets JSON)', m.octets],
+        ['ETAT reçus', m.serveur.length], ['ETAT par seconde', m.etatsParS.toFixed(1)], ['plus grand intervalle entre deux ETAT (ms)', m.plusGrandTrouEtat],
+        ['image médiane / max (ms)', m.imageMediane.toFixed(1) + ' / ' + Math.round(m.imageMax)], ['parcours (blocs)', a.parcouru.toFixed(1)],
+        ['progression / parcours', (a.ratio * 100).toFixed(1) + ' %'], ['reculs > ' + a.seuilRecul + ' bloc', a.reculs.length], ['recul maximal (bloc)', a.reculMax.toFixed(3)],
+        ['corrections visibles', a.corrections.length], ['captures (pellicule)', m.captures], ['détours', m.detours.length],
+        ['entrées non acquittées au plus', m.retardMax.n + ' (t=' + m.retardMax.t + ' ms)'], ['attentes du sol > 5 s côté serveur', attentesSol.length ? attentesSol.join(' ; ') + ' s' : '0'],
+        ['rattrapage du serveur après la marche (ms)', m.rattrapage.atteint ? m.rattrapage.ms : 'non atteint en ' + RATTRAPAGE_MAX_MS], ['départ', diagRepos.slice(0, 120)],
+      ].concat(cons ? [['journal du serveur (octets)', cons.journalOctets], ['exceptions non rattrapées (dernier Mio)', cons.exceptionsFin1Mio]] : []));
+      A.notOk(m.remplace, 'le joueur mesuré n\'a pas été remplacé pendant la marche');
+      A.ok(m.mort === null, 'préparation : le joueur ne meurt pas pendant la marche (chute, noyade) — mort à t=' + m.mort + ' ms' + contexte);
+      A.ok(m.captures >= 8, 'pellicule : au moins 8 captures (' + m.captures + ')');
+      A.ok(a.parcouru >= PARCOURS_MIN, 'préparation : le joueur a vraiment marché (' + a.parcouru.toFixed(1) + ' blocs parcourus, au moins ' + PARCOURS_MIN + ')' + contexte);
+      A.ok(a.duree_ms >= DUREE_MARCHE_MS - 100, 'marche mesurée pendant au moins 20 s (' + a.duree_ms + ' ms)');
+      A.ok(a.ok, 'SPEC-JOUABLE-001 (' + condition.nom + ') : en marchant, le joueur a été tiré en arrière\n' + J.messageMarche('client (chaque image, marche puis rattrapage)', a) + contexte +
+        (a.ok ? '' : await journalServeurJeu()));
+      /* Le serveur SUIT le joueur : au-delà de MAX_EN_ATTENTE entrées non acquittées, client et serveur
+         oublient les plus anciennes — le joueur reviendra sur ses pas dès que le serveur répondra. */
+      A.ok(m.retardMax.n <= MC.Synchro.MAX_EN_ATTENTE, 'SPEC-JOUABLE-001 (' + condition.nom + ') : le serveur a laissé ' + m.retardMax.n + ' entrées sans les acquitter (t=' + m.retardMax.t +
+        ' ms) — au-delà de ' + MC.Synchro.MAX_EN_ATTENTE + ', les plus anciennes sont oubliées et le joueur sera ramené en arrière' + contexte);
+      A.ok(m.rattrapage.atteint, 'SPEC-JOUABLE-001 (' + condition.nom + ') : touches lâchées, le serveur n\'a pas acquitté la dernière entrée de la marche en ' + (RATTRAPAGE_MAX_MS / 1000) +
+        ' s (' + JSON.stringify(m.rattrapage) + ') : le joueur affiché n\'est pas celui que le serveur tient' + contexte + await journalServeurJeu());
+    } finally {
+      if (ralenti && ralenti.ok) await ralentirCPU(1);
+      if (p) await quitterPartie(g, p);
+    }
+  }
+
+  e2e('SPEC-JOUABLE-001 : en marchant 20 s, le joueur n\'est jamais tiré en arrière — serveur normal', {
+        "teste": "qu'un joueur qui marche (avancer, courir, pas de côté, sauts) pendant 20 s dans la vraie page, sur un monde neuf dont le terrain se génère devant lui, contre un vrai serveur de jeu, n'est jamais ramené en arrière : position relevée à chaque image, analysée le long de la direction voulue",
+        "pourquoi": "en v0.5.0 puis en v0.9.0 le joueur « revenait sur ses pas » en marchant ; les tests d'immobilité (001/002) et le client émulé de tests/integration-archi-recul.js ne le voyaient pas : il faut marcher, dans la vraie page",
+        "attendu": "aucun recul de plus de 0,05 bloc (marche puis rattrapage du serveur), aucune correction du serveur de plus de 0,05 bloc, au plus MAX_EN_ATTENTE entrées non acquittées, dernière entrée acquittée moins de 15 s après la marche, progression ≥ 90 % du parcours, au moins 25 blocs parcourus, au moins 8 captures de pellicule ; sinon chaque recul avec son instant, son amplitude, son vecteur, le décalage cumulé, l'intervalle et sa source",
+        "delai": 240
+  }, async function (g) { await scenarioMarche(g, { nom: 'serveur normal' }); });
+
+  e2e('SPEC-JOUABLE-001 : en marchant 20 s, le joueur n\'est jamais tiré en arrière — navigateur ralenti ×4', {
+        "teste": "la même marche de 20 s, le processeur de la page ralenti quatre fois (CDP Emulation.setCPUThrottlingRate, demandé au pilote de tools/e2e-headless.js) : images longues, entrées espacées, comme sur une machine chargée",
+        "pourquoi": "le recul de la v0.5.0 venait du budget d'entrées du serveur quand les images du client s'allongent ; une machine chargée est le cas où prédiction et serveur ont le plus d'occasions de diverger",
+        "attendu": "aucun recul de plus de 0,05 bloc (marche puis rattrapage du serveur), aucune correction de plus de 0,05 bloc, au plus MAX_EN_ATTENTE entrées non acquittées, dernière entrée acquittée moins de 15 s après la marche, progression ≥ 90 % du parcours, au moins 25 blocs parcourus, au moins 8 captures ; sans pilote CDP (banc avec fenêtre) le test est ignoré, avec sa raison",
+        "delai": 300
+  }, async function (g) { await scenarioMarche(g, { nom: 'navigateur ralenti ×4 (CDP)', ralenti: 4 }); });
+
+  e2e('SPEC-JOUABLE-001 : en marchant 20 s, le joueur n\'est jamais tiré en arrière — serveur à console morte (SPEC-SECU-002)', {
+        "teste": "la même marche de 20 s, suivie du rattrapage du serveur, contre un serveur de jeu dont la sortie standard est devenue invalide AVANT l'arrivée du joueur (tools/precharge-console-morte.js, puis deux lignes de journal provoquées) et dont le fichier de monde est sur un disque lent (écritures synchrones retenues 50 ms, tools/precharge-disque-lent.js), comme le serveur empaqueté de la v0.9.0 relancé sans console dans un dossier OneDrive",
+        "pourquoi": "en v0.9.0 ce serveur bouclait dans son gestionnaire d'exceptions (EBADF, journal et sauvegarde synchrone à chaque tour) : tic affamé, ETAT tardifs, joueur recalé en arrière — aucun test ne marchait contre un serveur à console morte",
+        "attendu": "aucun recul de plus de 0,05 bloc (marche puis rattrapage du serveur), aucune correction de plus de 0,05 bloc, au plus MAX_EN_ATTENTE entrées non acquittées, dernière entrée acquittée moins de 15 s après la marche, progression ≥ 90 % du parcours, au moins 25 blocs parcourus, au moins 8 captures ; l'état de la console et du journal du serveur est joint au résultat",
+        "delai": 240
+  }, async function (g) { await scenarioMarche(g, { nom: 'serveur à console morte', consoleMorte: true, disqueLentMs: 50 }); });
 
   /* Casser à la souris (clic gauche maintenu, comme un joueur) puis observer
      4 s : le bloc reste de l'air à chaque image, et le serveur le tient cassé. */

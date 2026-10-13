@@ -81,9 +81,11 @@
     {
       /* Lot « jouabilité / synchro client-serveur » (SPEC-JOUABLE-001 à 009) :
          les e2e de tests/e2e-jouabilite.js (vrai navigateur sans fenêtre, vrai
-         serveur de jeu) et leur analyse pure (tests/spec-jouabilite.js). */
+         serveur de jeu) et leur analyse pure (tests/spec-jouabilite.js) — dont la
+         MARCHE de 20 s, jamais tirée en arrière, en trois conditions (serveur
+         normal, navigateur ralenti ×4 par CDP, serveur à console morte). */
       nom: 'jouabilite',
-      description: 'Jouabilité : le joueur ne bouge pas tout seul, rien ne s\'annule (blocs, inventaire, coffres) — e2e sur un vrai serveur, plus leur analyse',
+      description: 'Jouabilité : le joueur ne bouge pas tout seul, n\'est jamais tiré en arrière en marchant (serveur normal, navigateur ralenti, console morte), rien ne s\'annule (blocs, inventaire, coffres) — e2e sur un vrai serveur, plus leur analyse',
       pour: ['testeur', 'developpeur'],
       criteres: { domaines: ['JOUABLE'] },
     },
