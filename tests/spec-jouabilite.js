@@ -99,6 +99,77 @@
         function (m) { return m.t === 'inv_maj'; }, 1000);
       A.ok(/t=500 ms/.test(r) && /"rev":3/.test(r) && /"ack":1/.test(r) && /0:7×8/.test(r) && !/chat/.test(r), r);
     });
+
+    /* La marche (tests/e2e-jouabilite.js, « en marchant, le joueur n'est jamais tiré en arrière ») :
+       chaque image porte la direction VOULUE (touches et regard) ; un recul est une baisse de la
+       progression le long de cette direction, qu'il tienne en une image (recalage net) ou en
+       plusieurs (recalage lissé, petits reculs répétés). */
+    function marche(n, f) {
+      return serie(n, function (i) {
+        var e = { t: i * 16, x: i * 0.08, y: 64, z: 0, dir: { x: 1, z: 0 }, etats: i % 3 === 0 ? 1 : 0, ecart: 0, deltaServeur: 0.24 };
+        return f ? f(i, e) || e : e;
+      });
+    }
+
+    it('SPEC-JOUABLE-009 : une marche régulière (pas de côté et obstacle compris) ne produit ni recul ni correction', function () {
+      var a = J.analyserMarche(marche(1250));
+      A.ok(a.ok, J.messageMarche('marche', a));
+      A.equal(a.reculs.length, 0, 'aucun recul');
+      A.equal(a.corrections.length, 0, 'aucune correction');
+      A.close(a.progression, 1249 * 0.08, 1e-6, 'progression le long de la direction voulue');
+      A.close(a.ratio, 1, 1e-9, 'progression = parcours');
+      A.equal(a.echantillons, 1250);
+      A.ok(a.duree_ms >= 19980, 'durée (' + a.duree_ms + ' ms)');
+      // un mur : le joueur glisse le long (une composante tombe à 0) — jamais un recul
+      var glisse = J.analyserMarche(marche(100, function (i, e) { e.dir = { x: Math.SQRT1_2, z: Math.SQRT1_2 }; e.x = Math.min(i, 40) * 0.05; e.z = i * 0.05; }));
+      A.ok(glisse.ok && glisse.reculs.length === 0, 'glisser le long d\'un mur n\'est pas reculer : ' + J.messageMarche('glisse', glisse));
+      // sans touche de déplacement (dir nulle), une image ne compte pas
+      var arret = J.analyserMarche(marche(50, function (i, e) { if (i > 20) { e.dir = null; e.x = 20 * 0.08 - (i - 20) * 0.01; } }));
+      A.equal(arret.reculs.length, 0, 'touches lâchées : rien n\'est compté');
+    });
+
+    it('SPEC-JOUABLE-009 : un recalage en arrière pendant la marche est daté, avec son vecteur, le décalage cumulé, l\'intervalle et sa source', function () {
+      // deux recalages nets de 0,3 bloc à t=800 et t=2400 ms (ETAT reçu, le serveur n'a pas bougé : correction)
+      var ech = marche(250, function (i, e) {
+        var recul = (i >= 50 ? 0.3 : 0) + (i >= 150 ? 0.3 : 0);
+        e.x = i * 0.08 - recul;
+        if (i === 50 || i === 150) { e.etats = 1; e.ecart = 0.38; e.deltaServeur = 0; e.info = 'ETAT s=' + i; }
+      });
+      var a = J.analyserMarche(ech);
+      A.notOk(a.ok, 'deux reculs : échec');
+      A.equal(a.reculs.length, 2, 'deux reculs');
+      var r0 = a.reculs[0], r1 = a.reculs[1];
+      A.equal(r0.t_ms, 800, 'instant du premier');
+      A.close(r0.amplitude, 0.3 - 0.08, 1e-9, 'amplitude (baisse de la progression depuis son maximum)');
+      A.close(r0.vecteur.dx, 0.08 - 0.3, 1e-9, 'vecteur du pas en arrière');
+      A.close(r0.cumul.dx, 50 * 0.08 - 0.3, 1e-9, 'décalage cumulé depuis le départ');
+      A.equal(r0.intervalle_ms, null, 'pas d\'intervalle pour le premier');
+      A.equal(r1.intervalle_ms, 1600, 'intervalle entre deux reculs');
+      A.ok(/^correction serveur/.test(r0.source), 'source : ' + r0.source);
+      A.equal(r0.info, 'ETAT s=50', 'information du relevé');
+      A.equal(a.corrections.length, 2, 'deux corrections visibles (écart de réconciliation 0,38 bloc)');
+      A.equal(a.corrections[0].t_ms, 800);
+      A.close(a.reculMax, 0.22, 1e-9, 'recul maximal');
+      var msg = J.messageMarche('client (chaque image)', a);
+      A.ok(/2 recul\(s\)/.test(msg) && /t=800 ms/.test(msg) && /intervalle=1600 ms/.test(msg) && /correction serveur/.test(msg) && /2 correction\(s\)/.test(msg), msg);
+    });
+
+    it('SPEC-JOUABLE-009 : un recul LISSÉ (plusieurs images sous le seuil chacune) et un recul faible répété font échouer la marche', function () {
+      // 0,02 bloc en arrière pendant 10 images : 0,2 bloc au total, aucun pas au-dessus de 0,05
+      var lisse = J.analyserMarche(marche(200, function (i, e) {
+        var k = Math.max(0, Math.min(i, 110) - 100);
+        e.x = (i < 100 ? i * 0.08 : 100 * 0.08 - k * 0.02 + Math.max(0, i - 110) * 0.08);
+      }));
+      A.equal(lisse.reculs.length, 1, 'un recul lissé détecté : ' + J.messageMarche('lissé', lisse));
+      A.close(lisse.reculs[0].amplitude, 0.2, 1e-9, 'son amplitude cumulée');
+      A.equal(lisse.reculs[0].images, 10, 'sur 10 images');
+      // 0,04 bloc en arrière toutes les 5 images : aucun recul isolé > 0,05, mais la progression s'effondre
+      var repete = J.analyserMarche(marche(500, function (i, e) { e.x = i * 0.01 - Math.floor(i / 5) * 0.04; e.dir = { x: 1, z: 0 }; }));
+      A.notOk(repete.ok, 'progression trop faible : échec');
+      A.equal(repete.reculs.length, 0, 'aucun recul au-dessus du seuil');
+      A.ok(repete.ratio < 0.9, 'progression ' + repete.ratio.toFixed(2) + ' du parcours');
+      A.ok(/progression/.test(J.messageMarche('répété', repete)), J.messageMarche('répété', repete));
+    });
   });
 
   describe('Specs — jouabilité : jeter et ramasser (SPEC-JOUABLE-006, 007)', function () {

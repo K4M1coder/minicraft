@@ -104,6 +104,99 @@
     return lignes.join('\n');
   }
 
+  /* La MARCHE (tests/e2e-jouabilite.js, « en marchant, le joueur n'est jamais
+     tiré en arrière ») : `ech` = [{ t, x, y, z, dir, etats?, ecart?,
+     deltaServeur?, info? }] relevés à chaque image, `dir` = { x, z } la
+     direction horizontale VOULUE à cette image (touches tenues et regard ;
+     null sans touche de déplacement). Le pas de l'image i est projeté sur la
+     direction voulue à l'image i-1 (les touches tenues pendant l'image) ; leur
+     somme est la PROGRESSION, la somme des seuls pas en avant le PARCOURS (ce
+     que le joueur a lui-même couvert : un obstacle, un mur longé, une pente le
+     réduisent sans rien fausser).
+       - un RECUL est une baisse de la progression de plus de `seuilRecul`
+         (0,05 bloc) sous son maximum : un recalage net (une image) comme un
+         recalage lissé (plusieurs images sous le seuil chacune). Chaque recul
+         porte l'instant où la baisse commence, son amplitude, le vecteur du pas
+         le plus en arrière, le décalage cumulé depuis le départ, l'intervalle
+         depuis le recul précédent, le nombre d'images en arrière et la source
+         probable (sourceProbable) ;
+       - une CORRECTION visible : un ETAT reçu dont la réconciliation a déplacé
+         le client de plus de `seuilCorrection` (0,05 bloc) ;
+       - `ratio` = progression / parcours : des reculs répétés, chacun sous le
+         seuil, le font tomber sous `ratioMin` (0,9).
+     `ok` : ni recul, ni correction, ratio ≥ ratioMin. */
+  var SEUIL_RECUL = 0.05, SEUIL_CORRECTION = 0.05, RATIO_MIN = 0.9;
+  function analyserMarche(ech, opts) {
+    opts = opts || {};
+    var seuilRecul = opts.seuilRecul === undefined ? SEUIL_RECUL : opts.seuilRecul;
+    var seuilCorr = opts.seuilCorrection === undefined ? SEUIL_CORRECTION : opts.seuilCorrection;
+    var ratioMin = opts.ratioMin === undefined ? RATIO_MIN : opts.ratioMin;
+    var out = { ok: true, echantillons: ech ? ech.length : 0, duree_ms: 0, progression: 0, parcouru: 0, ratio: 1, reculMax: 0,
+      reculs: [], corrections: [], horizontal: 0, seuilRecul: seuilRecul, seuilCorrection: seuilCorr, ratioMin: ratioMin };
+    if (!ech || ech.length < 2) return out;
+    var p0 = ech[0], s = 0, sMax = 0, ep = null, dernierDebut = null;
+    function fermer() {
+      if (ep && ep.amplitude > seuilRecul) {
+        ep.intervalle_ms = dernierDebut === null ? null : ep.t_ms - dernierDebut;
+        dernierDebut = ep.t_ms;
+        out.reculs.push(ep);
+        if (ep.amplitude > out.reculMax) out.reculMax = ep.amplitude;
+      }
+      ep = null;
+    }
+    for (var i = 1; i < ech.length; i++) {
+      var e = ech[i], prec = ech[i - 1], t = Math.round(e.t - p0.t);
+      if ((e.etats || 0) > 0 && typeof e.ecart === 'number' && e.ecart > seuilCorr) {
+        out.corrections.push({ t_ms: t, ecart: e.ecart, source: sourceProbable({ etats: e.etats, ecart: e.ecart, deltaServeur: e.deltaServeur || 0 }, seuilCorr), info: e.info });
+      }
+      var d = prec.dir;
+      var nd = d ? Math.hypot(d.x, d.z) : 0;
+      if (!nd) continue;
+      var pas = { dx: e.x - prec.x, dy: e.y - prec.y, dz: e.z - prec.z };
+      var proj = (pas.dx * d.x + pas.dz * d.z) / nd;
+      s += proj;
+      if (proj > 0) out.parcouru += proj;
+      if (s >= sMax) { sMax = s; fermer(); continue; }
+      if (!ep) ep = { t_ms: t, amplitude: 0, images: 0, pasMin: 0 };
+      if (proj < 0) {
+        ep.images++;
+        if (proj < ep.pasMin) {
+          ep.pasMin = proj;
+          ep.vecteur = pas;
+          ep.cumul = { dx: e.x - p0.x, dy: e.y - p0.y, dz: e.z - p0.z };
+          ep.source = opts.source || sourceProbable({ etats: e.etats || 0, ecart: e.ecart, deltaServeur: e.deltaServeur || 0 }, 1e-4);
+          ep.info = e.info;
+        }
+      }
+      if (sMax - s > ep.amplitude) ep.amplitude = sMax - s;
+    }
+    fermer();
+    var der = ech[ech.length - 1];
+    out.duree_ms = Math.round(der.t - p0.t);
+    out.progression = s;
+    out.ratio = out.parcouru > 0 ? s / out.parcouru : 1;
+    out.horizontal = Math.hypot(der.x - p0.x, der.z - p0.z);
+    out.ok = !out.reculs.length && !out.corrections.length && out.ratio >= ratioMin;
+    return out;
+  }
+
+  function messageMarche(titre, a, max) {
+    max = max || 12;
+    var l = [titre + ' : ' + a.reculs.length + ' recul(s) au-delà de ' + a.seuilRecul + ' bloc, ' + a.corrections.length + ' correction(s) visible(s) (> ' + a.seuilCorrection +
+      ' bloc), progression ' + a.progression.toFixed(2) + ' bloc pour ' + a.parcouru.toFixed(2) + ' parcourus (' + (a.ratio * 100).toFixed(1) + ' %, minimum ' + (a.ratioMin * 100) +
+      ' %), recul maximal ' + a.reculMax.toFixed(3) + ' bloc, ' + a.echantillons + ' relevés en ' + (a.duree_ms / 1000).toFixed(1) + ' s, ' + a.horizontal.toFixed(1) + ' blocs du départ'];
+    a.reculs.slice(0, max).forEach(function (r) {
+      l.push('  recul t=' + r.t_ms + ' ms  amplitude ' + r.amplitude.toFixed(3) + ' bloc sur ' + r.images + ' image(s)  Δ=' + (r.vecteur ? vec(r.vecteur) : '?') +
+        '  cumul=' + (r.cumul ? vec(r.cumul) : '?') + '  intervalle=' + (r.intervalle_ms === null ? '—' : r.intervalle_ms + ' ms') + '  ← ' + r.source + (r.info ? '  [' + r.info + ']' : ''));
+    });
+    if (a.reculs.length > max) l.push('  … ' + (a.reculs.length - max) + ' autre(s) recul(s)');
+    a.corrections.slice(0, max).forEach(function (c) {
+      l.push('  correction t=' + c.t_ms + ' ms  écart ' + c.ecart.toFixed(3) + ' bloc  ← ' + c.source + (c.info ? '  [' + c.info + ']' : ''));
+    });
+    if (a.corrections.length > max) l.push('  … ' + (a.corrections.length - max) + ' autre(s) correction(s)');
+    return l.join('\n');
+  }
+
   /* Stabilité d'une valeur (bloc, signature d'inventaire, contenu de coffre)
      échantillonnée à chaque image APRÈS l'action : `ech` = [{ t, v }] (v
      comparé par égalité stricte — sérialiser avant). Rend { ok, changements,
@@ -167,6 +260,8 @@
   var API = {
     TOLERANCE: TOLERANCE, SEUIL_PAS: SEUIL_PAS,
     analyserPositions: analyserPositions, messagePositions: messagePositions, sourceProbable: sourceProbable,
+    SEUIL_RECUL: SEUIL_RECUL, SEUIL_CORRECTION: SEUIL_CORRECTION, RATIO_MIN: RATIO_MIN,
+    analyserMarche: analyserMarche, messageMarche: messageMarche,
     analyserStabilite: analyserStabilite, resumerMessages: resumerMessages,
     resumerInventaire: resumerInventaire, comparerInventaires: comparerInventaires, messageInventaires: messageInventaires,
   };
