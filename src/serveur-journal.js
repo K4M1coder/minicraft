@@ -122,17 +122,25 @@
          c'est un journal qui levait à chaque ligne qui faisait boucler) ;
        - la même panne répétée n'écrit pas N lignes : la première en entier,
          puis une ligne de compte au plus toutes les `regroupementMs` ;
+       - des pannes qui VARIENT (identifiant, coordonnée dans le message)
+         n'écrivent pas une pile chacune : au plus `lignesMax` lignes par
+         `regroupementMs`, le reste est compté et résumé en une ligne
+         (« N pannes différentes non écrites ») à la fenêtre suivante ;
+       - une horloge qui RECULE (NTP, veille, changement d'heure) remet les
+         fenêtres à zéro : un écart négatif n'est jamais pris pour une tempête ;
+       - l'échec de la sauvegarde de secours a son propre code (E-SERV-009) ;
        - la sauvegarde de secours (synchrone et atomique) : la première tout de
          suite, puis au plus une toutes les `sauvegardeMs` ;
        - au-delà de `max` pannes en `fenetreMs` (une tempête : le processus ne
          fait plus que ça), une dernière sauvegarde, une ligne E-SERV-008, et
          l'arrêt du processus avec le code `codeArret`. */
-  const GARDIEN = { max: 200, fenetreMs: 5000, sauvegardeMs: 30000, regroupementMs: 30000, codeArret: 70 };
+  const GARDIEN = { max: 200, fenetreMs: 5000, sauvegardeMs: 30000, regroupementMs: 30000, lignesMax: 20, codeArret: 70 };
   function gardienPannes(o) {
     const reglage = Object.assign({}, GARDIEN, o.reglage || {});
     const etat = { pannes: 0, ignorees: 0, lignes: 0, sauvegardes: 0, arret: false };
     const recentes = [];                         // instants des dernières pannes (au plus max)
-    let enCours = false, derniereSauvegarde = null, courante = null;
+    let enCours = false, derniereSauvegarde = null, courante = null, derniere = null;
+    const budget = { debut: null, ecrites: 0, tues: 0, resume: '' };   // lignes de la fenêtre de regroupement en cours
     function horloge() { try { const t = o.horloge(); return typeof t === 'number' && isFinite(t) ? t : 0; } catch (e) { return 0; } }
     function ecrire(niveau, texte, code) { etat.lignes++; try { o.journaliser(niveau, texte, code); } catch (e) { /* un journal en panne ne fait pas boucler */ } }
     function texteDe(x) { try { return String((x && x.stack) || x); } catch (e) { return '(panne illisible)'; } }
@@ -143,11 +151,23 @@
     }
     function sauvegarder() {
       etat.sauvegardes++;
-      try { o.sauvegarder(); } catch (e) { ecrire('error', 'échec de la sauvegarde de secours : ' + texteDe(e && e.message || e).slice(0, 300), 'E-SERV-007'); }
+      try { o.sauvegarder(); } catch (e) { ecrire('error', 'échec de la sauvegarde de secours : ' + texteDe(e && e.message || e).slice(0, 300), 'E-SERV-009'); }
+    }
+    /* Une ligne E-SERV-007 (pile ou compte) dans la limite de la fenêtre ;
+       au-delà, la panne est seulement comptée. */
+    function ecrireBorne(texte, pannes, resume) {
+      if (budget.ecrites >= reglage.lignesMax) { budget.tues += pannes; budget.resume = resume; return false; }
+      budget.ecrites++;
+      ecrire('error', texte, 'E-SERV-007');
+      return true;
+    }
+    function solderBudget(t) {
+      if (budget.tues > 0) ecrire('error', `${budget.tues} pannes différentes non écrites en ${Math.round((t - budget.debut) / 1000)} s (au plus ${reglage.lignesMax} lignes par ${reglage.regroupementMs / 1000} s) — la dernière : ${budget.resume}`, 'E-SERV-007');
+      budget.debut = t; budget.ecrites = 0; budget.tues = 0; budget.resume = '';
     }
     function compte(t) {
       if (!courante || courante.repetitions === 0) return;
-      ecrire('error', `${courante.libelle} : la même panne s'est répétée ${courante.repetitions} fois en ${Math.round((t - courante.debut) / 1000)} s — ${courante.resume}`, 'E-SERV-007');
+      ecrireBorne(`${courante.libelle} : la même panne s'est répétée ${courante.repetitions} fois en ${Math.round((t - courante.debut) / 1000)} s — ${courante.resume}`, courante.repetitions, courante.resume);
       courante.repetitions = 0; courante.debut = t;
     }
     function signaler(libelle, panne, opts) {
@@ -156,11 +176,22 @@
       enCours = true;
       try {
         const t = horloge();
+        if (derniere !== null && t < derniere) {
+          // l'horloge a reculé : les fenêtres repartent de maintenant
+          recentes.length = 0;
+          if (courante) courante.debut = t;
+          if (derniereSauvegarde !== null) derniereSauvegarde = t - reglage.sauvegardeMs;
+          budget.debut = t;
+        }
+        derniere = t;
+        if (budget.debut === null) budget.debut = t;
+        else if (t - budget.debut >= reglage.regroupementMs) solderBudget(t);
         recentes.push(t);
         if (recentes.length > reglage.max) recentes.shift();
         if (recentes.length >= reglage.max && t - recentes[0] <= reglage.fenetreMs) {
           etat.arret = true;
           compte(t);
+          solderBudget(t);
           ecrire('fatal', `E-SERV-008 tempête de pannes : ${reglage.max} en moins de ${reglage.fenetreMs / 1000} s (dernière : ${resumeDe(panne)}) — dernière sauvegarde puis arrêt du processus (code ${reglage.codeArret})`, 'E-SERV-008');
           sauvegarder();
           try { o.arreter(reglage.codeArret); } catch (e) { /* rien de plus à faire */ }
@@ -173,7 +204,7 @@
         } else {
           compte(t);
           courante = { libelle, resume, debut: t, repetitions: 0 };
-          ecrire('error', `${libelle} : ${texteDe(panne)}`, 'E-SERV-007');
+          ecrireBorne(`${libelle} : ${texteDe(panne)}`, 1, resume);
         }
         if (opts && opts.sauvegarde && (derniereSauvegarde === null || t - derniereSauvegarde >= reglage.sauvegardeMs)) {
           derniereSauvegarde = t;

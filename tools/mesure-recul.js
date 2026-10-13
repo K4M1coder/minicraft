@@ -328,8 +328,13 @@ async function mesurer(o) {
     const dateFin = Date.now();
     clearInterval(iv); iv = null;
     let stats = null;
-    await dodo(600);
-    try { stats = JSON.parse(fs.readFileSync(fichierStats, 'utf8')); } catch (e) { stats = null; }
+    /* Le préchargement réécrit ce fichier toutes les 500 ms, sans écriture
+       atomique : une lecture peut tomber sur un fichier absent (serveur chargé)
+       ou à moitié écrit. On relit jusqu'à 5 s avant de conclure. */
+    for (let essai = 0; essai < 25 && !(stats && stats.enveloppe); essai++) {
+      await dodo(essai === 0 ? 600 : 200);
+      try { stats = JSON.parse(fs.readFileSync(fichierStats, 'utf8')); } catch (e) { stats = null; }
+    }
     /* Le préchargement reconnaît la boucle de simulation à son texte (/dernier/ et
        /0\.25/). Si server.js change de forme, il ne l'enveloppe plus : sans tics
        relevés ni blocage injecté, la mesure serait fausse — on le dit clairement. */

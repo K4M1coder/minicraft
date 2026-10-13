@@ -197,6 +197,46 @@
       A.deep(lent.arrets, [], '400 pannes à 33 par seconde : le serveur continue');
     });
 
+    it('SPEC-SECU-002 : gardienPannes — une horloge qui recule (NTP, veille, changement d\'heure) n\'est jamais prise pour une tempête', function () {
+      var f = gardienFactice();
+      for (var i = 0; i < 200; i++) { f.t.maintenant += 60000; f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('e' + i)); }
+      A.deep(f.arrets, [], '200 pannes espacées d\'une minute : pas de tempête');
+      f.t.maintenant -= 86400000;
+      f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('après le recul'));
+      A.deep(f.arrets, [], 'l\'horloge recule d\'un jour : écart négatif, pas une tempête');
+      // et une vraie tempête après le recul est toujours vue
+      for (var k = 0; k < 200; k++) { f.t.maintenant += 1; f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('boucle')); }
+      A.deep(f.arrets, [70], 'une tempête après le recul arrête toujours le serveur');
+    });
+
+    it('SPEC-SECU-002 : gardienPannes — des pannes qui varient (identifiant, coordonnée) sous le seuil de tempête n\'écrivent pas une pile chacune', function () {
+      var f = gardienFactice();
+      for (var i = 0; i < 150; i++) { f.t.maintenant += 33; f.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('bloc ' + i + ' introuvable')); }
+      A.deep(f.arrets, [], '150 pannes en 5 s : sous le seuil, le serveur continue');
+      var piles = f.lignes.filter(function (l) { return /\n    at /.test(l.texte); });
+      A.ok(piles.length <= MC.ServeurJournal.GARDIEN.lignesMax, piles.length + ' piles écrites en 5 s (au plus ' + MC.ServeurJournal.GARDIEN.lignesMax + ')');
+      // 33 pannes différentes par seconde (juste sous le seuil) pendant 2 min : le journal reste borné, le compte des pannes tues est écrit
+      var g = gardienFactice();
+      for (var k = 0; k < 4000; k++) { g.t.maintenant += 30; g.g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('entité ' + k)); }
+      A.deep(g.arrets, [], 'sous le seuil de tempête : le serveur continue');
+      A.ok(g.lignes.length <= 5 * (MC.ServeurJournal.GARDIEN.lignesMax + 2), g.lignes.length + ' lignes en 2 min (bornées par fenêtre de 30 s)');
+      A.ok(g.lignes.some(function (l) { return /pannes différentes non écrites/.test(l.texte) && l.code === 'E-SERV-007'; }), 'une ligne de compte dit combien de pannes ont été tues');
+    });
+
+    it('SPEC-SECU-002 : gardienPannes — l\'échec de la sauvegarde de secours a son propre code (E-SERV-009)', function () {
+      var lignes = [];
+      var g = MC.ServeurJournal.gardienPannes({
+        horloge: function () { return 0; },
+        journaliser: function (niveau, texte, code) { lignes.push({ niveau: niveau, texte: texte, code: code }); },
+        sauvegarder: function () { throw new Error('disque plein'); }, arreter: function () {},
+      });
+      g.signaler('EXCEPTION NON RATTRAPÉE (le serveur continue)', panne('boum'), { sauvegarde: true });
+      var echec = lignes.filter(function (l) { return /échec de la sauvegarde de secours/.test(l.texte); });
+      A.equal(echec.length, 1);
+      A.equal(echec[0].code, 'E-SERV-009');
+      A.ok(/disque plein/.test(echec[0].texte), echec[0].texte);
+    });
+
     it('SPEC-SECU-002 : serveur-journal — l\'évènement « error » de la sortie standard coupe la console du journal au lieu de devenir une exception non rattrapée', function () {
       var ecouteurs = {}, signalees = [];
       function flux(nom) { return { on: function (ev, f) { ecouteurs[nom + ':' + ev] = f; } }; }

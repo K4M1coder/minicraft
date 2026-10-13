@@ -85,7 +85,7 @@
          MARCHE de 20 s, jamais tirée en arrière, en trois conditions (serveur
          normal, navigateur ralenti ×4 par CDP, serveur à console morte). */
       nom: 'jouabilite',
-      description: 'Jouabilité : le joueur ne bouge pas tout seul, n\'est jamais tiré en arrière en marchant (serveur normal, navigateur ralenti, console morte), rien ne s\'annule (blocs, inventaire, coffres) — e2e sur un vrai serveur, plus leur analyse',
+      description: 'Jouabilité : le joueur ne bouge pas tout seul, n\'est jamais tiré en arrière en marchant (serveur normal, navigateur ralenti, console morte), rien ne s\'annule (blocs, inventaire, coffres) — e2e sur un vrai serveur, plus leur analyse ; lancé à la demande, par aucun crochet (ni pr ni e2e-fumee)',
       pour: ['testeur', 'developpeur'],
       criteres: { domaines: ['JOUABLE'] },
     },

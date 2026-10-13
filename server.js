@@ -302,7 +302,7 @@ if (process.env.MC_TEST_ARRET_SI_MORT) {
    arrêt (code 70, E-SERV-008) sur une tempête de pannes — jamais un serveur
    qui tourne des jours dans le vide. */
 const gardien = MC.ServeurJournal.gardienPannes({
-  horloge: () => Date.now(),
+  horloge: () => performance.now(),   // monotone : un recul de l'horloge murale ne fausse pas les fenêtres
   journaliser: (niveau, texte, code) => logServeur[niveau](texte, null, null, { code }),
   sauvegarder: () => sauvegarderMondeSync(),
   arreter: (code) => process.exit(code),

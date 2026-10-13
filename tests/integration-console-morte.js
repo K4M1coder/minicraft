@@ -87,7 +87,7 @@ async function scenarioMorte() {
   ok(etatsParS >= 40, 'SPEC-SECU-002 : cadence d\'ETAT normale (' + etatsParS.toFixed(1) + '/s, attendu ≈ 60 ; avant : ≈ 15)');
   ok(res.serveur && res.serveur.ecartP95Ms < 60 && res.serveur.pendant.ticsLongs === 0, 'SPEC-SECU-002 : les tics du serveur gardent leur cadence (écart p95 ' + (res.serveur && res.serveur.ecartP95Ms) + ' ms, aucun tic > 250 ms)', JSON.stringify(res.serveur));
   ok(res.retardMax <= 4, 'SPEC-SECU-002 : les entrées du client sont acquittées sans retard (' + res.retardMax + ' en attente au plus ; avant : 7)');
-  ok(res.reculMax <= 0.05, 'SPEC-SECU-002 : le joueur qui marche ne revient pas sur ses pas (recul max ' + res.reculMax + ' bloc)');
+  ok(res.reculMax <= 0.05, 'SPEC-SECU-002 (témoin, ne discrimine pas seul) : le client émulé qui marche ne revient pas sur ses pas (recul max ' + res.reculMax + ' bloc) — le recul ne se voit qu’en vrai navigateur sur disque lent (tests/e2e-jouabilite.js, préréglage jouabilite) ; ici ce sont les vérifications de cause ci-dessus qui rougissent sans le correctif');
   ok(res.deplacement > 10, 'préparation : le client a vraiment marché (' + res.deplacement + ' blocs)');
 }
 
