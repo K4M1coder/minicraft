@@ -12,7 +12,7 @@
 
    Chargé par `node -r tools/precharge-disque-lent.js server.js …` avec
    MC_DISQUE_LENT_DOSSIER=<dossier> (seuls ses fichiers sont ralentis). Réservé
-   aux tests (banc : POST /tests/serveur-jeu { consoleMorte, disqueLentMs }) ;
+   aux tests (banc : POST /tests/serveur-jeu { conditions: { consoleMorte, disqueLentMs } }) ;
    jamais en exploitation. Ne change rien au serveur : il reproduit aussi le
    défaut sur une ancienne version. */
 'use strict';

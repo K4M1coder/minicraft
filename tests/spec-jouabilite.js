@@ -412,10 +412,10 @@
       var i = src.indexOf('function traiterServeurJeuTest(');
       var suite = /\n\s*(?:async\s+)?function \w+\(|\n\s*MC\.\w+ = \{/.exec(src.slice(i + 1));
       var corps = src.slice(i, suite ? i + 1 + suite.index : undefined);
-      A.ok(/corps\.consoleMorte === true/.test(corps), 'option explicite consoleMorte: true');
+      A.ok(/conditions\.consoleMorte === true/.test(corps), 'condition explicite conditions.consoleMorte: true (nom des conditions dégradées du lot SCENARIO à venir)');
       A.ok(/\['--require', PRECHARGE_CONSOLE_MORTE\]/.test(corps) && /stdio: consoleMorte \? \['ignore', fdSortie, fdSortie\]/.test(corps), 'préchargement tools/precharge-console-morte.js, sortie standard FICHIER');
       A.ok(/MC_JOURNAL_DOSSIER: cm\.journaux/.test(corps) && /'--monde', path\.join\(cm\.dossier, 'monde', 'monde\.json'\)/.test(corps), 'journal et monde dans un dossier temporaire');
-      A.ok(/corps\.disqueLentMs > 0 && corps\.disqueLentMs <= 2000/.test(corps), 'disque lent borné à 2 s par écriture');
+      A.ok(/conditions\.disqueLentMs > 0 && conditions\.disqueLentMs <= 2000/.test(corps), 'disque lent borné à 2 s par écriture');
     });
 
     it('SPEC-JOUABLE-001 : tools/precharge-disque-lent.js retient les écritures synchrones de SON dossier, et d\'aucun autre', function () {

@@ -715,7 +715,7 @@
     }
     var p = null;
     try {
-      p = await demarrerPartie(g, 'survie', [], condition.consoleMorte ? { serveur: { consoleMorte: true, disqueLentMs: condition.disqueLentMs }, avantConnexion: tuerConsole } : {});
+      p = await demarrerPartie(g, 'survie', [], condition.consoleMorte ? { serveur: { conditions: { consoleMorte: true, disqueLentMs: condition.disqueLentMs } }, avantConnexion: tuerConsole } : {});
       T.etape('repos');
       /* Le repos (serveur à jour, joueur immobile) n'est qu'un bon départ : un serveur affamé ne
          l'atteint jamais — c'est justement ce qu'on mesure ; un navigateur ralenti non plus (moins

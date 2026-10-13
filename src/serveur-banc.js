@@ -653,8 +653,10 @@
           MC_TEST_BOUCLE_LOCALE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
         });
         if (inv.length) env.MC_TEST_INV = JSON.stringify(inv);
-        // console morte : sortie standard fichier invalidée par le préchargement, journal fichier dans un dossier temporaire
-        const consoleMorte = !!(corps && corps.consoleMorte === true);
+        /* `conditions` (nom des conditions dégradées du lot SCENARIO à venir, PLAN.md) — `consoleMorte: true` : sortie standard
+           fichier invalidée par le préchargement, journal fichier dans un dossier temporaire */
+        const conditions = corps && corps.conditions && typeof corps.conditions === 'object' ? corps.conditions : {};
+        const consoleMorte = conditions.consoleMorte === true;
         let cm = null, fdSortie = null;
         if (consoleMorte) {
           const dossier = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mc-console-morte-'));
@@ -667,7 +669,7 @@
            de la v0.9.0 le réécrivait en synchrone à chaque tour de sa boucle */
         /* `disqueLentMs` (avec consoleMorte) : le dossier du monde est un disque lent (dossier synchronisé,
            comme le serveur empaqueté de la v0.9.0 dans OneDrive) — tools/precharge-disque-lent.js */
-        const disqueLentMs = consoleMorte && Number.isInteger(corps.disqueLentMs) && corps.disqueLentMs > 0 && corps.disqueLentMs <= 2000 ? corps.disqueLentMs : 0;
+        const disqueLentMs = consoleMorte && Number.isInteger(conditions.disqueLentMs) && conditions.disqueLentMs > 0 && conditions.disqueLentMs <= 2000 ? conditions.disqueLentMs : 0;
         if (disqueLentMs) Object.assign(env, { MC_DISQUE_LENT_DOSSIER: path.join(cm.dossier, 'monde'), MC_DISQUE_LENT_MS: String(disqueLentMs) });
         const args = (consoleMorte ? ['--require', PRECHARGE_CONSOLE_MORTE] : [])
           .concat(disqueLentMs ? ['--require', path.join(RACINE, 'tools', 'precharge-disque-lent.js')] : [])
