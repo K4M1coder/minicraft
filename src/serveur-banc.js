@@ -552,16 +552,51 @@
        de ce que le client affiche. */
     let serveurJeuTest = null;
     let journalJeuTest = '';            // sortie du dernier serveur de jeu de test (bornée), gardée après son arrêt
+    let consoleMorteJeuTest = null;     // état de la console du dernier serveur lancé avec `consoleMorte` (gardé après son arrêt)
     function arreterServeurJeuTest() {
       if (serveurJeuTest) { try { serveurJeuTest.enfant.kill(); } catch (e) { /* déjà parti */ } serveurJeuTest = null; }
     }
+    /* `consoleMorte: true` (e2e de la marche, SPEC-JOUABLE-001, SPEC-SECU-002) : le serveur de jeu
+       reçoit une sortie standard FICHIER que tools/precharge-console-morte.js rend invalide peu
+       après sa ligne MC_PORT= — comme un serveur relancé par une bascule de partie dont la console
+       a disparu. Son journal fichier (MC_JOURNAL_DOSSIER) est dans un dossier temporaire, relu ici
+       par la fin (au plus 1 Mio) : taille, exceptions non rattrapées, notes E-JOURNAL-001. */
+    const PRECHARGE_CONSOLE_MORTE = path.join(RACINE, 'tools', 'precharge-console-morte.js');
+    const lireFin = (f, max) => {
+      let fd = null;
+      try {
+        fd = fs.openSync(f, 'r');
+        const taille = fs.fstatSync(fd).size, n = Math.min(taille, max), tampon = Buffer.alloc(n);
+        fs.readSync(fd, tampon, 0, n, taille - n);
+        return { taille, texte: tampon.toString('utf8') };
+      } catch (e) { return { taille: 0, texte: '' }; } finally { if (fd !== null) { try { fs.closeSync(fd); } catch (e) { /* déjà fermé */ } } }
+    };
+    const etatConsoleMorte = (cm) => {
+      if (!cm) return null;
+      let fichiers = [];
+      try { fichiers = fs.readdirSync(cm.journaux).filter(f => /\.log$/.test(f)).sort(); } catch (e) { fichiers = []; }
+      let octets = 0, fin = '';
+      fichiers.forEach((f) => { const r = lireFin(path.join(cm.journaux, f), 1 << 20); octets += r.taille; fin = (fin + r.texte).slice(-(1 << 20)); });
+      let morte = false;
+      try { morte = fs.existsSync(cm.temoin); } catch (e) { morte = false; }
+      return {
+        morte, journalOctets: octets, sortieOctets: lireFin(cm.sortie, 0).taille,
+        exceptionsFin1Mio: (fin.match(/EXCEPTION NON RATTRAP/g) || []).length,
+        ebadfFin1Mio: (fin.match(/EBADF/g) || []).length,
+        notesConsole: (fin.match(/E-JOURNAL-001/g) || []).length,
+        // « sol d un joueur généré d un coup après X s d attente » : le joueur a attendu son terrain côté serveur
+        attentesSol: (fin.match(/sol d un joueur généré d un coup après [\d.]+ s/g) || []).map(l => parseFloat(/après ([\d.]+)/.exec(l)[1])),
+        fin: fin.slice(-4096),
+      };
+    };
     function traiterServeurJeuTest(req, res) {
       if (!PARAMS.tests) return false;
       const refus = refusRequeteLocale(req);
       if (refus) { repondreJSON(res, 403, { ok: false, motif: refus }); return true; }
       const chemin = req.url.split('?')[0];
       if (chemin === '/tests/serveur-jeu/journal') {
-        repondreJSON(res, 200, { ok: true, journal: journalJeuTest });
+        const cm = serveurJeuTest && serveurJeuTest.consoleMorte ? etatConsoleMorte(serveurJeuTest.consoleMorte) : consoleMorteJeuTest;
+        repondreJSON(res, 200, cm ? { ok: true, journal: journalJeuTest + (cm.fin ? '\n' + cm.fin : ''), consoleMorte: cm } : { ok: true, journal: journalJeuTest });
         return true;
       }
       if (chemin === '/tests/serveur-jeu/arreter') {
@@ -618,32 +653,78 @@
           MC_TEST_BOUCLE_LOCALE: '1', MC_TEST_ARRET_SI_MORT: String(process.pid),
         });
         if (inv.length) env.MC_TEST_INV = JSON.stringify(inv);
+        // console morte : sortie standard fichier invalidée par le préchargement, journal fichier dans un dossier temporaire
+        const consoleMorte = !!(corps && corps.consoleMorte === true);
+        let cm = null, fdSortie = null;
+        if (consoleMorte) {
+          const dossier = fs.mkdtempSync(path.join(require('os').tmpdir(), 'mc-console-morte-'));
+          cm = { dossier, sortie: path.join(dossier, 'sortie.txt'), temoin: path.join(dossier, 'morte.pid'), journaux: path.join(dossier, 'logs') };
+          fdSortie = fs.openSync(cm.sortie, 'w+');     // lecture-écriture : le préchargement y relit MC_PORT=
+          Object.assign(env, { MC_CONSOLE_MORTE_TEMOIN: cm.temoin, MC_JOURNAL_DOSSIER: cm.journaux });
+        }
         // SPEC-BANC-103 : `traceReseau: true` — chaque message échangé laisse une ligne dans la sortie du serveur de jeu (journal relu par le banc)
-        const args = [__filename, '--port', '0', '--serveur', '--admin', jeton].concat(corps && corps.traceReseau === true ? ['--journal', 'RESEAU:trace'] : []);
-        const enfant = require('child_process').spawn(process.execPath, args, {
-          cwd: RACINE, stdio: ['ignore', 'pipe', 'pipe'], windowsHide: true, env,
-        });
-        const sj = { enfant, port: 0, jeton };
+        /* console morte : un fichier de monde, comme la partie d'une bascule — le gestionnaire d'exceptions
+           de la v0.9.0 le réécrivait en synchrone à chaque tour de sa boucle */
+        /* `disqueLentMs` (avec consoleMorte) : le dossier du monde est un disque lent (dossier synchronisé,
+           comme le serveur empaqueté de la v0.9.0 dans OneDrive) — tools/precharge-disque-lent.js */
+        const disqueLentMs = consoleMorte && Number.isInteger(corps.disqueLentMs) && corps.disqueLentMs > 0 && corps.disqueLentMs <= 2000 ? corps.disqueLentMs : 0;
+        if (disqueLentMs) Object.assign(env, { MC_DISQUE_LENT_DOSSIER: path.join(cm.dossier, 'monde'), MC_DISQUE_LENT_MS: String(disqueLentMs) });
+        const args = (consoleMorte ? ['--require', PRECHARGE_CONSOLE_MORTE] : [])
+          .concat(disqueLentMs ? ['--require', path.join(RACINE, 'tools', 'precharge-disque-lent.js')] : [])
+          .concat([__filename, '--port', '0', '--serveur', '--admin', jeton])
+          .concat(consoleMorte ? ['--monde', path.join(cm.dossier, 'monde', 'monde.json')] : [])
+          .concat(corps && corps.traceReseau === true ? ['--journal', 'RESEAU:trace'] : []);
+        let enfant;
+        try {
+          enfant = require('child_process').spawn(process.execPath, args, {
+            cwd: RACINE, stdio: consoleMorte ? ['ignore', fdSortie, fdSortie] : ['ignore', 'pipe', 'pipe'], windowsHide: true, env,
+          });
+        } finally { if (fdSortie !== null) fs.closeSync(fdSortie); }
+        const sj = { enfant, port: 0, jeton, consoleMorte: cm };
         serveurJeuTest = sj;
-        let sortie = '', repondu = false;
+        consoleMorteJeuTest = null;
+        let sortie = '', repondu = false, sondeFichier = null;
         const repondre = (code, obj) => { if (repondu) return; repondu = true; clearTimeout(limite); repondreJSON(res, code, obj); };
         const limite = setTimeout(() => { arreterServeurJeuTest(); repondre(504, { ok: false, motif: 'demarrage_trop_long' }); }, 90000);
-        const ecouteSortie = (d) => {
-          sortie += d;
-          const m = /MC_PORT=(\d+)/.exec(sortie);
-          if (!m) return;
-          enfant.stdout.removeListener('data', ecouteSortie);
-          sortie = '';
+        const portLu = (texte) => {
+          const m = /MC_PORT=(\d+)/.exec(texte);
+          if (!m) return false;
           sj.port = parseInt(m[1], 10);
-          repondre(200, { ok: true, port: sj.port, mode, difficulte, graine });
+          repondre(200, { ok: true, port: sj.port, mode, difficulte, graine, consoleMorte, disqueLentMs });
+          return true;
         };
         // le journal du serveur de jeu, borné (les 32 derniers Kio), relu par le banc pour expliquer un échec
         const garder = (d) => { journalJeuTest = (journalJeuTest + d).slice(-32768); };
         journalJeuTest = '';
-        enfant.stdout.on('data', garder);
-        enfant.stdout.on('data', ecouteSortie);
-        enfant.stderr.on('data', garder);
-        enfant.on('exit', () => { if (serveurJeuTest === sj) serveurJeuTest = null; repondre(500, { ok: false, motif: 'serveur_arrete' }); });
+        if (consoleMorte) {
+          // pas de tube : la ligne MC_PORT= est lue dans le fichier de sortie (sondage borné par `limite`)
+          const sonder = () => {
+            const r = lireFin(cm.sortie, 32768);
+            journalJeuTest = r.texte;
+            sondeFichier = portLu(r.texte) || repondu ? null : setTimeout(sonder, 50);
+          };
+          sondeFichier = setTimeout(sonder, 50);
+        } else {
+          const ecouteSortie = (d) => {
+            sortie += d;
+            if (!portLu(sortie)) return;
+            enfant.stdout.removeListener('data', ecouteSortie);
+            sortie = '';
+          };
+          enfant.stdout.on('data', garder);
+          enfant.stdout.on('data', ecouteSortie);
+          enfant.stderr.on('data', garder);
+        }
+        enfant.on('exit', () => {
+          if (sondeFichier) { clearTimeout(sondeFichier); sondeFichier = null; }
+          if (cm) {
+            // gardé pour /tests/serveur-jeu/journal après l'arrêt ; le dossier temporaire est supprimé
+            consoleMorteJeuTest = etatConsoleMorte(cm);
+            try { fs.rmSync(cm.dossier, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 }); } catch (e) { /* fichier encore tenu : le dossier temporaire du système le reprendra */ }
+          }
+          if (serveurJeuTest === sj) serveurJeuTest = null;
+          repondre(500, { ok: false, motif: 'serveur_arrete' });
+        });
       });
       return true;
     }

@@ -407,6 +407,32 @@
       A.ok(/if \((EP\.)?reseauOuvert && !BOUCLE_LOCALE_TEST\)/.test(src), 'ouvert, mais écoute locale en mode test');
     });
 
+    it('SPEC-JOUABLE-001 : le serveur de jeu de test « à console morte » (marche, SPEC-SECU-002) : sortie standard fichier invalidée par le préchargement, monde sur disque, disque lent borné', function () {
+      var src = require('./source-serveur.js').sourceServeur(RACINE);
+      var i = src.indexOf('function traiterServeurJeuTest(');
+      var suite = /\n\s*(?:async\s+)?function \w+\(|\n\s*MC\.\w+ = \{/.exec(src.slice(i + 1));
+      var corps = src.slice(i, suite ? i + 1 + suite.index : undefined);
+      A.ok(/corps\.consoleMorte === true/.test(corps), 'option explicite consoleMorte: true');
+      A.ok(/\['--require', PRECHARGE_CONSOLE_MORTE\]/.test(corps) && /stdio: consoleMorte \? \['ignore', fdSortie, fdSortie\]/.test(corps), 'préchargement tools/precharge-console-morte.js, sortie standard FICHIER');
+      A.ok(/MC_JOURNAL_DOSSIER: cm\.journaux/.test(corps) && /'--monde', path\.join\(cm\.dossier, 'monde', 'monde\.json'\)/.test(corps), 'journal et monde dans un dossier temporaire');
+      A.ok(/corps\.disqueLentMs > 0 && corps\.disqueLentMs <= 2000/.test(corps), 'disque lent borné à 2 s par écriture');
+    });
+
+    it('SPEC-JOUABLE-001 : tools/precharge-disque-lent.js retient les écritures synchrones de SON dossier, et d\'aucun autre', function () {
+      var cp = require('child_process'), os = require('os');
+      var d = fs.mkdtempSync(path.join(os.tmpdir(), 'mc-disque-lent-'));
+      try {
+        fs.mkdirSync(path.join(d, 'lent'));
+        var prog = "const fs=require('fs'),p=require('path'),d=process.argv[1];function m(f){const t=Date.now();fs.writeFileSync(f,'x');fs.renameSync(f,f+'.r');return Date.now()-t;}" +
+          "process.stdout.write(JSON.stringify({lent:m(p.join(d,'lent','a.json')),rapide:m(p.join(d,'b.json'))}))";
+        var r = cp.spawnSync(process.execPath, ['--require', path.join(RACINE, 'tools', 'precharge-disque-lent.js'), '-e', prog, d],
+          { env: Object.assign({}, process.env, { MC_DISQUE_LENT_DOSSIER: path.join(d, 'lent'), MC_DISQUE_LENT_MS: '60' }), encoding: 'utf8', timeout: 20000 });
+        var o = JSON.parse(r.stdout || '{}');
+        A.ok(o.lent >= 110, 'écriture + renommage dans le dossier lent : au moins 2 × 60 ms (' + o.lent + ' ms)');
+        A.ok(o.rapide < 60, 'hors du dossier : rien n\'est retenu (' + o.rapide + ' ms)');
+      } finally { fs.rmSync(d, { recursive: true, force: true }); }
+    });
+
     it('SPEC-JOUABLE-006 : le serveur lance l\'objet d\'un INV_LACHER devant le joueur (lancerDevant), un trop-plein tombe toujours aux pieds', function () {
       var src = require('./source-serveur.js').sourceServeur(RACINE);   // server.js et ses modules (SPEC-SERVEUR-008)
       A.ok(/op\.k === 'lacher' \? lancerDevant : lacherAuxPieds/.test(src), 'traiterOp choisit lancerDevant pour un lâcher');

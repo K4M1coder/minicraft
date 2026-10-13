@@ -106,4 +106,51 @@
       A.ok(fumee && fumee.pour.indexOf('crochet') >= 0, 'e2e-fumee est bien utilisable par un crochet git (pre-push)');
     });
   });
+
+  // ══════════════════════════════════════════════════════════════════════════
+  // Pilote CDP offert à la page : ralentir le processeur (e2e de la marche)
+  // ══════════════════════════════════════════════════════════════════════════
+  describe('Specs — pilote CDP de la page : ralentir le processeur, rien d\'autre (SPEC-BANC-023)', function () {
+    /* Une fausse session CDP SYNCHRONE : `envoyer` note la commande et rend un « thenable » résolu
+       sur-le-champ (le harnais est synchrone, voir l'en-tête). */
+    function fausseSession() {
+      var s = { envois: [], ecouteurs: {} };
+      function resolu() { return { then: function (ok) { if (ok) ok({}); return this; }, catch: function () { return this; } }; }
+      s.sur = function (m, fn) { (s.ecouteurs[m] = s.ecouteurs[m] || []).push(fn); };
+      s.envoyer = function (m, p) { s.envois.push({ m: m, p: p }); return resolu(); };
+      s.appeler = function (payload) { (s.ecouteurs['Runtime.bindingCalled'] || []).forEach(function (fn) { fn({ name: E2EH.BINDING_PILOTE, payload: payload, executionContextId: 3 }); }); };
+      return s;
+    }
+
+    it('SPEC-BANC-023 : la page obtient un ralentissement borné du processeur, avec sa réponse écrite dans la page qui l\'a demandé', function () {
+      var s = fausseSession();
+      E2EH.installerPiloteCDP(s);
+      A.ok(s.envois.some(function (e) { return e.m === 'Runtime.addBinding' && e.p.name === 'mcPiloteCDP'; }), 'binding posé (window.mcPiloteCDP)');
+      s.appeler(JSON.stringify({ id: 'a1', action: 'ralentirCPU', taux: 4 }));
+      var ral = s.envois.filter(function (e) { return e.m === 'Emulation.setCPUThrottlingRate'; });
+      A.equal(ral.length, 1, 'une commande de ralentissement');
+      A.equal(ral[0].p.rate, 4, 'au taux demandé');
+      var rep = s.envois.filter(function (e) { return e.m === 'Runtime.evaluate'; }).pop();
+      A.ok(rep && /__mcPiloteReponses/.test(rep.p.expression) && /"a1"/.test(rep.p.expression) && /"ok":true/.test(rep.p.expression) && rep.p.contextId === 3,
+        'la réponse est écrite dans la page qui a demandé : ' + (rep && rep.p.expression));
+      // remise à 1 après chaque test : executerCampagne appelle pilote.remettre() juste après executerUnTest
+      var src = fs.readFileSync(path.join(RACINE, 'tools', 'e2e-headless.js'), 'utf8');
+      A.ok(/executerUnTest\(session, portServeur, test, opts\);\s*\n\s*await pilote\.remettre\(\);/.test(src), 'le taux est remis à 1 après chaque test (un test ralenti ne ralentit jamais le suivant)');
+    });
+
+    it('SPEC-BANC-023 : toute autre demande (action inconnue, taux hors de 1 à 20, sans id) est refusée sans rien envoyer au navigateur', function () {
+      var s = fausseSession();
+      E2EH.installerPiloteCDP(s);
+      var avant = s.envois.length;
+      s.appeler(JSON.stringify({ id: 'b1', action: 'Page.navigate', url: 'https://exemple.invalid' }));
+      s.appeler(JSON.stringify({ id: 'b2', action: 'ralentirCPU', taux: 50 }));
+      s.appeler(JSON.stringify({ id: 'b3', action: 'ralentirCPU', taux: '4' }));
+      s.appeler(JSON.stringify({ action: 'ralentirCPU', taux: 4 }));
+      s.appeler('pas du json');
+      var apres = s.envois.slice(avant);
+      A.equal(apres.filter(function (e) { return e.m !== 'Runtime.evaluate'; }).length, 0, 'aucune commande autre que la réponse : ' + JSON.stringify(apres.map(function (e) { return e.m; })));
+      A.equal(apres.length, 3, 'une réponse de refus pour chaque demande identifiée (b1, b2, b3)');
+      apres.forEach(function (e) { A.ok(/"ok":false/.test(e.p.expression) && /action refusée/.test(e.p.expression), e.p.expression); });
+    });
+  });
 })(typeof globalThis !== 'undefined' ? globalThis : this);

@@ -115,6 +115,40 @@ async function demarrerServeurTest(port, delaiMs) {
   return processus;
 }
 
+/* Pilote CDP offert à la page (e2e de la marche, tests/e2e-jouabilite.js) : une page ne peut pas
+   ralentir son propre processeur. Runtime.addBinding pose `window.mcPiloteCDP(json)` (il survit aux
+   navigations) ; la page y demande { id, action: 'ralentirCPU', taux } et lit la réponse dans
+   `window.__mcPiloteReponses[id]`. Seule cette action, au taux borné de 1 à 20, est acceptée : la
+   page ne pilote rien d'autre du navigateur. Le taux est remis à 1 après chaque test (`remettre`). */
+const BINDING_PILOTE = 'mcPiloteCDP';
+async function installerPiloteCDP(session) {
+  const pilote = { taux: 1 };
+  session.sur('Runtime.bindingCalled', (p) => {
+    if (!p || p.name !== BINDING_PILOTE) return;
+    let dem = null;
+    try { dem = JSON.parse(p.payload); } catch (e) { return; }
+    const id = dem && (typeof dem.id === 'string' || typeof dem.id === 'number') ? String(dem.id) : null;
+    if (id === null) return;
+    const repondre = (rep) => session.envoyer('Runtime.evaluate', {
+      expression: '(window.__mcPiloteReponses = window.__mcPiloteReponses || {})[' + JSON.stringify(id) + '] = ' + JSON.stringify(rep),
+      contextId: p.executionContextId,
+    }, 5000).catch(() => { /* page partie entre-temps */ });
+    const taux = dem && dem.taux;
+    if (!dem || dem.action !== 'ralentirCPU' || typeof taux !== 'number' || !(taux >= 1 && taux <= 20)) {
+      repondre({ ok: false, motif: 'action refusée (seule ralentirCPU, taux de 1 à 20)' });
+      return;
+    }
+    session.envoyer('Emulation.setCPUThrottlingRate', { rate: taux }, 10000)
+      .then(() => { pilote.taux = taux; repondre({ ok: true, taux }); }, (e) => repondre({ ok: false, motif: e.message }));
+  });
+  await session.envoyer('Runtime.addBinding', { name: BINDING_PILOTE }, 5000);
+  pilote.remettre = async () => {
+    if (pilote.taux === 1) return;
+    try { await session.envoyer('Emulation.setCPUThrottlingRate', { rate: 1 }, 10000); pilote.taux = 1; } catch (e) { /* session perdue */ }
+  };
+  return pilote;
+}
+
 function arreterServeurTest(processus) {
   if (!processus || processus.killed) return;
   try { processus.kill(); } catch (e) { /* déjà mort */ }
@@ -332,6 +366,8 @@ async function executerCampagne(selection, options) {
        le charge déjà, mais une autre page testée (le jeu lui-même) en profite aussi. */
     const collecteur = new DIAG.CollecteurCDP(session, { max: MAX_MESSAGES_CONSOLE });
     await collecteur.attacher({ scriptNouveauDocument: fs.readFileSync(path.join(RACINE, 'tests', 'erreurs-page.js'), 'utf8') });
+    // avant la navigation : la page du banc trouve le pilote dès son chargement
+    const pilote = await installerPiloteCDP(session).catch(() => ({ remettre: async () => {} }));
     // la cible « navigateur » : SystemInfo (GPU, pilote) et Tracing ne se trouvent pas sur la cible d'une page
     let infoGpuProcessus = null;
     if (infoVersion && infoVersion.webSocketDebuggerUrl) {
@@ -398,6 +434,7 @@ async function executerCampagne(selection, options) {
       opts.ecrire('  ▶ ' + test.nom);
       collecteur.debutTest();
       const r = await executerUnTest(session, portServeur, test, opts);
+      await pilote.remettre();      // un test ralenti ne ralentit jamais le suivant
       opts.ecrire((r.etat === 'ok' ? '    ✓ ' : '    ✗ ') + test.nom + ' (' + r.duree_ms + ' ms)');
       const vuDuNavigateur = collecteur.finTest();
       let message = r.message;
@@ -543,4 +580,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { executerCampagne, accelerationDepuisRenderer };
+module.exports = { executerCampagne, accelerationDepuisRenderer, installerPiloteCDP, BINDING_PILOTE };
