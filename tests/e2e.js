@@ -267,6 +267,8 @@
      d'écran) sont enveloppées pour la durée du test : un témoin « avant » (pris
      tout de suite) et un « après » (deux images plus tard). Restaurées à la
      conclusion. */
+  // noms internes des états de l'API → ce que le joueur voit
+  var LIBELLES_ETAT = { playing: 'partie en cours', ui: 'inventaire ou écran ouvert', menu: 'menu principal', paused: 'pause' };
   function envelopperActions(g, c) {
     var defs = [
       [g.player, 'useOn', 'poser ou utiliser un bloc (clic droit)', true],
@@ -275,7 +277,7 @@
       [g.player, 'dropSelected', 'jeter l\'objet tenu', true],
       [g.player, 'hurt', 'subir des dégâts', true],
       [g.player, 'respawn', 'réapparaître', true],
-      [g.input, 'setState', 'changer d\'écran', false],
+      [g.input, 'setState', 'changer d\'écran', true],
     ];
     var poses = [];
     defs.forEach(function (d) {
@@ -283,8 +285,13 @@
       if (!obj || typeof obj[nom] !== 'function') return;
       var orig = obj[nom];
       var env = function () {
-        var etat = (nom === 'setState') ? ' → ' + arguments[0] : '';
-        if (avant) temoinAvant('avant : ' + lib);
+        var etat = '', libAvant = lib;
+        if (nom === 'setState') {
+          var cible = String(arguments[0]);
+          etat = ' : ' + (LIBELLES_ETAT[cible] || cible);
+          libAvant = 'écran « ' + (LIBELLES_ETAT[this && this.state] || (this && this.state) || '?') + ' »';
+        }
+        if (avant) temoinAvant('avant : ' + libAvant);
         var r = orig.apply(this, arguments);
         temoin('action', 'après : ' + lib + etat, 2);
         return r;
@@ -649,7 +656,7 @@
     s.yaw = 0; s.pitch = 0;
     g.streamChunks(true);
     await frames(3);
-    temoin('action', 'état de départ : joueur au sol au point d\'apparition, inventaire vide', 0);
+    temoin('action', 'départ : joueur au sol, inventaire vide', 0);
     return s;
   }
 
@@ -5153,10 +5160,74 @@
         if (i > 0 && i < distinctes.length - 1) A.ok(!vues[c.base64], 'aucune image automatique en double : ' + c.libelle);
         vues[c.base64] = true;
       });
+      A.ok(!libelles.some(function (l) { return /KeyW/.test(l); }), 'les touches de déplacement (KeyW) ne déclenchent aucun témoin d\'action : ' + libelles.join(' | '));
       A.equal(distinctes[0].libelle, 'début', 'la première est « début »');
       A.equal(distinctes[distinctes.length - 1].libelle, 'fin', 'la dernière est « fin »');
       var t = distinctes.map(function (c) { return c.t_ms; });
       A.ok(t.every(function (x, i) { return i === 0 || x >= t[i - 1]; }), 'dans l\'ordre chronologique');
+    });
+
+  /* SPEC-BANC-026 : un test dispensé (captureAuto:false) ne reçoit aucun témoin
+     automatique ; et les plafonds par famille tiennent (faux tests imbriqués). */
+  e2e('SPEC-BANC-026 : la dispense captureAuto:false supprime les témoins automatiques',
+    { teste: 'qu\'un test portant fiche.captureAuto === false ne reçoit que ses captures explicites, début et fin',
+      pourquoi: 'les tests qui mesurent le temps d\'image (SPEC-RENDU-006, SPEC-JOUABLE-001/002) seraient faussés par un rendu ou un encodage de plus',
+      attendu: 'seulement « début » et « fin », malgré des touches, une assertion commentée et une attente de plus de 2 s' },
+    async function (g) {
+      await reset(g);
+      var enComptePrecedent = enCours;
+      var faux = {
+        id: 'demo-dispense-interne', name: 'faux test dispensé de témoins (interne, jamais listé dans une vraie campagne)',
+        fiche: { captureAuto: false },
+        fn: async function (gg) {
+          key('KeyE');
+          await frames(3);
+          A.ok(true, 'inventaire ouvert par E');
+          key('KeyE');
+          fakeLock(gg, true);
+          await frames(2);
+          gg.player.state.yaw += 1.2;
+          await wait(2600);
+          A.ok(true, 'attente terminée');
+        },
+      };
+      var res = await runUnE2E(g, faux, { delaiDefaut: 60 });
+      enCours = enComptePrecedent;
+      A.equal(res.etat, 'reussi', 'le faux test se termine normalement : ' + res.message);
+      var libelles = res.captures.filter(function (c) { return c.role !== 'triplet'; }).map(function (c) { return c.libelle; });
+      A.ok(libelles.every(function (l) { return l === 'début' || l === 'fin'; }), 'aucun témoin automatique pour un test dispensé : ' + libelles.join(' | '));
+    });
+
+  e2e('SPEC-BANC-026 : les plafonds des témoins par famille tiennent même quand chaque image est inédite',
+    { teste: 'que le nombre de témoins « action » et « preuve » ne dépasse jamais POLITIQUE.max, même si chaque touche et chaque assertion montre une image différente',
+      pourquoi: 'les plafonds sont la garantie sur le poids du registre et sur le surcoût de la campagne',
+      attendu: 'au plus 12 témoins d\'action et 5 témoins de preuve pour un faux test qui en déclencherait 20 de chaque' },
+    async function (g) {
+      await reset(g);
+      var enComptePrecedent = enCours;
+      var faux = {
+        id: 'demo-plafonds-interne', name: 'faux test bavard de témoins (interne, jamais listé dans une vraie campagne)',
+        fn: async function (gg) {
+          fakeLock(gg, true);
+          await frames(2);
+          for (var i = 0; i < 20; i++) {
+            gg.player.state.yaw += 0.35;
+            await frames(2);
+            key('KeyU');
+            await frames(3);
+            A.ok(true, 'assertion commentée numéro ' + i);
+          }
+        },
+      };
+      var res = await runUnE2E(g, faux, { delaiDefaut: 60 });
+      enCours = enComptePrecedent;
+      A.equal(res.etat, 'reussi', 'le faux test se termine normalement : ' + res.message);
+      var libelles = res.captures.filter(function (c) { return c.role !== 'triplet'; }).map(function (c) { return c.libelle; });
+      var nAction = libelles.filter(function (l) { return /^(avant|après) /.test(l); }).length;
+      var nPreuve = libelles.filter(function (l) { return /^preuve : /.test(l); }).length;
+      A.gt(nAction, 0, 'des témoins d\'action existent : ' + libelles.join(' | '));
+      A.ok(nAction <= 12, 'témoins d\'action plafonnés à 12 : ' + nAction);
+      A.ok(nPreuve <= 5, 'témoins de preuve plafonnés à 5 : ' + nPreuve);
     });
 
   /* SPEC-OPTION-008 : l'espace de rendu (rendu, HUD, menus) ne descend
