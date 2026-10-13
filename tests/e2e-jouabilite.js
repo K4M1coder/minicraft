@@ -718,10 +718,11 @@
       p = await demarrerPartie(g, 'survie', [], condition.consoleMorte ? { serveur: { consoleMorte: true, disqueLentMs: condition.disqueLentMs }, avantConnexion: tuerConsole } : {});
       T.etape('repos');
       /* Le repos (serveur à jour, joueur immobile) n'est qu'un bon départ : un serveur affamé ne
-         l'atteint jamais — c'est justement ce qu'on mesure. Au-delà de 20 s, on marche quand même,
-         et l'analyse de la marche dira ce que le serveur fait du joueur. */
-      var auRepos = await attendreRepos(g, p, true, 20000);
-      var diagRepos = auRepos ? 'au repos' : 'PAS au repos après 20 s (' + attendreRepos.diag + ')';
+         l'atteint jamais — c'est justement ce qu'on mesure ; un navigateur ralenti non plus (moins
+         de 10 entrées par demi-seconde : le critère d'attendreRepos n'est jamais rempli). Au-delà
+         de 10 s, on marche quand même, et l'analyse de la marche dira ce que le serveur fait du joueur. */
+      var auRepos = await attendreRepos(g, p, true, 10000);
+      var diagRepos = auRepos ? 'au repos' : 'PAS au repos après 10 s (' + attendreRepos.diag + ')';
       A.ok(!!p.sp.dernierEtat(), 'préparation : le serveur a envoyé au moins un ETAT du joueur');
       var tPrep = maintenant() - debut;
       T.etape('marche ' + (DUREE_MARCHE_MS / 1000) + ' s');
