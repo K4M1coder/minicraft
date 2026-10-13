@@ -14,6 +14,8 @@ entrée publiée. Des crochets git (`.githooks/`) et les portes G10–G11 le fon
 respecter (voir PLAN.md, « Commits et versions »).
 
 ## [Non publié]
+
+## [0.9.1] - 2026-10-13
 ### Corrigé
 - SPEC-BANC-106, SPEC-BANC-108 — **un serveur dont la console meurt ne boucle plus** : une sortie standard devenue invalide (EBADF, EPIPE, EIO, flux détruit : serveur relancé par une bascule de partie, exécutable lancé sans console, terminal fermé) coupe la console du journal pour le reste du processus, avec une seule note E-JOURNAL-001 dans le fichier ; le serveur écoute l'évènement « error » de ses sorties, qui devenait une exception non rattrapée à chaque ligne (tests/spec-journal.js, tests/spec-serveur-modules.js, tests/integration-console-morte.js).
 - SPEC-SECU-002 — **le gardien des pannes du serveur est borné** : non ré-entrant, il ne laisse jamais lever son journal, regroupe la même panne en une ligne de compte (E-SERV-007), ne fait la sauvegarde de secours synchrone qu'au plus une fois toutes les 30 s, et sur une tempête (200 pannes en moins de 5 s) sauvegarde une dernière fois puis arrête le processus avec le code 70 (E-SERV-008) au lieu de tourner des jours dans le vide — c'était la cause du « joueur qui revient sur ses pas » de v0.9.0 (tic affamé, ETAT tardifs) (tests/spec-serveur-modules.js, tests/integration-console-morte.js). Il compte sur une horloge monotone et remet ses fenêtres à zéro si l'horloge recule (jamais de fausse tempête après une correction NTP ou une veille) ; des pannes qui varient (identifiant, coordonnée) n'écrivent pas une pile chacune : au plus 20 lignes par 30 s, le reste résumé en une ligne ; l'échec de la sauvegarde de secours a son propre code, E-SERV-009 (tests/spec-serveur-modules.js).
@@ -1575,6 +1577,7 @@ plus celui-ci. Elle rassemble tout ce qui a été construit jusque-là.
   factions autonomes et factions de joueurs, L40 blocs sur 16 bits.
 
 [Non publié]: #
+[0.9.1]: #
 [0.9.0]: #
 [0.8.0]: #
 [0.7.0]: #
